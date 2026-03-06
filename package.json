@@ -1,0 +1,30 @@
+{
+  "name": "autoresearch",
+  "version": "0.1.0",
+  "description": "Slash-first AutoResearch TUI",
+  "type": "module",
+  "bin": {
+    "autoresearch": "dist/cli/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli/main.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:smoke:natural-collect": "bash test/smoke/run_natural_collect_pending_command.sh",
+    "test:smoke:natural-collect-execute": "bash test/smoke/run_natural_collect_execute_and_verify_artifacts.sh",
+    "test:smoke:ci": "CI=true bash test/smoke/run_ci_smoke.sh"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.14",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.2",
+    "vitest": "^4.0.18"
+  }
+}

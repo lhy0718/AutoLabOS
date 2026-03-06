@@ -1,0 +1,73 @@
+import type { CodexReasoningEffort } from "./codexCliClient.js";
+
+// Official Codex model list from developers.openai.com/codex/models
+// (recommended + alternative models), verified 2026-03-06.
+export const OFFICIAL_CODEX_MODELS = [
+  "gpt-5.4",
+  "gpt-5.3-codex",
+  "gpt-5.3-codex-spark",
+  "gpt-5.2-codex",
+  "gpt-5.2",
+  "gpt-5.1-codex-max",
+  "gpt-5.1",
+  "gpt-5.1-codex",
+  "gpt-5-codex",
+  "gpt-5-codex-mini",
+  "gpt-5"
+] as const;
+
+const DEFAULT_REASONING_EFFORT_CHOICES: readonly CodexReasoningEffort[] = ["low", "medium", "high"];
+
+// Reasoning-effort support is sourced from the Codex config reference and
+// per-model OpenAI docs where they exist. For preview/legacy models without
+// an explicit model page, the selector uses a conservative subset.
+const MODEL_REASONING_EFFORTS: Record<string, readonly CodexReasoningEffort[]> = {
+  "gpt-5.4": ["low", "medium", "high", "xhigh"],
+  "gpt-5.3-codex": ["low", "medium", "high", "xhigh"],
+  "gpt-5.3-codex-spark": ["low", "medium", "high"],
+  "gpt-5.2-codex": ["low", "medium", "high", "xhigh"],
+  "gpt-5.2": ["low", "medium", "high"],
+  "gpt-5.1-codex-max": ["low", "medium", "high"],
+  "gpt-5.1": ["low", "medium", "high"],
+  "gpt-5.1-codex": ["low", "medium", "high", "xhigh"],
+  "gpt-5-codex": ["low", "medium", "high"],
+  "gpt-5-codex-mini": ["low", "medium", "high"],
+  "gpt-5": ["minimal", "low", "medium", "high"]
+};
+
+export function buildCodexModelSelectionChoices(currentModel?: string, rawEnvChoices = ""): string[] {
+  const current = currentModel?.trim();
+  const fromEnv = rawEnvChoices
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const deduped = new Set<string>([...(current ? [current] : []), ...OFFICIAL_CODEX_MODELS, ...fromEnv]);
+  return [...deduped];
+}
+
+export function getReasoningEffortChoicesForModel(model?: string): readonly CodexReasoningEffort[] {
+  const normalized = model?.trim();
+  if (normalized && MODEL_REASONING_EFFORTS[normalized]) {
+    return MODEL_REASONING_EFFORTS[normalized];
+  }
+  return DEFAULT_REASONING_EFFORT_CHOICES;
+}
+
+export function isReasoningEffortSupportedForModel(model: string | undefined, effort: string | undefined): boolean {
+  if (!effort) {
+    return false;
+  }
+  return getReasoningEffortChoicesForModel(model).includes(effort as CodexReasoningEffort);
+}
+
+export function normalizeReasoningEffortForModel(
+  model: string | undefined,
+  effort: string | undefined
+): CodexReasoningEffort {
+  if (isReasoningEffortSupportedForModel(model, effort)) {
+    return effort as CodexReasoningEffort;
+  }
+
+  const supported = getReasoningEffortChoicesForModel(model);
+  return supported.includes("medium") ? "medium" : supported[0];
+}
