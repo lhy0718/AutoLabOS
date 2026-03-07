@@ -20,8 +20,19 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         .slice(0, 8)
         .map((line, idx) => {
           try {
-            const obj = JSON.parse(line) as { claim?: string };
-            return obj.claim || `seed_${idx + 1}`;
+            const obj = JSON.parse(line) as {
+              claim?: string;
+              limitation_slot?: string;
+              dataset_slot?: string;
+              metric_slot?: string;
+            };
+            const parts = [
+              obj.claim,
+              obj.limitation_slot && obj.limitation_slot !== "Not specified." ? `limitation: ${obj.limitation_slot}` : undefined,
+              obj.dataset_slot && obj.dataset_slot !== "Not specified." ? `dataset: ${obj.dataset_slot}` : undefined,
+              obj.metric_slot && obj.metric_slot !== "Not specified." ? `metric: ${obj.metric_slot}` : undefined
+            ].filter(Boolean);
+            return parts.join(" | ") || `seed_${idx + 1}`;
           } catch {
             return `seed_${idx + 1}`;
           }

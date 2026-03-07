@@ -13,11 +13,13 @@ npm link
 autoresearch
 ```
 
-Optional: set your Semantic Scholar API key in `.env`.
+Required: set your Semantic Scholar API key in `.env` (or enter it during first-run setup).
+Optional: if you choose `OpenAI API` as the primary provider or `Responses API PDF analysis`, also set `OPENAI_API_KEY`.
 
 ```bash
 cp .env.example .env
 echo 'SEMANTIC_SCHOLAR_API_KEY=your_key_here' >> .env
+echo 'OPENAI_API_KEY=your_openai_key_here' >> .env
 ```
 
 Development mode:
@@ -33,8 +35,21 @@ Without `npm link`, you can still run `node dist/cli/main.js`.
 1. Run `autoresearch` in an empty project.
 2. If `.autoresearch/config.yaml` is missing, setup wizard starts automatically.
 3. Wizard creates scaffold/config and opens the dashboard.
-4. Setup wizard asks for an optional Semantic Scholar API key and writes it to `.env`.
-5. At runtime, AutoResearch reads `SEMANTIC_SCHOLAR_API_KEY` from `process.env` or `.env`.
+4. Setup wizard requires a Semantic Scholar API key and writes it to `.env`.
+5. Setup wizard lets you choose the primary LLM provider:
+   - `codex`: use Codex ChatGPT login for the main workflow
+   - `api`: use OpenAI API models for the main workflow (`OPENAI_API_KEY` required)
+6. Setup wizard also lets you choose PDF analysis mode:
+   - `codex`: download/extract PDF text locally, then analyze with Codex
+   - `api`: send the PDF directly to the Responses API (requires `OPENAI_API_KEY`)
+7. If you choose `api` as the primary provider, setup wizard and `/settings` also let you choose the OpenAI API model.
+   - Current catalog: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`
+8. If you choose `api` for PDF analysis, setup wizard and `/settings` also let you choose the Responses API PDF model.
+   - Current catalog: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`
+9. `/model` follows the active primary provider:
+   - Codex provider: Codex model selector
+   - OpenAI API provider: OpenAI API model selector
+10. At runtime, AutoResearch reads `SEMANTIC_SCHOLAR_API_KEY` and `OPENAI_API_KEY` from `process.env` or `.env`.
 
 ## CLI Policy
 

@@ -1,7 +1,15 @@
-import { CodexCliClient } from "../../integrations/codex/codexCliClient.js";
+interface TitleGenerationClient {
+  runForText(opts: {
+    prompt: string;
+    sandboxMode?: string;
+    approvalPolicy?: string;
+    systemPrompt?: string;
+    abortSignal?: AbortSignal;
+  }): Promise<string>;
+}
 
 export class TitleGenerator {
-  constructor(private readonly codex: CodexCliClient) {}
+  constructor(private readonly resolveClient: () => TitleGenerationClient) {}
 
   async generateTitle(topic: string, constraints: string[], objectiveMetric: string): Promise<string> {
     const prompt = [
@@ -18,7 +26,7 @@ export class TitleGenerator {
     ].join("\n");
 
     try {
-      const response = await this.codex.runForText({
+      const response = await this.resolveClient().runForText({
         prompt,
         sandboxMode: "read-only",
         approvalPolicy: "never"

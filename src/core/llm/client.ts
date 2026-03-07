@@ -1,4 +1,5 @@
 import { CodexCliClient } from "../../integrations/codex/codexCliClient.js";
+import { OpenAiResponsesTextClient } from "../../integrations/openai/responsesTextClient.js";
 
 export interface LLMCompletionUsage {
   inputTokens?: number;
@@ -33,6 +34,32 @@ export class CodexLLMClient implements LLMClient {
         costUsd: undefined
       }
     };
+  }
+}
+
+export class OpenAiResponsesLLMClient implements LLMClient {
+  constructor(private readonly openai: OpenAiResponsesTextClient) {}
+
+  async complete(prompt: string, opts?: { threadId?: string; systemPrompt?: string }): Promise<LLMCompletion> {
+    const text = await this.openai.runForText({
+      prompt,
+      systemPrompt: opts?.systemPrompt
+    });
+
+    return {
+      text,
+      usage: {
+        costUsd: undefined
+      }
+    };
+  }
+}
+
+export class RoutedLLMClient implements LLMClient {
+  constructor(private readonly resolveClient: () => LLMClient) {}
+
+  async complete(prompt: string, opts?: { threadId?: string; systemPrompt?: string }): Promise<LLMCompletion> {
+    return this.resolveClient().complete(prompt, opts);
   }
 }
 

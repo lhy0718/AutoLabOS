@@ -6,16 +6,21 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   ensureScaffold,
+  hasOpenAiApiKey,
   hasSemanticScholarApiKey,
   loadConfig,
   resolveAppPaths,
+  resolveOpenAiApiKey,
   resolveSemanticScholarApiKey,
+  runSetupWizard,
   saveConfig,
   upsertEnvVar
 } from "../src/config.js";
+import { DEFAULT_RESPONSES_PDF_MODEL } from "../src/integrations/openai/pdfModelCatalog.js";
 import { AppConfig } from "../src/types.js";
 
 const ORIGINAL_SEMANTIC_SCHOLAR_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY;
+const ORIGINAL_OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 function makeConfig(): AppConfig {
   return {
@@ -28,7 +33,16 @@ function makeConfig(): AppConfig {
         reasoning_effort: "xhigh",
         fast_mode: false,
         auth_required: true
+      },
+      openai: {
+        model: "gpt-5.4",
+        reasoning_effort: "medium",
+        api_key_required: true
       }
+    },
+    analysis: {
+      pdf_mode: "codex_text_extract",
+      responses_model: "gpt-5.4"
     },
     papers: {
       max_results: 200,
@@ -75,6 +89,12 @@ afterEach(() => {
     process.env.SEMANTIC_SCHOLAR_API_KEY = ORIGINAL_SEMANTIC_SCHOLAR_API_KEY;
   }
 
+  if (ORIGINAL_OPENAI_API_KEY === undefined) {
+    delete process.env.OPENAI_API_KEY;
+  } else {
+    process.env.OPENAI_API_KEY = ORIGINAL_OPENAI_API_KEY;
+  }
+
 });
 
 describe("config .env overrides", () => {
@@ -111,5 +131,124 @@ describe("config .env overrides", () => {
     const raw = await fs.readFile(envPath, "utf8");
     expect(raw).toContain("FOO=bar\n");
     expect(raw).toContain('SEMANTIC_SCHOLAR_API_KEY="wizard-key"');
+  });
+
+  it("requires a Semantic Scholar API key during first-run setup", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-required-key-"));
+    const paths = resolveAppPaths(cwd);
+    const answers = [
+      "project",
+      "Multi-agent collaboration",
+      "recent papers,last 5 years",
+      "reproducibility",
+      "codex",
+      "codex",
+      "",
+      "   ",
+      "required-key"
+    ];
+
+    const config = await runSetupWizard(paths, async (_question, defaultValue = "") => {
+      const answer = answers.shift();
+      return answer !== undefined ? answer : defaultValue;
+    });
+
+    expect(config.project_name).toBe("project");
+    await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("required-key");
+    await expect(fs.readFile(paths.configFile, "utf8")).resolves.toContain("project_name: project");
+  });
+
+  it("uses OPENAI_API_KEY from .env when Responses PDF mode is enabled", async () => {
+    delete process.env.OPENAI_API_KEY;
+    const { cwd } = await createWorkspace();
+    await fs.writeFile(path.join(cwd, ".env"), 'OPENAI_API_KEY="openai-env-key"\n', "utf8");
+
+    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-env-key");
+    await expect(hasOpenAiApiKey(cwd)).resolves.toBe(true);
+  });
+
+  it("writes OPENAI_API_KEY during setup when Responses PDF mode is selected", async () => {
+    delete process.env.OPENAI_API_KEY;
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-openai-key-"));
+    const paths = resolveAppPaths(cwd);
+    const answers = [
+      "project",
+      "Multi-agent collaboration",
+      "recent papers,last 5 years",
+      "reproducibility",
+      "codex",
+      "api",
+      "gpt-4o",
+      "semantic-key",
+      "openai-key"
+    ];
+
+    const config = await runSetupWizard(paths, async (_question, defaultValue = "") => {
+      const answer = answers.shift();
+      return answer !== undefined ? answer : defaultValue;
+    });
+
+    expect(config.analysis.pdf_mode).toBe("responses_api_pdf");
+    expect(config.analysis.responses_model).toBe("gpt-4o");
+    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
+    await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="openai-key"');
+  });
+
+  it("writes OPENAI_API_KEY and OpenAI provider config during setup when API provider is selected", async () => {
+    delete process.env.OPENAI_API_KEY;
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-openai-provider-"));
+    const paths = resolveAppPaths(cwd);
+    const answers = [
+      "project",
+      "Multi-agent collaboration",
+      "recent papers,last 5 years",
+      "reproducibility",
+      "api",
+      "gpt-5-mini",
+      "codex",
+      "semantic-key",
+      "openai-key"
+    ];
+
+    const config = await runSetupWizard(paths, async (_question, defaultValue = "") => {
+      const answer = answers.shift();
+      return answer !== undefined ? answer : defaultValue;
+    });
+
+    expect(config.providers.llm_mode).toBe("openai_api");
+    expect(config.providers.openai.model).toBe("gpt-5-mini");
+    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
+  });
+
+  it("normalizes unsupported Responses API PDF models to the default", async () => {
+    const { paths } = await createWorkspace();
+    const config = makeConfig();
+    config.analysis.pdf_mode = "responses_api_pdf";
+    config.analysis.responses_model = "unsupported-model";
+    await saveConfig(paths, config);
+
+    const loaded = await loadConfig(paths);
+
+    expect(loaded.analysis.responses_model).toBe(DEFAULT_RESPONSES_PDF_MODEL);
+    expect(loaded.providers.openai.model).toBe("gpt-5.4");
+  });
+
+  it("does not create .autoresearch if first-run setup aborts before completion", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-abort-"));
+    const paths = resolveAppPaths(cwd);
+    let callCount = 0;
+
+    await expect(
+      runSetupWizard(paths, async (_question, defaultValue = "") => {
+        callCount += 1;
+        if (callCount === 3) {
+          throw new Error("setup aborted");
+        }
+        return defaultValue || "value";
+      })
+    ).rejects.toThrow("setup aborted");
+
+    await expect(fs.access(paths.rootDir)).rejects.toThrow();
+    await expect(fs.access(path.join(cwd, ".env"))).rejects.toThrow();
   });
 });

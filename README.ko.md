@@ -13,11 +13,13 @@ npm link
 autoresearch
 ```
 
-선택 사항: Semantic Scholar API key를 `.env`에 넣을 수 있습니다.
+필수: Semantic Scholar API key를 `.env`에 넣어야 합니다. (또는 첫 실행 setup wizard에서 입력)
+선택: 기본 provider를 `OpenAI API`로 선택하거나 PDF 분석을 `Responses API`로 설정할 경우 `OPENAI_API_KEY`도 필요합니다.
 
 ```bash
 cp .env.example .env
 echo 'SEMANTIC_SCHOLAR_API_KEY=your_key_here' >> .env
+echo 'OPENAI_API_KEY=your_openai_key_here' >> .env
 ```
 
 개발 모드:
@@ -33,8 +35,21 @@ npm run dev
 1. 빈 프로젝트에서 `autoresearch`를 실행합니다.
 2. `.autoresearch/config.yaml`이 없으면 setup wizard가 자동 시작됩니다.
 3. wizard가 설정/스캐폴드를 만든 뒤 대시보드로 진입합니다.
-4. setup wizard는 선택적으로 Semantic Scholar API key를 묻고, 입력한 값은 `.env`에 기록합니다.
-5. 실행 시 AutoResearch는 `process.env` 또는 `.env`의 `SEMANTIC_SCHOLAR_API_KEY`를 읽습니다.
+4. setup wizard는 Semantic Scholar API key를 필수로 묻고, 입력한 값은 `.env`에 기록합니다.
+5. setup wizard에서 기본 LLM provider를 선택합니다.
+   - `codex`: 메인 워크플로를 Codex ChatGPT 로그인으로 실행
+   - `api`: 메인 워크플로를 OpenAI API 모델로 실행 (`OPENAI_API_KEY` 필요)
+6. setup wizard에서 PDF 분석 모드도 선택합니다.
+   - `codex`: PDF를 로컬에서 텍스트 추출 후 Codex로 분석
+   - `api`: PDF를 Responses API로 직접 전달해 분석 (`OPENAI_API_KEY` 필요)
+7. 기본 provider로 `api`를 선택하면 setup wizard와 `/settings`에서 OpenAI API 모델도 선택할 수 있습니다.
+   - 현재 카탈로그: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`
+8. PDF 분석에서 `api`를 선택하면 setup wizard와 `/settings`에서 Responses API PDF 모델도 선택할 수 있습니다.
+   - 현재 카탈로그: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`
+9. `/model`은 현재 기본 provider를 따릅니다.
+   - Codex provider: Codex 모델 선택기
+   - OpenAI API provider: OpenAI API 모델 선택기
+10. 실행 시 AutoResearch는 `process.env` 또는 `.env`의 `SEMANTIC_SCHOLAR_API_KEY`, `OPENAI_API_KEY`를 읽습니다.
 
 ## CLI 정책
 

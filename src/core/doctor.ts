@@ -3,7 +3,14 @@ import { spawn } from "node:child_process";
 import { DoctorCheck } from "../types.js";
 import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
 
-export async function runDoctor(codex: CodexCliClient): Promise<DoctorCheck[]> {
+export async function runDoctor(
+  codex: CodexCliClient,
+  opts?: {
+    llmMode?: "codex_chatgpt_only" | "openai_api";
+    pdfAnalysisMode?: "codex_text_extract" | "responses_api_pdf";
+    openAiApiKeyConfigured?: boolean;
+  }
+): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
 
   const cli = await codex.checkCliAvailable();
@@ -15,6 +22,18 @@ export async function runDoctor(codex: CodexCliClient): Promise<DoctorCheck[]> {
   checks.push(await runBinaryCheck("python3", ["--version"], "python"));
   checks.push(await runBinaryCheck("pip3", ["--version"], "pip"));
   checks.push(await runBinaryCheck("pdflatex", ["--version"], "latex"));
+  if (opts?.llmMode === "openai_api" || opts?.pdfAnalysisMode === "responses_api_pdf") {
+    checks.push({
+      name: "openai-api-key",
+      ok: opts.openAiApiKeyConfigured === true,
+      detail:
+        opts.openAiApiKeyConfigured === true
+          ? "OPENAI_API_KEY detected"
+          : opts?.llmMode === "openai_api"
+            ? "OPENAI_API_KEY missing (required for OpenAI API provider mode)"
+            : "OPENAI_API_KEY missing (required for Responses API PDF analysis)"
+    });
+  }
 
   return checks;
 }

@@ -132,7 +132,7 @@ describe("buildFrame", () => {
     expect(frame.lines.map((line) => stripAnsi(line))).not.toContain("Busy");
   });
 
-  it("renders activity label when a busy node is executing", () => {
+  it("renders collecting status above the input instead of a header activity line", () => {
     const graph = createDefaultGraphState();
     graph.currentNode = "collect_papers";
     graph.nodeStates.collect_papers.status = "running";
@@ -140,7 +140,7 @@ describe("buildFrame", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: true,
-      activityLabel: "Collecting papers...",
+      activityLabel: "Collecting...",
       thinking: false,
       thinkingFrame: 0,
       run: makeRun({ graph, currentNode: "collect_papers" }),
@@ -152,7 +152,13 @@ describe("buildFrame", () => {
       colorEnabled: false
     });
 
-    expect(frame.lines.map((line) => stripAnsi(line))).toContain("Activity: Collecting papers...");
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    expect(plain).not.toContain("Activity: Collecting...");
+    expect(plain).toContain("Collecting...");
+    const promptIndex = frame.inputLineIndex - 1;
+    expect(plain[promptIndex]).toBe("> ");
+    expect(plain[promptIndex - 1]).toBe("");
+    expect(plain[promptIndex - 2]).toBe("Collecting...");
   });
 
   it("places suggestions below the input line", () => {
@@ -382,5 +388,70 @@ describe("buildFrame", () => {
     expect(thinkingA).toContain("\x1b[");
     expect(thinkingA).not.toBe(thinkingB);
     expect(a.thinkingLineIndex).toBeDefined();
+  });
+
+  it("animates collecting status text above the input line", () => {
+    const a = buildFrame({
+      appVersion: "1.0.0",
+      busy: true,
+      activityLabel: "Collecting...",
+      thinking: false,
+      thinkingFrame: 1,
+      run: makeRun(),
+      logs: [],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: true
+    });
+    const b = buildFrame({
+      appVersion: "1.0.0",
+      busy: true,
+      activityLabel: "Collecting...",
+      thinking: false,
+      thinkingFrame: 8,
+      run: makeRun(),
+      logs: [],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: true
+    });
+
+    const statusA = a.lines.find((line) => stripAnsi(line).includes("Collecting...")) || "";
+    const statusB = b.lines.find((line) => stripAnsi(line).includes("Collecting...")) || "";
+    expect(statusA).toContain("\x1b[");
+    expect(statusA).not.toBe(statusB);
+    expect(a.thinkingLineIndex).toBeDefined();
+  });
+
+  it("wraps long title and log lines to the terminal width instead of letting them overflow", () => {
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      terminalWidth: 40,
+      run: makeRun({
+        title: "Multi-agent collaboration in recent papers: five-year state-of-the-art reproducibility benchmark"
+      }),
+      logs: [
+        "Graph nodes: collect_papers, analyze_papers, generate_hypotheses, design_experiments, implement_experiments, run_experiments, analyze_results, write_paper"
+      ],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    expect(plain.some((line) => line.includes("reproducibility benchmark"))).toBe(true);
+    expect(
+      plain.filter((line) => line.includes("Graph nodes:") || line.includes("generate_hypotheses") || line.includes("write_paper")).length
+    ).toBeGreaterThan(1);
+    expect(plain[frame.inputLineIndex - 1]).toBe("> ");
   });
 });

@@ -41,6 +41,22 @@ describe("buildSuggestions", () => {
     expect(suggestions.some((s) => s.applyValue === "/agent run implement_experiments ")).toBe(true);
   });
 
+  it("suggests --top-n flow for /agent run analyze_papers", () => {
+    const optionSuggestions = buildSuggestions({
+      input: "/agent run analyze_papers --top",
+      runs,
+      activeRunId: "run-alpha-123"
+    });
+    expect(optionSuggestions.some((s) => s.applyValue === "/agent run analyze_papers --top-n ")).toBe(true);
+
+    const countSuggestions = buildSuggestions({
+      input: "/agent run analyze_papers --top-n ",
+      runs,
+      activeRunId: "run-alpha-123"
+    });
+    expect(countSuggestions.some((s) => s.applyValue === "/agent run analyze_papers --top-n 50 ")).toBe(true);
+  });
+
   it("suggests run ids for /agent jump <node>", () => {
     const suggestions = buildSuggestions({ input: "/agent jump implement_experiments run-", runs, activeRunId: "run-alpha-123" });
     expect(suggestions.some((s) => s.applyValue === "/agent jump implement_experiments run-alpha-123")).toBe(

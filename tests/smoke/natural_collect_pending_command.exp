@@ -14,8 +14,7 @@ set run_id [lindex $argv 1]
 set query "최근 5년 관련도 순으로 100개 수집해줘"
 set expected_cmd "/agent collect --last-years 5 --sort relevance --limit 100 --run $run_id"
 
-cd $workdir
-spawn node ../dist/cli/main.js
+spawn_autoresearch $workdir
 
 expect {
   -re "Slash command palette is ready" {}

@@ -24,6 +24,17 @@ export async function appendJsonl(run: RunRecord, relativePath: string, items: u
   return outputPath;
 }
 
+export async function appendJsonlItems(run: RunRecord, relativePath: string, items: unknown[]): Promise<string> {
+  const outputPath = path.join(runArtifactsDir(run), relativePath);
+  await ensureDir(path.dirname(outputPath));
+  const lines = items.map((item) => JSON.stringify(item)).join("\n");
+  if (!lines) {
+    return outputPath;
+  }
+  await fs.appendFile(outputPath, `${lines}\n`, "utf8");
+  return outputPath;
+}
+
 export async function safeRead(filePath: string): Promise<string> {
   try {
     return await fs.readFile(filePath, "utf8");

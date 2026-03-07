@@ -1,5 +1,5 @@
 import { RunRecord, SuggestionItem } from "../types.js";
-import { PaintStyle, paint } from "./theme.js";
+import { PaintStyle, paint, reset, stripAnsi } from "./theme.js";
 import { getDisplayWidth } from "./displayWidth.js";
 
 export interface RenderFrameInput {
@@ -8,6 +8,7 @@ export interface RenderFrameInput {
   activityLabel?: string;
   thinking: boolean;
   thinkingFrame: number;
+  terminalWidth?: number;
   run?: RunRecord;
   logs: string[];
   input: string;
@@ -36,15 +37,15 @@ export interface RenderFrameOutput {
 }
 
 export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
-  const lines: string[] = [];
-  let thinkingLineIndex: number | undefined;
+  const rawLines: string[] = [];
+  let rawThinkingLineIndex: number | undefined;
 
-  lines.push(paint(`AutoResearch v${input.appVersion}`, { fg: 96, bold: true }, input.colorEnabled));
+  rawLines.push(paint(`AutoResearch v${input.appVersion}`, { fg: 96, bold: true }, input.colorEnabled));
 
   if (input.run) {
-    lines.push(renderLabelValue("Run", input.run.id, input.colorEnabled, true));
-    lines.push(renderLabelValue("Title", input.run.title, input.colorEnabled, true));
-    lines.push(
+    rawLines.push(renderLabelValue("Run", input.run.id, input.colorEnabled, true));
+    rawLines.push(renderLabelValue("Title", input.run.title, input.colorEnabled, true));
+    rawLines.push(
       renderLabelValue(
         "Node",
         `${input.run.currentNode} (${input.run.graph.nodeStates[input.run.currentNode].status})`,
@@ -52,41 +53,38 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
         true
       )
     );
-    if (input.activityLabel) {
-      lines.push(renderActivityLabel(input.activityLabel, input.colorEnabled));
-    }
   } else {
-    lines.push(renderLabelValue("Run", "none", input.colorEnabled, true));
+    rawLines.push(renderLabelValue("Run", "none", input.colorEnabled, true));
   }
 
-  lines.push("");
-  lines.push(paint("Recent logs", { fg: 97, bold: true }, input.colorEnabled));
+  rawLines.push("");
+  rawLines.push(paint("Recent logs", { fg: 97, bold: true }, input.colorEnabled));
 
   const recentLogs = input.logs.slice(-12);
   if (recentLogs.length === 0) {
-    lines.push(paint("no logs yet", { fg: 90 }, input.colorEnabled));
+    rawLines.push(paint("no logs yet", { fg: 90 }, input.colorEnabled));
   } else {
     for (const log of recentLogs) {
-      lines.push(renderLogLine(log, input.colorEnabled));
+      rawLines.push(renderLogLine(log, input.colorEnabled));
     }
   }
 
-  if (input.thinking) {
-    lines.push("");
-    lines.push(buildThinkingText(input.thinkingFrame, input.colorEnabled));
-    thinkingLineIndex = lines.length;
+  if (input.thinking || input.activityLabel) {
+    rawLines.push("");
+    rawLines.push(buildAnimatedStatusText(input.thinking ? "Thinking..." : input.activityLabel!, input.thinkingFrame, input.colorEnabled));
+    rawThinkingLineIndex = rawLines.length;
   }
 
-  lines.push("");
+  rawLines.push("");
   const prompt = `${paint(">", { fg: 96, bold: true }, input.colorEnabled)} ${paint(input.input, { fg: 97 }, input.colorEnabled)}`;
-  lines.push(prompt);
-  const inputLineIndex = lines.length;
+  rawLines.push(prompt);
+  const rawInputLineIndex = rawLines.length;
   const inputColumn = 3 + getDisplayWidth(sliceByChars(input.input, input.inputCursor));
 
   if (input.suggestions.length > 0) {
-    lines.push("");
+    rawLines.push("");
     input.suggestions.forEach((suggestion, idx) => {
-      lines.push(renderSuggestionRow({
+      rawLines.push(renderSuggestionRow({
         suggestion,
         selected: idx === input.selectedSuggestion,
         colorEnabled: input.colorEnabled
@@ -95,8 +93,8 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
   }
 
   if (input.selectionMenu) {
-    lines.push("");
-    lines.push(
+    rawLines.push("");
+    rawLines.push(
       paint(
         `${input.selectionMenu.title}  (↑/↓ move, Enter select, Esc cancel)`,
         { fg: 97, bold: true },
@@ -104,7 +102,7 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
       )
     );
     input.selectionMenu.options.forEach((option, idx) => {
-      lines.push(
+      rawLines.push(
         renderSelectionRow({
           option,
           selected: idx === input.selectionMenu?.selectedIndex,
@@ -113,6 +111,26 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
       );
     });
   }
+
+  const wrapWidth = Math.max(20, (input.terminalWidth ?? 120) - 1);
+  const lines: string[] = [];
+  let inputLineIndex = 0;
+  let thinkingLineIndex: number | undefined;
+
+  rawLines.forEach((line, rawIndex) => {
+    const oneBasedIndex = rawIndex + 1;
+    const wrapped =
+      oneBasedIndex === rawInputLineIndex || oneBasedIndex === rawThinkingLineIndex
+        ? [line]
+        : wrapAnsiLine(line, wrapWidth);
+    lines.push(...wrapped);
+    if (oneBasedIndex === rawThinkingLineIndex) {
+      thinkingLineIndex = lines.length;
+    }
+    if (oneBasedIndex === rawInputLineIndex) {
+      inputLineIndex = lines.length;
+    }
+  });
 
   return {
     lines,
@@ -124,6 +142,58 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
 
 function sliceByChars(text: string, count: number): string {
   return Array.from(text).slice(0, Math.max(0, count)).join("");
+}
+
+function wrapAnsiLine(line: string, width: number): string[] {
+  if (!line) {
+    return [""];
+  }
+  if (getDisplayWidth(stripAnsi(line)) <= width) {
+    return [line];
+  }
+
+  const tokens = line.split(/(\x1b\[[0-9;]*m)/g).filter((token) => token.length > 0);
+  const out: string[] = [];
+  let active = "";
+  let current = "";
+  let currentWidth = 0;
+
+  const flush = (): void => {
+    if (!current) {
+      return;
+    }
+    const needsReset = active && !current.endsWith(reset);
+    out.push(needsReset ? `${current}${reset}` : current);
+    current = active;
+    currentWidth = 0;
+  };
+
+  for (const token of tokens) {
+    if (/^\x1b\[[0-9;]*m$/.test(token)) {
+      current += token;
+      active = token === reset ? "" : `${active}${token}`;
+      if (token === reset) {
+        active = "";
+      }
+      continue;
+    }
+
+    for (const char of Array.from(token)) {
+      const charWidth = getDisplayWidth(char);
+      if (currentWidth > 0 && currentWidth + charWidth > width) {
+        flush();
+      }
+      current += char;
+      currentWidth += charWidth;
+    }
+  }
+
+  if (current) {
+    const needsReset = active && !current.endsWith(reset);
+    out.push(needsReset ? `${current}${reset}` : current);
+  }
+
+  return out.length > 0 ? out : [line];
 }
 
 interface SuggestionRowArgs {
@@ -164,10 +234,6 @@ function renderSelectionRow(args: SelectionRowArgs): string {
 
 function renderLabelValue(label: string, value: string, colorEnabled: boolean, emphasizeValue = false): string {
   return `${paint(`${label}:`, { fg: 97, bold: true }, colorEnabled)} ${paint(value, emphasizeValue ? { fg: 97 } : { fg: 90 }, colorEnabled)}`;
-}
-
-function renderActivityLabel(value: string, colorEnabled: boolean): string {
-  return `${paint("Activity:", { fg: 97, bold: true }, colorEnabled)} ${paint(value, { fg: 96, bold: true }, colorEnabled)}`;
 }
 
 function renderLogLine(log: string, colorEnabled: boolean): string {
@@ -456,7 +522,10 @@ function classifyLogLine(log: string): ClassifiedLogLine {
 }
 
 export function buildThinkingText(frame: number, colorEnabled: boolean): string {
-  const text = "Thinking...";
+  return buildAnimatedStatusText("Thinking...", frame, colorEnabled);
+}
+
+export function buildAnimatedStatusText(text: string, frame: number, colorEnabled: boolean): string {
   if (!colorEnabled) {
     return text;
   }

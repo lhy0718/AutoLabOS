@@ -137,6 +137,22 @@ function agentCommandSuggestions(parsed: ParsedInput, runs: SlashContextRun[]): 
       return nodeSuggestions(parsed.argPartial, `/agent ${sub}`);
     }
 
+    if (sub === "run" && (parsed.args[1] || "").toLowerCase() === "analyze_papers") {
+      if (parsed.argPartial === "--top-n" || parsed.argPartial.startsWith("--top")) {
+        return analyzeTopNOptionSuggestions(parsed);
+      }
+      const prev = parsed.args[parsed.argIndex - 1];
+      if (prev === "--top-n") {
+        return enumSuggestions("/agent run analyze_papers", "--top-n", parsed.argPartial, ["20", "50", "100", "200"]);
+      }
+      if (parsed.argIndex >= 2 && (parsed.argPartial === "" || parsed.argPartial.startsWith("--"))) {
+        return analyzeTopNOptionSuggestions(parsed);
+      }
+      if (parsed.argIndex >= 2) {
+        return runSuggestions(`agent run analyze_papers`, parsed.argPartial, runs);
+      }
+    }
+
     if (sub === "run" || sub === "jump") {
       if (parsed.argIndex === 2) {
         return runSuggestions(`agent ${sub} ${parsed.args[1]}`, parsed.argPartial, runs);
@@ -260,6 +276,19 @@ function collectSuggestions(parsed: ParsedInput, runs: SlashContextRun[]): Sugge
   }
 
   return collectOptionSuggestions("");
+}
+
+function analyzeTopNOptionSuggestions(parsed: ParsedInput): SuggestionItem[] {
+  const applyPrefix = parsed.args.slice(0, parsed.argIndex).join(" ").replace(/\s+$/, "");
+  return [
+    {
+      key: "analyze:top-n",
+      label: "/agent run analyze_papers --top-n <n>",
+      description: "Analyze only the top-N ranked papers",
+      applyValue: `/${applyPrefix ? `${parsed.commandName} ${applyPrefix} ` : "agent run analyze_papers "}--top-n `,
+      score: 1
+    }
+  ].map(({ score: _score, ...item }) => item);
 }
 
 function recollectCountSuggestions(partial: string): SuggestionItem[] {

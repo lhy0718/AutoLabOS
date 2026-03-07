@@ -16,6 +16,14 @@ import {
   normalizeReasoningEffortForModel,
   resolveCodexModelSelection
 } from "../integrations/codex/modelCatalog.js";
+import {
+  RESPONSES_PDF_MODEL_OPTIONS,
+  normalizeResponsesPdfModel
+} from "../integrations/openai/pdfModelCatalog.js";
+import {
+  OPENAI_RESPONSES_MODEL_OPTIONS,
+  normalizeOpenAiResponsesModel
+} from "../integrations/openai/modelCatalog.js";
 import { buildSuggestions } from "./commandPalette/suggest.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
 import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../core/commands/naturalAssistant.js";
@@ -33,11 +41,13 @@ import { runDoctor } from "../core/doctor.js";
 import { resolveRunByQuery } from "../core/runs/runResolver.js";
 import { askLine } from "../utils/prompt.js";
 import { ensureDir } from "../utils/fs.js";
+import { resolveOpenAiApiKey, upsertEnvVar } from "../config.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { getAppVersion } from "./version.js";
-import { buildFrame, buildThinkingText, RenderFrameOutput, SelectionMenuOption } from "./renderFrame.js";
+import { buildAnimatedStatusText, buildFrame, buildThinkingText, RenderFrameOutput, SelectionMenuOption } from "./renderFrame.js";
 import { supportsColor } from "./theme.js";
+import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import {
   deleteBackward,
   deleteToLineStart,
@@ -59,6 +69,7 @@ interface TerminalAppDeps {
   runStore: RunStore;
   titleGenerator: TitleGenerator;
   codex: CodexCliClient;
+  openAiTextClient?: OpenAiResponsesTextClient;
   eventStream: EventStream;
   orchestrator: AgentOrchestrator;
   initialRunId?: string;
@@ -121,6 +132,7 @@ export class TerminalApp {
   private readonly runStore: RunStore;
   private readonly titleGenerator: TitleGenerator;
   private readonly codex: CodexCliClient;
+  private readonly openAiTextClient?: OpenAiResponsesTextClient;
   private readonly eventStream: EventStream;
   private readonly orchestrator: AgentOrchestrator;
   private readonly onQuit: () => void;
@@ -167,6 +179,7 @@ export class TerminalApp {
     this.runStore = deps.runStore;
     this.titleGenerator = deps.titleGenerator;
     this.codex = deps.codex;
+    this.openAiTextClient = deps.openAiTextClient;
     this.eventStream = deps.eventStream;
     this.orchestrator = deps.orchestrator;
     this.activeRunId = deps.initialRunId;
@@ -560,7 +573,7 @@ export class TerminalApp {
             runs: this.runIndex,
             activeRunId: this.activeRunId,
             logs: this.logs,
-            codex: this.codex,
+            llm: this.getNaturalAssistantClient(),
             workspaceRoot: process.cwd(),
             steeringHints,
             abortSignal: abortController.signal,
@@ -731,6 +744,7 @@ export class TerminalApp {
     this.activeBusyAbortController = abortController;
     this.activeBusyLabel = label;
     this.busy = true;
+    this.ensureStatusAnimationTimer();
     this.render();
     try {
       await action(abortController.signal);
@@ -747,6 +761,7 @@ export class TerminalApp {
         this.activeBusyLabel = undefined;
       }
       this.busy = false;
+      this.stopStatusAnimationIfIdle();
       this.updateSuggestions();
       this.render();
       void this.drainQueuedInputs();
@@ -973,7 +988,7 @@ export class TerminalApp {
         runs: this.runIndex,
         activeRunId: this.activeRunId,
         logs: this.logs,
-        codex: this.codex,
+        llm: this.getNaturalAssistantClient(),
         workspaceRoot: process.cwd(),
         steeringHints: [
           "Automatic replan requested after a failed multi-step slash-command plan.",
@@ -1324,7 +1339,7 @@ export class TerminalApp {
     this.pushLog("Workflow:");
     this.pushLog("/approve | /retry");
     this.pushLog("/agent list | /agent status [run] | /agent graph [run] | /agent budget [run]");
-    this.pushLog("/agent run <node> [run] | /agent retry [node] [run] | /agent jump <node> [run] [--force]");
+    this.pushLog("/agent run <node> [run] [--top-n <n>] | /agent retry [node] [run] | /agent jump <node> [run] [--force]");
     this.pushLog("/agent focus <node> | /agent resume [run] [checkpoint]");
     this.pushLog("");
     this.pushLog("Collection:");
@@ -1357,7 +1372,7 @@ export class TerminalApp {
       .map((x) => x.trim())
       .filter(Boolean);
 
-    this.pushLog("Generating run title with Codex...");
+    this.pushLog(`Generating run title with ${this.describePrimaryLlmProvider(this.config.providers.llm_mode)}...`);
     this.render();
 
     const title = await this.titleGenerator.generateTitle(topic, constraints, objectiveMetric);
@@ -1375,7 +1390,11 @@ export class TerminalApp {
   }
 
   private async handleDoctor(): Promise<void> {
-    const checks = await runDoctor(this.codex);
+    const checks = await runDoctor(this.codex, {
+      llmMode: this.config.providers.llm_mode,
+      pdfAnalysisMode: this.config.analysis.pdf_mode,
+      openAiApiKeyConfigured: await resolveOpenAiApiKey(process.cwd()).then(Boolean)
+    });
     for (const check of checks) {
       const mark = check.ok ? "OK" : "FAIL";
       this.pushLog(`[${mark}] ${check.name}: ${check.detail}`);
@@ -1462,7 +1481,7 @@ export class TerminalApp {
     if (sub === "run") {
       const nodeRaw = args[1] as AgentId | undefined;
       if (!nodeRaw) {
-        this.pushLog("Usage: /agent run <node> [run]");
+        this.pushLog("Usage: /agent run <node> [run] [--top-n <n>]");
         return { ok: false, reason: "missing node for /agent run" };
       }
       if (!AGENT_ORDER.includes(nodeRaw)) {
@@ -1470,10 +1489,31 @@ export class TerminalApp {
         return { ok: false, reason: `unknown node ${nodeRaw}` };
       }
 
-      const runQuery = args.slice(2).join(" ").trim() || undefined;
+      let runQuery = args.slice(2).join(" ").trim() || undefined;
+      if (nodeRaw === "analyze_papers") {
+        const parsed = parseAnalyzeRunArgs(args.slice(2));
+        if (parsed.error) {
+          this.pushLog(parsed.error);
+          return { ok: false, reason: parsed.error };
+        }
+        runQuery = parsed.runQuery;
+      } else if (args.slice(2).includes("--top-n")) {
+        this.pushLog("--top-n is only supported for /agent run analyze_papers");
+        return { ok: false, reason: "unsupported --top-n option" };
+      }
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
         return { ok: false, reason: "target run not found" };
+      }
+
+      if (nodeRaw === "analyze_papers") {
+        const parsed = parseAnalyzeRunArgs(args.slice(2));
+        const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+        await runContext.put("analyze_papers.request", {
+          topN: parsed.topN ?? null,
+          selectionMode: parsed.topN ? "top_n" : "all",
+          selectionPolicy: "hybrid_title_citation_recency_v1"
+        });
       }
 
       await this.setActiveRunId(run.id);
@@ -1821,6 +1861,72 @@ export class TerminalApp {
       "Default objective metric",
       this.config.research.default_objective_metric
     );
+    const llmMode = await this.openSelectionMenu(
+      "Select primary LLM provider",
+      this.buildPrimaryLlmProviderOptions(),
+      this.config.providers.llm_mode
+    );
+    if (!llmMode) {
+      this.pushLog("Settings update canceled.");
+      return;
+    }
+    if (llmMode === "openai_api" && !(await resolveOpenAiApiKey(process.cwd()))) {
+      const openAiApiKey = await this.askWithinTui("OpenAI API key", "");
+      if (!openAiApiKey.trim()) {
+        this.pushLog("OpenAI API key is required for OpenAI API provider mode.");
+        return;
+      }
+      await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
+    }
+    let openAiModel = this.config.providers.openai.model;
+    if (llmMode === "openai_api") {
+      const selectedOpenAiModel = await this.openSelectionMenu(
+        "Select OpenAI API model",
+        this.buildOpenAiModelOptions(),
+        normalizeOpenAiResponsesModel(this.config.providers.openai.model)
+      );
+      if (!selectedOpenAiModel) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      openAiModel = selectedOpenAiModel;
+      this.openAiTextClient?.updateDefaults({
+        model: openAiModel,
+        reasoningEffort: this.config.providers.openai.reasoning_effort
+      });
+    }
+    const pdfMode = await this.openSelectionMenu(
+      "Select PDF analysis mode",
+      this.buildPdfAnalysisModeOptions(),
+      this.config.analysis.pdf_mode
+    );
+    if (!pdfMode) {
+      this.pushLog("Settings update canceled.");
+      return;
+    }
+
+    if (pdfMode === "responses_api_pdf" && !(await resolveOpenAiApiKey(process.cwd()))) {
+      const openAiApiKey = await this.askWithinTui("OpenAI API key", "");
+      if (!openAiApiKey.trim()) {
+        this.pushLog("OpenAI API key is required for Responses API PDF analysis.");
+        return;
+      }
+      await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
+    }
+
+    let responsesPdfModel = this.config.analysis.responses_model;
+    if (pdfMode === "responses_api_pdf") {
+      const selectedResponsesModel = await this.openSelectionMenu(
+        "Select Responses API PDF model",
+        this.buildResponsesPdfModelOptions(),
+        normalizeResponsesPdfModel(this.config.analysis.responses_model)
+      );
+      if (!selectedResponsesModel) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      responsesPdfModel = selectedResponsesModel;
+    }
 
     this.config.research.default_topic = topic;
     this.config.research.default_constraints = constraintsRaw
@@ -1828,9 +1934,19 @@ export class TerminalApp {
       .map((x) => x.trim())
       .filter(Boolean);
     this.config.research.default_objective_metric = metric;
+    this.config.providers.llm_mode = llmMode as AppConfig["providers"]["llm_mode"];
+    this.config.providers.openai.model = openAiModel;
+    this.config.analysis.pdf_mode = pdfMode as AppConfig["analysis"]["pdf_mode"];
+    this.config.analysis.responses_model = responsesPdfModel;
 
     await this.saveConfigFn(this.config);
-    this.pushLog("Settings saved.");
+    const analysisSummary =
+      this.config.analysis.pdf_mode === "responses_api_pdf"
+        ? `${this.describePdfAnalysisMode(this.config.analysis.pdf_mode)} (${this.config.analysis.responses_model})`
+        : this.describePdfAnalysisMode(this.config.analysis.pdf_mode);
+    this.pushLog(
+      `Settings saved. LLM provider: ${this.describePrimaryLlmProvider(this.config.providers.llm_mode)}. PDF analysis mode: ${analysisSummary}.`
+    );
   }
 
   private async handleModel(args: string[]): Promise<void> {
@@ -1839,6 +1955,14 @@ export class TerminalApp {
       return;
     }
 
+    if (this.config.providers.llm_mode === "openai_api") {
+      await this.handleOpenAiApiModelSelection();
+      return;
+    }
+    await this.handleCodexModelSelection();
+  }
+
+  private async handleCodexModelSelection(): Promise<void> {
     this.pushCurrentModelDefaults();
     const selectedModel = await this.openSelectionMenu(
       "Select model",
@@ -1855,7 +1979,6 @@ export class TerminalApp {
 
     const resolvedModel = resolveCodexModelSelection(selectedModel);
     const model = resolvedModel.model;
-
     const reasoningChoices = getReasoningEffortChoicesForModel(model);
     const currentEffort = normalizeReasoningEffortForModel(model, this.config.providers.codex.reasoning_effort);
     const effort = await this.openSelectionMenu(
@@ -1883,7 +2006,42 @@ export class TerminalApp {
     this.pushCurrentModelDefaults();
   }
 
+  private async handleOpenAiApiModelSelection(): Promise<void> {
+    this.pushCurrentModelDefaults();
+    if (!(await resolveOpenAiApiKey(process.cwd()))) {
+      const openAiApiKey = await this.askWithinTui("OpenAI API key", "");
+      if (!openAiApiKey.trim()) {
+        this.pushLog("OpenAI API key is required for OpenAI API provider mode.");
+        return;
+      }
+      await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
+    }
+
+    const selectedModel = await this.openSelectionMenu(
+      "Select OpenAI API model",
+      this.buildOpenAiModelOptions(),
+      normalizeOpenAiResponsesModel(this.config.providers.openai.model)
+    );
+    if (!selectedModel) {
+      this.pushLog("Model selection canceled.");
+      return;
+    }
+
+    this.config.providers.openai.model = selectedModel;
+    this.openAiTextClient?.updateDefaults({
+      model: selectedModel,
+      reasoningEffort: this.config.providers.openai.reasoning_effort
+    });
+    await this.saveConfigFn(this.config);
+    this.pushLog(`OpenAI API model updated: ${selectedModel}.`);
+    this.pushCurrentModelDefaults();
+  }
+
   private pushCurrentModelDefaults(): void {
+    if (this.config.providers.llm_mode === "openai_api") {
+      this.pushLog(`OpenAI API defaults: model=${this.config.providers.openai.model}`);
+      return;
+    }
     const model = this.formatCurrentModelLabel();
     const effort = this.config.providers.codex.reasoning_effort;
     this.pushLog(`Codex defaults: model=${model}, reasoning=${effort}`);
@@ -1911,6 +2069,88 @@ export class TerminalApp {
     }));
   }
 
+  private buildPdfAnalysisModeOptions(): SelectionMenuOption[] {
+    return [
+      {
+        value: "codex_text_extract",
+        label: "codex_text_extract",
+        description: "Download/extract PDF text locally, then analyze with Codex."
+      },
+      {
+        value: "responses_api_pdf",
+        label: "responses_api_pdf",
+        description: "Send PDF file input to Responses API (requires OPENAI_API_KEY)."
+      }
+    ];
+  }
+
+  private buildResponsesPdfModelOptions(): SelectionMenuOption[] {
+    return RESPONSES_PDF_MODEL_OPTIONS.map((option) => ({
+      value: option.value,
+      label: option.label,
+      description: option.description
+    }));
+  }
+
+  private buildPrimaryLlmProviderOptions(): SelectionMenuOption[] {
+    return [
+      {
+        value: "codex_chatgpt_only",
+        label: "codex_chatgpt_only",
+        description: "Use Codex ChatGPT login as the main LLM provider."
+      },
+      {
+        value: "openai_api",
+        label: "openai_api",
+        description: "Use OpenAI API models as the main LLM provider."
+      }
+    ];
+  }
+
+  private buildOpenAiModelOptions(): SelectionMenuOption[] {
+    return OPENAI_RESPONSES_MODEL_OPTIONS.map((option) => ({
+      value: option.value,
+      label: option.label,
+      description: option.description
+    }));
+  }
+
+  private describePdfAnalysisMode(mode: AppConfig["analysis"]["pdf_mode"]): string {
+    return mode === "responses_api_pdf" ? "Responses API PDF input" : "Codex text extraction";
+  }
+
+  private describePrimaryLlmProvider(mode: AppConfig["providers"]["llm_mode"]): string {
+    return mode === "openai_api" ? "OpenAI API" : "Codex ChatGPT";
+  }
+
+  private getNaturalAssistantClient(): {
+    runForText: (opts: {
+      prompt: string;
+      sandboxMode?: string;
+      approvalPolicy?: string;
+      threadId?: string;
+      systemPrompt?: string;
+      abortSignal?: AbortSignal;
+    }) => Promise<string>;
+    runTurnStream?: CodexCliClient["runTurnStream"];
+  } {
+    if (this.config.providers.llm_mode === "openai_api" && this.openAiTextClient) {
+      return this.openAiTextClient;
+    }
+    return {
+      runForText: async (opts) =>
+        this.codex.runForText({
+          prompt: opts.prompt,
+          sandboxMode: (opts.sandboxMode || "read-only") as "read-only" | "workspace-write" | "danger-full-access",
+          approvalPolicy: (opts.approvalPolicy || "never") as "never" | "on-request" | "on-failure" | "untrusted",
+          systemPrompt: opts.systemPrompt
+        }),
+      runTurnStream:
+        typeof this.codex.runTurnStream === "function"
+          ? this.codex.runTurnStream.bind(this.codex)
+          : undefined
+    };
+  }
   private async openSelectionMenu(
     label: string,
     options: readonly string[] | readonly SelectionMenuOption[],
@@ -2149,6 +2389,7 @@ export class TerminalApp {
       activityLabel: this.getActivityLabel(run),
       thinking: this.thinking,
       thinkingFrame: this.thinkingFrame,
+      terminalWidth: this.resolveTerminalWidth(),
       run,
       logs: this.logs,
       input: this.input,
@@ -2174,6 +2415,14 @@ export class TerminalApp {
       process.stdout.write(`\x1b[${up}A`);
     }
     process.stdout.write(`\x1b[${frame.inputColumn}G`);
+  }
+
+  private resolveTerminalWidth(): number {
+    const envWidth = Number.parseInt(process.env.COLUMNS ?? "", 10);
+    if (Number.isFinite(envWidth) && envWidth >= 20) {
+      return envWidth;
+    }
+    return process.stdout.columns ?? 120;
   }
 
   private getActivityLabel(run?: RunRecord): string | undefined {
@@ -2205,7 +2454,15 @@ export class TerminalApp {
     }
 
     const up = frame.inputLineIndex - frame.thinkingLineIndex;
-    const text = buildThinkingText(this.thinkingFrame, this.colorEnabled);
+    const text = this.thinking
+      ? buildThinkingText(this.thinkingFrame, this.colorEnabled)
+      : this.activeBusyLabel
+        ? buildAnimatedStatusText(this.activeBusyLabel, this.thinkingFrame, this.colorEnabled)
+        : "";
+    if (!text) {
+      this.render();
+      return;
+    }
     frame.lines[frame.thinkingLineIndex - 1] = text;
 
     process.stdout.write("\x1b[s");
@@ -2363,6 +2620,10 @@ export class TerminalApp {
       case "analyze_papers": {
         const evidence = await countJsonl(path.join(runDir, "evidence_store.jsonl"));
         const summaries = await countJsonl(path.join(runDir, "paper_summaries.jsonl"));
+        const selection = await readAnalyzeSelectionCount(path.join(runDir, "analysis_manifest.json"));
+        if (selection) {
+          return `Count(${node}): ${evidence} evidences, ${summaries} summaries, selected ${selection.selected}/${selection.total}`;
+        }
         return `Count(${node}): ${evidence} evidences, ${summaries} summaries`;
       }
       case "generate_hypotheses": {
@@ -2431,26 +2692,13 @@ export class TerminalApp {
     }
     this.thinking = true;
     this.thinkingFrame = 0;
-    if (this.thinkingTimer) {
-      clearInterval(this.thinkingTimer);
-    }
-    this.thinkingTimer = setInterval(() => {
-      if (!this.thinking || this.stopped) {
-        return;
-      }
-      this.thinkingFrame = (this.thinkingFrame + 1) % 10_000;
-      this.renderThinkingLineOnly();
-    }, 120);
+    this.ensureStatusAnimationTimer();
     this.render();
   }
 
   private stopThinking(): void {
     this.thinking = false;
-    this.thinkingFrame = 0;
-    if (this.thinkingTimer) {
-      clearInterval(this.thinkingTimer);
-      this.thinkingTimer = undefined;
-    }
+    this.stopStatusAnimationIfIdle();
   }
 
   private advanceThinkingFrame(): void {
@@ -2465,7 +2713,7 @@ export class TerminalApp {
     if (normalized === "agent") {
       const sub = (args[0] || "").toLowerCase();
       if (sub === "collect" || sub === "recollect") {
-        return "Collecting papers...";
+        return "Collecting...";
       }
       if (sub === "run") {
         const node = args[1];
@@ -2491,6 +2739,30 @@ export class TerminalApp {
       return "Saving settings...";
     }
     return `/${command}`;
+  }
+
+  private ensureStatusAnimationTimer(): void {
+    if (this.thinkingTimer) {
+      return;
+    }
+    this.thinkingTimer = setInterval(() => {
+      if ((!this.thinking && !this.busy) || this.stopped) {
+        return;
+      }
+      this.thinkingFrame = (this.thinkingFrame + 1) % 10_000;
+      this.renderThinkingLineOnly();
+    }, 120);
+  }
+
+  private stopStatusAnimationIfIdle(): void {
+    if (this.thinking || this.busy) {
+      return;
+    }
+    this.thinkingFrame = 0;
+    if (this.thinkingTimer) {
+      clearInterval(this.thinkingTimer);
+      this.thinkingTimer = undefined;
+    }
   }
 }
 
@@ -2692,7 +2964,7 @@ function isGraphNodeId(value: string | undefined): value is GraphNodeId {
 function describeNodeActivity(node: GraphNodeId): string {
   switch (node) {
     case "collect_papers":
-      return "Collecting papers...";
+      return "Collecting...";
     case "analyze_papers":
       return "Analyzing papers...";
     case "generate_hypotheses":
@@ -2895,6 +3167,34 @@ function buildTitleCommand(title: string, runId: string): string {
   return `/title "${escaped}" --run ${runId}`;
 }
 
+function parseAnalyzeRunArgs(args: string[]): { runQuery?: string; topN?: number; error?: string } {
+  const runParts: string[] = [];
+  let topN: number | undefined;
+
+  for (let idx = 0; idx < args.length; idx += 1) {
+    const token = args[idx];
+    if (token === "--top-n") {
+      const value = args[idx + 1];
+      if (!value) {
+        return { error: "Usage: /agent run analyze_papers [run] [--top-n <n>]" };
+      }
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return { error: "Usage: /agent run analyze_papers [run] [--top-n <n>]" };
+      }
+      topN = Math.floor(parsed);
+      idx += 1;
+      continue;
+    }
+    runParts.push(token);
+  }
+
+  return {
+    runQuery: runParts.join(" ").trim() || undefined,
+    topN
+  };
+}
+
 function shouldUseConservativeCollectPacing(
   request: CollectCommandRequest,
   targetTotal: number,
@@ -3058,7 +3358,7 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
     case "collect_papers":
       return ["corpus.jsonl", "bibtex.bib", "collect_request.json", "collect_result.json"];
     case "analyze_papers":
-      return ["paper_summaries.jsonl", "evidence_store.jsonl"];
+      return ["paper_summaries.jsonl", "evidence_store.jsonl", "analysis_manifest.json", "analysis_cache"];
     case "generate_hypotheses":
       return ["hypotheses.jsonl"];
     case "design_experiments":
@@ -3090,7 +3390,16 @@ function nodeContextKeys(node: GraphNodeId): string[] {
         "collect_papers.last_result"
       ];
     case "analyze_papers":
-      return ["analyze_papers.evidence_count"];
+      return [
+        "analyze_papers.request",
+        "analyze_papers.evidence_count",
+        "analyze_papers.summary_count",
+        "analyze_papers.full_text_count",
+        "analyze_papers.abstract_fallback_count",
+        "analyze_papers.selected_count",
+        "analyze_papers.total_candidates",
+        "analyze_papers.selection_fingerprint"
+      ];
     case "generate_hypotheses":
       return ["generate_hypotheses.top_k"];
     case "design_experiments":
@@ -3210,5 +3519,24 @@ async function countDirFiles(dirPath: string): Promise<number> {
     return count;
   } catch {
     return 0;
+  }
+}
+
+async function readAnalyzeSelectionCount(manifestPath: string): Promise<{ selected: number; total: number } | undefined> {
+  try {
+    const raw = await fs.readFile(manifestPath, "utf8");
+    const parsed = JSON.parse(raw) as {
+      selectedPaperIds?: unknown;
+      totalCandidates?: unknown;
+    };
+    if (!Array.isArray(parsed.selectedPaperIds) || typeof parsed.totalCandidates !== "number") {
+      return undefined;
+    }
+    return {
+      selected: parsed.selectedPaperIds.length,
+      total: parsed.totalCandidates
+    };
+  } catch {
+    return undefined;
   }
 }

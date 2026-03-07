@@ -43,6 +43,13 @@ providers:
     reasoning_effort: xhigh
     auth_required: true
     fast_mode: false
+  openai:
+    model: gpt-5.4
+    reasoning_effort: medium
+    api_key_required: true
+analysis:
+  pdf_mode: codex_text_extract
+  responses_model: gpt-5.4
 papers:
   max_results: 200
   per_second_limit: 1

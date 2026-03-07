@@ -554,11 +554,17 @@ function formatAttemptSummary(diagnostics: SemanticScholarSearchDiagnostics): st
   if (diagnostics.attemptCount === 0) {
     return "0";
   }
+  const allFirstAttemptSuccess = diagnostics.attempts.every((attempt) => attempt.attempt === 1 && attempt.ok);
+  if (allFirstAttemptSuccess) {
+    return `${diagnostics.attempts.length} request(s) succeeded on the first attempt.`;
+  }
+
   return diagnostics.attempts
-    .map((attempt) => {
+    .map((attempt, index) => {
       const status = attempt.status ? String(attempt.status) : "network";
       const retry = attempt.retryAfterMs ? ` retry-after=${attempt.retryAfterMs}ms` : "";
-      return `#${attempt.attempt}:${status}${retry}`;
+      const outcome = attempt.ok ? "ok" : "failed";
+      return `req${index + 1} attempt${attempt.attempt}=${status} ${outcome}${retry}`;
     })
     .join(", ");
 }

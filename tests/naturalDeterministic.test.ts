@@ -103,6 +103,56 @@ describe("naturalDeterministic", () => {
     expect(result?.pendingCommand).toBe(`/agent collect --sort relevance --additional 200 --run ${run.id}`);
   });
 
+  it("maps screenshot-style investigation prompts to collect commands instead of node run commands", () => {
+    const run = makeRun({
+      id: "run-shot",
+      title: "Multi-agent collaboration in recent papers",
+      topic: "Multi-agent collaboration"
+    });
+
+    const result = resolveDeterministicPendingCommand(
+      "논문 300개를 pdf 있는 것만 관련도 순으로 최신 5년의 논문으로 조사해줘",
+      {
+        runs: [run],
+        activeRunId: run.id
+      }
+    );
+
+    expect(result?.pendingCommand).toBe(
+      "/agent collect --last-years 5 --sort relevance --limit 300 --open-access --run run-shot"
+    );
+  });
+
+  it("maps top-N analysis requests to /agent run analyze_papers --top-n", () => {
+    const run = makeRun({ id: "run-analyze" });
+    const cases = [
+      {
+        input: "상위 50개만 분석해줘",
+        expected: "/agent run analyze_papers run-analyze --top-n 50"
+      },
+      {
+        input: "title과 가장 비슷한 논문 30개만 분석",
+        expected: "/agent run analyze_papers run-analyze --top-n 30"
+      },
+      {
+        input: "피인용수 높은 상위 100개 분석",
+        expected: "/agent run analyze_papers run-analyze --top-n 100"
+      },
+      {
+        input: "analyze the top 20 papers",
+        expected: "/agent run analyze_papers run-analyze --top-n 20"
+      }
+    ];
+
+    for (const entry of cases) {
+      const result = resolveDeterministicPendingCommand(entry.input, {
+        runs: [run],
+        activeRunId: run.id
+      });
+      expect(result?.pendingCommand, entry.input).toBe(entry.expected);
+    }
+  });
+
   it("simulates 20 collection-like natural queries and maps them correctly", () => {
     const run = makeRun({
       id: "run-sim",
@@ -197,6 +247,14 @@ describe("naturalDeterministic", () => {
         input: 'Nature와 Science에서 "AI agent reasoning" 논문 50개 수집해줘',
         expected:
           '/agent collect "AI agent reasoning" --sort relevance --limit 50 --venue "Nature,Science" --run run-sim'
+      },
+      {
+        input: "논문 300개를 pdf 있는 것만 관련도 순으로 최신 5년의 논문으로 조사해줘",
+        expected: "/agent collect --last-years 5 --sort relevance --limit 300 --open-access --run run-sim"
+      },
+      {
+        input: "AI agent reasoning 논문 120개를 최근 5년 기준으로 검색해줘",
+        expected: '/agent collect "AI agent reasoning" --last-years 5 --sort relevance --limit 120 --run run-sim'
       }
     ];
 

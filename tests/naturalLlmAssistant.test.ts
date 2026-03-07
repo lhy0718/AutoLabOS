@@ -42,7 +42,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       runs: [run],
       activeRunId: run.id,
       logs: [],
-      codex: {
+      llm: {
         runForText: async () =>
           JSON.stringify({
             reply_lines: ["지금 현재 노드를 실행할 수 있습니다."],
@@ -65,7 +65,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       runs: [run],
       activeRunId: run.id,
       logs: [],
-      codex: {
+      llm: {
         runForText: async () => "가능합니다. /agent run collect_papers run-freeform 를 실행하세요."
       }
     });
@@ -82,7 +82,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       runs: [run],
       activeRunId: run.id,
       logs: [],
-      codex: {
+      llm: {
         runForText: async () => {
           throw new Error("model offline");
         }
@@ -100,7 +100,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       runs: [run],
       activeRunId: run.id,
       logs: [],
-      codex: {
+      llm: {
         runForText: async () =>
           JSON.stringify({
             reply_lines: ["unsafe command suggested"],
@@ -121,7 +121,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       runs: [run],
       activeRunId: run.id,
       logs: [],
-      codex: {
+      llm: {
         runForText: async () =>
           JSON.stringify({
             reply_lines: ["Here is the current run status."],
@@ -142,7 +142,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       runs: [run],
       activeRunId: run.id,
       logs: [],
-      codex: {
+      llm: {
         runForText: async () =>
           JSON.stringify({
             reply_lines: ["수집 노드로 돌아가 200편을 추가 수집할게요."],
@@ -163,7 +163,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       runs: [run],
       activeRunId: run.id,
       logs: [],
-      codex: {
+      llm: {
         runForText: async () =>
           JSON.stringify({
             reply_lines: ["최근 5년 필터로 100편 수집을 제안합니다."],
@@ -184,7 +184,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       runs: [run],
       activeRunId: run.id,
       logs: [],
-      codex: {
+      llm: {
         runForText: async () =>
           JSON.stringify({
             reply_lines: ["현재 run의 논문 산출물을 정리할게요."],
@@ -205,7 +205,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       runs: [run],
       activeRunId: run.id,
       logs: [],
-      codex: {
+      llm: {
         runForText: async () =>
           JSON.stringify({
             reply_lines: ["정리 후 다시 수집하는 2단계 계획입니다."],
@@ -267,7 +267,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
         activeRunId: run.id,
         logs: [],
         workspaceRoot: workspace,
-        codex: {
+        llm: {
           runForText: async ({ prompt }) => {
             capturedPrompt = prompt;
             return JSON.stringify({
@@ -298,7 +298,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       runs: [run],
       activeRunId: run.id,
       logs: [],
-      codex: {
+      llm: {
         runForText: async () => {
           calls += 1;
           if (calls === 1) {
@@ -322,7 +322,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       runs: [run],
       activeRunId: run.id,
       logs: [],
-      codex: {
+      llm: {
         runForText: async () => {
           throw new Error("runForText should not be used when stream is available");
         },

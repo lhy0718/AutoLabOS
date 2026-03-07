@@ -18,3 +18,10 @@ proc fail {message} {
 proc escape_regex {text} {
   return [string map {\\ \\\\ [ \\[ ] \\] ( \\( ) \\) . \\. + \\+ * \\* ? \\? ^ \\^ $ \\$ | \\|} $text]
 }
+
+proc spawn_autoresearch {workdir} {
+  global spawn_id
+  cd $workdir
+  spawn env COLUMNS=220 LINES=40 node ../dist/cli/main.js
+  catch {stty rows 40 cols 220}
+}

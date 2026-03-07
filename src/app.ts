@@ -3,6 +3,7 @@ import {
   ensureScaffold,
   hasSemanticScholarApiKey,
   loadConfig,
+  resolveOpenAiApiKey,
   resolveAppPaths,
   resolveSemanticScholarApiKey,
   runSetupWizard,
@@ -14,7 +15,7 @@ import { CodexCliClient } from "./integrations/codex/codexCliClient.js";
 import { AgentOrchestrator } from "./core/agents/agentOrchestrator.js";
 import { launchTerminalApp } from "./tui/TerminalApp.js";
 import { InMemoryEventStream } from "./core/events.js";
-import { CodexLLMClient } from "./core/llm/client.js";
+import { CodexLLMClient, OpenAiResponsesLLMClient, RoutedLLMClient } from "./core/llm/client.js";
 import { LocalAciAdapter } from "./tools/aciLocalAdapter.js";
 import { SemanticScholarClient } from "./tools/semanticScholar.js";
 import { DefaultNodeRegistry } from "./core/stateGraph/nodeRegistry.js";
@@ -22,11 +23,11 @@ import { CheckpointStore } from "./core/stateGraph/checkpointStore.js";
 import { StateGraphRuntime } from "./core/stateGraph/runtime.js";
 import { askLine } from "./utils/prompt.js";
 import { AppConfig } from "./types.js";
+import { ResponsesPdfAnalysisClient } from "./integrations/openai/responsesPdfAnalysisClient.js";
+import { OpenAiResponsesTextClient } from "./integrations/openai/responsesTextClient.js";
 
 export async function runAutoresearchApp(): Promise<void> {
   const paths = resolveAppPaths(process.cwd());
-  await ensureScaffold(paths);
-
   const firstRunSetup = !(await configExists(paths));
   let config;
   if (firstRunSetup) {
@@ -36,6 +37,7 @@ export async function runAutoresearchApp(): Promise<void> {
   } else {
     config = await loadConfig(paths);
   }
+  await ensureScaffold(paths);
 
   const runStore = new RunStore(paths);
   const codex = new CodexCliClient(paths.cwd, {
@@ -43,7 +45,13 @@ export async function runAutoresearchApp(): Promise<void> {
     reasoningEffort: config.providers.codex.reasoning_effort || "xhigh",
     fastMode: config.providers.codex.fast_mode === true
   });
-  const titleGenerator = new TitleGenerator(codex);
+  const openAiText = new OpenAiResponsesTextClient(() => resolveOpenAiApiKey(paths.cwd), {
+    model: config.providers.openai.model,
+    reasoningEffort: config.providers.openai.reasoning_effort
+  });
+  const titleGenerator = new TitleGenerator(() =>
+    config.providers.llm_mode === "openai_api" ? openAiText : codex
+  );
   const initialRunId = await maybeCreateInitialRun({
     firstRunSetup,
     runStore,
@@ -52,7 +60,11 @@ export async function runAutoresearchApp(): Promise<void> {
   });
 
   const eventStream = new InMemoryEventStream();
-  const llm = new CodexLLMClient(codex);
+  const codexLlm = new CodexLLMClient(codex);
+  const openAiLlm = new OpenAiResponsesLLMClient(openAiText);
+  const llm = new RoutedLLMClient(() =>
+    config.providers.llm_mode === "openai_api" ? openAiLlm : codexLlm
+  );
   const aci = new LocalAciAdapter();
   const semanticScholarApiKey = await resolveSemanticScholarApiKey(paths.cwd);
   const semanticScholar = new SemanticScholarClient({
@@ -60,6 +72,7 @@ export async function runAutoresearchApp(): Promise<void> {
     perSecondLimit: config.papers.per_second_limit,
     maxRetries: 3
   });
+  const responsesPdfAnalysis = new ResponsesPdfAnalysisClient(() => resolveOpenAiApiKey(paths.cwd));
 
   const nodeRegistry = new DefaultNodeRegistry({
     config,
@@ -68,7 +81,8 @@ export async function runAutoresearchApp(): Promise<void> {
     llm,
     codex,
     aci,
-    semanticScholar
+    semanticScholar,
+    responsesPdfAnalysis
   });
 
   const checkpointStore = new CheckpointStore(paths);
@@ -80,6 +94,7 @@ export async function runAutoresearchApp(): Promise<void> {
     runStore,
     titleGenerator,
     codex,
+    openAiTextClient: openAiText,
     eventStream,
     orchestrator,
     initialRunId,

@@ -17,7 +17,7 @@ interface NaturalLlmAssistantContext {
   runs: RunRecord[];
   activeRunId?: string;
   logs: string[];
-  codex: NaturalAssistantCodexClient;
+  llm: NaturalAssistantTextClient;
   workspaceRoot?: string;
   steeringHints?: string[];
   abortSignal?: AbortSignal;
@@ -69,7 +69,13 @@ const ALLOWED_ROOT_COMMANDS = new Set([
 const NATURAL_LLM_PRIMARY_TIMEOUT_MS = 90000;
 const NATURAL_LLM_RETRY_TIMEOUT_MS = 45000;
 
-interface NaturalAssistantCodexClient extends Pick<CodexCliClient, "runForText"> {
+interface NaturalAssistantTextClient {
+  runForText(opts: {
+    prompt: string;
+    sandboxMode?: string;
+    approvalPolicy?: string;
+    systemPrompt?: string;
+  }): Promise<string>;
   runTurnStream?: CodexCliClient["runTurnStream"];
 }
 
@@ -86,7 +92,7 @@ export async function buildNaturalAssistantResponseWithLlm(
   try {
     progress.status("LLM request started.");
     raw = await runForTextWithTimeout(
-      ctx.codex,
+      ctx.llm,
       {
         prompt,
         sandboxMode: "read-only",
@@ -114,7 +120,7 @@ export async function buildNaturalAssistantResponseWithLlm(
   try {
     progress.status("Retrying LLM response parsing in plain-text mode...");
     const retryRaw = await runForTextWithTimeout(
-      ctx.codex,
+      ctx.llm,
       {
         prompt: plainTextPrompt,
         sandboxMode: "read-only",
@@ -645,7 +651,7 @@ function looksLikePdfUrl(url: string | undefined): boolean {
 }
 
 async function runForTextWithTimeout(
-  codex: NaturalAssistantCodexClient,
+  llm: NaturalAssistantTextClient,
   args: {
     prompt: string;
     sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
@@ -657,8 +663,8 @@ async function runForTextWithTimeout(
 ): Promise<string> {
   let timer: NodeJS.Timeout | undefined;
   try {
-    const execute = typeof codex.runTurnStream === "function"
-      ? codex
+    const execute = typeof llm.runTurnStream === "function"
+      ? llm
           .runTurnStream({
             ...args,
             onEvent: (event) => {
@@ -666,7 +672,7 @@ async function runForTextWithTimeout(
             }
           })
           .then((result) => result.finalText)
-      : codex.runForText({
+      : llm.runForText({
           prompt: args.prompt,
           sandboxMode: args.sandboxMode,
           approvalPolicy: args.approvalPolicy

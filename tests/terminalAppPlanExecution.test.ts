@@ -7,7 +7,11 @@ function makeApp(): any {
   const app = new TerminalApp({
     config: {
       papers: { max_results: 100 },
-      providers: { codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false } }
+      providers: {
+        llm_mode: "codex_chatgpt_only",
+        codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+        openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+      }
     } as any,
     runStore: {} as any,
     titleGenerator: {} as any,

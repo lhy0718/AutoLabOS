@@ -1,66 +1,493 @@
 import path from "node:path";
+import { promises as fs } from "node:fs";
 
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { runReActLoop } from "../agents/runtime/reactLoop.js";
-import { appendJsonl, safeRead } from "./helpers.js";
+import { appendJsonlItems, runArtifactsDir, safeRead } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
+import { readJsonFile, writeJsonFile } from "../../utils/fs.js";
+import {
+  analyzePaperWithLlm,
+  analyzePaperWithResponsesPdf,
+  PaperEvidenceRow,
+  PaperSummaryRow
+} from "../analysis/paperAnalyzer.js";
+import {
+  AnalysisCorpusRow,
+  resolvePaperPdfUrl,
+  resolvePaperTextSource
+} from "../analysis/paperText.js";
+import {
+  AnalysisSelectionRequest,
+  DeterministicScoreBreakdown,
+  normalizeAnalysisSelectionRequest,
+  PaperSelectionResult,
+  selectPapersForAnalysis
+} from "../analysis/paperSelection.js";
+
+interface AnalysisManifest {
+  version: 2;
+  updatedAt: string;
+  request: AnalysisSelectionRequest;
+  selectionFingerprint: string;
+  totalCandidates: number;
+  candidatePoolSize: number;
+  selectedPaperIds: string[];
+  rerankedPaperIds: string[];
+  deterministicRankingPreview: Array<{
+    paper_id: string;
+    title: string;
+    deterministic_score: number;
+    score_breakdown: DeterministicScoreBreakdown;
+  }>;
+  papers: Record<string, AnalysisManifestEntry>;
+}
+
+interface AnalysisManifestEntry {
+  paper_id: string;
+  title: string;
+  status: "pending" | "completed" | "failed" | "skipped";
+  selected: boolean;
+  rank?: number;
+  source_type?: "full_text" | "abstract";
+  summary_count: number;
+  evidence_count: number;
+  analysis_attempts: number;
+  analysis_mode?: "codex_text_extract" | "responses_api_pdf";
+  pdf_url?: string;
+  pdf_cache_path?: string;
+  text_cache_path?: string;
+  fallback_reason?: string;
+  last_error?: string;
+  deterministic_score?: number;
+  selection_score?: number;
+  score_breakdown?: DeterministicScoreBreakdown;
+  rerank_position?: number;
+  updatedAt: string;
+  completedAt?: string;
+}
 
 export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
     id: "analyze_papers",
-    async execute({ run, graph }) {
+    async execute({ run, abortSignal }) {
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
-      const corpusPath = path.join(".autoresearch", "runs", run.id, "corpus.jsonl");
-      const corpusText = await safeRead(corpusPath);
-      const rows = corpusText
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => {
-          try {
-            return JSON.parse(line) as { paper_id?: string; title?: string; abstract?: string };
-          } catch {
-            return {};
+      const corpusRows = await readCorpusRows(run.id);
+      const analysisMode = deps.config.analysis.pdf_mode;
+      const artifactsRoot = runArtifactsDir(run);
+      const manifestPath = path.join(artifactsRoot, "analysis_manifest.json");
+      const summaryPath = path.join(artifactsRoot, "paper_summaries.jsonl");
+      const evidencePath = path.join(artifactsRoot, "evidence_store.jsonl");
+
+      const request = await loadAnalysisSelectionRequest(runContextMemory);
+      await runContextMemory.put("analyze_papers.request", request);
+
+      deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "analyze_papers",
+        payload: {
+          text:
+            request.selectionMode === "top_n" && request.topN
+              ? `Ranking ${corpusRows.length} papers and selecting the top ${request.topN} for analysis.`
+              : `Analyzing all ${corpusRows.length} collected papers.`
+        }
+      });
+
+      const selection = await selectPapersForAnalysis({
+        llm: deps.llm,
+        runTitle: run.title,
+        runTopic: run.topic,
+        corpusRows,
+        request
+      });
+
+      deps.eventStream.emit({
+        type: "PLAN_CREATED",
+        runId: run.id,
+        node: "analyze_papers",
+        payload: {
+          selectionMode: selection.request.selectionMode,
+          selectedCount: selection.selectedPaperIds.length,
+          totalCandidates: selection.totalCandidates,
+          candidatePoolSize: selection.candidatePoolSize,
+          rerankApplied: selection.rerankApplied
+        }
+      });
+
+      if (selection.rerankFallbackReason) {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_papers",
+          payload: {
+            text: `LLM rerank unavailable, falling back to deterministic order (${selection.rerankFallbackReason}).`
+          }
+        });
+      } else if (selection.rerankApplied) {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_papers",
+          payload: {
+            text: `Hybrid rerank selected ${selection.selectedPaperIds.length} paper(s) from ${selection.totalCandidates} candidate(s).`
+          }
+        });
+      }
+
+      const selectedRows = selection.selectedPaperIds
+        .map((paperId) => corpusRows.find((row) => row.paper_id === paperId))
+        .filter((row): row is AnalysisCorpusRow => Boolean(row));
+
+      if (
+        analysisMode === "responses_api_pdf" &&
+        selectedRows.some((row) => Boolean(resolvePaperPdfUrl(row))) &&
+        !(await deps.responsesPdfAnalysis.hasApiKey())
+      ) {
+        return {
+          status: "failure",
+          summary: "Responses API PDF analysis is selected, but OPENAI_API_KEY is not configured.",
+          error: "OPENAI_API_KEY is required when PDF analysis mode is set to Responses API.",
+          toolCallsUsed: 0
+        };
+      }
+
+      const existingManifest = await readExistingManifest(manifestPath);
+      let manifest =
+        existingManifest && existingManifest.selectionFingerprint === selection.selectionFingerprint
+          ? existingManifest
+          : undefined;
+
+      if (!manifest && !existingManifest && selection.request.selectionMode === "all") {
+        manifest = await bootstrapManifestFromExistingOutputs(selection, summaryPath, evidencePath);
+        await writeJsonFile(manifestPath, manifest);
+      }
+
+      if (!manifest) {
+        await resetAnalysisOutputs(summaryPath, evidencePath);
+        manifest = createFreshManifest(selection);
+        await writeJsonFile(manifestPath, manifest);
+      }
+
+      const pendingRows = selectedRows.filter((row) => manifest!.papers[row.paper_id]?.status !== "completed");
+      let failedCount = 0;
+
+      for (let index = 0; index < pendingRows.length; index += 1) {
+        const row = pendingRows[index];
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_papers",
+          payload: {
+            text: `Resolving analysis source ${index + 1}/${pendingRows.length} for "${row.title}".`
           }
         });
 
-      const react = await runReActLoop({
-        runId: run.id,
-        node: "analyze_papers",
-        goal: `Extract evidence slots from ${rows.length} papers`,
-        tools: [
-          {
-            name: "extract_slots",
-            run: async (input) => ({
-              status: "ok",
-              output: `done: slots extracted for ${rows.length} entries from prompt ${input.slice(0, 40)}`,
-              toolCallsUsed: 1
-            })
+        deps.eventStream.emit({
+          type: "TOOL_CALLED",
+          runId: run.id,
+          node: "analyze_papers",
+          payload: {
+            tool: "analyze_paper",
+            paper_id: row.paper_id
           }
-        ],
-        eventStream: deps.eventStream
-      });
+        });
 
-      const evidence = rows.map((row, idx) => ({
-        evidence_id: `ev_${idx + 1}`,
-        paper_id: row.paper_id || `paper_${idx + 1}`,
-        claim: row.title || "Untitled claim",
-        method_slot: (row.abstract || "").slice(0, 120),
-        result_slot: (row.abstract || "").slice(120, 240),
-        confidence: 0.6
-      }));
+        const pdfUrl = resolvePaperPdfUrl(row);
+        const useResponsesPdf = analysisMode === "responses_api_pdf" && Boolean(pdfUrl);
+        const source = useResponsesPdf
+          ? {
+              sourceType: "full_text" as const,
+              text: row.abstract || row.title,
+              fullTextAvailable: true,
+              pdfUrl
+            }
+          : await resolvePaperTextSource({
+              runId: run.id,
+              paper: row,
+              abortSignal
+            });
 
-      await appendJsonl(run, "paper_summaries.jsonl", rows);
-      await appendJsonl(run, "evidence_store.jsonl", evidence);
-      await runContextMemory.put("analyze_papers.evidence_count", evidence.length);
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_papers",
+          payload: {
+            text: useResponsesPdf
+              ? `Using Responses API PDF input for "${row.title}".`
+              : source.sourceType === "full_text"
+                ? `Using full text for "${row.title}".`
+                : `Falling back to abstract for "${row.title}" (${source.fallbackReason || "no full text"}).`
+          }
+        });
+
+        try {
+          const analysis = useResponsesPdf && pdfUrl
+            ? await analyzePaperWithResponsesPdf({
+                client: deps.responsesPdfAnalysis,
+                paper: row,
+                pdfUrl,
+                model: deps.config.analysis.responses_model,
+                maxAttempts: 2,
+                abortSignal
+              })
+            : await analyzePaperWithLlm({
+                llm: deps.llm,
+                paper: row,
+                source,
+                maxAttempts: 2
+              });
+
+          await appendJsonlItems(run, "paper_summaries.jsonl", [analysis.summaryRow]);
+          await appendJsonlItems(run, "evidence_store.jsonl", analysis.evidenceRows);
+
+          const manifestEntry = manifest.papers[row.paper_id];
+          manifest.papers[row.paper_id] = {
+            ...manifestEntry,
+            paper_id: row.paper_id,
+            title: row.title,
+            status: "completed",
+            selected: true,
+            source_type: source.sourceType,
+            summary_count: 1,
+            evidence_count: analysis.evidenceRows.length,
+            analysis_attempts: analysis.attempts,
+            analysis_mode: useResponsesPdf ? "responses_api_pdf" : "codex_text_extract",
+            pdf_url: source.pdfUrl,
+            pdf_cache_path: source.pdfCachePath,
+            text_cache_path: source.textCachePath,
+            fallback_reason: source.fallbackReason,
+            last_error: undefined,
+            updatedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString()
+          };
+          manifest.updatedAt = new Date().toISOString();
+          await writeJsonFile(manifestPath, manifest);
+
+          deps.eventStream.emit({
+            type: "OBS_RECEIVED",
+            runId: run.id,
+            node: "analyze_papers",
+            payload: {
+              text: `Analyzed "${row.title}" (${analysis.evidenceRows.length} evidence item(s), source=${source.sourceType}).`
+            }
+          });
+        } catch (error) {
+          failedCount += 1;
+          const message = error instanceof Error ? error.message : String(error);
+          const manifestEntry = manifest.papers[row.paper_id];
+          manifest.papers[row.paper_id] = {
+            ...manifestEntry,
+            paper_id: row.paper_id,
+            title: row.title,
+            status: "failed",
+            selected: true,
+            source_type: source.sourceType,
+            summary_count: 0,
+            evidence_count: 0,
+            analysis_attempts: 2,
+            analysis_mode: useResponsesPdf ? "responses_api_pdf" : "codex_text_extract",
+            pdf_url: source.pdfUrl,
+            pdf_cache_path: source.pdfCachePath,
+            text_cache_path: source.textCachePath,
+            fallback_reason: source.fallbackReason,
+            last_error: message,
+            updatedAt: new Date().toISOString()
+          };
+          manifest.updatedAt = new Date().toISOString();
+          await writeJsonFile(manifestPath, manifest);
+          deps.eventStream.emit({
+            type: "TEST_FAILED",
+            runId: run.id,
+            node: "analyze_papers",
+            payload: {
+              text: `Analysis validation failed for "${row.title}": ${message}`
+            }
+          });
+        }
+      }
+
+      const summaryRows = await readSummaryRows(summaryPath);
+      const evidenceRows = await readEvidenceRows(evidencePath);
+      const fullTextCount = summaryRows.filter((row) => row.source_type === "full_text").length;
+      const abstractFallbackCount = summaryRows.filter((row) => row.source_type === "abstract").length;
+
+      await runContextMemory.put("analyze_papers.summary_count", summaryRows.length);
+      await runContextMemory.put("analyze_papers.evidence_count", evidenceRows.length);
+      await runContextMemory.put("analyze_papers.full_text_count", fullTextCount);
+      await runContextMemory.put("analyze_papers.abstract_fallback_count", abstractFallbackCount);
+      await runContextMemory.put("analyze_papers.selected_count", selection.selectedPaperIds.length);
+      await runContextMemory.put("analyze_papers.total_candidates", selection.totalCandidates);
+      await runContextMemory.put("analyze_papers.selection_fingerprint", selection.selectionFingerprint);
+
+      if (failedCount > 0) {
+        return {
+          status: "failure",
+          summary:
+            request.selectionMode === "top_n" && request.topN
+              ? `Analyzed ${summaryRows.length}/${selection.selectedPaperIds.length} selected papers from ${selection.totalCandidates} candidates; ${failedCount} failed and can be retried.`
+              : `Analyzed ${summaryRows.length}/${corpusRows.length} papers, ${failedCount} failed and can be retried.`,
+          error: `Analysis incomplete: ${failedCount} paper(s) failed validation or LLM extraction.`,
+          toolCallsUsed: Math.max(1, pendingRows.length)
+        };
+      }
 
       return {
         status: "success",
-        summary: react.summary,
+        summary:
+          request.selectionMode === "top_n" && request.topN
+            ? `Analyzed top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers into ${evidenceRows.length} evidence item(s); ${fullTextCount} full-text and ${abstractFallbackCount} abstract fallback (mode=${analysisMode}).`
+            : `Analyzed ${summaryRows.length} papers into ${evidenceRows.length} evidence item(s); ${fullTextCount} full-text and ${abstractFallbackCount} abstract fallback (mode=${analysisMode}).`,
         needsApproval: true,
-        toolCallsUsed: react.toolCallsUsed
+        toolCallsUsed: Math.max(1, pendingRows.length)
       };
     }
   };
+}
+
+async function loadAnalysisSelectionRequest(runContextMemory: RunContextMemory): Promise<AnalysisSelectionRequest> {
+  const stored = await runContextMemory.get<{ topN?: unknown; selectionMode?: unknown; selectionPolicy?: unknown }>(
+    "analyze_papers.request"
+  );
+  const topN =
+    typeof stored?.topN === "number" && Number.isFinite(stored.topN) && stored.topN > 0
+      ? Math.floor(stored.topN)
+      : null;
+  return normalizeAnalysisSelectionRequest(topN);
+}
+
+async function readCorpusRows(runId: string): Promise<AnalysisCorpusRow[]> {
+  const corpusPath = path.join(".autoresearch", "runs", runId, "corpus.jsonl");
+  const corpusText = await safeRead(corpusPath);
+  return corpusText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line) as AnalysisCorpusRow;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((row): row is AnalysisCorpusRow => Boolean(row?.paper_id));
+}
+
+async function readExistingManifest(manifestPath: string): Promise<AnalysisManifest | undefined> {
+  try {
+    const manifest = await readJsonFile<AnalysisManifest>(manifestPath);
+    if (manifest?.version === 2 && manifest.papers && typeof manifest.papers === "object") {
+      return manifest;
+    }
+  } catch {
+    // ignore
+  }
+  return undefined;
+}
+
+function createFreshManifest(selection: PaperSelectionResult): AnalysisManifest {
+  const now = new Date().toISOString();
+  return {
+    version: 2,
+    updatedAt: now,
+    request: selection.request,
+    selectionFingerprint: selection.selectionFingerprint,
+    totalCandidates: selection.totalCandidates,
+    candidatePoolSize: selection.candidatePoolSize,
+    selectedPaperIds: selection.selectedPaperIds,
+    rerankedPaperIds: selection.rerankedPaperIds,
+    deterministicRankingPreview: selection.deterministicRankingPreview,
+    papers: Object.fromEntries(
+      selection.rankedCandidates.map((candidate) => [
+        candidate.paper.paper_id,
+        {
+          paper_id: candidate.paper.paper_id,
+          title: candidate.paper.title,
+          status: candidate.selected ? "pending" : "skipped",
+          selected: candidate.selected,
+          rank: candidate.rank,
+          summary_count: 0,
+          evidence_count: 0,
+          analysis_attempts: 0,
+          deterministic_score: candidate.deterministicScore,
+          selection_score: candidate.selectionScore,
+          score_breakdown: candidate.scoreBreakdown,
+          rerank_position: candidate.rerankPosition,
+          updatedAt: now
+        } satisfies AnalysisManifestEntry
+      ])
+    )
+  };
+}
+
+async function resetAnalysisOutputs(summaryPath: string, evidencePath: string): Promise<void> {
+  await fs.rm(summaryPath, { force: true });
+  await fs.rm(evidencePath, { force: true });
+}
+
+async function bootstrapManifestFromExistingOutputs(
+  selection: PaperSelectionResult,
+  summaryPath: string,
+  evidencePath: string
+): Promise<AnalysisManifest> {
+  const manifest = createFreshManifest(selection);
+  const summaries = await readSummaryRows(summaryPath);
+  const evidences = await readEvidenceRows(evidencePath);
+  const evidenceCountByPaper = new Map<string, number>();
+
+  for (const evidence of evidences) {
+    evidenceCountByPaper.set(evidence.paper_id, (evidenceCountByPaper.get(evidence.paper_id) ?? 0) + 1);
+  }
+
+  for (const summary of summaries) {
+    const entry = manifest.papers[summary.paper_id];
+    if (!entry || !entry.selected) {
+      continue;
+    }
+    manifest.papers[summary.paper_id] = {
+      ...entry,
+      status: "completed",
+      source_type: summary.source_type,
+      summary_count: 1,
+      evidence_count: evidenceCountByPaper.get(summary.paper_id) ?? 0,
+      analysis_attempts: 1,
+      analysis_mode: "codex_text_extract",
+      updatedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString()
+    };
+  }
+
+  return manifest;
+}
+
+async function readSummaryRows(filePath: string): Promise<PaperSummaryRow[]> {
+  const raw = await safeRead(filePath);
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line) as PaperSummaryRow;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((row): row is PaperSummaryRow => Boolean(row?.paper_id));
+}
+
+async function readEvidenceRows(filePath: string): Promise<PaperEvidenceRow[]> {
+  const raw = await safeRead(filePath);
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line) as PaperEvidenceRow;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((row): row is PaperEvidenceRow => Boolean(row?.paper_id));
 }

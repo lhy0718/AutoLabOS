@@ -204,6 +204,16 @@ describe("collectPapers bibtex", () => {
     expect(result.error).toContain('Semantic Scholar rate limited "Multi-Agent Collaboration"');
     expect(result.error).toContain("429");
     expect(result.error).toContain("lower --limit to 50-100");
+    expect(
+      eventStream
+        .history()
+        .filter((event) => event.type === "OBS_RECEIVED")
+        .some((event) =>
+          String(event.payload?.text ?? "").includes(
+            "Semantic Scholar attempts: req1 attempt1=429 failed retry-after=2000ms, req2 attempt2=429 failed retry-after=2000ms, req3 attempt3=429 failed retry-after=2000ms"
+          )
+        )
+    ).toBe(true);
 
     const resultMetaRaw = await readFile(
       path.join(root, ".autoresearch", "runs", runId, "collect_result.json"),
@@ -298,7 +308,12 @@ describe("collectPapers bibtex", () => {
               fieldsOfStudy: ["Computer Science"]
             }
           ])
-        )
+        ),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
       } as any
     });
 
@@ -311,6 +326,14 @@ describe("collectPapers bibtex", () => {
     expect(result.summary).toBe('Semantic Scholar stored 1 papers for "Multi-Agent Collaboration".');
     expect(result.summary).not.toContain("Collection objective");
     expect(eventStream.history().some((event) => event.type === "TOOL_CALLED")).toBe(false);
+    expect(
+      eventStream
+        .history()
+        .filter((event) => event.type === "OBS_RECEIVED")
+        .some((event) =>
+          String(event.payload?.text ?? "").includes("Semantic Scholar attempts: 1 request(s) succeeded on the first attempt.")
+        )
+    ).toBe(true);
   });
 
   it("merges additional collection results with existing corpus and dedupes by paper_id", async () => {

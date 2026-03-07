@@ -117,13 +117,22 @@ export interface AppConfig {
   version: 1;
   project_name: string;
   providers: {
-    llm_mode: "codex_chatgpt_only";
+    llm_mode: "codex_chatgpt_only" | "openai_api";
     codex: {
       model: string;
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
       fast_mode: boolean;
       auth_required: true;
     };
+    openai: {
+      model: string;
+      reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
+      api_key_required: true;
+    };
+  };
+  analysis: {
+    pdf_mode: "codex_text_extract" | "responses_api_pdf";
+    responses_model: string;
   };
   papers: {
     max_results: number;

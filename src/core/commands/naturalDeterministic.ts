@@ -91,6 +91,14 @@ export const SUPPORTED_NATURAL_INPUTS: SupportedNaturalInput[] = [
     examples: ["수집 단계로 이동해줘", "가설 단계 다시 실행해줘", "결과분석 단계 산출물 개수 보여줘"]
   },
   {
+    id: "analyze_top_n",
+    descriptionEn: "Analyze only the top-N ranked papers instead of the whole corpus",
+    descriptionKo: "전체가 아니라 상위 N개 논문만 분석",
+    commandHintEn: "/agent run analyze_papers [run] --top-n <n>",
+    commandHintKo: "/agent run analyze_papers [run] --top-n <n>",
+    examples: ["상위 50개만 분석해줘", "title과 가장 비슷한 논문 30개만 분석", "analyze the top 100 papers"]
+  },
+  {
     id: "graph_budget_approval",
     descriptionEn: "Show graph, show budget, approve current node, or retry current node",
     descriptionKo: "그래프 보기, 예산 보기, 현재 노드 승인, 현재 노드 재시도",
@@ -245,6 +253,18 @@ export function resolveDeterministicPendingCommand(
     );
   }
 
+  const analyzeTopN = extractAnalyzeTopNRequest(text);
+  if (analyzeTopN) {
+    const command = `/agent run analyze_papers${targetRun?.id ? ` ${targetRun.id}` : ""} --top-n ${analyzeTopN.topN}`;
+    return buildPending(
+      language,
+      command,
+      targetRun?.id,
+      `Analyzing the top ${analyzeTopN.topN} ranked papers.`,
+      `상위 ${analyzeTopN.topN}개 논문만 분석합니다.`
+    );
+  }
+
   const nodeCommand = resolveNodeCommand(text, targetRun?.id);
   if (nodeCommand) {
     return buildPending(language, nodeCommand.command, targetRun?.id, nodeCommand.en, nodeCommand.ko);
@@ -275,6 +295,33 @@ export function resolveNodeAlias(text: string): GraphNodeId | undefined {
   return undefined;
 }
 
+function extractAnalyzeTopNRequest(text: string): { topN: number } | undefined {
+  const raw = text.trim();
+  if (!raw) {
+    return undefined;
+  }
+  const lower = raw.toLowerCase();
+  const hasAnalyzeVerb =
+    /분석/u.test(raw) ||
+    /analy[sz]e|analysis/i.test(lower);
+  if (!hasAnalyzeVerb) {
+    return undefined;
+  }
+
+  const hasPaperHints =
+    /논문|paper|papers/u.test(raw) ||
+    /title|제목|citation|피인용|유사|similar|relevance|관련도/u.test(lower);
+  const topMatch =
+    raw.match(/상위\s*(\d+)\s*(?:개|편)?/u) ||
+    raw.match(/top\s*(\d+)\s*(?:papers?)?/iu) ||
+    raw.match(/(\d+)\s*(?:개|편|papers?)\s*(?:만)?[^.\n]{0,60}(?:분석|analy[sz]e)/iu);
+  const topN = toPositiveInt(topMatch?.[1]);
+  if (!topN || !hasPaperHints && !/상위|top/u.test(raw)) {
+    return undefined;
+  }
+  return { topN };
+}
+
 export function extractCollectRequestFromNatural(text: string): CollectCommandRequest | undefined {
   const raw = text.trim();
   const lower = raw.toLowerCase();
@@ -286,8 +333,8 @@ export function extractCollectRequestFromNatural(text: string): CollectCommandRe
 
   const hasCollectVerb =
     /수집/u.test(raw) ||
-    /collect|gather|fetch|search/i.test(lower) ||
-    /모아줘|모아 줘|찾아줘|가져와/u.test(raw);
+    /collect|gather|fetch|search|lookup|find|research|investigate/i.test(lower) ||
+    /모아줘|모아 줘|찾아줘|찾아 줘|가져와|검색해줘|검색해 줘|조사해줘|조사해 줘|조회해줘|조회해 줘/u.test(raw);
   const hasPaperWord = /논문|paper|papers/u.test(raw);
   const hasCollectHints =
     hasPaperWord ||
@@ -476,6 +523,9 @@ function resolveNodeCommand(
 
 function extractSort(text: string): CollectCommandRequest["sort"] {
   const lower = text.toLowerCase();
+  if (/관련도\s*(?:순(?:으로)?|기준)?|relevance(?:\s+order|\s+first|\s+sort(?:ed)?\s+by)?/u.test(lower)) {
+    return { field: "relevance", order: /오름차순|asc|ascending/u.test(lower) ? "asc" : "desc" };
+  }
   if (
     /(?:top|highest|most)\s+citations?|sort(?:ed)?\s+by\s+citations?|citation(?: count)?\s*(?:desc|ascending|descending|order|sort)|인용(?:수)?\s*(?:높|많|순|기준)/u.test(
       lower
@@ -484,7 +534,10 @@ function extractSort(text: string): CollectCommandRequest["sort"] {
   ) {
     return { field: "citationCount", order: /오름차순|asc|ascending/u.test(lower) ? "asc" : "desc" };
   }
-  if (/최신|recent|latest|newest|publication date/u.test(lower)) {
+  if (
+    /최신\s*순|최신순|최근순|publication date|latest first|newest first|sorted?\s+by\s+date/u.test(lower) ||
+    (/(?:최신|recent|latest|newest)/u.test(lower) && !/(?:최근|최신)\s*\d+\s*년/u.test(lower))
+  ) {
     return { field: "publicationDate", order: /오름차순|asc|ascending/u.test(lower) ? "asc" : "desc" };
   }
   if (/paperid|paper id/i.test(lower)) {
@@ -502,9 +555,9 @@ function extractTopicQuery(text: string): string | undefined {
     /(.+?)\s*(?:와|과)?\s*관련(?:된|한)?\s*(?:최근\s*\d+\s*년(?:동안)?(?:의)?\s*)?(?:논문|paper|papers)/iu,
     /(.+?)\s*(?:와|과)?\s*관련(?:된|한)?\s*(?:논문|paper|papers)/iu,
     /주제(?:는|가|로)?\s*(.+?)\s*(?:논문|paper|papers)/iu,
-    /(.+?)\s+\d+\s*(?:개|편)\s*(?:수집|collect|gather|fetch|search|모아|찾아|가져와)/iu,
-    /(.+?)\s*(?:관련\s*)?(?:논문|paper|papers).*(?:수집|collect|gather|fetch|search|모아|찾아|가져와)/iu,
-    /(?:about|on|for)\s+(.+?)\s+(?:papers?|collection|collect)/iu
+    /(.+?)\s+\d+\s*(?:개|편)\s*(?:수집|collect|gather|fetch|search|lookup|find|research|investigate|모아|찾아|가져와|검색|조사|조회)/iu,
+    /(.+?)\s*(?:관련\s*)?(?:논문|paper|papers).*(?:수집|collect|gather|fetch|search|lookup|find|research|investigate|모아|찾아|가져와|검색|조사|조회)/iu,
+    /(?:about|on|for)\s+(.+?)\s+(?:papers?|collection|collect|search|research)/iu
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern)?.[1]?.trim();
@@ -527,15 +580,18 @@ function extractAdditionalCount(text: string): number | undefined {
 
 function extractLimitCount(text: string): number | undefined {
   const match =
-    text.match(/(\d+)\s*(?:개|편)\s*(?:수집|collect|gather|fetch|search)/u) ||
+    text.match(/(\d+)\s*(?:개|편)(?:를|을)?\s*(?:수집|collect|gather|fetch|search|lookup|find|research|investigate|검색|조사|조회)/u) ||
     text.match(/(\d+)\s*(?:개|편)(?!\s*(?:더|추가))/u) ||
     text.match(/(\d+)\s+(?:papers?|items?)(?!\s*(?:more|additional))/iu) ||
-    text.match(/(?:collect|gather|fetch|search)\s+(\d+)\s+(?:papers?|items?)/iu);
+    text.match(/(?:collect|gather|fetch|search|lookup|find|research|investigate)\s+(\d+)\s+(?:papers?|items?)/iu);
   return toPositiveInt(match?.[1]);
 }
 
 function extractLastYears(text: string): number | undefined {
-  const match = text.match(/최근\s*(\d+)\s*년/u) || text.match(/last\s+(\d+)\s+years?/iu);
+  const match =
+    text.match(/(?:최근|최신)\s*(\d+)\s*년/u) ||
+    text.match(/last\s+(\d+)\s+years?/iu) ||
+    text.match(/latest\s+(\d+)\s+years?/iu);
   return toPositiveInt(match?.[1]);
 }
 
@@ -687,8 +743,10 @@ function normalizeTopicQueryCandidate(value: string): string {
     /^(?:지금\s*)?(?:현재\s*)?논문(?:을|를|들|들을)?\s*(?:모두|전부|전체)?\s*(?:삭제|제거|지워|없애)(?:하고|한 뒤|후에)\s*/u,
     /^(?:clear|delete|remove)\s+(?:all\s+)?papers?\s*(?:and|then)\s*/iu,
     /^(?:논문(?:을|를|들|들을)?|papers?)\s*/iu,
+    /^\d+\s*(?:개|편)(?:를|을)?\s*/u,
+    /^pdf\s*(?:링크|link|url)?\s*(?:가|이)?\s*있는(?:\s*것(?:들)?)?(?:으로|만)?\s*/iu,
     /^(?:지금|현재)\s*/u,
-    /^최근\s*\d+\s*년(?:동안)?(?:의)?\s*/u,
+    /^(?:최근|최신)\s*\d+\s*년(?:동안)?(?:의)?\s*/u,
     /^last\s+\d+\s+years?(?:\s+of)?\s*/iu,
     /^(?:관련도|relevance|최신순|latest|recent|newest|publication date|인용(?:수)?|citation(?: count)?)\s*(?:순(?:으로)?|order)?\s*/iu,
     /^(?:오픈\s*액세스|오픈액세스|open[- ]access)\s*/iu,
@@ -708,7 +766,7 @@ function normalizeTopicQueryCandidate(value: string): string {
   return out
     .replace(/^(?:and|for|on|about)\s+/iu, "")
     .replace(/\s*(?:논문(?:들|을|를)?|papers?)$/iu, "")
-    .replace(/\s*최근\s*\d+\s*년(?:동안)?(?:의)?$/u, "")
+    .replace(/\s*(?:최근|최신)\s*\d+\s*년(?:동안)?(?:의)?$/u, "")
     .replace(/\s*last\s+\d+\s+years?(?:\s+of)?$/iu, "")
     .replace(/\s*(?:와|과)$/u, "")
     .replace(/\s*(?:관련(?:된|한)?)$/u, "")
