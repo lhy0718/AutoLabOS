@@ -11,12 +11,12 @@
     "dev": "tsx src/cli/main.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:smoke:natural-collect": "bash test/smoke/run_natural_collect_pending_command.sh",
-    "test:smoke:natural-collect-execute": "bash test/smoke/run_natural_collect_execute_and_verify_artifacts.sh",
-    "test:smoke:all": "AUTORESEARCH_SMOKE_MODE=all bash test/smoke/run_ci_smoke.sh",
-    "test:smoke:natural-composite-all": "bash test/smoke/run_natural_composite_run_all_execute_and_verify_artifacts.sh",
-    "test:smoke:natural-llm-composite-all": "bash test/smoke/run_natural_llm_composite_run_all_execute_and_verify_artifacts.sh",
-    "test:smoke:ci": "CI=true bash test/smoke/run_ci_smoke.sh"
+    "test:smoke:natural-collect": "bash tests/smoke/run_natural_collect_pending_command.sh",
+    "test:smoke:natural-collect-execute": "bash tests/smoke/run_natural_collect_execute_and_verify_artifacts.sh",
+    "test:smoke:all": "AUTORESEARCH_SMOKE_MODE=all bash tests/smoke/run_ci_smoke.sh",
+    "test:smoke:natural-composite-all": "bash tests/smoke/run_natural_composite_run_all_execute_and_verify_artifacts.sh",
+    "test:smoke:natural-llm-composite-all": "bash tests/smoke/run_natural_llm_composite_run_all_execute_and_verify_artifacts.sh",
+    "test:smoke:ci": "CI=true bash tests/smoke/run_ci_smoke.sh"
   },
   "engines": {
     "node": ">=18"

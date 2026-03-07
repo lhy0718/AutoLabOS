@@ -126,7 +126,6 @@ export interface AppConfig {
     };
   };
   papers: {
-    semantic_scholar_api_key: string;
     max_results: number;
     per_second_limit: number;
   };

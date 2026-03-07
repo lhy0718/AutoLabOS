@@ -1,4 +1,13 @@
-import { configExists, ensureScaffold, loadConfig, resolveAppPaths, runSetupWizard, saveConfig } from "./config.js";
+import {
+  configExists,
+  ensureScaffold,
+  hasSemanticScholarApiKey,
+  loadConfig,
+  resolveAppPaths,
+  resolveSemanticScholarApiKey,
+  runSetupWizard,
+  saveConfig
+} from "./config.js";
 import { RunStore } from "./core/runs/runStore.js";
 import { TitleGenerator } from "./core/runs/titleGenerator.js";
 import { CodexCliClient } from "./integrations/codex/codexCliClient.js";
@@ -45,8 +54,9 @@ export async function runAutoresearchApp(): Promise<void> {
   const eventStream = new InMemoryEventStream();
   const llm = new CodexLLMClient(codex);
   const aci = new LocalAciAdapter();
+  const semanticScholarApiKey = await resolveSemanticScholarApiKey(paths.cwd);
   const semanticScholar = new SemanticScholarClient({
-    apiKey: config.papers.semantic_scholar_api_key || undefined,
+    apiKey: semanticScholarApiKey,
     perSecondLimit: config.papers.per_second_limit,
     maxRetries: 3
   });
@@ -73,6 +83,7 @@ export async function runAutoresearchApp(): Promise<void> {
     eventStream,
     orchestrator,
     initialRunId,
+    semanticScholarApiKeyConfigured: await hasSemanticScholarApiKey(paths.cwd),
     onQuit: () => {
       process.stdout.write("\nBye\n");
     },

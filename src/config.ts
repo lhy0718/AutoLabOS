@@ -49,7 +49,6 @@ function buildConfigFromWizardAnswers(answers: {
   defaultTopic: string;
   defaultConstraints: string[];
   defaultObjectiveMetric: string;
-  semanticScholarApiKey: string;
 }): AppConfig {
   return {
     version: 1,
@@ -64,7 +63,6 @@ function buildConfigFromWizardAnswers(answers: {
       }
     },
     papers: {
-      semantic_scholar_api_key: answers.semanticScholarApiKey,
       max_results: 200,
       per_second_limit: 1
     },
@@ -117,11 +115,13 @@ export async function runSetupWizard(paths: AppPaths): Promise<AppConfig> {
     projectName,
     defaultTopic,
     defaultConstraints,
-    defaultObjectiveMetric,
-    semanticScholarApiKey
+    defaultObjectiveMetric
   });
 
   await saveConfig(paths, config);
+  if (semanticScholarApiKey.trim()) {
+    await upsertEnvVar(path.join(paths.cwd, ".env"), "SEMANTIC_SCHOLAR_API_KEY", semanticScholarApiKey.trim());
+  }
   await ensureScaffold(paths);
   return config;
 }
@@ -144,8 +144,12 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   if (!config.providers.codex) {
     throw new Error("Invalid config: providers.codex is missing");
   }
+  if (!config.papers) {
+    throw new Error("Invalid config: papers is missing");
+  }
 
   const codex = config.providers.codex;
+  const papers = config.papers;
   if (!codex.model) {
     codex.model = "gpt-5.3-codex";
   }
@@ -159,5 +163,100 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     codex.fast_mode = false;
   }
   codex.reasoning_effort = normalizeReasoningEffortForModel(codex.model, codex.reasoning_effort);
+  config.papers = {
+    max_results: Math.max(1, papers.max_results || 200),
+    per_second_limit: Math.max(1, papers.per_second_limit || 1)
+  };
   return config;
+}
+
+export async function resolveSemanticScholarApiKey(cwd: string): Promise<string | undefined> {
+  const fileEnv = await readDotEnvFile(path.join(cwd, ".env"));
+  const semanticScholarApiKey =
+    process.env.SEMANTIC_SCHOLAR_API_KEY ||
+    fileEnv.SEMANTIC_SCHOLAR_API_KEY;
+  const normalized = semanticScholarApiKey?.trim();
+  return normalized ? normalized : undefined;
+}
+
+export async function hasSemanticScholarApiKey(cwd: string): Promise<boolean> {
+  return Boolean(await resolveSemanticScholarApiKey(cwd));
+}
+
+async function readDotEnvFile(filePath: string): Promise<Record<string, string>> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return parseDotEnv(raw);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
+}
+
+function parseDotEnv(raw: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) {
+      continue;
+    }
+    const [, key, originalValue] = match;
+    let value = originalValue.trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
+export async function upsertEnvVar(filePath: string, key: string, value: string): Promise<void> {
+  const escapedValue = quoteEnvValue(value);
+  let existing = "";
+  try {
+    existing = await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const lines = existing ? existing.split(/\r?\n/) : [];
+  let updated = false;
+  const nextLines = lines.map((line) => {
+    if (line.trim().match(new RegExp(`^${escapeRegExp(key)}\\s*=`))) {
+      updated = true;
+      return `${key}=${escapedValue}`;
+    }
+    return line;
+  });
+
+  if (!updated) {
+    if (nextLines.length > 0 && nextLines[nextLines.length - 1] !== "") {
+      nextLines.push("");
+    }
+    nextLines.push(`${key}=${escapedValue}`);
+  }
+
+  const normalized = nextLines.join("\n").replace(/\n+$/u, "\n");
+  await fs.writeFile(filePath, normalized || `${key}=${escapedValue}\n`, "utf8");
+}
+
+function quoteEnvValue(value: string): string {
+  return JSON.stringify(value);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -16,6 +16,22 @@ afterEach(() => {
   process.chdir(ORIGINAL_CWD);
 });
 
+async function* batchStream<T>(...batches: T[][]): AsyncGenerator<T[], void, void> {
+  for (const batch of batches) {
+    yield batch;
+  }
+}
+
+async function* failingBatchStream<T>(
+  batches: T[][],
+  error: Error
+): AsyncGenerator<T[], void, void> {
+  for (const batch of batches) {
+    yield batch;
+  }
+  throw error;
+}
+
 describe("collectPapers bibtex", () => {
   it("builds bibtex entry with rich metadata", () => {
     const entry = buildBibtexEntry({
@@ -153,9 +169,19 @@ describe("collectPapers bibtex", () => {
       codex: {} as any,
       aci: {} as any,
       semanticScholar: {
-        searchPapers: vi.fn(async () => {
-          throw new Error("Semantic Scholar request failed: 429");
-        })
+        streamSearchPapers: vi.fn(() =>
+          failingBatchStream([], new Error("Semantic Scholar request failed: 429"))
+        ),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 3,
+          lastStatus: 429,
+          retryAfterMs: 2000,
+          attempts: [
+            { attempt: 1, ok: false, status: 429, retryAfterMs: 2000, endpoint: "search" },
+            { attempt: 2, ok: false, status: 429, retryAfterMs: 2000, endpoint: "search" },
+            { attempt: 3, ok: false, status: 429, retryAfterMs: 2000, endpoint: "search" }
+          ]
+        }))
       } as any
     });
 
@@ -175,6 +201,9 @@ describe("collectPapers bibtex", () => {
     );
     expect(resultMetaRaw).toContain('"query": "Multi-Agent Collaboration"');
     expect(resultMetaRaw).toContain('"fetchError": "Semantic Scholar request failed: 429"');
+    expect(resultMetaRaw).toContain('"attemptCount": 3');
+    expect(resultMetaRaw).toContain('"lastStatus": 429');
+    expect(resultMetaRaw).toContain('"retryAfterMs": 2000');
 
     await expect(access(path.join(root, ".autoresearch", "runs", runId, "corpus.jsonl"))).rejects.toThrow();
   });
@@ -241,23 +270,25 @@ describe("collectPapers bibtex", () => {
       codex: {} as any,
       aci: {} as any,
       semanticScholar: {
-        searchPapers: vi.fn(async () => [
-          {
-            paperId: "paper-1",
-            title: "Multi-Agent Collaboration for Research",
-            abstract: "Test abstract",
-            year: 2025,
-            venue: "NeurIPS",
-            url: "https://example.org/paper-1",
-            openAccessPdfUrl: "https://example.org/paper-1.pdf",
-            authors: ["Alice Kim"],
-            citationCount: 42,
-            influentialCitationCount: 7,
-            publicationDate: "2025-01-01",
-            publicationTypes: ["Review"],
-            fieldsOfStudy: ["Computer Science"]
-          }
-        ])
+        streamSearchPapers: vi.fn(() =>
+          batchStream([
+            {
+              paperId: "paper-1",
+              title: "Multi-Agent Collaboration for Research",
+              abstract: "Test abstract",
+              year: 2025,
+              venue: "NeurIPS",
+              url: "https://example.org/paper-1",
+              openAccessPdfUrl: "https://example.org/paper-1.pdf",
+              authors: ["Alice Kim"],
+              citationCount: 42,
+              influentialCitationCount: 7,
+              publicationDate: "2025-01-01",
+              publicationTypes: ["Review"],
+              fieldsOfStudy: ["Computer Science"]
+            }
+          ])
+        )
       } as any
     });
 
@@ -267,8 +298,224 @@ describe("collectPapers bibtex", () => {
     });
 
     expect(result.status).toBe("success");
-    expect(result.summary).toBe('Semantic Scholar fetched 1 papers for "Multi-Agent Collaboration".');
+    expect(result.summary).toBe('Semantic Scholar stored 1 papers for "Multi-Agent Collaboration".');
     expect(result.summary).not.toContain("Collection objective");
     expect(eventStream.history().some((event) => event.type === "TOOL_CALLED")).toBe(false);
+  });
+
+  it("merges additional collection results with existing corpus and dedupes by paper_id", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-merge-"));
+    process.chdir(root);
+
+    const runId = "run-collect-merge";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Multi-Agent Collaboration",
+      topic: "AI agent automation",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      `${JSON.stringify({
+        paper_id: "paper-1",
+        title: "Existing Paper",
+        abstract: "",
+        authors: ["Alice Kim"]
+      })}\n`,
+      "utf8"
+    );
+    await writeFile(path.join(runDir, "bibtex.bib"), "@article{paper_1,\n  title = {Existing Paper},\n}\n", "utf8");
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Multi-Agent Collaboration",
+              additional: 2,
+              limit: 3,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const eventStream = new InMemoryEventStream();
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers: vi.fn(() =>
+          batchStream([
+            {
+              paperId: "paper-1",
+              title: "Existing Paper",
+              authors: ["Alice Kim"]
+            },
+            {
+              paperId: "paper-2",
+              title: "New Paper 2",
+              authors: ["Bob Lee"]
+            },
+            {
+              paperId: "paper-3",
+              title: "New Paper 3",
+              authors: ["Chris Park"]
+            }
+          ])
+        )
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.summary).toBe(
+      'Semantic Scholar stored 3 total papers for "Multi-Agent Collaboration" (2 newly added).'
+    );
+    const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
+    expect(corpus).toContain('"paper_id":"paper-1"');
+    expect(corpus).toContain('"paper_id":"paper-2"');
+    expect(corpus).toContain('"paper_id":"paper-3"');
+    const resultMetaRaw = await readFile(path.join(runDir, "collect_result.json"), "utf8");
+    expect(resultMetaRaw).toContain('"mode": "additional"');
+    expect(resultMetaRaw).toContain('"added": 2');
+    expect(resultMetaRaw).toContain('"stored": 3');
+  });
+
+  it("persists partial collected papers before a later 429 failure", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-partial-"));
+    process.chdir(root);
+
+    const runId = "run-collect-partial";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Multi-Agent Collaboration",
+      topic: "AI agent automation",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Multi-Agent Collaboration",
+              limit: 3,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const eventStream = new InMemoryEventStream();
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers: vi.fn(() =>
+          failingBatchStream(
+            [
+              [
+                {
+                  paperId: "paper-1",
+                  title: "New Paper 1",
+                  authors: ["Alice Kim"]
+                },
+                {
+                  paperId: "paper-2",
+                  title: "New Paper 2",
+                  authors: ["Bob Lee"]
+                }
+              ]
+            ],
+            new Error("Semantic Scholar request failed: 429")
+          )
+        )
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("failure");
+    const corpus = await readFile(path.join(root, ".autoresearch", "runs", runId, "corpus.jsonl"), "utf8");
+    expect(corpus).toContain('"paper_id":"paper-1"');
+    expect(corpus).toContain('"paper_id":"paper-2"');
+    const resultMetaRaw = await readFile(
+      path.join(root, ".autoresearch", "runs", runId, "collect_result.json"),
+      "utf8"
+    );
+    expect(resultMetaRaw).toContain('"completed": false');
+    expect(resultMetaRaw).toContain('"stored": 2');
+    expect(resultMetaRaw).toContain('"fetchError": "Semantic Scholar request failed: 429"');
   });
 });

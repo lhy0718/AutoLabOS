@@ -132,6 +132,29 @@ describe("buildFrame", () => {
     expect(frame.lines.map((line) => stripAnsi(line))).not.toContain("Busy");
   });
 
+  it("renders activity label when a busy node is executing", () => {
+    const graph = createDefaultGraphState();
+    graph.currentNode = "collect_papers";
+    graph.nodeStates.collect_papers.status = "running";
+
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: true,
+      activityLabel: "Collecting papers...",
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun({ graph, currentNode: "collect_papers" }),
+      logs: [],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    expect(frame.lines.map((line) => stripAnsi(line))).toContain("Activity: Collecting papers...");
+  });
+
   it("places suggestions below the input line", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",

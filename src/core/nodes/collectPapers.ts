@@ -1,11 +1,13 @@
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { appendJsonl, writeRunArtifact } from "./helpers.js";
+import { appendJsonl, runArtifactsDir, safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { LongTermStore } from "../memory/longTermStore.js";
 import {
+  SemanticScholarAttemptRecord,
   SemanticScholarPaper,
   SemanticScholarSearchFilters,
+  SemanticScholarSearchDiagnostics,
   SemanticScholarSearchRequest
 } from "../../tools/semanticScholar.js";
 import { BibtexMode } from "../commands/collectOptions.js";
@@ -35,8 +37,17 @@ interface CollectResultMeta {
   query: string;
   limit: number;
   fetched: number;
+  stored: number;
+  added: number;
+  baseCount: number;
+  completed: boolean;
+  mode: "replace" | "additional";
   source: "semantic_scholar";
   fetchError?: string;
+  attemptCount: number;
+  lastStatus?: number;
+  retryAfterMs?: number;
+  attempts: SemanticScholarAttemptRecord[];
   sort: {
     field: "relevance" | "citationCount" | "publicationDate" | "paperId";
     order: "asc" | "desc";
@@ -53,73 +64,134 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
       const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
       const requestFromContext = await runContextMemory.get<CollectPapersNodeRequest>("collect_papers.request");
-      const overrideLimit = await runContextMemory.get<number>("collect_papers.requested_limit");
       const normalizedRequest = normalizeCollectRequest({
         request: requestFromContext,
         topic: run.topic,
-        configuredLimit: deps.config.papers.max_results,
-        overrideLimit
+        configuredLimit: deps.config.papers.max_results
       });
+      const mode: "replace" | "additional" =
+        typeof requestFromContext?.additional === "number" && requestFromContext.additional > 0
+          ? "additional"
+          : "replace";
+      const existingCorpus = mode === "additional" ? await readExistingCorpus(run) : [];
+      const baseBibtex = mode === "additional" ? await safeRead(`${runArtifactsDir(run)}/bibtex.bib`) : "";
+      const storedRows = new Map<string, StoredCorpusRow>(
+        existingCorpus.map((row) => [row.paper_id, row])
+      );
+      const fetchedPapers: SemanticScholarPaper[] = [];
+      const newPapers: SemanticScholarPaper[] = [];
+      const baseCount = storedRows.size;
+      let storedCount = storedRows.size;
+      let diagnostics: SemanticScholarSearchDiagnostics =
+        deps.semanticScholar.getLastSearchDiagnostics?.() ?? emptyCollectDiagnostics();
 
-      let papers: Awaited<ReturnType<typeof deps.semanticScholar.searchPapers>> = [];
       let fetchError: string | undefined;
       try {
-        papers = await deps.semanticScholar.searchPapers(normalizedRequest, abortSignal);
+        for await (const batch of deps.semanticScholar.streamSearchPapers(normalizedRequest, abortSignal)) {
+          fetchedPapers.push(...batch);
+          const batchRows = batch.map((paper) => normalizeCorpusRow(paper));
+          let changed = false;
+          for (let index = 0; index < batch.length; index += 1) {
+            const paper = batch[index];
+            const row = batchRows[index];
+            if (!storedRows.has(paper.paperId)) {
+              storedRows.set(paper.paperId, row);
+              newPapers.push(paper);
+              changed = true;
+            }
+          }
+
+          if (changed) {
+            storedCount = storedRows.size;
+            await persistCollectSnapshot({
+              run,
+              rows: Array.from(storedRows.values()),
+              mode,
+              request: normalizedRequest,
+              resultMeta: buildCollectResultMeta({
+                request: normalizedRequest,
+                fetched: fetchedPapers.length,
+                stored: storedCount,
+                added: newPapers.length,
+                baseCount,
+                mode,
+                diagnostics,
+                filters: normalizedRequest.filters || {},
+                bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode),
+                completed: false
+              }),
+              existingBibtex: baseBibtex,
+              newPapers,
+              bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode)
+            });
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "collect_papers",
+              payload: {
+                text: `Collected ${storedCount} paper(s) so far (${newPapers.length} new) for "${normalizedRequest.query}".`
+              }
+            });
+          }
+        }
+        diagnostics = deps.semanticScholar.getLastSearchDiagnostics?.() ?? diagnostics;
         await runContextMemory.put("collect_papers.requested_limit", null);
         await runContextMemory.put("collect_papers.request", null);
       } catch (error) {
         fetchError = error instanceof Error ? error.message : String(error);
+        diagnostics = deps.semanticScholar.getLastSearchDiagnostics?.() ?? diagnostics;
       }
 
-      const corpus = papers.map((paper) => ({
-        paper_id: paper.paperId,
-        title: paper.title,
-        abstract: paper.abstract || "",
-        year: paper.year,
-        venue: paper.venue,
-        url: paper.url,
-        pdf_url: paper.openAccessPdfUrl,
-        authors: paper.authors,
-        citation_count: paper.citationCount,
-        influential_citation_count: paper.influentialCitationCount,
-        publication_date: paper.publicationDate,
-        publication_types: paper.publicationTypes,
-        fields_of_study: paper.fieldsOfStudy
-      }));
-
       const bibtexMode = normalizeBibtexMode(requestFromContext?.bibtexMode);
-      const bibtex = buildBibtexFile(papers, bibtexMode);
-      const resultMeta: CollectResultMeta = {
-        query: normalizedRequest.query,
-        limit: normalizedRequest.limit,
-        fetched: corpus.length,
-        source: "semantic_scholar",
-        fetchError,
-        sort: {
-          field: normalizedRequest.sort?.field ?? "relevance",
-          order: normalizedRequest.sort?.order ?? "desc"
-        },
+      storedCount = storedRows.size;
+      const resultMeta = buildCollectResultMeta({
+        request: normalizedRequest,
+        fetched: fetchedPapers.length,
+        stored: storedCount,
+        added: newPapers.length,
+        baseCount,
+        mode,
+        diagnostics,
         filters: normalizedRequest.filters || {},
         bibtexMode,
-        timestamp: new Date().toISOString()
-      };
+        completed: !fetchError,
+        fetchError
+      });
 
-      await writeRunArtifact(run, "collect_request.json", JSON.stringify(normalizedRequest, null, 2));
-      await writeRunArtifact(run, "collect_result.json", JSON.stringify(resultMeta, null, 2));
+      await persistCollectSnapshot({
+        run,
+        rows: Array.from(storedRows.values()),
+        mode,
+        request: normalizedRequest,
+        resultMeta,
+        existingBibtex: baseBibtex,
+        newPapers,
+        bibtexMode
+      });
+
       await runContextMemory.put("collect_papers.last_request", normalizedRequest);
       await runContextMemory.put("collect_papers.last_result", resultMeta);
+      await runContextMemory.put("collect_papers.last_attempt_count", diagnostics.attemptCount);
+      await runContextMemory.put("collect_papers.count", storedCount);
+      await runContextMemory.put("collect_papers.source", "semantic_scholar");
+      if (diagnostics.attemptCount > 0) {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "collect_papers",
+          payload: {
+            text: `Semantic Scholar attempts: ${formatAttemptSummary(diagnostics)}`
+          }
+        });
+      }
       if (fetchError) {
         await runContextMemory.put("collect_papers.last_error", fetchError);
       } else {
         await runContextMemory.put("collect_papers.last_error", null);
-        await appendJsonl(run, "corpus.jsonl", corpus);
-        await writeRunArtifact(run, "bibtex.bib", bibtex);
-        await runContextMemory.put("collect_papers.count", corpus.length);
-        await runContextMemory.put("collect_papers.source", "semantic_scholar");
         await longTermStore.append({
           runId: run.id,
           category: "papers",
-          text: `Collected ${corpus.length} papers for ${normalizedRequest.query}`,
+          text: `Collected ${storedCount} papers for ${normalizedRequest.query}`,
           tags: ["collect_papers", normalizedRequest.query]
         });
       }
@@ -130,7 +202,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         node: "collect_papers",
         payload: {
           source: "semantic_scholar",
-          papers: corpus.length,
+          papers: storedCount,
           query: normalizedRequest.query,
           requested_limit: normalizedRequest.limit,
           fetch_error: fetchError
@@ -149,7 +221,10 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
       return {
         status: "success",
-        summary: `Semantic Scholar fetched ${corpus.length} papers for "${normalizedRequest.query}".`,
+        summary:
+          mode === "additional"
+            ? `Semantic Scholar stored ${storedCount} total papers for "${normalizedRequest.query}" (${newPapers.length} newly added).`
+            : `Semantic Scholar stored ${storedCount} papers for "${normalizedRequest.query}".`,
         needsApproval: true,
         toolCallsUsed: 1
       };
@@ -216,7 +291,6 @@ function normalizeCollectRequest(input: {
   request?: CollectPapersNodeRequest;
   topic: string;
   configuredLimit: number;
-  overrideLimit?: number;
 }): SemanticScholarSearchRequest {
   const configuredLimit = Math.max(1, input.configuredLimit);
   const request = input.request;
@@ -224,12 +298,12 @@ function normalizeCollectRequest(input: {
     typeof request?.limit === "number" && Number.isFinite(request.limit) && request.limit > 0
       ? Math.floor(request.limit)
       : undefined;
-  const requestedLimitFromLegacy =
-    typeof input.overrideLimit === "number" && Number.isFinite(input.overrideLimit) && input.overrideLimit > 0
-      ? Math.floor(input.overrideLimit)
+  const requestedAdditional =
+    typeof request?.additional === "number" && Number.isFinite(request.additional) && request.additional > 0
+      ? Math.floor(request.additional)
       : undefined;
 
-  const limit = requestedLimitFromCommand ?? requestedLimitFromLegacy ?? configuredLimit;
+  const limit = requestedLimitFromCommand ?? requestedAdditional ?? configuredLimit;
   const query = (request?.query || input.topic).trim();
   const sortField = request?.sort?.field ?? "relevance";
   const sortOrder = request?.sort?.order ?? (sortField === "paperId" ? "asc" : "desc");
@@ -341,4 +415,137 @@ function normalizeS2Bibtex(raw: string | undefined): string | undefined {
     return undefined;
   }
   return trimmed;
+}
+
+interface StoredCorpusRow {
+  paper_id: string;
+  title: string;
+  abstract: string;
+  year?: number;
+  venue?: string;
+  url?: string;
+  pdf_url?: string;
+  authors: string[];
+  citation_count?: number;
+  influential_citation_count?: number;
+  publication_date?: string;
+  publication_types?: string[];
+  fields_of_study?: string[];
+}
+
+function normalizeCorpusRow(paper: SemanticScholarPaper): StoredCorpusRow {
+  return {
+    paper_id: paper.paperId,
+    title: paper.title,
+    abstract: paper.abstract || "",
+    year: paper.year,
+    venue: paper.venue,
+    url: paper.url,
+    pdf_url: paper.openAccessPdfUrl,
+    authors: paper.authors,
+    citation_count: paper.citationCount,
+    influential_citation_count: paper.influentialCitationCount,
+    publication_date: paper.publicationDate,
+    publication_types: paper.publicationTypes,
+    fields_of_study: paper.fieldsOfStudy
+  };
+}
+
+async function readExistingCorpus(run: { id: string }): Promise<StoredCorpusRow[]> {
+  const raw = await safeRead(`.autoresearch/runs/${run.id}/corpus.jsonl`);
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line) as StoredCorpusRow;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((row): row is StoredCorpusRow => Boolean(row?.paper_id));
+}
+
+function buildCollectResultMeta(input: {
+  request: SemanticScholarSearchRequest;
+  fetched: number;
+  stored: number;
+  added: number;
+  baseCount: number;
+  mode: "replace" | "additional";
+  diagnostics: SemanticScholarSearchDiagnostics;
+  filters: SemanticScholarSearchFilters;
+  bibtexMode: BibtexMode;
+  completed: boolean;
+  fetchError?: string;
+}): CollectResultMeta {
+  return {
+    query: input.request.query,
+    limit: input.request.limit,
+    fetched: input.fetched,
+    stored: input.stored,
+    added: input.added,
+    baseCount: input.baseCount,
+    completed: input.completed,
+    mode: input.mode,
+    source: "semantic_scholar",
+    fetchError: input.fetchError,
+    attemptCount: input.diagnostics.attemptCount,
+    lastStatus: input.diagnostics.lastStatus,
+    retryAfterMs: input.diagnostics.retryAfterMs,
+    attempts: input.diagnostics.attempts,
+    sort: {
+      field: input.request.sort?.field ?? "relevance",
+      order: input.request.sort?.order ?? "desc"
+    },
+    filters: input.filters,
+    bibtexMode: input.bibtexMode,
+    timestamp: new Date().toISOString()
+  };
+}
+
+async function persistCollectSnapshot(input: {
+  run: { id: string };
+  rows: StoredCorpusRow[];
+  mode: "replace" | "additional";
+  request: SemanticScholarSearchRequest;
+  resultMeta: CollectResultMeta;
+  existingBibtex: string;
+  newPapers: SemanticScholarPaper[];
+  bibtexMode: BibtexMode;
+}): Promise<void> {
+  await writeRunArtifact(input.run as any, "collect_request.json", JSON.stringify(input.request, null, 2));
+  await writeRunArtifact(input.run as any, "collect_result.json", JSON.stringify(input.resultMeta, null, 2));
+  const shouldWriteArtifacts =
+    input.resultMeta.completed || input.mode === "additional" || input.rows.length > 0;
+  if (!shouldWriteArtifacts) {
+    return;
+  }
+
+  await appendJsonl(input.run as any, "corpus.jsonl", input.rows);
+  const existingBibtex = input.mode === "additional" ? input.existingBibtex.trim() : "";
+  const newBibtex = buildBibtexFile(input.newPapers, input.bibtexMode).trim();
+  const bibtex = [existingBibtex, newBibtex].filter(Boolean).join("\n\n");
+  await writeRunArtifact(input.run as any, "bibtex.bib", bibtex ? `${bibtex}\n` : "");
+}
+
+function emptyCollectDiagnostics(): SemanticScholarSearchDiagnostics {
+  return {
+    attemptCount: 0,
+    attempts: []
+  };
+}
+
+function formatAttemptSummary(diagnostics: SemanticScholarSearchDiagnostics): string {
+  if (diagnostics.attemptCount === 0) {
+    return "0";
+  }
+  return diagnostics.attempts
+    .map((attempt) => {
+      const status = attempt.status ? String(attempt.status) : "network";
+      const retry = attempt.retryAfterMs ? ` retry-after=${attempt.retryAfterMs}ms` : "";
+      return `#${attempt.attempt}:${status}${retry}`;
+    })
+    .join(", ");
 }

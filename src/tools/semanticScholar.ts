@@ -48,6 +48,22 @@ export interface SemanticScholarClientOptions {
   maxRetries?: number;
 }
 
+export interface SemanticScholarAttemptRecord {
+  attempt: number;
+  ok: boolean;
+  status?: number;
+  retryAfterMs?: number;
+  endpoint: string;
+  errorMessage?: string;
+}
+
+export interface SemanticScholarSearchDiagnostics {
+  attemptCount: number;
+  lastStatus?: number;
+  retryAfterMs?: number;
+  attempts: SemanticScholarAttemptRecord[];
+}
+
 interface SearchResponse {
   data?: Array<Record<string, unknown>>;
   token?: string;
@@ -76,6 +92,7 @@ export class SemanticScholarClient {
   private readonly maxRetries: number;
   private nextRequestAtMs = 0;
   private throttleQueue: Promise<void> = Promise.resolve();
+  private lastSearchDiagnostics: SemanticScholarSearchDiagnostics = emptyDiagnostics();
 
   constructor(opts: SemanticScholarClientOptions) {
     this.apiKey = opts.apiKey;
@@ -104,18 +121,56 @@ export class SemanticScholarClient {
 
     const request = this.normalizeRequest(requestOrQuery, limitOrSignal);
     const abortSignal = this.resolveAbortSignal(requestOrQuery, limitOrSignal, maybeSignal);
+    this.lastSearchDiagnostics = emptyDiagnostics();
 
     if (!request.query.trim()) {
       return [];
     }
 
-    const targetLimit = Math.max(1, request.limit);
-    const sortField = request.sort?.field ?? "relevance";
-
-    if (sortField === "relevance") {
-      return this.searchByRelevance(request, targetLimit, abortSignal);
+    const papers: SemanticScholarPaper[] = [];
+    for await (const batch of this.streamSearchPapers(request, abortSignal)) {
+      papers.push(...batch);
     }
-    return this.searchByBulk(request, targetLimit, abortSignal);
+    return papers;
+  }
+
+  async *streamSearchPapers(
+    request: SemanticScholarSearchRequest,
+    abortSignal?: AbortSignal
+  ): AsyncGenerator<SemanticScholarPaper[], void, void> {
+    const fakeResponse = process.env.AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
+    if (typeof fakeResponse === "string" && fakeResponse.trim()) {
+      const papers = parseFakeSemanticScholarResponse(fakeResponse).slice(
+        0,
+        Math.max(1, this.normalizeRequest(request).limit)
+      );
+      if (papers.length > 0) {
+        yield papers;
+      }
+      return;
+    }
+
+    const normalized = this.normalizeRequest(request);
+    if (!normalized.query.trim()) {
+      return;
+    }
+
+    const targetLimit = Math.max(1, normalized.limit);
+    const sortField = normalized.sort?.field ?? "relevance";
+    if (sortField === "relevance") {
+      yield* this.streamByRelevance(normalized, targetLimit, abortSignal);
+      return;
+    }
+    yield* this.streamByBulk(normalized, targetLimit, abortSignal);
+  }
+
+  getLastSearchDiagnostics(): SemanticScholarSearchDiagnostics {
+    return {
+      attemptCount: this.lastSearchDiagnostics.attemptCount,
+      lastStatus: this.lastSearchDiagnostics.lastStatus,
+      retryAfterMs: this.lastSearchDiagnostics.retryAfterMs,
+      attempts: this.lastSearchDiagnostics.attempts.map((attempt) => ({ ...attempt }))
+    };
   }
 
   private normalizeRequest(
@@ -152,20 +207,20 @@ export class SemanticScholarClient {
     return limitOrSignal instanceof AbortSignal ? limitOrSignal : maybeSignal;
   }
 
-  private async searchByRelevance(
+  private async *streamByRelevance(
     request: SemanticScholarSearchRequest,
     targetLimit: number,
     abortSignal?: AbortSignal
-  ): Promise<SemanticScholarPaper[]> {
-    const results: SemanticScholarPaper[] = [];
+  ): AsyncGenerator<SemanticScholarPaper[], void, void> {
     const seen = new Set<string>();
     let offset = 0;
+    let yieldedCount = 0;
     const pageSize = resolveRelevancePageSize(request, targetLimit, Boolean(this.apiKey));
     const interRequestDelayMs = resolveInterRequestDelayMs(request, targetLimit, this.perSecondLimit, Boolean(this.apiKey));
 
-    while (results.length < targetLimit) {
+    while (yieldedCount < targetLimit) {
       throwIfAborted(abortSignal);
-      const batch = Math.min(pageSize, targetLimit - results.length);
+      const batch = Math.min(pageSize, targetLimit - yieldedCount);
 
       const params = this.buildSearchParams(request, {
         includeOffsetLimit: true,
@@ -180,19 +235,21 @@ export class SemanticScholarClient {
         break;
       }
 
+      const nextBatch: SemanticScholarPaper[] = [];
       for (const paper of items) {
         if (seen.has(paper.paperId)) {
           continue;
         }
         seen.add(paper.paperId);
-        results.push(paper);
-        if (results.length >= targetLimit) {
+        nextBatch.push(paper);
+        yieldedCount += 1;
+        if (yieldedCount >= targetLimit) {
           break;
         }
       }
 
-      if (results.length >= targetLimit) {
-        break;
+      if (nextBatch.length > 0) {
+        yield nextBatch;
       }
       if (items.length < batch) {
         break;
@@ -200,21 +257,19 @@ export class SemanticScholarClient {
       offset += items.length;
       await delay(interRequestDelayMs);
     }
-
-    return results;
   }
 
-  private async searchByBulk(
+  private async *streamByBulk(
     request: SemanticScholarSearchRequest,
     targetLimit: number,
     abortSignal?: AbortSignal
-  ): Promise<SemanticScholarPaper[]> {
-    const results: SemanticScholarPaper[] = [];
+  ): AsyncGenerator<SemanticScholarPaper[], void, void> {
     const seen = new Set<string>();
     let token: string | undefined;
+    let yieldedCount = 0;
     const interRequestDelayMs = resolveInterRequestDelayMs(request, targetLimit, this.perSecondLimit, Boolean(this.apiKey));
 
-    while (results.length < targetLimit) {
+    while (yieldedCount < targetLimit) {
       throwIfAborted(abortSignal);
       const params = this.buildSearchParams(request, {
         includeOffsetLimit: false,
@@ -229,19 +284,21 @@ export class SemanticScholarClient {
         break;
       }
 
+      const nextBatch: SemanticScholarPaper[] = [];
       for (const paper of items) {
         if (seen.has(paper.paperId)) {
           continue;
         }
         seen.add(paper.paperId);
-        results.push(paper);
-        if (results.length >= targetLimit) {
+        nextBatch.push(paper);
+        yieldedCount += 1;
+        if (yieldedCount >= targetLimit) {
           break;
         }
       }
 
-      if (results.length >= targetLimit) {
-        break;
+      if (nextBatch.length > 0) {
+        yield nextBatch;
       }
       token = typeof parsed.token === "string" && parsed.token.trim() ? parsed.token : undefined;
       if (!token) {
@@ -249,8 +306,6 @@ export class SemanticScholarClient {
       }
       await delay(interRequestDelayMs);
     }
-
-    return results.slice(0, targetLimit);
   }
 
   private buildSearchParams(
@@ -313,6 +368,7 @@ export class SemanticScholarClient {
     let lastError: unknown;
     for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
       throwIfAborted(abortSignal);
+      let recorded = false;
       try {
         await this.waitForRateLimitSlot(abortSignal);
         const response = await fetch(endpoint, {
@@ -323,16 +379,40 @@ export class SemanticScholarClient {
         });
 
         if (!response.ok) {
+          const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+          this.recordAttempt({
+            attempt,
+            ok: false,
+            status: response.status,
+            retryAfterMs,
+            endpoint
+          });
+          recorded = true;
           throw new SemanticScholarHttpError(
             response.status,
-            parseRetryAfterMs(response.headers.get("retry-after"))
+            retryAfterMs
           );
         }
 
+        this.recordAttempt({
+          attempt,
+          ok: true,
+          status: response.status,
+          endpoint
+        });
+        recorded = true;
         return await response.json();
       } catch (error) {
         if (isAbortError(error)) {
           throw new Error("Operation aborted by user");
+        }
+        if (!recorded) {
+          this.recordAttempt({
+            attempt,
+            ok: false,
+            endpoint,
+            errorMessage: error instanceof Error ? error.message : String(error)
+          });
         }
         lastError = error;
         if (attempt < this.maxRetries) {
@@ -342,6 +422,13 @@ export class SemanticScholarClient {
     }
 
     throw lastError instanceof Error ? lastError : new Error("Semantic Scholar request failed");
+  }
+
+  private recordAttempt(attempt: SemanticScholarAttemptRecord): void {
+    this.lastSearchDiagnostics.attempts.push(attempt);
+    this.lastSearchDiagnostics.attemptCount = this.lastSearchDiagnostics.attempts.length;
+    this.lastSearchDiagnostics.lastStatus = attempt.status;
+    this.lastSearchDiagnostics.retryAfterMs = attempt.retryAfterMs;
   }
 
   private async waitForRateLimitSlot(abortSignal?: AbortSignal): Promise<void> {
@@ -357,6 +444,13 @@ export class SemanticScholarClient {
     this.throttleQueue = ticket.catch(() => undefined);
     await ticket;
   }
+}
+
+function emptyDiagnostics(): SemanticScholarSearchDiagnostics {
+  return {
+    attemptCount: 0,
+    attempts: []
+  };
 }
 
 class SemanticScholarHttpError extends Error {

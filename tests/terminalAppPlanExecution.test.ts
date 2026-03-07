@@ -14,6 +14,7 @@ function makeApp(): any {
     codex: {} as any,
     eventStream: { subscribe: () => () => {} } as any,
     orchestrator: {} as any,
+    semanticScholarApiKeyConfigured: false,
     onQuit: () => {},
     saveConfig: async () => {}
   });
@@ -163,5 +164,86 @@ describe("TerminalApp pending natural plan execution", () => {
 
     expect(app.logs).toContain("Replan matched the failed plan. Not re-arming the same commands.");
     expect(app.pendingNaturalCommand).toBeUndefined();
+  });
+
+  it("deterministically splits a rate-limited collect request before falling back to LLM", async () => {
+    const app = makeApp();
+    app.runIndex = [makeRun("run-1")];
+    app.activeRunId = "run-1";
+    app.runIndex[0].title = "Multi-Agent Collaboration";
+    app.runIndex[0].topic = "Multi-Agent Collaboration";
+    app.semanticScholarApiKeyConfigured = true;
+    app.codex = {
+      runForText: vi.fn()
+    };
+    app.pendingNaturalCommand = {
+      command: '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 300 --open-access --run run-1',
+      commands: ['/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 300 --open-access --run run-1'],
+      sourceInput: "collect papers",
+      createdAt: new Date().toISOString(),
+      stepIndex: 0,
+      totalSteps: 1
+    };
+
+    app.executeParsedSlash = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      reason:
+        'Semantic Scholar rate limited "Multi-Agent Collaboration": Semantic Scholar request failed: 429 (rate limited).'
+    });
+
+    await app.handlePendingNaturalConfirmation("y");
+
+    expect(app.codex.runForText).not.toHaveBeenCalled();
+    expect(app.logs).toContain("Attempting automatic replan after failed step...");
+    expect(app.logs).toContain(
+      "Deterministic collect replan: splitting the failed request into 6 smaller step(s) of up to 50 papers."
+    );
+    expect(app.logs).toContain("Recovery collect plan prepared with 6 smaller step(s).");
+    expect(app.logs).not.toContain("Execution plan detected. Pending 6-step plan:");
+    expect(
+      app.logs.some((line: string) =>
+        line.includes('- [1/6] /agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 50 --open-access --run run-1')
+      )
+    ).toBe(false);
+    expect(app.pendingNaturalCommand?.commands).toEqual([
+      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 50 --open-access --run run-1',
+      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
+      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
+      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
+      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
+      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1'
+    ]);
+    expect(app.pendingNaturalCommand?.presentation).toBe("collect_replan_summary");
+  });
+
+  it("keeps deterministic collect replans summarized during reminders and continuations", async () => {
+    const app = makeApp();
+    app.pendingNaturalCommand = {
+      command: '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 50 --open-access --run run-1',
+      commands: [
+        '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 50 --open-access --run run-1',
+        '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1'
+      ],
+      sourceInput: "collect papers",
+      createdAt: new Date().toISOString(),
+      stepIndex: 0,
+      totalSteps: 2,
+      presentation: "collect_replan_summary"
+    };
+
+    app.executeParsedSlash = vi.fn().mockResolvedValueOnce({ ok: true });
+
+    await app.handlePendingNaturalConfirmation("later");
+    await app.handlePendingNaturalConfirmation("y");
+
+    expect(app.logs).toContain("Pending recovery collect plan from step 1/2.");
+    expect(app.logs).toContain("Next recovery collect step ready (2/2).");
+    expect(
+      app.logs.some((line: string) => line.includes('Pending plan from step 1/2: /agent collect "Multi-Agent Collaboration"'))
+    ).toBe(false);
+    expect(
+      app.logs.some((line: string) => line.includes('Remaining plan steps (2-2/2):'))
+    ).toBe(false);
+    expect(app.pendingNaturalCommand?.presentation).toBe("collect_replan_summary");
   });
 });

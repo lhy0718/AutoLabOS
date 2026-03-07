@@ -13,6 +13,13 @@ npm link
 autoresearch
 ```
 
+선택 사항: Semantic Scholar API key를 `.env`에 넣을 수 있습니다.
+
+```bash
+cp .env.example .env
+echo 'SEMANTIC_SCHOLAR_API_KEY=your_key_here' >> .env
+```
+
 개발 모드:
 
 ```bash
@@ -26,6 +33,8 @@ npm run dev
 1. 빈 프로젝트에서 `autoresearch`를 실행합니다.
 2. `.autoresearch/config.yaml`이 없으면 setup wizard가 자동 시작됩니다.
 3. wizard가 설정/스캐폴드를 만든 뒤 대시보드로 진입합니다.
+4. setup wizard는 선택적으로 Semantic Scholar API key를 묻고, 입력한 값은 `.env`에 기록합니다.
+5. 실행 시 AutoResearch는 `process.env` 또는 `.env`의 `SEMANTIC_SCHOLAR_API_KEY`를 읽습니다.
 
 ## CLI 정책
 
@@ -234,6 +243,8 @@ npm run test:smoke:ci
 ```
 
 스모크 테스트 안내:
+- smoke harness 파일은 `tests/smoke/` 아래에 있습니다.
+- smoke가 실행하는 예시 workspace는 계속 `/test`를 사용합니다.
 - `test:smoke:natural-collect`는 `/test` 경로에서 실행되며,
   자연어 수집 요청 -> pending `/agent collect ...` 생성 흐름을 PTY로 검증합니다.
 - `test:smoke:natural-collect-execute`는 `/test` 경로에서 실행되며,

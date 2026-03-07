@@ -62,6 +62,7 @@ interface TerminalAppDeps {
   eventStream: EventStream;
   orchestrator: AgentOrchestrator;
   initialRunId?: string;
+  semanticScholarApiKeyConfigured: boolean;
   onQuit: () => void;
   saveConfig: (nextConfig: AppConfig) => Promise<void>;
 }
@@ -79,6 +80,7 @@ interface PendingNaturalCommandState {
   createdAt: string;
   stepIndex: number;
   totalSteps: number;
+  presentation?: "default" | "collect_replan_summary";
 }
 
 interface ActiveSelectionMenu {
@@ -123,6 +125,7 @@ export class TerminalApp {
   private readonly orchestrator: AgentOrchestrator;
   private readonly onQuit: () => void;
   private readonly saveConfigFn: (nextConfig: AppConfig) => Promise<void>;
+  private readonly semanticScholarApiKeyConfigured: boolean;
   private readonly appVersion = getAppVersion();
   private readonly colorEnabled = supportsColor();
 
@@ -167,6 +170,7 @@ export class TerminalApp {
     this.eventStream = deps.eventStream;
     this.orchestrator = deps.orchestrator;
     this.activeRunId = deps.initialRunId;
+    this.semanticScholarApiKeyConfigured = deps.semanticScholarApiKeyConfigured;
     this.onQuit = deps.onQuit;
     this.saveConfigFn = deps.saveConfig;
   }
@@ -499,7 +503,7 @@ export class TerminalApp {
     }
 
     if (this.pendingNaturalCommand) {
-      const pending = this.describePendingNaturalCommands(this.pendingNaturalCommand.commands);
+      const pending = this.describePendingNaturalCommands(this.pendingNaturalCommand);
       this.pendingNaturalCommand = undefined;
       this.pushLog(`Pending natural action cleared: ${pending}`);
     }
@@ -515,7 +519,7 @@ export class TerminalApp {
       async (abortSignal) => {
         await this.executeParsedSlash(parsed.command, parsed.args, abortSignal);
       },
-      `/${parsed.command}`
+      this.describeBusyLabelForSlash(parsed.command, parsed.args)
     );
   }
 
@@ -649,6 +653,9 @@ export class TerminalApp {
             return;
           }
 
+          this.activeBusyLabel = this.describeBusyLabelForSlash(parsed.command, parsed.args);
+          this.render();
+
           if (pending.totalSteps > 1 && (offset > 0 || runAllRemaining)) {
             this.pushLog(`Step ${currentStepNumber}/${pending.totalSteps}: ${command}`);
           }
@@ -676,7 +683,8 @@ export class TerminalApp {
               this.armPendingNaturalCommands(pending.sourceInput, pending.commands.slice(offset + 1), {
                 stepIndex: currentStepIndex + 1,
                 totalSteps: pending.totalSteps,
-                continuation: true
+                continuation: true,
+                presentation: pending.presentation
               });
               return;
             }
@@ -696,7 +704,7 @@ export class TerminalApp {
         this.pushLog(`Canceled pending command: ${pending.command}`);
       } else {
         this.pushLog(
-          `Canceled pending plan from step ${pending.stepIndex + 1}/${pending.totalSteps}: ${this.describePendingNaturalCommands(pending.commands)}`
+          `Canceled pending plan from step ${pending.stepIndex + 1}/${pending.totalSteps}: ${this.describePendingNaturalCommands(pending)}`
         );
       }
       this.render();
@@ -707,9 +715,7 @@ export class TerminalApp {
       this.pushLog(`Pending command: ${pending.command}`);
       this.pushLog("Type 'y' to run it, or 'n' to cancel.");
     } else {
-      this.pushLog(
-        `Pending plan from step ${pending.stepIndex + 1}/${pending.totalSteps}: ${this.describePendingNaturalCommands(pending.commands)}`
-      );
+      this.pushLog(this.buildPendingPlanReminderLine(pending));
       this.pushLog(
         `Type 'y' to run step ${pending.stepIndex + 1}/${pending.totalSteps}, 'a' to run all remaining steps, or 'n' to cancel the remaining plan.`
       );
@@ -943,6 +949,24 @@ export class TerminalApp {
 
     this.pushLog("Attempting automatic replan after failed step...");
 
+    const deterministicReplan = this.buildDeterministicCollectReplanAfterFailure(
+      failedCommand,
+      failureReason
+    );
+    if (deterministicReplan) {
+      for (const line of deterministicReplan.lines) {
+        this.pushLog(line);
+      }
+      if (samePendingPlan(pending.commands, deterministicReplan.commands)) {
+        this.pushLog("Replan matched the failed plan. Not re-arming the same commands.");
+        return;
+      }
+      this.armPendingNaturalCommands(pending.sourceInput, deterministicReplan.commands, {
+        presentation: "collect_replan_summary"
+      });
+      return;
+    }
+
     try {
       const response = await buildNaturalAssistantResponseWithLlm({
         input: pending.sourceInput,
@@ -999,6 +1023,99 @@ export class TerminalApp {
       const message = error instanceof Error ? error.message : String(error);
       this.pushLog(`Automatic replan failed: ${message}`);
     }
+  }
+
+  private buildDeterministicCollectReplanAfterFailure(
+    failedCommand: string,
+    failureReason: string | undefined
+  ): { lines: string[]; commands: string[] } | undefined {
+    if (!isSemanticScholarRateLimitFailure(failureReason)) {
+      return undefined;
+    }
+
+    const parsedSlash = parseSlashCommand(failedCommand);
+    if (!parsedSlash || parsedSlash.command !== "agent") {
+      return undefined;
+    }
+    const sub = (parsedSlash.args[0] || "").toLowerCase();
+    if (sub !== "collect" && sub !== "recollect") {
+      return undefined;
+    }
+
+    const collectParsed =
+      sub === "collect"
+        ? parseCollectArgs(parsedSlash.args.slice(1))
+        : parseCollectArgs(["--additional", parsedSlash.args[1] || "", "--run", parsedSlash.args[2] || ""]);
+    if (!collectParsed.ok || !collectParsed.request) {
+      return undefined;
+    }
+
+    const request = {
+      ...collectParsed.request,
+      warnings: []
+    };
+    const targetRun =
+      (request.runQuery ? this.runIndex.find((run) => run.id === request.runQuery) : undefined) ||
+      this.getActiveIndexedRun();
+    const query = request.query?.trim() || targetRun?.topic;
+    if (!query) {
+      return undefined;
+    }
+
+    const batchSize = determineCollectReplanBatchSize(
+      request,
+      !this.semanticScholarApiKeyConfigured
+    );
+    const totalRequested = request.additional ?? request.limit ?? Math.max(1, this.config.papers.max_results);
+    if (totalRequested <= batchSize) {
+      return undefined;
+    }
+
+    const commands: string[] = [];
+    let remaining = totalRequested;
+    const runId = targetRun?.id;
+    const baseRequest: CollectCommandRequest = {
+      ...request,
+      query,
+      warnings: [],
+      dryRun: false
+    };
+
+    const firstFetch = Math.min(batchSize, remaining);
+    commands.push(
+      buildCollectSlashCommand(
+        {
+          ...baseRequest,
+          additional: undefined,
+          limit: firstFetch
+        },
+        runId
+      )
+    );
+    remaining -= firstFetch;
+
+    while (remaining > 0) {
+      const additional = Math.min(batchSize, remaining);
+      commands.push(
+        buildCollectSlashCommand(
+          {
+            ...baseRequest,
+            limit: undefined,
+            additional
+          },
+          runId
+        )
+      );
+      remaining -= additional;
+    }
+
+    return {
+      lines: [
+        `Deterministic collect replan: splitting the failed request into ${commands.length} smaller step(s) of up to ${batchSize} papers.`,
+        "This avoids another LLM round-trip and retries the same collect request in smaller batches."
+      ],
+      commands
+    };
   }
 
   private async drainQueuedInputs(): Promise<void> {
@@ -1604,13 +1721,14 @@ export class TerminalApp {
 
     const corpusCount = await this.readCorpusCount(run.id);
     const configuredLimit = Math.max(1, this.config.papers.max_results);
-    const targetTotal = request.additional ? corpusCount + request.additional : request.limit ?? configuredLimit;
+    const fetchCount = request.additional ? corpusCount + request.additional : request.limit ?? configuredLimit;
+    const targetTotal = request.additional ? corpusCount + request.additional : fetchCount;
     const query = request.query?.trim() || run.topic;
     const filters = normalizeCollectFiltersForNode(request);
     const endpoint = request.sort.field === "relevance" ? "/paper/search" : "/paper/search/bulk";
     const nodeRequest = {
       query,
-      limit: targetTotal,
+      limit: fetchCount,
       additional: request.additional,
       sort: request.sort,
       filters,
@@ -1621,6 +1739,7 @@ export class TerminalApp {
       this.pushLog("Collect dry-run plan:");
       this.pushLog(`- run: ${run.id} (${run.title})`);
       this.pushLog(`- query: ${query}`);
+      this.pushLog(`- fetch_count: ${fetchCount}`);
       this.pushLog(`- target_total: ${targetTotal} (current ${corpusCount})`);
       this.pushLog(`- endpoint: ${endpoint}`);
       this.pushLog(`- sort: ${request.sort.field}:${request.sort.order}`);
@@ -1631,7 +1750,7 @@ export class TerminalApp {
 
     const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
     await runContext.put("collect_papers.request", nodeRequest);
-    await runContext.put("collect_papers.requested_limit", targetTotal);
+    await runContext.put("collect_papers.requested_limit", fetchCount);
 
     await this.orchestrator.jumpToNode(
       run.id,
@@ -1644,7 +1763,7 @@ export class TerminalApp {
       ? `Moving to collect_papers and requesting +${request.additional} papers (target total ${targetTotal}).`
       : `Moving to collect_papers with target total ${targetTotal}.`;
     this.pushLog(summaryPrefix);
-    if (shouldUseConservativeCollectPacing(request, targetTotal, !this.config.papers.semantic_scholar_api_key?.trim())) {
+    if (shouldUseConservativeCollectPacing(request, fetchCount, !this.semanticScholarApiKeyConfigured)) {
       this.pushLog(
         "Large or filtered collect request detected. Using smaller Semantic Scholar chunks to reduce rate limits."
       );
@@ -1856,7 +1975,12 @@ export class TerminalApp {
   private armPendingNaturalCommands(
     sourceInput: string,
     commands: string[],
-    options?: { stepIndex?: number; totalSteps?: number; continuation?: boolean }
+    options?: {
+      stepIndex?: number;
+      totalSteps?: number;
+      continuation?: boolean;
+      presentation?: "default" | "collect_replan_summary";
+    }
   ): void {
     const normalizedCommands = commands.map((command) => command.trim()).filter(Boolean);
     if (normalizedCommands.length === 0) {
@@ -1870,7 +1994,8 @@ export class TerminalApp {
       sourceInput,
       createdAt: new Date().toISOString(),
       stepIndex,
-      totalSteps
+      totalSteps,
+      presentation: options?.presentation ?? "default"
     };
 
     if (totalSteps === 1) {
@@ -1880,7 +2005,9 @@ export class TerminalApp {
     }
 
     if (options?.continuation) {
-      if (normalizedCommands.length === 1) {
+      if (this.pendingNaturalCommand.presentation === "collect_replan_summary") {
+        this.pushLog(`Next recovery collect step ready (${stepIndex + 1}/${totalSteps}).`);
+      } else if (normalizedCommands.length === 1) {
         this.pushLog(`Next plan step ready (${stepIndex + 1}/${totalSteps}): ${normalizedCommands[0]}`);
       } else {
         this.pushLog(`Remaining plan steps (${stepIndex + 1}-${totalSteps}/${totalSteps}):`);
@@ -1894,20 +2021,34 @@ export class TerminalApp {
       return;
     }
 
-    this.pushLog(`Execution plan detected. Pending ${totalSteps}-step plan:`);
-    normalizedCommands.forEach((command, index) => {
-      this.pushLog(`- [${stepIndex + index + 1}/${totalSteps}] ${command}`);
-    });
+    if (this.pendingNaturalCommand.presentation === "collect_replan_summary") {
+      this.pushLog(`Recovery collect plan prepared with ${totalSteps} smaller step(s).`);
+    } else {
+      this.pushLog(`Execution plan detected. Pending ${totalSteps}-step plan:`);
+      normalizedCommands.forEach((command, index) => {
+        this.pushLog(`- [${stepIndex + index + 1}/${totalSteps}] ${command}`);
+      });
+    }
     this.pushLog(
       `Type 'y' to run step ${stepIndex + 1}/${totalSteps}, 'a' to run all remaining steps, or 'n' to cancel the plan.`
     );
   }
 
-  private describePendingNaturalCommands(commands: string[]): string {
-    if (commands.length <= 1) {
-      return commands[0] ?? "";
+  private buildPendingPlanReminderLine(pending: PendingNaturalCommandState): string {
+    if (pending.presentation === "collect_replan_summary") {
+      return `Pending recovery collect plan from step ${pending.stepIndex + 1}/${pending.totalSteps}.`;
     }
-    return commands.join(" -> ");
+    return `Pending plan from step ${pending.stepIndex + 1}/${pending.totalSteps}: ${this.describePendingNaturalCommands(pending)}`;
+  }
+
+  private describePendingNaturalCommands(pending: PendingNaturalCommandState): string {
+    if (pending.presentation === "collect_replan_summary") {
+      return `recovery collect plan (${pending.totalSteps} step${pending.totalSteps === 1 ? "" : "s"})`;
+    }
+    if (pending.commands.length <= 1) {
+      return pending.commands[0] ?? "";
+    }
+    return pending.commands.join(" -> ");
   }
 
   private async setActiveRunId(runId?: string): Promise<void> {
@@ -2005,6 +2146,7 @@ export class TerminalApp {
     const frame = buildFrame({
       appVersion: this.appVersion,
       busy: this.busy,
+      activityLabel: this.getActivityLabel(run),
       thinking: this.thinking,
       thinkingFrame: this.thinkingFrame,
       run,
@@ -2032,6 +2174,27 @@ export class TerminalApp {
       process.stdout.write(`\x1b[${up}A`);
     }
     process.stdout.write(`\x1b[${frame.inputColumn}G`);
+  }
+
+  private getActivityLabel(run?: RunRecord): string | undefined {
+    if (!this.busy || this.thinking) {
+      return undefined;
+    }
+
+    const explicit = this.activeBusyLabel?.trim();
+    if (explicit && explicit !== "operation") {
+      return explicit;
+    }
+
+    if (!run) {
+      return undefined;
+    }
+
+    const nodeStatus = run.graph.nodeStates[run.currentNode]?.status;
+    if (nodeStatus !== "running") {
+      return undefined;
+    }
+    return describeNodeActivity(run.currentNode);
   }
 
   private renderThinkingLineOnly(): void {
@@ -2296,6 +2459,39 @@ export class TerminalApp {
     }
     this.thinkingFrame = (this.thinkingFrame + 1) % 10_000;
   }
+
+  private describeBusyLabelForSlash(command: string, args: string[]): string {
+    const normalized = command.toLowerCase();
+    if (normalized === "agent") {
+      const sub = (args[0] || "").toLowerCase();
+      if (sub === "collect" || sub === "recollect") {
+        return "Collecting papers...";
+      }
+      if (sub === "run") {
+        const node = args[1];
+        if (isGraphNodeId(node)) {
+          return describeNodeActivity(node);
+        }
+      }
+      if (sub === "retry") {
+        const node = args[1];
+        if (isGraphNodeId(node)) {
+          return `Retrying ${describeNodeActivity(node).toLowerCase()}`;
+        }
+      }
+    }
+
+    if (normalized === "title") {
+      return "Updating title...";
+    }
+    if (normalized === "model") {
+      return "Updating model settings...";
+    }
+    if (normalized === "settings") {
+      return "Saving settings...";
+    }
+    return `/${command}`;
+  }
 }
 
 export async function launchTerminalApp(deps: TerminalAppDeps): Promise<void> {
@@ -2484,6 +2680,34 @@ function extractRequestedTitleCount(text: string): number {
 
 function detectQueryLanguage(text: string): "ko" | "en" {
   return /[\p{Script=Hangul}]/u.test(text) ? "ko" : "en";
+}
+
+function isGraphNodeId(value: string | undefined): value is GraphNodeId {
+  if (!value) {
+    return false;
+  }
+  return AGENT_ORDER.includes(value as GraphNodeId);
+}
+
+function describeNodeActivity(node: GraphNodeId): string {
+  switch (node) {
+    case "collect_papers":
+      return "Collecting papers...";
+    case "analyze_papers":
+      return "Analyzing papers...";
+    case "generate_hypotheses":
+      return "Generating hypotheses...";
+    case "design_experiments":
+      return "Designing experiments...";
+    case "implement_experiments":
+      return "Implementing experiments...";
+    case "run_experiments":
+      return "Running experiments...";
+    case "analyze_results":
+      return "Analyzing results...";
+    case "write_paper":
+      return "Writing paper...";
+  }
 }
 
 export interface CompositeNaturalCommandPlan {
@@ -2687,6 +2911,30 @@ function shouldUseConservativeCollectPacing(
   );
 }
 
+function determineCollectReplanBatchSize(
+  request: CollectCommandRequest,
+  missingApiKey: boolean
+): number {
+  if (
+    missingApiKey ||
+    request.filters.openAccessPdf === true ||
+    (request.filters.publicationTypes?.length ?? 0) > 0 ||
+    (request.filters.fieldsOfStudy?.length ?? 0) > 0 ||
+    (request.filters.venues?.length ?? 0) > 0 ||
+    typeof request.filters.minCitationCount === "number"
+  ) {
+    return 50;
+  }
+  return 100;
+}
+
+function isSemanticScholarRateLimitFailure(message: string | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+  return /semantic scholar/i.test(message) && (/\b429\b/.test(message) || /rate limit/i.test(message));
+}
+
 function toNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -2835,6 +3083,7 @@ function nodeContextKeys(node: GraphNodeId): string[] {
         "collect_papers.count",
         "collect_papers.source",
         "collect_papers.last_error",
+        "collect_papers.last_attempt_count",
         "collect_papers.requested_limit",
         "collect_papers.request",
         "collect_papers.last_request",

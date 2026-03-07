@@ -13,6 +13,13 @@ npm link
 autoresearch
 ```
 
+Optional: set your Semantic Scholar API key in `.env`.
+
+```bash
+cp .env.example .env
+echo 'SEMANTIC_SCHOLAR_API_KEY=your_key_here' >> .env
+```
+
 Development mode:
 
 ```bash
@@ -26,6 +33,8 @@ Without `npm link`, you can still run `node dist/cli/main.js`.
 1. Run `autoresearch` in an empty project.
 2. If `.autoresearch/config.yaml` is missing, setup wizard starts automatically.
 3. Wizard creates scaffold/config and opens the dashboard.
+4. Setup wizard asks for an optional Semantic Scholar API key and writes it to `.env`.
+5. At runtime, AutoResearch reads `SEMANTIC_SCHOLAR_API_KEY` from `process.env` or `.env`.
 
 ## CLI Policy
 
@@ -234,6 +243,8 @@ npm run test:smoke:ci
 ```
 
 Smoke note:
+- Smoke harness files live under `tests/smoke/`.
+- The runnable example workspace used by smoke stays under `/test`.
 - `test:smoke:natural-collect` runs in `/test` and verifies PTY flow for
   natural-language collect request -> pending `/agent collect ...` command.
 - `test:smoke:natural-collect-execute` runs in `/test` and verifies

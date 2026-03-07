@@ -7,6 +7,7 @@ describe("SemanticScholarClient", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    delete process.env.AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
   });
 
   it("uses /paper/search for relevance mode", async () => {
@@ -120,6 +121,7 @@ describe("SemanticScholarClient", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        status: 200,
         json: async () => ({
           data: [{ paperId: "p1", title: "Paper 1", authors: [] }]
         })
@@ -140,6 +142,11 @@ describe("SemanticScholarClient", () => {
     const papers = await promise;
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(papers).toHaveLength(1);
+    expect(client.getLastSearchDiagnostics()).toMatchObject({
+      attemptCount: 2,
+      lastStatus: 200
+    });
+    expect(client.getLastSearchDiagnostics().attempts.map((attempt) => attempt.status)).toEqual([429, 200]);
   });
 
   it("uses conservative chunk sizes for large filtered relevance requests", async () => {
@@ -176,7 +183,7 @@ describe("SemanticScholarClient", () => {
       filters: { openAccessPdf: true }
     });
 
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(7000);
     const papers = await promise;
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -184,7 +191,7 @@ describe("SemanticScholarClient", () => {
     expect(urls.map((url) => url.searchParams.get("limit"))).toEqual(["50", "50", "20"]);
     expect(urls.map((url) => url.searchParams.get("offset"))).toEqual(["0", "50", "100"]);
     expect(papers).toHaveLength(120);
-  });
+  }, 10_000);
 
   it("enforces a minimum interval between sequential requests at 1 RPS", async () => {
     vi.useFakeTimers();
@@ -226,5 +233,28 @@ describe("SemanticScholarClient", () => {
     const papers = await promise;
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(papers).toHaveLength(101);
+  });
+
+  it("uses fake Semantic Scholar data for streamSearchPapers without hitting fetch", async () => {
+    process.env.AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE = JSON.stringify([
+      { paperId: "p1", title: "Paper 1", authors: [] },
+      { paperId: "p2", title: "Paper 2", authors: [] }
+    ]);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new SemanticScholarClient({ perSecondLimit: 1 });
+    const batches: Array<{ paperId: string }[]> = [];
+    for await (const batch of client.streamSearchPapers({
+      query: "agent",
+      limit: 10,
+      sort: { field: "relevance" }
+    })) {
+      batches.push(batch as Array<{ paperId: string }>);
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.map((paper) => paper.paperId)).toEqual(["p1", "p2"]);
   });
 });

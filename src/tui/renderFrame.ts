@@ -5,6 +5,7 @@ import { getDisplayWidth } from "./displayWidth.js";
 export interface RenderFrameInput {
   appVersion: string;
   busy: boolean;
+  activityLabel?: string;
   thinking: boolean;
   thinkingFrame: number;
   run?: RunRecord;
@@ -51,6 +52,9 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
         true
       )
     );
+    if (input.activityLabel) {
+      lines.push(renderActivityLabel(input.activityLabel, input.colorEnabled));
+    }
   } else {
     lines.push(renderLabelValue("Run", "none", input.colorEnabled, true));
   }
@@ -160,6 +164,10 @@ function renderSelectionRow(args: SelectionRowArgs): string {
 
 function renderLabelValue(label: string, value: string, colorEnabled: boolean, emphasizeValue = false): string {
   return `${paint(`${label}:`, { fg: 97, bold: true }, colorEnabled)} ${paint(value, emphasizeValue ? { fg: 97 } : { fg: 90 }, colorEnabled)}`;
+}
+
+function renderActivityLabel(value: string, colorEnabled: boolean): string {
+  return `${paint("Activity:", { fg: 97, bold: true }, colorEnabled)} ${paint(value, { fg: 96, bold: true }, colorEnabled)}`;
 }
 
 function renderLogLine(log: string, colorEnabled: boolean): string {

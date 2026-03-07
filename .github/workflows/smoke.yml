@@ -12,7 +12,7 @@ on:
       - main
     paths:
       - "src/**"
-      - "test/smoke/**"
+      - "tests/smoke/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/smoke.yml"

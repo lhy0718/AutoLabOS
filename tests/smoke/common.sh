@@ -44,7 +44,6 @@ providers:
     auth_required: true
     fast_mode: false
 papers:
-  semantic_scholar_api_key: ""
   max_results: 200
   per_second_limit: 1
 research:
@@ -201,7 +200,7 @@ smoke_reset_collect_artifacts() {
 smoke_run_expect() {
   local exp_name="$1"
   local run_id="$2"
-  expect "$SMOKE_ROOT_DIR/test/smoke/$exp_name" "$SMOKE_WORK_DIR" "$run_id"
+  expect "$SMOKE_ROOT_DIR/tests/smoke/$exp_name" "$SMOKE_WORK_DIR" "$run_id"
 }
 
 smoke_bib_key_for_prefix() {
@@ -353,7 +352,7 @@ smoke_run_mode() {
     exit 1
   fi
   script_name="$(smoke_script_for_mode "$mode")"
-  bash "$SMOKE_ROOT_DIR/test/smoke/$script_name"
+  bash "$SMOKE_ROOT_DIR/tests/smoke/$script_name"
 }
 
 smoke_run_all_modes() {
