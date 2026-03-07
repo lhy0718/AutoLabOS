@@ -158,10 +158,12 @@ export class SemanticScholarClient {
     const results: SemanticScholarPaper[] = [];
     const seen = new Set<string>();
     let offset = 0;
+    const pageSize = resolveRelevancePageSize(request, targetLimit, Boolean(this.apiKey));
+    const interRequestDelayMs = resolveInterRequestDelayMs(request, targetLimit, this.perSecondLimit, Boolean(this.apiKey));
 
     while (results.length < targetLimit) {
       throwIfAborted(abortSignal);
-      const batch = Math.min(100, targetLimit - results.length);
+      const batch = Math.min(pageSize, targetLimit - results.length);
 
       const params = this.buildSearchParams(request, {
         includeOffsetLimit: true,
@@ -187,11 +189,14 @@ export class SemanticScholarClient {
         }
       }
 
+      if (results.length >= targetLimit) {
+        break;
+      }
       if (items.length < batch) {
         break;
       }
       offset += items.length;
-      await delay(Math.ceil(1000 / this.perSecondLimit));
+      await delay(interRequestDelayMs);
     }
 
     return results;
@@ -205,6 +210,7 @@ export class SemanticScholarClient {
     const results: SemanticScholarPaper[] = [];
     const seen = new Set<string>();
     let token: string | undefined;
+    const interRequestDelayMs = resolveInterRequestDelayMs(request, targetLimit, this.perSecondLimit, Boolean(this.apiKey));
 
     while (results.length < targetLimit) {
       throwIfAborted(abortSignal);
@@ -232,11 +238,14 @@ export class SemanticScholarClient {
         }
       }
 
+      if (results.length >= targetLimit) {
+        break;
+      }
       token = typeof parsed.token === "string" && parsed.token.trim() ? parsed.token : undefined;
       if (!token) {
         break;
       }
-      await delay(Math.ceil(1000 / this.perSecondLimit));
+      await delay(interRequestDelayMs);
     }
 
     return results.slice(0, targetLimit);
@@ -311,7 +320,10 @@ export class SemanticScholarClient {
         });
 
         if (!response.ok) {
-          throw new Error(`Semantic Scholar request failed: ${response.status}`);
+          throw new SemanticScholarHttpError(
+            response.status,
+            parseRetryAfterMs(response.headers.get("retry-after"))
+          );
         }
 
         return await response.json();
@@ -320,11 +332,23 @@ export class SemanticScholarClient {
           throw new Error("Operation aborted by user");
         }
         lastError = error;
-        await delay(200 * attempt);
+        if (attempt < this.maxRetries) {
+          await delay(resolveRetryDelayMs(error, attempt, this.perSecondLimit));
+        }
       }
     }
 
     throw lastError instanceof Error ? lastError : new Error("Semantic Scholar request failed");
+  }
+}
+
+class SemanticScholarHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfterMs?: number
+  ) {
+    super(buildSemanticScholarHttpErrorMessage(status, retryAfterMs));
+    this.name = "SemanticScholarHttpError";
   }
 }
 
@@ -351,6 +375,93 @@ function isAbortError(error: unknown): boolean {
   }
   const msg = error.message.toLowerCase();
   return msg.includes("aborted") || msg.includes("abort");
+}
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds * 1000);
+  }
+
+  const dateMs = Date.parse(value);
+  if (!Number.isNaN(dateMs)) {
+    return Math.max(0, dateMs - Date.now());
+  }
+
+  return undefined;
+}
+
+function resolveRetryDelayMs(error: unknown, attempt: number, perSecondLimit: number): number {
+  const baseDelay = Math.max(Math.ceil(1000 / Math.max(1, perSecondLimit)), 1000);
+  const backoff = Math.min(baseDelay * 2 ** (attempt - 1), 30_000);
+  if (error instanceof SemanticScholarHttpError) {
+    return Math.max(error.retryAfterMs ?? 0, backoff);
+  }
+  return backoff;
+}
+
+function buildSemanticScholarHttpErrorMessage(status: number, retryAfterMs?: number): string {
+  if (status === 429) {
+    const retryHint = retryAfterMs ? `; retry after ${formatRetryAfterMs(retryAfterMs)}` : "";
+    return `Semantic Scholar request failed: 429 (rate limited${retryHint})`;
+  }
+  return `Semantic Scholar request failed: ${status}`;
+}
+
+function formatRetryAfterMs(retryAfterMs: number): string {
+  if (retryAfterMs >= 60_000) {
+    return `${Math.ceil(retryAfterMs / 60_000)}m`;
+  }
+  return `${Math.max(1, Math.ceil(retryAfterMs / 1000))}s`;
+}
+
+function resolveRelevancePageSize(
+  request: SemanticScholarSearchRequest,
+  targetLimit: number,
+  hasApiKey: boolean
+): number {
+  let size = 100;
+  if (targetLimit >= 200) {
+    size = 50;
+  }
+  if (!hasApiKey) {
+    size = Math.min(size, 50);
+  }
+  if (request.filters?.openAccessPdf) {
+    size = Math.min(size, 50);
+  }
+  if (
+    (request.filters?.publicationTypes && request.filters.publicationTypes.length > 0) ||
+    (request.filters?.fieldsOfStudy && request.filters.fieldsOfStudy.length > 0) ||
+    (request.filters?.venue && request.filters.venue.length > 0) ||
+    typeof request.filters?.minCitationCount === "number"
+  ) {
+    size = Math.min(size, 50);
+  }
+  return Math.max(25, size);
+}
+
+function resolveInterRequestDelayMs(
+  request: SemanticScholarSearchRequest,
+  targetLimit: number,
+  perSecondLimit: number,
+  hasApiKey: boolean
+): number {
+  let delayMs = Math.ceil(1000 / Math.max(1, perSecondLimit));
+  if (targetLimit >= 200) {
+    delayMs = Math.max(delayMs, 1500);
+  }
+  if (!hasApiKey) {
+    delayMs = Math.max(delayMs, 2000);
+  }
+  if (request.filters?.openAccessPdf) {
+    delayMs = Math.max(delayMs, 2000);
+  }
+  return delayMs;
 }
 
 function normalizePaper(item: Record<string, unknown>): SemanticScholarPaper | undefined {

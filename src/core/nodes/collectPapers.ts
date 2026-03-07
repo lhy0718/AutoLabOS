@@ -53,6 +53,14 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
     async execute({ run, graph, abortSignal }) {
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
       const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
+      const requestFromContext = await runContextMemory.get<CollectPapersNodeRequest>("collect_papers.request");
+      const overrideLimit = await runContextMemory.get<number>("collect_papers.requested_limit");
+      const normalizedRequest = normalizeCollectRequest({
+        request: requestFromContext,
+        topic: run.topic,
+        configuredLimit: deps.config.papers.max_results,
+        overrideLimit
+      });
       const tools: WorkerTool[] = [
         {
           name: "summarize",
@@ -67,21 +75,13 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const rewoo = await executeReWOO({
         runId: run.id,
         node: "collect_papers",
-        plan: buildDefaultPlan(`Collect papers for topic: ${run.topic}`),
+        plan: buildDefaultPlan(`Collect papers for query: ${normalizedRequest.query}`),
         tools,
         eventStream: deps.eventStream
       });
 
       let papers: Awaited<ReturnType<typeof deps.semanticScholar.searchPapers>> = [];
       let fetchError: string | undefined;
-      const requestFromContext = await runContextMemory.get<CollectPapersNodeRequest>("collect_papers.request");
-      const overrideLimit = await runContextMemory.get<number>("collect_papers.requested_limit");
-      const normalizedRequest = normalizeCollectRequest({
-        request: requestFromContext,
-        topic: run.topic,
-        configuredLimit: deps.config.papers.max_results,
-        overrideLimit
-      });
       try {
         papers = await deps.semanticScholar.searchPapers(normalizedRequest, abortSignal);
         await runContextMemory.put("collect_papers.requested_limit", null);
@@ -123,23 +123,25 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         timestamp: new Date().toISOString()
       };
 
-      await appendJsonl(run, "corpus.jsonl", corpus);
-      await writeRunArtifact(run, "bibtex.bib", bibtex);
       await writeRunArtifact(run, "collect_request.json", JSON.stringify(normalizedRequest, null, 2));
       await writeRunArtifact(run, "collect_result.json", JSON.stringify(resultMeta, null, 2));
-      await runContextMemory.put("collect_papers.count", corpus.length);
-      await runContextMemory.put("collect_papers.source", "semantic_scholar");
       await runContextMemory.put("collect_papers.last_request", normalizedRequest);
       await runContextMemory.put("collect_papers.last_result", resultMeta);
       if (fetchError) {
         await runContextMemory.put("collect_papers.last_error", fetchError);
+      } else {
+        await runContextMemory.put("collect_papers.last_error", null);
+        await appendJsonl(run, "corpus.jsonl", corpus);
+        await writeRunArtifact(run, "bibtex.bib", bibtex);
+        await runContextMemory.put("collect_papers.count", corpus.length);
+        await runContextMemory.put("collect_papers.source", "semantic_scholar");
+        await longTermStore.append({
+          runId: run.id,
+          category: "papers",
+          text: `Collected ${corpus.length} papers for ${normalizedRequest.query}`,
+          tags: ["collect_papers", normalizedRequest.query]
+        });
       }
-      await longTermStore.append({
-        runId: run.id,
-        category: "papers",
-        text: `Collected ${corpus.length} papers for ${run.topic}`,
-        tags: ["collect_papers", run.topic]
-      });
 
       deps.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -154,13 +156,19 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         }
       });
 
-      const fetchSummary = fetchError
-        ? `Semantic Scholar fetch failed (${fetchError}); saved empty corpus.`
-        : `Semantic Scholar fetched ${corpus.length} papers.`;
+      if (fetchError) {
+        const failureMessage = buildCollectFailureMessage(normalizedRequest, fetchError);
+        return {
+          status: "failure",
+          error: failureMessage,
+          summary: failureMessage,
+          toolCallsUsed: rewoo.toolCallsUsed + 1
+        };
+      }
 
       return {
         status: "success",
-        summary: `${fetchSummary} ${rewoo.summary || ""}`.trim(),
+        summary: `Semantic Scholar fetched ${corpus.length} papers for "${normalizedRequest.query}". ${rewoo.summary || ""}`.trim(),
         needsApproval: true,
         toolCallsUsed: rewoo.toolCallsUsed + 1
       };
@@ -298,6 +306,30 @@ function normalizeBibtexMode(mode: unknown): BibtexMode {
     return mode;
   }
   return "hybrid";
+}
+
+function buildCollectFailureMessage(
+  request: SemanticScholarSearchRequest,
+  fetchError: string
+): string {
+  if (/\b429\b/.test(fetchError)) {
+    const chunkNote = usesConservativeChunking(request)
+      ? " AutoResearch already switched this request to smaller Semantic Scholar chunks."
+      : "";
+    return `Semantic Scholar rate limited "${request.query}": ${fetchError}.${chunkNote} Wait a bit and retry, or lower --limit to 50-100 / collect in smaller batches.`;
+  }
+  return `Semantic Scholar fetch failed for "${request.query}" (${fetchError})`;
+}
+
+function usesConservativeChunking(request: SemanticScholarSearchRequest): boolean {
+  return (
+    request.limit >= 200 ||
+    request.filters?.openAccessPdf === true ||
+    (request.filters?.publicationTypes?.length ?? 0) > 0 ||
+    (request.filters?.fieldsOfStudy?.length ?? 0) > 0 ||
+    (request.filters?.venue?.length ?? 0) > 0 ||
+    typeof request.filters?.minCitationCount === "number"
+  );
 }
 
 function buildBibtexKey(paper: SemanticScholarPaper): string {

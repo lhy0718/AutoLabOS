@@ -1644,6 +1644,11 @@ export class TerminalApp {
       ? `Moving to collect_papers and requesting +${request.additional} papers (target total ${targetTotal}).`
       : `Moving to collect_papers with target total ${targetTotal}.`;
     this.pushLog(summaryPrefix);
+    if (shouldUseConservativeCollectPacing(request, targetTotal, !this.config.papers.semantic_scholar_api_key?.trim())) {
+      this.pushLog(
+        "Large or filtered collect request detected. Using smaller Semantic Scholar chunks to reduce rate limits."
+      );
+    }
 
     const response = await this.orchestrator.runAgentWithOptions(run.id, "collect_papers", {
       abortSignal
@@ -2664,6 +2669,22 @@ function normalizeTitleIntentCandidate(raw: string): string {
 function buildTitleCommand(title: string, runId: string): string {
   const escaped = title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   return `/title "${escaped}" --run ${runId}`;
+}
+
+function shouldUseConservativeCollectPacing(
+  request: CollectCommandRequest,
+  targetTotal: number,
+  missingApiKey: boolean
+): boolean {
+  return (
+    targetTotal >= 200 ||
+    missingApiKey ||
+    request.filters.openAccessPdf === true ||
+    (request.filters.publicationTypes?.length ?? 0) > 0 ||
+    (request.filters.fieldsOfStudy?.length ?? 0) > 0 ||
+    (request.filters.venues?.length ?? 0) > 0 ||
+    typeof request.filters.minCitationCount === "number"
+  );
 }
 
 function toNonEmptyString(value: unknown): string | undefined {

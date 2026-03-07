@@ -1,6 +1,20 @@
-import { describe, expect, it } from "vitest";
+import path from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtemp, access, readFile, mkdir, writeFile } from "node:fs/promises";
 
-import { buildBibtexEntry, buildBibtexFile } from "../src/core/nodes/collectPapers.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { buildBibtexEntry, buildBibtexFile, createCollectPapersNode } from "../src/core/nodes/collectPapers.js";
+import { InMemoryEventStream } from "../src/core/events.js";
+import { MockLLMClient } from "../src/core/llm/client.js";
+import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
+import { RunRecord } from "../src/types.js";
+
+const ORIGINAL_CWD = process.cwd();
+
+afterEach(() => {
+  process.chdir(ORIGINAL_CWD);
+});
 
 describe("collectPapers bibtex", () => {
   it("builds bibtex entry with rich metadata", () => {
@@ -75,5 +89,93 @@ describe("collectPapers bibtex", () => {
     );
 
     expect(bib.trim()).toBe("");
+  });
+
+  it("returns failure on fetch error and preserves the requested query in diagnostics", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-"));
+    process.chdir(root);
+
+    const runId = "run-collect-failure";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Multi-Agent Collaboration",
+      topic: "AI agent automation",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Multi-Agent Collaboration",
+              limit: 300,
+              sort: { field: "relevance", order: "desc" },
+              filters: { lastYears: 5, openAccessPdf: true }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const eventStream = new InMemoryEventStream();
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        searchPapers: vi.fn(async () => {
+          throw new Error("Semantic Scholar request failed: 429");
+        })
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain('Semantic Scholar rate limited "Multi-Agent Collaboration"');
+    expect(result.error).toContain("429");
+    expect(result.error).toContain("lower --limit to 50-100");
+
+    const resultMetaRaw = await readFile(
+      path.join(root, ".autoresearch", "runs", runId, "collect_result.json"),
+      "utf8"
+    );
+    expect(resultMetaRaw).toContain('"query": "Multi-Agent Collaboration"');
+    expect(resultMetaRaw).toContain('"fetchError": "Semantic Scholar request failed: 429"');
+
+    await expect(access(path.join(root, ".autoresearch", "runs", runId, "corpus.jsonl"))).rejects.toThrow();
   });
 });

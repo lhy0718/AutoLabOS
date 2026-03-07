@@ -4,6 +4,7 @@ import { SemanticScholarClient } from "../src/tools/semanticScholar.js";
 
 describe("SemanticScholarClient", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -105,5 +106,83 @@ describe("SemanticScholarClient", () => {
     expect(papers[0]?.openAccessPdfUrl).toBe("https://example.org/paper.pdf");
     expect(papers[0]?.citationStylesBibtex).toContain("@article{p1");
     expect(papers[0]?.doi).toBe("10.1000/xyz");
+  });
+
+  it("respects Retry-After when retrying 429 responses", async () => {
+    vi.useFakeTimers();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        headers: new Headers({ "retry-after": "2" })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [{ paperId: "p1", title: "Paper 1", authors: [] }]
+        })
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new SemanticScholarClient({ perSecondLimit: 1000, maxRetries: 2 });
+    const promise = client.searchPapers({
+      query: "agent",
+      limit: 1,
+      sort: { field: "relevance" }
+    });
+
+    await vi.advanceTimersByTimeAsync(1900);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(100);
+    const papers = await promise;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(papers).toHaveLength(1);
+  });
+
+  it("uses conservative chunk sizes for large filtered relevance requests", async () => {
+    vi.useFakeTimers();
+
+    const makeRows = (count: number, start: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        paperId: `p${start + index}`,
+        title: `Paper ${start + index}`,
+        authors: []
+      }));
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: makeRows(50, 0) })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: makeRows(50, 50) })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: makeRows(20, 100) })
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new SemanticScholarClient({ perSecondLimit: 1000, maxRetries: 2 });
+    const promise = client.searchPapers({
+      query: "agent",
+      limit: 120,
+      sort: { field: "relevance" },
+      filters: { openAccessPdf: true }
+    });
+
+    await vi.advanceTimersByTimeAsync(5000);
+    const papers = await promise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const urls = fetchMock.mock.calls.map((call) => new URL(String(call[0])));
+    expect(urls.map((url) => url.searchParams.get("limit"))).toEqual(["50", "50", "20"]);
+    expect(urls.map((url) => url.searchParams.get("offset"))).toEqual(["0", "50", "100"]);
+    expect(papers).toHaveLength(120);
   });
 });
