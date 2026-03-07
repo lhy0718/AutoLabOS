@@ -31,7 +31,8 @@ export async function runAutoresearchApp(): Promise<void> {
   const runStore = new RunStore(paths);
   const codex = new CodexCliClient(paths.cwd, {
     model: config.providers.codex.model || "gpt-5.3-codex",
-    reasoningEffort: config.providers.codex.reasoning_effort || "xhigh"
+    reasoningEffort: config.providers.codex.reasoning_effort || "xhigh",
+    fastMode: config.providers.codex.fast_mode === true
   });
   const titleGenerator = new TitleGenerator(codex);
   const initialRunId = await maybeCreateInitialRun({
@@ -52,8 +53,10 @@ export async function runAutoresearchApp(): Promise<void> {
 
   const nodeRegistry = new DefaultNodeRegistry({
     config,
+    runStore,
     eventStream,
     llm,
+    codex,
     aci,
     semanticScholar
   });
@@ -67,6 +70,7 @@ export async function runAutoresearchApp(): Promise<void> {
     runStore,
     titleGenerator,
     codex,
+    eventStream,
     orchestrator,
     initialRunId,
     onQuit: () => {

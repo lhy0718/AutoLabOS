@@ -83,6 +83,19 @@ const EXECUTE_INTENT_KEYWORDS = [
   "승인"
 ];
 
+export function matchesNaturalAssistantIntent(input: string): boolean {
+  const lower = input.trim().toLowerCase();
+  if (!lower) {
+    return false;
+  }
+  return (
+    includesAny(lower, STRUCTURE_KEYWORDS) ||
+    includesAny(lower, NEXT_KEYWORDS) ||
+    includesAny(lower, STATUS_KEYWORDS) ||
+    includesAny(lower, EXECUTE_INTENT_KEYWORDS)
+  );
+}
+
 export function buildNaturalAssistantResponse(ctx: NaturalAssistantContext): NaturalAssistantResponse {
   const text = ctx.input.trim();
   const lower = text.toLowerCase();

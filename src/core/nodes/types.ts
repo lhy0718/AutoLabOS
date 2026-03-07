@@ -1,14 +1,18 @@
 import { AppConfig } from "../../types.js";
 import { EventStream } from "../events.js";
 import { LLMClient } from "../llm/client.js";
+import { RunStore } from "../runs/runStore.js";
 import { AgentComputerInterface } from "../../tools/aci.js";
 import { SemanticScholarClient } from "../../tools/semanticScholar.js";
 import { GraphNodeHandler, GraphNodeResult } from "../stateGraph/types.js";
+import { CodexCliClient } from "../../integrations/codex/codexCliClient.js";
 
 export interface NodeExecutionDeps {
   config: AppConfig;
+  runStore: RunStore;
   eventStream: EventStream;
   llm: LLMClient;
+  codex: CodexCliClient;
   aci: AgentComputerInterface;
   semanticScholar: SemanticScholarClient;
 }

@@ -139,6 +139,60 @@ Examples:
 - `/agent collect "agent planning" --sort citationCount --order desc --min-citations 100`
 - `/agent collect --additional 200 --run <run_id>`
 
+Step-by-step approval for multi-step plans:
+
+- Natural-language multi-step plans pause after each step.
+- `y`: run only the next step
+- `a`: run all remaining steps without pausing again
+- `n`: cancel the remaining plan
+- Automatic replan can arm a revised follow-up command after a failed step.
+
+## Natural-Language Inputs
+
+AutoResearch does not try to enumerate every possible sentence. Instead, it defines
+supported deterministic intent families and routes those directly to slash commands
+or local status handlers before falling back to the workspace-grounded LLM.
+
+Ask this inside the TUI to see the live list:
+
+- `what natural inputs are supported?`
+
+Supported intent families:
+
+1. Help / settings / model / doctor / quit
+   - Examples: `show help`, `open model selector`, `run environment checks`
+2. Run lifecycle
+   - Examples: `create a new run`, `list runs`, `open run alpha`, `resume the previous run`
+3. Run title changes
+   - Examples: `change the run title to Multi-agent collaboration`
+4. Workflow structure / status / next step
+   - Examples: `what should I do next?`, `show current status`, `show the workflow`
+5. Paper collection
+   - Examples: `collect 100 papers from the last 5 years by relevance`
+   - Examples: `collect 50 open-access review papers`
+   - Examples: `collect 200 more papers`
+   - Examples: `clear collected papers, then collect 100 new papers`
+6. Node control
+   - Examples: `jump back to collect_papers`, `retry the hypothesis node`, `focus on implement_experiments`
+7. Graph / budget / approval
+   - Examples: `show graph`, `show budget`, `approve current node`, `retry current node`
+8. Direct questions about collected papers
+   - Examples: `how many papers were collected?`
+   - Examples: `how many papers are missing PDF paths?`
+   - Examples: `what is the top-cited paper?`
+   - Examples: `show 3 paper titles`
+
+Notes:
+
+- Supported deterministic intents are implemented in
+  [src/core/commands/naturalDeterministic.ts](/Users/home/AutoResearchV2/src/core/commands/naturalDeterministic.ts).
+- Status / next-step local responses are implemented in
+  [src/core/commands/naturalAssistant.ts](/Users/home/AutoResearchV2/src/core/commands/naturalAssistant.ts).
+- Other questions still fall back to the workspace-grounded LLM assistant.
+- Composite natural-language execution plans run in step-by-step approval mode.
+- When a composite plan is pending, `a` runs every remaining step in one confirmation.
+- LLM-generated plans can also be revised automatically after a failed step.
+
 ## Command Palette
 
 - Type `/`: open command list
@@ -173,6 +227,7 @@ Legacy runs are auto-migrated to v3 on load.
 ```bash
 npm run build
 npm test
+npm run test:smoke:all
 npm run test:smoke:natural-collect
 npm run test:smoke:natural-collect-execute
 npm run test:smoke:ci
@@ -183,9 +238,12 @@ Smoke note:
   natural-language collect request -> pending `/agent collect ...` command.
 - `test:smoke:natural-collect-execute` runs in `/test` and verifies
   natural-language collect request -> `y` execute -> collect artifacts created.
+- `test:smoke:all` runs the full local smoke bundle in `/test`.
 - It uses `AUTORESEARCH_FAKE_CODEX_RESPONSE` to avoid live Codex calls.
 - Execute smoke also uses `AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE`.
 - `test:smoke:ci` runs CI-mode smoke selection.
   - Default mode: `pending`
-  - Set `AUTORESEARCH_SMOKE_MODE=execute` or `AUTORESEARCH_SMOKE_MODE=all`
+  - Additional modes: `execute`, `composite`, `composite-all`, `llm-composite`, `llm-composite-all`, `llm-replan`
+  - Set `AUTORESEARCH_SMOKE_MODE=<mode>` or `AUTORESEARCH_SMOKE_MODE=all`
     to switch scenarios in CI.
+- Smoke output is quiet by default. Set `AUTORESEARCH_SMOKE_VERBOSE=1` to show full PTY logs.

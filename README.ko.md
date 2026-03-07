@@ -139,6 +139,60 @@ npm run dev
 - `/agent collect "agent planning" --sort citationCount --order desc --min-citations 100`
 - `/agent collect --additional 200 --run <run_id>`
 
+복합 plan의 단계별 승인:
+
+- 자연어 복합 실행 계획은 각 step마다 멈추고 다시 승인받습니다.
+- `y`: 다음 step 1개만 실행
+- `n`: 남은 plan 취소
+- step 실패 후에는 자동 재계획으로 후속 명령이 다시 pending 될 수 있습니다.
+
+## 자연어 입력 지원 범위
+
+AutoResearch는 가능한 모든 문장을 전부 고정 규칙으로 처리하지 않습니다.
+대신 지원하는 deterministic intent family를 명시적으로 정의하고, 이 범위는
+LLM보다 먼저 slash command 또는 로컬 상태 응답으로 연결합니다. 그 밖의 질문은
+workspace 기반 LLM fallback으로 처리합니다.
+
+TUI 안에서 아래처럼 물어보면 현재 지원 목록을 바로 보여줍니다.
+
+- `지원되는 자연어 입력을 보여줘`
+- `what natural inputs are supported?`
+
+현재 지원하는 자연어 입력 범주:
+
+1. 도움말 / 설정 / 모델 / 환경 점검 / 종료
+   - 예: `도움말 보여줘`, `모델 선택기 열어줘`, `환경 점검해줘`
+2. run 라이프사이클
+   - 예: `새 run 시작해줘`, `run 목록 보여줘`, `alpha run 열어줘`, `이전 run 재개해줘`
+3. run title 변경
+   - 예: `run title을 Multi-agent collaboration으로 바꿔줘`
+4. 워크플로 구조 / 현재 상태 / 다음 단계
+   - 예: `현재 상태 보여줘`, `다음에 뭐 해야 해?`, `워크플로 구조 알려줘`
+5. 논문 수집
+   - 예: `최근 5년 관련도 순으로 100개 수집해줘`
+   - 예: `오픈액세스 리뷰 논문 50개 수집해줘`
+   - 예: `논문 200개 더 수집해줘`
+   - 예: `기존 논문을 지우고 새 논문 100개 다시 수집해줘`
+6. 노드 제어
+   - 예: `collect_papers로 이동해줘`, `가설 노드 다시 실행해줘`, `implement_experiments에 집중해줘`
+7. 그래프 / 예산 / 승인
+   - 예: `그래프 보여줘`, `예산 상태 보여줘`, `현재 노드 승인해줘`, `현재 노드 재시도해줘`
+8. 수집된 논문 직접 질의
+   - 예: `논문 몇 개 모았어?`
+   - 예: `pdf 경로가 없는 논문이 몇 개야?`
+   - 예: `citation이 가장 높은 논문이 뭐야?`
+   - 예: `논문 제목 3개 보여줘`
+
+구현 위치:
+
+- deterministic 자연어 라우터:
+  [src/core/commands/naturalDeterministic.ts](/Users/home/AutoResearchV2/src/core/commands/naturalDeterministic.ts)
+- 상태 / 다음 단계 로컬 응답:
+  [src/core/commands/naturalAssistant.ts](/Users/home/AutoResearchV2/src/core/commands/naturalAssistant.ts)
+- 복합 자연어 실행 계획은 단계별 승인(step-by-step approval)으로 동작합니다.
+- 복합 plan이 pending 상태일 때 `a`를 입력하면 남은 단계를 한 번에 모두 실행할 수 있습니다.
+- LLM이 만든 plan도 step 실패 시 자동 재계획으로 이어질 수 있습니다.
+
 ## 명령 팔레트
 
 - `/` 입력 시 명령 목록 오픈
@@ -173,6 +227,7 @@ npm run dev
 ```bash
 npm run build
 npm test
+npm run test:smoke:all
 npm run test:smoke:natural-collect
 npm run test:smoke:natural-collect-execute
 npm run test:smoke:ci
@@ -183,8 +238,11 @@ npm run test:smoke:ci
   자연어 수집 요청 -> pending `/agent collect ...` 생성 흐름을 PTY로 검증합니다.
 - `test:smoke:natural-collect-execute`는 `/test` 경로에서 실행되며,
   자연어 수집 요청 -> `y` 실행 -> 수집 산출물 생성까지 PTY로 검증합니다.
+- `test:smoke:all`은 `/test` 기준 전체 로컬 smoke 묶음을 실행합니다.
 - 실제 Codex 호출 없이 `AUTORESEARCH_FAKE_CODEX_RESPONSE`를 사용합니다.
 - execute 스모크는 `AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE`도 사용합니다.
 - `test:smoke:ci`는 CI 모드 선택 실행입니다.
   - 기본 모드: `pending`
-  - CI에서 `AUTORESEARCH_SMOKE_MODE=execute` 또는 `all`로 시나리오를 선택할 수 있습니다.
+  - 추가 모드: `execute`, `composite`, `composite-all`, `llm-composite`, `llm-composite-all`, `llm-replan`
+  - CI에서 `AUTORESEARCH_SMOKE_MODE=<mode>` 또는 `all`로 시나리오를 선택할 수 있습니다.
+- smoke 출력은 기본적으로 조용하게 동작하며, 전체 PTY 로그가 필요하면 `AUTORESEARCH_SMOKE_VERBOSE=1`을 사용합니다.

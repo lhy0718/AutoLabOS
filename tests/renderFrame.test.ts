@@ -48,6 +48,54 @@ const suggestions: SuggestionItem[] = [
 ];
 
 describe("buildFrame", () => {
+  it("applies distinct colors for help sections, warnings, successes, and errors", () => {
+    const frame = buildFrame({
+      appVersion: "0.1.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun(),
+      logs: ["Help", "Usage: /run <run>", "Updated title: A -> B", "Error: bad input"],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: true
+    });
+
+    const helpLine = frame.lines.find((line) => stripAnsi(line) === "[INFO] Help") ?? "";
+    const usageLine = frame.lines.find((line) => stripAnsi(line) === "[WARN] Usage: /run <run>") ?? "";
+    const successLine = frame.lines.find((line) => stripAnsi(line) === "[OK] Updated title: A -> B") ?? "";
+    const errorLine = frame.lines.find((line) => stripAnsi(line) === "[ERR] Error: bad input") ?? "";
+
+    expect(helpLine).toMatch(/\x1b\[[0-9;]*96m/);
+    expect(usageLine).toMatch(/\x1b\[[0-9;]*93m/);
+    expect(successLine).toMatch(/\x1b\[[0-9;]*92m/);
+    expect(errorLine).toMatch(/\x1b\[[0-9;]*91m/);
+  });
+
+  it("highlights direct answers and numbered titles in white", () => {
+    const frame = buildFrame({
+      appVersion: "0.1.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun(),
+      logs: ["현재 수집된 논문은 20편입니다.", "1. First paper title"],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: true
+    });
+
+    const answerLine = frame.lines.find((line) => stripAnsi(line) === "[INFO] 현재 수집된 논문은 20편입니다.") ?? "";
+    const titleLine = frame.lines.find((line) => stripAnsi(line) === "[INFO] 1. First paper title") ?? "";
+
+    expect(answerLine).toMatch(/\x1b\[[0-9;]*97m/);
+    expect(titleLine).toMatch(/\x1b\[[0-9;]*97m/);
+  });
+
   it("renders compact header with version", () => {
     const frame = buildFrame({
       appVersion: "0.1.0",
@@ -64,6 +112,24 @@ describe("buildFrame", () => {
     });
 
     expect(stripAnsi(frame.lines[0])).toBe("AutoResearch v0.1.0");
+  });
+
+  it("does not render Busy label", () => {
+    const frame = buildFrame({
+      appVersion: "0.1.0",
+      busy: true,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun(),
+      logs: [],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    expect(frame.lines.map((line) => stripAnsi(line))).not.toContain("Busy");
   });
 
   it("places suggestions below the input line", () => {
@@ -88,6 +154,55 @@ describe("buildFrame", () => {
     const suggestionRows = frame.lines.slice(frame.inputLineIndex + 1).map((line) => stripAnsi(line));
     expect(suggestionRows[0]).toBe("/doctor  Run environment checks");
     expect(suggestionRows.every((row) => !row.includes(" - "))).toBe(true);
+  });
+
+  it("prefixes regular log lines with INFO/WARN/OK/ERR tags", () => {
+    const frame = buildFrame({
+      appVersion: "0.1.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun(),
+      logs: ["Natural query: test", "Canceled pending command: /approve", "Run completed.", "Error: broken"],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    expect(plain).toContain("[INFO] Natural query: test");
+    expect(plain).toContain("[WARN] Canceled pending command: /approve");
+    expect(plain).toContain("[OK] Run completed.");
+    expect(plain).toContain("[ERR] Error: broken");
+  });
+
+  it("keeps automatic replan logs out of error styling", () => {
+    const frame = buildFrame({
+      appVersion: "0.1.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun(),
+      logs: [
+        "Attempting automatic replan after failed step...",
+        "The previous collect step failed. I can retry with a corrected collect command.",
+        "Replan matched the failed plan. Not re-arming the same commands.",
+        "No revised execution plan was suggested."
+      ],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    expect(plain).toContain("[INFO] Attempting automatic replan after failed step...");
+    expect(plain).toContain("[INFO] The previous collect step failed. I can retry with a corrected collect command.");
+    expect(plain).toContain("[WARN] Replan matched the failed plan. Not re-arming the same commands.");
+    expect(plain).toContain("[WARN] No revised execution plan was suggested.");
   });
 
   it("computes cursor column at the end of '> input'", () => {
@@ -161,14 +276,24 @@ describe("buildFrame", () => {
       colorEnabled: false,
       selectionMenu: {
         title: "Select model",
-        options: ["gpt-5.3-codex", "gpt-5.2-codex"],
+        options: [
+          {
+            value: "gpt-5.3-codex",
+            label: "gpt-5.3-codex",
+            description: "Primary Codex model."
+          },
+          {
+            value: "gpt-5.2-codex",
+            label: "gpt-5.2-codex"
+          }
+        ],
         selectedIndex: 1
       }
     });
 
     const plain = frame.lines.map((line) => stripAnsi(line));
     expect(plain.some((line) => line.includes("Select model"))).toBe(true);
-    expect(plain.some((line) => line.trim() === "gpt-5.3-codex")).toBe(true);
+    expect(plain.some((line) => line.includes("gpt-5.3-codex  Primary Codex model."))).toBe(true);
     expect(plain.some((line) => line.trim() === "gpt-5.2-codex")).toBe(true);
   });
 
@@ -187,7 +312,11 @@ describe("buildFrame", () => {
       colorEnabled: true,
       selectionMenu: {
         title: "Select reasoning effort",
-        options: ["low", "medium", "high"],
+        options: [
+          { value: "low", label: "low" },
+          { value: "medium", label: "medium" },
+          { value: "high", label: "high" }
+        ],
         selectedIndex: 2
       }
     });
@@ -229,5 +358,6 @@ describe("buildFrame", () => {
     const thinkingB = b.lines.find((line) => stripAnsi(line).includes("Thinking...")) || "";
     expect(thinkingA).toContain("\x1b[");
     expect(thinkingA).not.toBe(thinkingB);
+    expect(a.thinkingLineIndex).toBeDefined();
   });
 });

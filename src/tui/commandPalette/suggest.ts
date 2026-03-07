@@ -6,6 +6,7 @@ import { fuzzyScore } from "./fuzzy.js";
 export interface SuggestionContext {
   input: string;
   runs: SlashContextRun[];
+  activeRunId?: string;
 }
 
 interface ParsedInput {
@@ -42,11 +43,11 @@ export function buildSuggestions(ctx: SuggestionContext): SuggestionItem[] {
   const parsed = parseSlashInput(raw);
 
   if (!parsed.commandName) {
-    return commandSuggestions(parsed.commandQuery);
+    return commandSuggestions(parsed.commandQuery, ctx);
   }
 
   if (!knownCommand(parsed.commandName)) {
-    return commandSuggestions(parsed.commandQuery);
+    return commandSuggestions(parsed.commandQuery, ctx);
   }
 
   if (parsed.commandName === "run" || parsed.commandName === "resume") {
@@ -61,24 +62,29 @@ export function buildSuggestions(ctx: SuggestionContext): SuggestionItem[] {
     return modelSuggestions(parsed);
   }
 
-  return commandSuggestions(parsed.commandName);
+  if (parsed.commandName === "title") {
+    return titleSuggestions(parsed, ctx);
+  }
+
+  return commandSuggestions(parsed.commandName, ctx);
 }
 
 function knownCommand(name: string): boolean {
   return SLASH_COMMANDS.some((cmd) => cmd.name === name);
 }
 
-function commandSuggestions(query: string): SuggestionItem[] {
+function commandSuggestions(query: string, ctx: SuggestionContext): SuggestionItem[] {
   return SLASH_COMMANDS
     .map((cmd) => {
       const score = fuzzyScore(query, cmd.name);
       if (score === null) {
         return null;
       }
+      const description = describeCommand(cmd.name, cmd.description, ctx);
       return {
         key: `cmd:${cmd.name}`,
         label: cmd.usage,
-        description: cmd.description,
+        description,
         applyValue: `/${cmd.name} `,
         score
       };
@@ -87,6 +93,20 @@ function commandSuggestions(query: string): SuggestionItem[] {
     .sort((a, b) => b.score - a.score)
     .slice(0, 8)
     .map(({ score: _score, ...item }) => item);
+}
+
+function titleSuggestions(parsed: ParsedInput, ctx: SuggestionContext): SuggestionItem[] {
+  const currentTitle = getActiveRunTitle(ctx);
+  const score = fuzzyScore(parsed.argPartial, "title") ?? 0;
+  return [
+    {
+      key: "title:rename",
+      label: "/title <new title>",
+      description: currentTitle ? `Current: ${truncateForSuggestion(currentTitle)}` : "Rename the active run",
+      applyValue: "/title ",
+      score
+    }
+  ].map(({ score: _score, ...item }) => item);
 }
 
 function agentCommandSuggestions(parsed: ParsedInput, runs: SlashContextRun[]): SuggestionItem[] {
@@ -174,7 +194,7 @@ function agentCommandSuggestions(parsed: ParsedInput, runs: SlashContextRun[]): 
     }
   }
 
-  return commandSuggestions("agent");
+  return commandSuggestions("agent", { input: parsed.commandName || "", runs });
 }
 
 function collectSuggestions(parsed: ParsedInput, runs: SlashContextRun[]): SuggestionItem[] {
@@ -315,6 +335,31 @@ function modelSuggestions(parsed: ParsedInput): SuggestionItem[] {
       score
     }
   ].map(({ score: _score, ...item }) => item);
+}
+
+function describeCommand(name: string, fallback: string, ctx: SuggestionContext): string {
+  if (name === "title") {
+    const currentTitle = getActiveRunTitle(ctx);
+    if (currentTitle) {
+      return `Current: ${truncateForSuggestion(currentTitle)}`;
+    }
+  }
+  return fallback;
+}
+
+function getActiveRunTitle(ctx: SuggestionContext): string | undefined {
+  if (!ctx.activeRunId) {
+    return undefined;
+  }
+  return ctx.runs.find((run) => run.id === ctx.activeRunId)?.title;
+}
+
+function truncateForSuggestion(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 48) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 45)}...`;
 }
 
 function enumSuggestions(prefix: string, option: string, partial: string, values: string[]): SuggestionItem[] {

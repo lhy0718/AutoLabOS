@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  GPT_5_4_FAST_MODEL_LABEL,
   OFFICIAL_CODEX_MODELS,
+  buildCodexModelSelectionChoices,
+  getCurrentCodexModelSelectionValue,
   getReasoningEffortChoicesForModel,
-  normalizeReasoningEffortForModel
+  normalizeReasoningEffortForModel,
+  resolveCodexModelSelection
 } from "../src/integrations/codex/modelCatalog.js";
 
 describe("modelCatalog", () => {
@@ -13,6 +17,21 @@ describe("modelCatalog", () => {
     expect(OFFICIAL_CODEX_MODELS).toContain("gpt-5.2");
     expect(OFFICIAL_CODEX_MODELS).toContain("gpt-5-codex-mini");
     expect(OFFICIAL_CODEX_MODELS).not.toContain("gpt-5.1-codex-mini");
+  });
+
+  it("exposes gpt-5.4 and gpt-5.4 (fast) as separate selector options", () => {
+    const choices = buildCodexModelSelectionChoices();
+    expect(choices).toContain("gpt-5.4");
+    expect(choices).toContain(GPT_5_4_FAST_MODEL_LABEL);
+    expect(resolveCodexModelSelection("gpt-5.4")).toEqual({
+      model: "gpt-5.4",
+      fastMode: false
+    });
+    expect(resolveCodexModelSelection(GPT_5_4_FAST_MODEL_LABEL)).toEqual({
+      model: "gpt-5.4",
+      fastMode: true
+    });
+    expect(getCurrentCodexModelSelectionValue("gpt-5.4", true)).toBe(GPT_5_4_FAST_MODEL_LABEL);
   });
 
   it("exposes xhigh for Codex models that document it", () => {

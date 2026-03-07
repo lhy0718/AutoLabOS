@@ -1,5 +1,5 @@
 import { RunRecord, SuggestionItem } from "../types.js";
-import { paint } from "./theme.js";
+import { PaintStyle, paint } from "./theme.js";
 import { getDisplayWidth } from "./displayWidth.js";
 
 export interface RenderFrameInput {
@@ -16,19 +16,27 @@ export interface RenderFrameInput {
   colorEnabled: boolean;
   selectionMenu?: {
     title: string;
-    options: string[];
+    options: SelectionMenuOption[];
     selectedIndex: number;
   };
+}
+
+export interface SelectionMenuOption {
+  value: string;
+  label: string;
+  description?: string;
 }
 
 export interface RenderFrameOutput {
   lines: string[];
   inputLineIndex: number;
   inputColumn: number;
+  thinkingLineIndex?: number;
 }
 
 export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
   const lines: string[] = [];
+  let thinkingLineIndex: number | undefined;
 
   lines.push(paint(`AutoResearch v${input.appVersion}`, { fg: 96, bold: true }, input.colorEnabled));
 
@@ -47,10 +55,6 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
     lines.push(renderLabelValue("Run", "none", input.colorEnabled, true));
   }
 
-  if (input.busy) {
-    lines.push(paint("Busy", { fg: 33, bold: true }, input.colorEnabled));
-  }
-
   lines.push("");
   lines.push(paint("Recent logs", { fg: 97, bold: true }, input.colorEnabled));
 
@@ -65,7 +69,8 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
 
   if (input.thinking) {
     lines.push("");
-    lines.push(renderThinkingText(input.thinkingFrame, input.colorEnabled));
+    lines.push(buildThinkingText(input.thinkingFrame, input.colorEnabled));
+    thinkingLineIndex = lines.length;
   }
 
   lines.push("");
@@ -108,7 +113,8 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
   return {
     lines,
     inputLineIndex,
-    inputColumn
+    inputColumn,
+    thinkingLineIndex
   };
 }
 
@@ -134,17 +140,22 @@ function renderSuggestionRow(args: SuggestionRowArgs): string {
 }
 
 interface SelectionRowArgs {
-  option: string;
+  option: SelectionMenuOption;
   selected: boolean;
   colorEnabled: boolean;
 }
 
 function renderSelectionRow(args: SelectionRowArgs): string {
-  const text = `  ${args.option}`;
+  const text = args.option.description
+    ? `  ${args.option.label}  ${args.option.description}`
+    : `  ${args.option.label}`;
   if (args.selected) {
     return paint(text, { fg: 97, bg: 44, bold: true }, args.colorEnabled);
   }
-  return paint(text, { fg: 97 }, args.colorEnabled);
+  if (!args.option.description) {
+    return paint(text, { fg: 97 }, args.colorEnabled);
+  }
+  return `  ${paint(args.option.label, { fg: 97 }, args.colorEnabled)}  ${paint(args.option.description, { fg: 90 }, args.colorEnabled)}`;
 }
 
 function renderLabelValue(label: string, value: string, colorEnabled: boolean, emphasizeValue = false): string {
@@ -152,16 +163,205 @@ function renderLabelValue(label: string, value: string, colorEnabled: boolean, e
 }
 
 function renderLogLine(log: string, colorEnabled: boolean): string {
+  if (!log) {
+    return "";
+  }
+
+  const classified = classifyLogLine(log);
+  const prefix = paint(`[${classified.level}]`, classified.prefixStyle, colorEnabled);
+  const text = paint(log, classified.textStyle, colorEnabled);
+  return `${prefix} ${text}`;
+}
+
+interface ClassifiedLogLine {
+  level: "INFO" | "WARN" | "OK" | "ERR";
+  prefixStyle: PaintStyle;
+  textStyle: PaintStyle;
+}
+
+function classifyLogLine(log: string): ClassifiedLogLine {
   const lower = log.toLowerCase();
 
+  if (
+    log === "Help" ||
+    log === "Core:" ||
+    log === "Workflow:" ||
+    log === "Collection:" ||
+    log === "Natural language:"
+  ) {
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 96, bold: true }
+    };
+  }
+  if (log.startsWith("/")) {
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 97 }
+    };
+  }
+  if (log.startsWith("Examples:") || log.startsWith("Ask 'what natural inputs are supported?'")) {
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 97, bold: true }
+    };
+  }
+  if (log.startsWith("Collect options:")) {
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 90 }
+    };
+  }
+  if (log.startsWith("Execution requests require") || log.startsWith("While thinking,")) {
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 90, dim: true }
+    };
+  }
+  if (lower.startsWith("collect dry-run plan:") || lower.startsWith("graph nodes:")) {
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 96, bold: true }
+    };
+  }
+  if (
+    lower.startsWith("usage:") ||
+    lower.startsWith("canceled") ||
+    lower.startsWith("cancel requested:") ||
+    lower.startsWith("collect option warning:") ||
+    lower.startsWith("model selection canceled.") ||
+    lower.startsWith("pending natural action cleared:") ||
+    lower.startsWith("no runs found.") ||
+    lower.startsWith("no active run.")
+  ) {
+    return {
+      level: "WARN",
+      prefixStyle: { fg: 93, bold: true },
+      textStyle: { fg: 93, bold: true }
+    };
+  }
+  if (
+    lower.startsWith("queued turn:") ||
+    lower.startsWith("running queued input:") ||
+    lower.startsWith("replanning current natural query") ||
+    lower.startsWith("steering applied") ||
+    lower.startsWith("detected paper cleanup intent.") ||
+    lower.startsWith("running immediately:") ||
+    lower.startsWith("generating run title with codex...")
+  ) {
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 96 }
+    };
+  }
+  if (
+    lower.startsWith("[ok]") ||
+    lower.startsWith("confirmed.") ||
+    lower.startsWith("created run") ||
+    lower.startsWith("updated title:") ||
+    lower.startsWith("selected run") ||
+    lower.startsWith("run resumed") ||
+    lower.startsWith("node ") ||
+    lower.startsWith("cleared ") ||
+    lower.startsWith("focused current node") ||
+    lower.startsWith("jumped to ") ||
+    lower.startsWith("retry set ") ||
+    lower.startsWith("retry armed ") ||
+    lower.startsWith("approved ") ||
+    lower.startsWith("settings saved.") ||
+    lower.startsWith("collect_papers finished:") ||
+    lower.startsWith("run completed.") ||
+    lower.startsWith("plan completed after ")
+  ) {
+    return {
+      level: "OK",
+      prefixStyle: { fg: 92, bold: true },
+      textStyle: { fg: 92, bold: true }
+    };
+  }
+  if (
+    lower.startsWith("현재 수집된 논문은") ||
+    lower.startsWith("pdf 경로가 없는 논문은") ||
+    lower.startsWith("citation이 가장 높은 논문은") ||
+    lower.startsWith("논문 제목 ") ||
+    lower.startsWith("the current run has ") ||
+    lower.startsWith("papers without a pdf path:") ||
+    lower.startsWith("the top-cited paper is ") ||
+    lower.startsWith("here are ")
+  ) {
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 97 }
+    };
+  }
+  if (/^\d+\.\s/u.test(log)) {
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 97 }
+    };
+  }
+  if (lower.startsWith("execution plan detected.") || /^-\s*\[\d+\/\d+\]/u.test(log) || /^step \d+\/\d+:/iu.test(log)) {
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 97, bold: true }
+    };
+  }
+  if (lower.startsWith("next plan step ready") || lower.startsWith("remaining plan steps")) {
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 97, bold: true }
+    };
+  }
+  if (
+    lower.startsWith("attempting automatic replan after failed step") ||
+    lower.startsWith("the previous collect step failed. i can retry") ||
+    lower.startsWith("replan matched the failed plan")
+  ) {
+    return {
+      level: lower.startsWith("replan matched") ? "WARN" : "INFO",
+      prefixStyle: lower.startsWith("replan matched") ? { fg: 93, bold: true } : { fg: 96, bold: true },
+      textStyle: lower.startsWith("replan matched") ? { fg: 93, bold: true } : { fg: 97 }
+    };
+  }
+  if (lower.startsWith("no revised execution plan was suggested.")) {
+    return {
+      level: "WARN",
+      prefixStyle: { fg: 93, bold: true },
+      textStyle: { fg: 93, bold: true }
+    };
+  }
+
   if (lower.startsWith("error:") || lower.includes("[fail]") || lower.includes("failed")) {
-    return paint(log, { fg: 91, bold: true }, colorEnabled);
+    return {
+      level: "ERR",
+      prefixStyle: { fg: 91, bold: true },
+      textStyle: { fg: 91, bold: true }
+    };
   }
   if (lower.startsWith("next step:") || lower.startsWith("execution intent detected")) {
-    return paint(log, { fg: 97, bold: true }, colorEnabled);
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 97, bold: true }
+    };
   }
   if (log.startsWith("다음 단계:") || log.startsWith("실행 의도 감지")) {
-    return paint(log, { fg: 97, bold: true }, colorEnabled);
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 97, bold: true }
+    };
   }
   if (
     lower.startsWith("natural query:") ||
@@ -169,10 +369,18 @@ function renderLogLine(log: string, colorEnabled: boolean): string {
     lower.startsWith("current node:") ||
     lower.startsWith("budget:")
   ) {
-    return paint(log, { fg: 97, bold: true }, colorEnabled);
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 97, bold: true }
+    };
   }
   if (log.startsWith("자연어 질의:") || log.startsWith("현재 노드:") || log.startsWith("예산:")) {
-    return paint(log, { fg: 97, bold: true }, colorEnabled);
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 97, bold: true }
+    };
   }
   if (
     lower.startsWith("confirmed.") ||
@@ -188,7 +396,11 @@ function renderLogLine(log: string, colorEnabled: boolean): string {
     lower.startsWith("retry ") ||
     lower.startsWith("approved ")
   ) {
-    return paint(log, { fg: 97 }, colorEnabled);
+    return {
+      level: "OK",
+      prefixStyle: { fg: 92, bold: true },
+      textStyle: { fg: 97 }
+    };
   }
   if (
     log.startsWith("런:") ||
@@ -202,18 +414,40 @@ function renderLogLine(log: string, colorEnabled: boolean): string {
     log.startsWith("재시도 ") ||
     log.startsWith("승인됨")
   ) {
-    return paint(log, { fg: 97 }, colorEnabled);
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 97 }
+    };
   }
-  if (lower.startsWith("type 'y'") || lower.startsWith("pending command:")) {
-    return paint(log, { fg: 96, bold: true }, colorEnabled);
+  if (
+    lower.startsWith("type 'y'") ||
+    lower.startsWith("pending command:") ||
+    lower.startsWith("pending plan:") ||
+    lower.startsWith("pending plan from step ") ||
+    lower.startsWith("stopped remaining plan")
+  ) {
+    return {
+      level: "WARN",
+      prefixStyle: { fg: 93, bold: true },
+      textStyle: { fg: 96, bold: true }
+    };
   }
   if (lower.startsWith("use the suggested")) {
-    return paint(log, { fg: 90, dim: true }, colorEnabled);
+    return {
+      level: "INFO",
+      prefixStyle: { fg: 96, bold: true },
+      textStyle: { fg: 90, dim: true }
+    };
   }
-  return paint(log, { fg: 90 }, colorEnabled);
+  return {
+    level: "INFO",
+    prefixStyle: { fg: 96, bold: true },
+    textStyle: { fg: 90 }
+  };
 }
 
-function renderThinkingText(frame: number, colorEnabled: boolean): string {
+export function buildThinkingText(frame: number, colorEnabled: boolean): string {
   const text = "Thinking...";
   if (!colorEnabled) {
     return text;

@@ -59,6 +59,7 @@ function buildConfigFromWizardAnswers(answers: {
       codex: {
         model: "gpt-5.3-codex",
         reasoning_effort: "xhigh",
+        fast_mode: false,
         auth_required: true
       }
     },
@@ -150,6 +151,12 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   }
   if (!codex.reasoning_effort) {
     codex.reasoning_effort = "xhigh";
+  }
+  if (typeof codex.fast_mode !== "boolean") {
+    codex.fast_mode = false;
+  }
+  if (codex.model !== "gpt-5.4") {
+    codex.fast_mode = false;
   }
   codex.reasoning_effort = normalizeReasoningEffortForModel(codex.model, codex.reasoning_effort);
   return config;

@@ -9,6 +9,7 @@ export interface NaturalAssistantResponse {
   lines: string[];
   targetRunId?: string;
   pendingCommand?: string;
+  pendingCommands?: string[];
 }
 
 interface NaturalLlmAssistantContext {
@@ -27,6 +28,7 @@ interface ModelOutput {
   reply_lines?: unknown;
   target_run_id?: unknown;
   recommended_command?: unknown;
+  recommended_commands?: unknown;
   should_offer_execute?: unknown;
 }
 
@@ -55,6 +57,7 @@ const ALLOWED_ROOT_COMMANDS = new Set([
   "runs",
   "run",
   "resume",
+  "title",
   "agent",
   "model",
   "approve",
@@ -63,8 +66,8 @@ const ALLOWED_ROOT_COMMANDS = new Set([
   "quit"
 ]);
 
-const NATURAL_LLM_PRIMARY_TIMEOUT_MS = 120000;
-const NATURAL_LLM_RETRY_TIMEOUT_MS = 90000;
+const NATURAL_LLM_PRIMARY_TIMEOUT_MS = 90000;
+const NATURAL_LLM_RETRY_TIMEOUT_MS = 45000;
 
 interface NaturalAssistantCodexClient extends Pick<CodexCliClient, "runForText"> {
   runTurnStream?: CodexCliClient["runTurnStream"];
@@ -163,8 +166,11 @@ function buildPrompt(
     "Use selected_run_facts as trusted context for run artifacts and counts.",
     "If the answer is uncertain, state uncertainty clearly instead of inventing data.",
     "If user asks to execute, suggest exactly one safe slash command and set should_offer_execute=true.",
+    "If the user asks for a multi-step action, you may return recommended_commands as an ordered array of safe slash commands.",
+    "If steering hints indicate a previous plan step failed, treat this as a replanning request and revise the plan.",
+    "When replanning after failure, avoid repeating the same failed command unchanged unless no safer alternative exists.",
     "If user asks for explanation only, set should_offer_execute=false.",
-    "Allowed root commands: /help, /new, /doctor, /runs, /run, /resume, /agent, /model, /approve, /retry, /settings, /quit.",
+    "Allowed root commands: /help, /new, /doctor, /runs, /run, /resume, /title, /agent, /model, /approve, /retry, /settings, /quit.",
     "For model settings, recommend '/model' only (no subcommands).",
     "When user asks to collect papers, prefer '/agent collect [query] [options]' and set should_offer_execute=true.",
     "For additional paper collection, prefer '/agent collect --additional <count> --run <run-id>' (legacy '/agent recollect <count> [run-id]' is also valid).",
@@ -186,6 +192,7 @@ function buildPrompt(
     '  "reply_lines": ["line1", "line2"],',
     '  "target_run_id": "run-id-or-empty",',
     '  "recommended_command": "/agent ... or empty",',
+    '  "recommended_commands": ["/agent ...", "/title ..."] ,',
     '  "should_offer_execute": true',
     "}"
   ].join("\n");
@@ -275,11 +282,19 @@ function parseLlmResponse(
     if (replyLines.length > 0) {
       const targetRunId = resolveTargetRunId(parsed.target_run_id, runs, selectedRunId);
       const recommendedCommand = sanitizeRecommendedCommand(parsed.recommended_command);
+      const recommendedCommands = sanitizeRecommendedCommands(parsed.recommended_commands);
       const shouldOfferExecute = parsed.should_offer_execute === true;
+      const effectiveCommands =
+        recommendedCommands.length > 0
+          ? recommendedCommands
+          : recommendedCommand
+            ? [recommendedCommand]
+            : [];
       return {
         lines: replyLines,
         targetRunId,
-        pendingCommand: shouldOfferExecute ? recommendedCommand : undefined
+        pendingCommand: shouldOfferExecute && effectiveCommands.length === 1 ? effectiveCommands[0] : undefined,
+        pendingCommands: shouldOfferExecute && effectiveCommands.length > 1 ? effectiveCommands : undefined
       };
     }
   }
@@ -355,6 +370,23 @@ function sanitizeRecommendedCommand(raw: unknown): string | undefined {
   }
 
   return cmd;
+}
+
+function sanitizeRecommendedCommands(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: string[] = [];
+  for (const value of raw) {
+    const command = sanitizeRecommendedCommand(value);
+    if (!command) {
+      continue;
+    }
+    if (!out.includes(command)) {
+      out.push(command);
+    }
+  }
+  return out.slice(0, 8);
 }
 
 function resolveTargetRun(runs: RunRecord[], activeRunId: string | undefined, input: string): RunRecord | undefined {
@@ -684,9 +716,12 @@ function createProgressReporter(onProgress?: (line: string) => void): ProgressRe
       if (delta) {
         state.buffer += delta;
         const hasBreak = /[\n\r]/u.test(state.buffer);
-        const longEnough = state.buffer.length >= 64;
+        const longEnough = state.buffer.length >= 24;
         const now = Date.now();
-        const stale = now - state.lastEmitMs >= 1200;
+        if (state.lastEmitMs === 0) {
+          state.lastEmitMs = now;
+        }
+        const stale = now - state.lastEmitMs >= 350;
         if (hasBreak || longEnough || stale) {
           const text = oneLine(state.buffer);
           if (text) {

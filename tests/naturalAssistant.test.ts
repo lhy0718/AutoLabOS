@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildNaturalAssistantResponse } from "../src/core/commands/naturalAssistant.js";
+import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../src/core/commands/naturalAssistant.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
@@ -32,6 +32,12 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
 }
 
 describe("buildNaturalAssistantResponse", () => {
+  it("detects status and next-step intents locally", () => {
+    expect(matchesNaturalAssistantIntent("what should I do next?")).toBe(true);
+    expect(matchesNaturalAssistantIntent("현재 상태 보여줘")).toBe(true);
+    expect(matchesNaturalAssistantIntent("논문 제목 하나 알려줘")).toBe(false);
+  });
+
   it("explains workflow and next step when no runs exist", () => {
     const response = buildNaturalAssistantResponse({
       input: "파이프라인 구조 알려줘",

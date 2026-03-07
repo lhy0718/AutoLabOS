@@ -121,6 +121,7 @@ export interface AppConfig {
     codex: {
       model: string;
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
+      fast_mode: boolean;
       auth_required: true;
     };
   };

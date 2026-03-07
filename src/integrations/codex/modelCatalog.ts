@@ -1,5 +1,7 @@
 import type { CodexReasoningEffort } from "./codexCliClient.js";
 
+export const GPT_5_4_FAST_MODEL_LABEL = "gpt-5.4 (fast)";
+
 // Official Codex model list from developers.openai.com/codex/models
 // (recommended + alternative models), verified 2026-03-06.
 export const OFFICIAL_CODEX_MODELS = [
@@ -41,7 +43,13 @@ export function buildCodexModelSelectionChoices(currentModel?: string, rawEnvCho
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  const deduped = new Set<string>([...(current ? [current] : []), ...OFFICIAL_CODEX_MODELS, ...fromEnv]);
+  const deduped = new Set<string>([
+    ...(current ? [current] : []),
+    "gpt-5.4",
+    GPT_5_4_FAST_MODEL_LABEL,
+    ...OFFICIAL_CODEX_MODELS.filter((model) => model !== "gpt-5.4"),
+    ...fromEnv
+  ]);
   return [...deduped];
 }
 
@@ -70,4 +78,41 @@ export function normalizeReasoningEffortForModel(
 
   const supported = getReasoningEffortChoicesForModel(model);
   return supported.includes("medium") ? "medium" : supported[0];
+}
+
+export function resolveCodexModelSelection(choice: string): {
+  model: string;
+  fastMode: boolean;
+} {
+  if (choice === GPT_5_4_FAST_MODEL_LABEL) {
+    return {
+      model: "gpt-5.4",
+      fastMode: true
+    };
+  }
+
+  return {
+    model: choice,
+    fastMode: false
+  };
+}
+
+export function getCurrentCodexModelSelectionValue(model: string | undefined, fastMode: boolean | undefined): string {
+  if (model === "gpt-5.4" && fastMode) {
+    return GPT_5_4_FAST_MODEL_LABEL;
+  }
+  return model?.trim() || "gpt-5.4";
+}
+
+export function getCodexModelSelectionDescription(choice: string): string | undefined {
+  switch (choice) {
+    case "gpt-5.4":
+      return "Standard GPT-5.4 mode.";
+    case GPT_5_4_FAST_MODEL_LABEL:
+      return "Fast mode: 1.5x speed, 2x credits.";
+    case "gpt-5.3-codex-spark":
+      return "Separate fast Codex model.";
+    default:
+      return undefined;
+  }
 }

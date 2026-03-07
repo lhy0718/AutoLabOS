@@ -198,6 +198,34 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
     expect(response.pendingCommand).toBe(`/agent clear_papers ${run.id}`);
   });
 
+  it("accepts multi-step recommended_commands plans", async () => {
+    const run = makeRun({ id: "run-plan", status: "paused" });
+    const response = await buildNaturalAssistantResponseWithLlm({
+      input: "논문을 지우고 최근 5년 논문을 다시 모아줘",
+      runs: [run],
+      activeRunId: run.id,
+      logs: [],
+      codex: {
+        runForText: async () =>
+          JSON.stringify({
+            reply_lines: ["정리 후 다시 수집하는 2단계 계획입니다."],
+            target_run_id: run.id,
+            recommended_commands: [
+              `/agent clear_papers ${run.id}`,
+              `/agent collect --last-years 5 --sort relevance --run ${run.id}`
+            ],
+            should_offer_execute: true
+          })
+      }
+    });
+
+    expect(response.pendingCommands).toEqual([
+      `/agent clear_papers ${run.id}`,
+      `/agent collect --last-years 5 --sort relevance --run ${run.id}`
+    ]);
+    expect(response.pendingCommand).toBeUndefined();
+  });
+
   it("includes workspace and run facts in prompt", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-natural-prompt-"));
     try {

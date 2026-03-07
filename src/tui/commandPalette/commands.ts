@@ -11,6 +11,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: "runs", usage: "/runs", description: "List and search runs" },
   { name: "run", usage: "/run <run>", description: "Select a run" },
   { name: "resume", usage: "/resume <run>", description: "Resume a run" },
+  { name: "title", usage: "/title <new title>", description: "Rename the active run" },
   { name: "agent", usage: "/agent <subcommand>", description: "Run and inspect state graph nodes" },
   { name: "model", usage: "/model", description: "Open model and reasoning selector" },
   { name: "approve", usage: "/approve", description: "Approve current node" },

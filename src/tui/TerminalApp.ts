@@ -7,14 +7,27 @@ import { AGENT_ORDER, AgentId, AppConfig, GraphNodeId, RunRecord, SuggestionItem
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
+import { AutoResearchEvent, EventStream } from "../core/events.js";
 import {
   buildCodexModelSelectionChoices,
+  getCodexModelSelectionDescription,
+  getCurrentCodexModelSelectionValue,
   getReasoningEffortChoicesForModel,
-  normalizeReasoningEffortForModel
+  normalizeReasoningEffortForModel,
+  resolveCodexModelSelection
 } from "../integrations/codex/modelCatalog.js";
 import { buildSuggestions } from "./commandPalette/suggest.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
+import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../core/commands/naturalAssistant.js";
 import { buildNaturalAssistantResponseWithLlm } from "../core/commands/naturalLlmAssistant.js";
+import {
+  buildCollectSlashCommand,
+  extractCollectRequestFromNatural,
+  formatSupportedNaturalInputLines,
+  isSupportedNaturalInputsQuery,
+  resolveNodeAlias,
+  resolveDeterministicPendingCommand
+} from "../core/commands/naturalDeterministic.js";
 import { runDoctor } from "../core/doctor.js";
 import { resolveRunByQuery } from "../core/runs/runResolver.js";
 import { askLine } from "../utils/prompt.js";
@@ -22,7 +35,7 @@ import { ensureDir } from "../utils/fs.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { getAppVersion } from "./version.js";
-import { buildFrame } from "./renderFrame.js";
+import { buildFrame, buildThinkingText, RenderFrameOutput, SelectionMenuOption } from "./renderFrame.js";
 import { supportsColor } from "./theme.js";
 import {
   deleteBackward,
@@ -45,6 +58,7 @@ interface TerminalAppDeps {
   runStore: RunStore;
   titleGenerator: TitleGenerator;
   codex: CodexCliClient;
+  eventStream: EventStream;
   orchestrator: AgentOrchestrator;
   initialRunId?: string;
   onQuit: () => void;
@@ -57,9 +71,18 @@ interface ActiveNaturalRequest {
   abortController: AbortController;
 }
 
+interface PendingNaturalCommandState {
+  command: string;
+  commands: string[];
+  sourceInput: string;
+  createdAt: string;
+  stepIndex: number;
+  totalSteps: number;
+}
+
 interface ActiveSelectionMenu {
   title: string;
-  options: string[];
+  options: SelectionMenuOption[];
   selectedIndex: number;
   resolve: (value: string | undefined) => void;
 }
@@ -85,11 +108,17 @@ interface CorpusInsightsCacheEntry {
   insights: CorpusInsights;
 }
 
+interface SlashExecutionResult {
+  ok: boolean;
+  reason?: string;
+}
+
 export class TerminalApp {
   private readonly config: AppConfig;
   private readonly runStore: RunStore;
   private readonly titleGenerator: TitleGenerator;
   private readonly codex: CodexCliClient;
+  private readonly eventStream: EventStream;
   private readonly orchestrator: AgentOrchestrator;
   private readonly onQuit: () => void;
   private readonly saveConfigFn: (nextConfig: AppConfig) => Promise<void>;
@@ -121,11 +150,9 @@ export class TerminalApp {
   private readonly corpusInsightsCache = new Map<string, CorpusInsightsCacheEntry>();
   private stopped = false;
   private resolver?: () => void;
-  private pendingNaturalCommand?: {
-    command: string;
-    sourceInput: string;
-    createdAt: string;
-  };
+  private unsubscribeEvents?: () => void;
+  private lastRenderedFrame?: RenderFrameOutput;
+  private pendingNaturalCommand?: PendingNaturalCommandState;
 
   private readonly keypressHandler = (str: string, key: readline.Key) => {
     void this.handleKeypress(str, key);
@@ -136,6 +163,7 @@ export class TerminalApp {
     this.runStore = deps.runStore;
     this.titleGenerator = deps.titleGenerator;
     this.codex = deps.codex;
+    this.eventStream = deps.eventStream;
     this.orchestrator = deps.orchestrator;
     this.activeRunId = deps.initialRunId;
     this.onQuit = deps.onQuit;
@@ -147,6 +175,14 @@ export class TerminalApp {
     if (this.activeRunId) {
       await this.loadHistoryForRun(this.activeRunId);
     }
+    this.unsubscribeEvents = this.eventStream.subscribe((event) => {
+      const line = formatEventLog(event);
+      if (!line) {
+        return;
+      }
+      this.pushLog(line);
+      this.render();
+    });
     this.pushLog("Slash command palette is ready. Type /help to see commands.");
     this.attachKeyboard();
     this.render();
@@ -345,6 +381,7 @@ export class TerminalApp {
 
     this.suggestions = buildSuggestions({
       input: normalizeSlashPrefix(this.input),
+      activeRunId: this.activeRunId,
       runs: this.runIndex.map((run) => ({
         id: run.id,
         title: run.title,
@@ -393,7 +430,7 @@ export class TerminalApp {
     if (!menu) {
       return;
     }
-    const value = menu.options[menu.selectedIndex];
+    const value = menu.options[menu.selectedIndex]?.value;
     const resolve = menu.resolve;
     this.activeSelectionMenu = undefined;
     resolve(value);
@@ -461,7 +498,7 @@ export class TerminalApp {
     }
 
     if (this.pendingNaturalCommand) {
-      const pending = this.pendingNaturalCommand.command;
+      const pending = this.describePendingNaturalCommands(this.pendingNaturalCommand.commands);
       this.pendingNaturalCommand = undefined;
       this.pushLog(`Pending natural action cleared: ${pending}`);
     }
@@ -566,14 +603,10 @@ export class TerminalApp {
           this.pushLog(line);
         }
 
-        if (response.pendingCommand) {
-          this.pendingNaturalCommand = {
-            command: response.pendingCommand,
-            sourceInput: text,
-            createdAt: new Date().toISOString()
-          };
-          this.pushLog(`Execution intent detected. Pending command: ${response.pendingCommand}`);
-          this.pushLog("Type 'y' to run now, or 'n' to cancel.");
+        if (response.pendingCommands && response.pendingCommands.length > 0) {
+          this.armPendingNaturalCommands(text, response.pendingCommands);
+        } else if (response.pendingCommand) {
+          this.armPendingNaturalCommands(text, [response.pendingCommand]);
         }
         return;
       }
@@ -587,32 +620,99 @@ export class TerminalApp {
     }
 
     const normalized = text.trim().toLowerCase();
-    if (isAffirmative(normalized)) {
+    const runAllRemaining = isRunAllRemainingInput(normalized) && pending.totalSteps > 1;
+    if (isAffirmative(normalized) || runAllRemaining) {
       this.pendingNaturalCommand = undefined;
       await this.runBusyAction(async (abortSignal) => {
         if (abortSignal.aborted) {
           return;
         }
-        this.pushLog(`Confirmed. Running: ${pending.command}`);
-        const parsed = parseSlashCommand(pending.command);
-        if (!parsed) {
-          this.pushLog(`Failed to parse pending command: ${pending.command}`);
-          return;
+        const stepNumber = pending.stepIndex + 1;
+        if (pending.totalSteps === 1) {
+          this.pushLog(`Confirmed. Running: ${pending.command}`);
+        } else if (runAllRemaining) {
+          this.pushLog(
+            `Confirmed. Running all remaining steps from ${stepNumber}/${pending.totalSteps}.`
+          );
+        } else {
+          this.pushLog(`Confirmed. Running step ${stepNumber}/${pending.totalSteps}: ${pending.command}`);
         }
-        await this.executeParsedSlash(parsed.command, parsed.args, abortSignal);
+
+        for (let offset = 0; offset < pending.commands.length; offset += 1) {
+          const command = pending.commands[offset];
+          const currentStepIndex = pending.stepIndex + offset;
+          const currentStepNumber = currentStepIndex + 1;
+          const parsed = parseSlashCommand(command);
+          if (!parsed) {
+            this.pushLog(`Failed to parse pending command: ${command}`);
+            return;
+          }
+
+          if (pending.totalSteps > 1 && (offset > 0 || runAllRemaining)) {
+            this.pushLog(`Step ${currentStepNumber}/${pending.totalSteps}: ${command}`);
+          }
+
+          const result = await this.executeParsedSlash(parsed.command, parsed.args, abortSignal);
+          if (!result.ok) {
+            if (pending.totalSteps > 1) {
+              this.pushLog(
+                `Stopped remaining plan after step ${currentStepNumber}/${pending.totalSteps}: ${result.reason || "step failed"}.`
+              );
+            }
+            await this.attemptAutomaticReplanAfterFailedStep(
+              pending,
+              currentStepIndex,
+              command,
+              result.reason,
+              abortSignal
+            );
+            return;
+          }
+
+          if (pending.totalSteps > 1 && currentStepNumber < pending.totalSteps) {
+            this.pushLog(`Step ${currentStepNumber}/${pending.totalSteps} completed.`);
+            if (!runAllRemaining) {
+              this.armPendingNaturalCommands(pending.sourceInput, pending.commands.slice(offset + 1), {
+                stepIndex: currentStepIndex + 1,
+                totalSteps: pending.totalSteps,
+                continuation: true
+              });
+              return;
+            }
+          }
+        }
+
+        if (pending.totalSteps > 1) {
+          this.pushLog(`Plan completed after ${pending.totalSteps} step(s).`);
+        }
       }, "pending natural command");
       return;
     }
 
     if (isNegative(normalized)) {
       this.pendingNaturalCommand = undefined;
-      this.pushLog(`Canceled pending command: ${pending.command}`);
+      if (pending.totalSteps === 1) {
+        this.pushLog(`Canceled pending command: ${pending.command}`);
+      } else {
+        this.pushLog(
+          `Canceled pending plan from step ${pending.stepIndex + 1}/${pending.totalSteps}: ${this.describePendingNaturalCommands(pending.commands)}`
+        );
+      }
       this.render();
       return;
     }
 
-    this.pushLog(`Pending command: ${pending.command}`);
-    this.pushLog("Type 'y' to run it, or 'n' to cancel.");
+    if (pending.totalSteps === 1) {
+      this.pushLog(`Pending command: ${pending.command}`);
+      this.pushLog("Type 'y' to run it, or 'n' to cancel.");
+    } else {
+      this.pushLog(
+        `Pending plan from step ${pending.stepIndex + 1}/${pending.totalSteps}: ${this.describePendingNaturalCommands(pending.commands)}`
+      );
+      this.pushLog(
+        `Type 'y' to run step ${pending.stepIndex + 1}/${pending.totalSteps}, 'a' to run all remaining steps, or 'n' to cancel the remaining plan.`
+      );
+    }
     this.render();
   }
 
@@ -651,6 +751,47 @@ export class TerminalApp {
       return true;
     }
 
+    const language = detectQueryLanguage(text);
+
+    if (isSupportedNaturalInputsQuery(text)) {
+      for (const line of formatSupportedNaturalInputLines(language)) {
+        this.pushLog(line);
+      }
+      this.pushLog(
+        language === "ko"
+          ? "이 목록 밖의 질문은 workspace 기반 LLM 응답으로 계속 처리합니다."
+          : "Questions outside this list continue to use the workspace-grounded LLM fallback."
+      );
+      return true;
+    }
+
+    const compositePlan = buildCompositeNaturalCommandPlan(text, {
+      runId: this.getActiveIndexedRun()?.id
+    });
+    if (compositePlan) {
+      for (const line of compositePlan.lines) {
+        this.pushLog(line);
+      }
+      this.armPendingNaturalCommands(text, compositePlan.commands);
+      return true;
+    }
+
+    const titleChange = extractTitleChangeIntent(text);
+    if (titleChange) {
+      const run = await this.resolveTargetRun(undefined);
+      if (!run) {
+        return true;
+      }
+      const command = buildTitleCommand(titleChange.title, run.id);
+      this.pushLog(
+        language === "ko"
+          ? `run title을 "${titleChange.title}"로 변경합니다.`
+          : `I can rename the run title to "${titleChange.title}".`
+      );
+      this.armPendingNaturalCommands(text, [command]);
+      return true;
+    }
+
     if (isClearCollectedPapersIntent(text)) {
       const run = await this.resolveTargetRun(undefined);
       if (!run) {
@@ -662,12 +803,46 @@ export class TerminalApp {
       return true;
     }
 
+    const deterministic = resolveDeterministicPendingCommand(text, {
+      runs: this.runIndex,
+      activeRunId: this.activeRunId
+    });
+    if (deterministic) {
+      if (deterministic.targetRunId) {
+        await this.setActiveRunId(deterministic.targetRunId);
+      }
+      for (const line of deterministic.lines) {
+        this.pushLog(line);
+      }
+      if (deterministic.pendingCommand) {
+        this.armPendingNaturalCommands(text, [deterministic.pendingCommand]);
+      }
+      return true;
+    }
+
+    if (matchesNaturalAssistantIntent(text)) {
+      const response = buildNaturalAssistantResponse({
+        input: text,
+        runs: this.runIndex,
+        activeRunId: this.activeRunId
+      });
+      if (response.targetRunId) {
+        await this.setActiveRunId(response.targetRunId);
+      }
+      for (const line of response.lines) {
+        this.pushLog(line);
+      }
+      if (response.pendingCommand) {
+        this.armPendingNaturalCommands(text, [response.pendingCommand]);
+      }
+      return true;
+    }
+
     const run = await this.resolveTargetRun(undefined);
     if (!run) {
       return false;
     }
 
-    const language = detectQueryLanguage(text);
     const insights = await this.readCorpusInsights(run.id);
 
     if (isMissingPdfCountIntent(text)) {
@@ -745,6 +920,77 @@ export class TerminalApp {
     }
 
     return false;
+  }
+
+  private async attemptAutomaticReplanAfterFailedStep(
+    pending: { command: string; commands: string[]; sourceInput: string; createdAt: string },
+    failedStepIndex: number,
+    failedCommand: string,
+    failureReason: string | undefined,
+    abortSignal: AbortSignal
+  ): Promise<void> {
+    if (abortSignal.aborted) {
+      return;
+    }
+
+    this.pushLog("Attempting automatic replan after failed step...");
+
+    try {
+      const response = await buildNaturalAssistantResponseWithLlm({
+        input: pending.sourceInput,
+        runs: this.runIndex,
+        activeRunId: this.activeRunId,
+        logs: this.logs,
+        codex: this.codex,
+        workspaceRoot: process.cwd(),
+        steeringHints: [
+          "Automatic replan requested after a failed multi-step slash-command plan.",
+          `Original pending commands: ${JSON.stringify(pending.commands)}`,
+          `Failure step index: ${failedStepIndex + 1}/${pending.commands.length}`,
+          `Failed command: ${failedCommand}`,
+          `Failure reason: ${failureReason || "unknown"}`,
+          "Return a revised slash-command plan if one is available.",
+          "Do not repeat the same failed command unchanged if it already failed."
+        ],
+        abortSignal,
+        onProgress: (line) => {
+          this.pushLog(oneLine(line));
+          this.render();
+        }
+      });
+
+      if (response.targetRunId) {
+        await this.setActiveRunId(response.targetRunId);
+      }
+
+      for (const line of response.lines) {
+        this.pushLog(line);
+      }
+
+      const proposedCommands = response.pendingCommands?.length
+        ? response.pendingCommands
+        : response.pendingCommand
+          ? [response.pendingCommand]
+          : [];
+
+      if (proposedCommands.length === 0) {
+        this.pushLog("No revised execution plan was suggested.");
+        return;
+      }
+
+      if (samePendingPlan(pending.commands, proposedCommands)) {
+        this.pushLog("Replan matched the failed plan. Not re-arming the same commands.");
+        return;
+      }
+
+      this.armPendingNaturalCommands(pending.sourceInput, proposedCommands);
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        return;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      this.pushLog(`Automatic replan failed: ${message}`);
+    }
   }
 
   private async drainQueuedInputs(): Promise<void> {
@@ -899,67 +1145,75 @@ export class TerminalApp {
     command: string,
     args: string[],
     abortSignal?: AbortSignal
-  ): Promise<void> {
+  ): Promise<SlashExecutionResult> {
     if (abortSignal?.aborted) {
       throw new Error("Operation aborted by user");
     }
     switch (command) {
       case "help":
         this.printHelp();
-        return;
+        return { ok: true };
       case "new":
         await this.handleNewRun();
-        return;
+        return { ok: true };
       case "doctor":
         await this.handleDoctor();
-        return;
+        return { ok: true };
       case "runs":
         await this.handleRuns(args);
-        return;
+        return { ok: true };
       case "run":
-        await this.handleRunSelect(args, false);
-        return;
+        return this.handleRunSelect(args, false);
       case "resume":
-        await this.handleRunSelect(args, true);
-        return;
+        return this.handleRunSelect(args, true);
+      case "title":
+        return this.handleTitle(args);
       case "agent":
-        await this.handleAgent(args, abortSignal);
-        return;
+        return this.handleAgent(args, abortSignal);
       case "approve":
-        await this.handleApprove();
-        return;
+        return this.handleApprove();
       case "retry":
-        await this.handleRetry();
-        return;
+        return this.handleRetry();
       case "settings":
         await this.handleSettings();
-        return;
+        return { ok: true };
       case "model":
         await this.handleModel(args);
-        return;
+        return { ok: true };
       case "quit":
         await this.shutdown();
-        return;
+        return { ok: true };
       default:
         this.pushLog(`Unknown command: /${command}`);
+        return { ok: false, reason: `unknown command /${command}` };
     }
   }
 
   private printHelp(): void {
-    this.pushLog("Available commands:");
-    this.pushLog("/help, /new, /doctor, /runs, /run <run>, /resume <run>");
-    this.pushLog("/agent list | /agent run <node> [run] | /agent status [run]");
+    this.pushLog("Help");
+    this.pushLog("");
+    this.pushLog("Core:");
+    this.pushLog("/help | /new | /runs | /run <run> | /resume <run> | /title <new title>");
+    this.pushLog("/doctor | /model | /settings | /quit");
+    this.pushLog("");
+    this.pushLog("Workflow:");
+    this.pushLog("/approve | /retry");
+    this.pushLog("/agent list | /agent status [run] | /agent graph [run] | /agent budget [run]");
+    this.pushLog("/agent run <node> [run] | /agent retry [node] [run] | /agent jump <node> [run] [--force]");
+    this.pushLog("/agent focus <node> | /agent resume [run] [checkpoint]");
+    this.pushLog("");
+    this.pushLog("Collection:");
     this.pushLog("/agent collect [query] [options] | /agent recollect <n> [run]");
     this.pushLog("/agent clear <node> [run] | /agent count <node> [run] | /agent clear_papers [run]");
-    this.pushLog("/agent focus <node>");
-    this.pushLog("/agent graph [run] | /agent resume [run] [checkpoint] | /agent retry [node] [run]");
-    this.pushLog("/agent jump <node> [run] [--force] | /agent budget [run]");
     this.pushLog("Collect options: --run --limit --additional --last-years --year --date-range --sort --order --field --venue --type --min-citations --open-access --bibtex --dry-run");
-    this.pushLog("/model");
-    this.pushLog("/approve, /retry, /settings, /quit");
-    this.pushLog("While Thinking: any input is treated as steering for the current turn.");
-    this.pushLog("Natural language is supported. Example: What should I do next?");
-    this.pushLog("If natural input requests execution, confirm with 'y' or cancel with 'n'.");
+    this.pushLog("");
+    this.pushLog("Natural language:");
+    this.pushLog("Ask 'what natural inputs are supported?' to list the live intent catalog.");
+    this.pushLog("Examples: What should I do next? | Show current status | Collect 100 papers from the last 5 years by relevance");
+    this.pushLog("Examples: Show artifact count for the analyze_results node | Change the run title to Multi-agent collaboration");
+    this.pushLog("Execution requests require 'y' to run or 'n' to cancel.");
+    this.pushLog("Multi-step plans: 'y' runs the next step, 'a' runs all remaining steps, 'n' cancels the rest.");
+    this.pushLog("While thinking, any new input is treated as steering.");
   }
 
   private async handleNewRun(): Promise<void> {
@@ -1017,18 +1271,18 @@ export class TerminalApp {
     }
   }
 
-  private async handleRunSelect(args: string[], resume: boolean): Promise<void> {
+  private async handleRunSelect(args: string[], resume: boolean): Promise<SlashExecutionResult> {
     const query = args.join(" ").trim();
     if (!query) {
       this.pushLog(`Usage: /${resume ? "resume" : "run"} <run>`);
-      return;
+      return { ok: false, reason: `missing run for /${resume ? "resume" : "run"}` };
     }
 
     const runs = await this.runStore.listRuns();
     const run = resolveRunByQuery(runs, query);
     if (!run) {
       this.pushLog(`Run not found for query: ${query}`);
-      return;
+      return { ok: false, reason: `run not found for query ${query}` };
     }
 
     await this.setActiveRunId(run.id);
@@ -1040,9 +1294,36 @@ export class TerminalApp {
     }
 
     await this.refreshRunIndex();
+    return { ok: true };
   }
 
-  private async handleAgent(args: string[], abortSignal?: AbortSignal): Promise<void> {
+  private async handleTitle(args: string[]): Promise<SlashExecutionResult> {
+    const parsed = parseTitleCommandArgs(args);
+    if (parsed.error) {
+      this.pushLog(parsed.error);
+      return { ok: false, reason: parsed.error };
+    }
+
+    const run = await this.resolveTargetRun(parsed.runQuery);
+    if (!run) {
+      return { ok: false, reason: "target run not found" };
+    }
+
+    if (run.title === parsed.title) {
+      this.pushLog(`Title is already set: ${run.title}`);
+      return { ok: true };
+    }
+
+    const previousTitle = run.title;
+    run.title = parsed.title;
+    await this.runStore.updateRun(run);
+    await this.setActiveRunId(run.id);
+    await this.refreshRunIndex();
+    this.pushLog(`Updated title: ${previousTitle} -> ${parsed.title}`);
+    return { ok: true };
+  }
+
+  private async handleAgent(args: string[], abortSignal?: AbortSignal): Promise<SlashExecutionResult> {
     if (abortSignal?.aborted) {
       throw new Error("Operation aborted by user");
     }
@@ -1050,24 +1331,24 @@ export class TerminalApp {
 
     if (!sub || sub === "list") {
       this.pushLog(`Graph nodes: ${AGENT_ORDER.join(", ")}`);
-      return;
+      return { ok: true };
     }
 
     if (sub === "run") {
       const nodeRaw = args[1] as AgentId | undefined;
       if (!nodeRaw) {
         this.pushLog("Usage: /agent run <node> [run]");
-        return;
+        return { ok: false, reason: "missing node for /agent run" };
       }
       if (!AGENT_ORDER.includes(nodeRaw)) {
         this.pushLog(`Unknown node: ${nodeRaw}`);
-        return;
+        return { ok: false, reason: `unknown node ${nodeRaw}` };
       }
 
       const runQuery = args.slice(2).join(" ").trim() || undefined;
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
-        return;
+        return { ok: false, reason: "target run not found" };
       }
 
       await this.setActiveRunId(run.id);
@@ -1076,18 +1357,18 @@ export class TerminalApp {
 
       if (response.result.status === "failure") {
         this.pushLog(`Node ${nodeRaw} failed: ${response.result.error || "unknown error"}`);
-        return;
+        return { ok: false, reason: response.result.error || `${nodeRaw} failed` };
       }
 
       this.pushLog(`Node ${nodeRaw} finished: ${oneLine(response.result.summary)}`);
-      return;
+      return { ok: true };
     }
 
     if (sub === "status") {
       const runQuery = args.slice(1).join(" ").trim() || undefined;
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
-        return;
+        return { ok: false, reason: "target run not found" };
       }
 
       await this.setActiveRunId(run.id);
@@ -1099,12 +1380,11 @@ export class TerminalApp {
         const rollback = run.graph.rollbackCounters[node] ?? 0;
         this.pushLog(`- ${node}: ${state.status} (retry=${retry}, rollback=${rollback})`);
       }
-      return;
+      return { ok: true };
     }
 
     if (sub === "collect") {
-      await this.handleAgentCollect(args.slice(1), abortSignal);
-      return;
+      return this.handleAgentCollect(args.slice(1), abortSignal);
     }
 
     if (sub === "recollect") {
@@ -1112,7 +1392,7 @@ export class TerminalApp {
       const additional = Number(countRaw);
       if (!countRaw || !Number.isFinite(additional) || additional <= 0) {
         this.pushLog("Usage: /agent recollect <additional_count> [run]");
-        return;
+        return { ok: false, reason: "invalid additional count for /agent recollect" };
       }
 
       const normalizedAdditional = Math.max(1, Math.floor(additional));
@@ -1121,36 +1401,35 @@ export class TerminalApp {
       if (runQuery) {
         collectArgs.push("--run", runQuery);
       }
-      await this.handleAgentCollect(collectArgs, abortSignal, true);
-      return;
+      return this.handleAgentCollect(collectArgs, abortSignal, true);
     }
 
     if (sub === "count" || sub === "개수조회") {
       const nodeRaw = args[1] as GraphNodeId | undefined;
       if (!nodeRaw || !AGENT_ORDER.includes(nodeRaw)) {
         this.pushLog("Usage: /agent count <node> [run]");
-        return;
+        return { ok: false, reason: "invalid node for /agent count" };
       }
       const runQuery = args.slice(2).join(" ").trim() || undefined;
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
-        return;
+        return { ok: false, reason: "target run not found" };
       }
       const countSummary = await this.countNodeArtifacts(run, nodeRaw);
       this.pushLog(countSummary);
-      return;
+      return { ok: true };
     }
 
     if (sub === "clear") {
       const nodeRaw = args[1] as GraphNodeId | undefined;
       if (!nodeRaw || !AGENT_ORDER.includes(nodeRaw)) {
         this.pushLog("Usage: /agent clear <node> [run]");
-        return;
+        return { ok: false, reason: "invalid node for /agent clear" };
       }
       const runQuery = args.slice(2).join(" ").trim() || undefined;
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
-        return;
+        return { ok: false, reason: "target run not found" };
       }
       const removed = await this.clearNodeArtifacts(run, nodeRaw);
       await this.resetRunFromNode(run.id, nodeRaw, `clear ${nodeRaw}`);
@@ -1158,14 +1437,14 @@ export class TerminalApp {
       this.pushLog(`Cleared ${nodeRaw} artifacts: ${removed} item(s).`);
       this.pushLog(`Run reset from ${nodeRaw} (pending).`);
       await this.refreshRunIndex();
-      return;
+      return { ok: true };
     }
 
     if (sub === "clear_papers") {
       const runQuery = args.slice(1).join(" ").trim() || undefined;
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
-        return;
+        return { ok: false, reason: "target run not found" };
       }
 
       const removed = await this.clearNodeArtifacts(run, "collect_papers");
@@ -1174,30 +1453,30 @@ export class TerminalApp {
       this.pushLog(`Cleared paper artifacts: ${removed} file(s).`);
       this.pushLog("Run reset to collect_papers (pending).");
       await this.refreshRunIndex();
-      return;
+      return { ok: true };
     }
 
     if (sub === "focus") {
       const nodeRaw = args[1] as GraphNodeId | undefined;
       if (!nodeRaw || !AGENT_ORDER.includes(nodeRaw)) {
         this.pushLog("Usage: /agent focus <node>");
-        return;
+        return { ok: false, reason: "invalid node for /agent focus" };
       }
       const run = await this.resolveTargetRun(undefined);
       if (!run) {
-        return;
+        return { ok: false, reason: "target run not found" };
       }
       await this.orchestrator.jumpToNode(run.id, nodeRaw, "safe", "focus command");
       this.pushLog(`Focused current node to ${nodeRaw}.`);
       await this.refreshRunIndex();
-      return;
+      return { ok: true };
     }
 
     if (sub === "graph") {
       const runQuery = args.slice(1).join(" ").trim() || undefined;
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
-        return;
+        return { ok: false, reason: "target run not found" };
       }
 
       const graph = await this.orchestrator.getGraphStatus(run.id);
@@ -1205,7 +1484,7 @@ export class TerminalApp {
       for (const node of AGENT_ORDER) {
         this.pushLog(`- ${node}: ${graph.nodeStates[node].status}`);
       }
-      return;
+      return { ok: true };
     }
 
     if (sub === "resume") {
@@ -1213,14 +1492,14 @@ export class TerminalApp {
       const checkpointRaw = args[2] || undefined;
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
-        return;
+        return { ok: false, reason: "target run not found" };
       }
 
       const checkpoint = checkpointRaw ? Number(checkpointRaw) : undefined;
       await this.orchestrator.resumeRun(run.id, Number.isFinite(checkpoint ?? NaN) ? checkpoint : undefined);
       this.pushLog(`Resumed run ${run.id}${checkpoint ? ` from checkpoint ${checkpoint}` : ""}.`);
       await this.refreshRunIndex();
-      return;
+      return { ok: true };
     }
 
     if (sub === "retry") {
@@ -1228,21 +1507,21 @@ export class TerminalApp {
       const runQuery = args.slice(2).join(" ").trim() || undefined;
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
-        return;
+        return { ok: false, reason: "target run not found" };
       }
 
       const node = nodeRaw && AGENT_ORDER.includes(nodeRaw) ? nodeRaw : undefined;
       const updated = await this.orchestrator.retryCurrent(run.id, node);
       this.pushLog(`Retry armed for ${updated.currentNode}.`);
       await this.refreshRunIndex();
-      return;
+      return { ok: true };
     }
 
     if (sub === "jump") {
       const nodeRaw = args[1] as GraphNodeId | undefined;
       if (!nodeRaw || !AGENT_ORDER.includes(nodeRaw)) {
         this.pushLog("Usage: /agent jump <node> [run] [--force]");
-        return;
+        return { ok: false, reason: "invalid node for /agent jump" };
       }
 
       const force = args.includes("--force");
@@ -1254,47 +1533,48 @@ export class TerminalApp {
 
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
-        return;
+        return { ok: false, reason: "target run not found" };
       }
 
       const mode = force ? "force" : "safe";
       await this.orchestrator.jumpToNode(run.id, nodeRaw, mode, "manual jump command");
       this.pushLog(`Jumped to ${nodeRaw} (${mode}).`);
       await this.refreshRunIndex();
-      return;
+      return { ok: true };
     }
 
     if (sub === "budget") {
       const runQuery = args.slice(1).join(" ").trim() || undefined;
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
-        return;
+        return { ok: false, reason: "target run not found" };
       }
 
       const budget = await this.orchestrator.getBudgetStatus(run.id);
       this.pushLog(
         `Budget: tools ${budget.toolCallsUsed}/${budget.policy.maxToolCalls}, time ${(budget.wallClockMsUsed / 60000).toFixed(1)}m/${budget.policy.maxWallClockMinutes}m, usd ${budget.usdUsed ?? 0}/${budget.policy.maxUsd}`
       );
-      return;
+      return { ok: true };
     }
 
     this.pushLog(
       "Usage: /agent list | run | status | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | budget"
     );
+    return { ok: false, reason: `unknown /agent subcommand ${sub}` };
   }
 
   private async handleAgentCollect(
     rawArgs: string[],
     abortSignal?: AbortSignal,
     fromRecollectAlias = false
-  ): Promise<void> {
+  ): Promise<SlashExecutionResult> {
     const parsed = parseCollectArgs(rawArgs);
     if (!parsed.ok || !parsed.request) {
       for (const error of parsed.errors) {
         this.pushLog(`Collect option error: ${error}`);
       }
       this.pushLog(parsed.usage || COLLECT_USAGE);
-      return;
+      return { ok: false, reason: parsed.errors[0] || "invalid collect options" };
     }
 
     const request = parsed.request;
@@ -1305,7 +1585,7 @@ export class TerminalApp {
     const runQuery = request.runQuery?.trim() || undefined;
     const run = await this.resolveTargetRun(runQuery);
     if (!run) {
-      return;
+      return { ok: false, reason: "target run not found" };
     }
 
     if (abortSignal?.aborted) {
@@ -1338,7 +1618,7 @@ export class TerminalApp {
       this.pushLog(`- sort: ${request.sort.field}:${request.sort.order}`);
       this.pushLog(`- bibtex: ${request.bibtexMode}`);
       this.pushLog(`- filters: ${JSON.stringify(filters)}`);
-      return;
+      return { ok: true };
     }
 
     const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
@@ -1363,16 +1643,17 @@ export class TerminalApp {
     await this.refreshRunIndex();
     if (response.result.status === "failure") {
       this.pushLog(`collect_papers failed: ${response.result.error || "unknown error"}`);
-      return;
+      return { ok: false, reason: response.result.error || "collect_papers failed" };
     }
 
     this.pushLog(`collect_papers finished: ${oneLine(response.result.summary)}`);
+    return { ok: true };
   }
 
-  private async handleApprove(): Promise<void> {
+  private async handleApprove(): Promise<SlashExecutionResult> {
     const run = await this.resolveTargetRun(undefined);
     if (!run) {
-      return;
+      return { ok: false, reason: "target run not found" };
     }
 
     const updated = await this.orchestrator.approveCurrent(run.id);
@@ -1383,17 +1664,19 @@ export class TerminalApp {
     }
 
     await this.refreshRunIndex();
+    return { ok: true };
   }
 
-  private async handleRetry(): Promise<void> {
+  private async handleRetry(): Promise<SlashExecutionResult> {
     const run = await this.resolveTargetRun(undefined);
     if (!run) {
-      return;
+      return { ok: false, reason: "target run not found" };
     }
 
     const updated = await this.orchestrator.retryCurrent(run.id);
     this.pushLog(`Retry set for node ${updated.currentNode}.`);
     await this.refreshRunIndex();
+    return { ok: true };
   }
 
   private async handleSettings(): Promise<void> {
@@ -1425,15 +1708,21 @@ export class TerminalApp {
     }
 
     this.pushCurrentModelDefaults();
-    const model = await this.openSelectionMenu(
+    const selectedModel = await this.openSelectionMenu(
       "Select model",
-      this.buildModelSelectionChoices(),
-      this.config.providers.codex.model
+      this.buildModelSelectionOptions(),
+      getCurrentCodexModelSelectionValue(
+        this.config.providers.codex.model,
+        this.config.providers.codex.fast_mode
+      )
     );
-    if (!model) {
+    if (!selectedModel) {
       this.pushLog("Model selection canceled.");
       return;
     }
+
+    const resolvedModel = resolveCodexModelSelection(selectedModel);
+    const model = resolvedModel.model;
 
     const reasoningChoices = getReasoningEffortChoicesForModel(model);
     const currentEffort = normalizeReasoningEffortForModel(model, this.config.providers.codex.reasoning_effort);
@@ -1449,19 +1738,30 @@ export class TerminalApp {
 
     this.config.providers.codex.model = model;
     this.config.providers.codex.reasoning_effort = effort as CodexReasoningEffort;
+    this.config.providers.codex.fast_mode = model === "gpt-5.4" ? resolvedModel.fastMode : false;
     this.codex.updateDefaults({
       model,
-      reasoningEffort: effort as CodexReasoningEffort
+      reasoningEffort: effort as CodexReasoningEffort,
+      fastMode: this.config.providers.codex.fast_mode
     });
     await this.saveConfigFn(this.config);
-    this.pushLog(`Codex model updated: ${model} (reasoning: ${effort}).`);
+    this.pushLog(
+      `Codex model updated: ${this.formatCurrentModelLabel()} (reasoning: ${effort}).`
+    );
     this.pushCurrentModelDefaults();
   }
 
   private pushCurrentModelDefaults(): void {
-    const model = this.config.providers.codex.model;
+    const model = this.formatCurrentModelLabel();
     const effort = this.config.providers.codex.reasoning_effort;
     this.pushLog(`Codex defaults: model=${model}, reasoning=${effort}`);
+  }
+
+  private formatCurrentModelLabel(): string {
+    return getCurrentCodexModelSelectionValue(
+      this.config.providers.codex.model,
+      this.config.providers.codex.fast_mode
+    );
   }
 
   private buildModelSelectionChoices(): string[] {
@@ -1471,20 +1771,33 @@ export class TerminalApp {
     );
   }
 
+  private buildModelSelectionOptions(): SelectionMenuOption[] {
+    return this.buildModelSelectionChoices().map((value) => ({
+      value,
+      label: value,
+      description: getCodexModelSelectionDescription(value)
+    }));
+  }
+
   private async openSelectionMenu(
     label: string,
-    options: readonly string[],
+    options: readonly string[] | readonly SelectionMenuOption[],
     currentValue: string
   ): Promise<string | undefined> {
     if (options.length === 0) {
       return undefined;
     }
 
-    const selectedIndex = Math.max(0, options.findIndex((value) => value === currentValue));
+    const normalizedOptions: SelectionMenuOption[] = options.map((option) =>
+      typeof option === "string"
+        ? { value: option, label: option }
+        : { value: option.value, label: option.label, description: option.description }
+    );
+    const selectedIndex = Math.max(0, normalizedOptions.findIndex((option) => option.value === currentValue));
     return new Promise<string | undefined>((resolve) => {
       this.activeSelectionMenu = {
         title: label,
-        options: [...options],
+        options: normalizedOptions,
         selectedIndex,
         resolve
       };
@@ -1515,6 +1828,73 @@ export class TerminalApp {
     }
 
     return active;
+  }
+
+  private getActiveIndexedRun(): RunRecord | undefined {
+    if (this.activeRunId) {
+      const active = this.runIndex.find((run) => run.id === this.activeRunId);
+      if (active) {
+        return active;
+      }
+    }
+    return this.runIndex[0];
+  }
+
+  private armPendingNaturalCommands(
+    sourceInput: string,
+    commands: string[],
+    options?: { stepIndex?: number; totalSteps?: number; continuation?: boolean }
+  ): void {
+    const normalizedCommands = commands.map((command) => command.trim()).filter(Boolean);
+    if (normalizedCommands.length === 0) {
+      return;
+    }
+    const stepIndex = options?.stepIndex ?? 0;
+    const totalSteps = options?.totalSteps ?? normalizedCommands.length;
+    this.pendingNaturalCommand = {
+      command: normalizedCommands[0],
+      commands: normalizedCommands,
+      sourceInput,
+      createdAt: new Date().toISOString(),
+      stepIndex,
+      totalSteps
+    };
+
+    if (totalSteps === 1) {
+      this.pushLog(`Execution intent detected. Pending command: ${normalizedCommands[0]}`);
+      this.pushLog("Type 'y' to run now, or 'n' to cancel.");
+      return;
+    }
+
+    if (options?.continuation) {
+      if (normalizedCommands.length === 1) {
+        this.pushLog(`Next plan step ready (${stepIndex + 1}/${totalSteps}): ${normalizedCommands[0]}`);
+      } else {
+        this.pushLog(`Remaining plan steps (${stepIndex + 1}-${totalSteps}/${totalSteps}):`);
+        normalizedCommands.forEach((command, index) => {
+          this.pushLog(`- [${stepIndex + index + 1}/${totalSteps}] ${command}`);
+        });
+      }
+      this.pushLog(
+        `Type 'y' to run step ${stepIndex + 1}/${totalSteps}, 'a' to run all remaining steps, or 'n' to cancel the remaining plan.`
+      );
+      return;
+    }
+
+    this.pushLog(`Execution plan detected. Pending ${totalSteps}-step plan:`);
+    normalizedCommands.forEach((command, index) => {
+      this.pushLog(`- [${stepIndex + index + 1}/${totalSteps}] ${command}`);
+    });
+    this.pushLog(
+      `Type 'y' to run step ${stepIndex + 1}/${totalSteps}, 'a' to run all remaining steps, or 'n' to cancel the plan.`
+    );
+  }
+
+  private describePendingNaturalCommands(commands: string[]): string {
+    if (commands.length <= 1) {
+      return commands[0] ?? "";
+    }
+    return commands.join(" -> ");
   }
 
   private async setActiveRunId(runId?: string): Promise<void> {
@@ -1629,6 +2009,7 @@ export class TerminalApp {
           }
         : undefined
     });
+    this.lastRenderedFrame = frame;
 
     process.stdout.write("\x1Bc");
     process.stdout.write(frame.lines.join("\n"));
@@ -1638,6 +2019,26 @@ export class TerminalApp {
       process.stdout.write(`\x1b[${up}A`);
     }
     process.stdout.write(`\x1b[${frame.inputColumn}G`);
+  }
+
+  private renderThinkingLineOnly(): void {
+    const frame = this.lastRenderedFrame;
+    if (!frame?.thinkingLineIndex || !process.stdout.isTTY) {
+      this.render();
+      return;
+    }
+
+    const up = frame.inputLineIndex - frame.thinkingLineIndex;
+    const text = buildThinkingText(this.thinkingFrame, this.colorEnabled);
+    frame.lines[frame.thinkingLineIndex - 1] = text;
+
+    process.stdout.write("\x1b[s");
+    if (up > 0) {
+      process.stdout.write(`\x1b[${up}A`);
+    }
+    process.stdout.write("\x1b[1G\x1b[2K");
+    process.stdout.write(text);
+    process.stdout.write("\x1b[u");
   }
 
   private async readCorpusCount(runId: string): Promise<number> {
@@ -1839,6 +2240,8 @@ export class TerminalApp {
       this.activeSelectionMenu = undefined;
       resolve(undefined);
     }
+    this.unsubscribeEvents?.();
+    this.unsubscribeEvents = undefined;
     this.stopThinking();
     this.detachKeyboard();
     process.stdin.pause();
@@ -1860,7 +2263,7 @@ export class TerminalApp {
         return;
       }
       this.thinkingFrame = (this.thinkingFrame + 1) % 10_000;
-      this.render();
+      this.renderThinkingLineOnly();
     }, 120);
     this.render();
   }
@@ -1910,9 +2313,24 @@ function normalizeSteeringInput(text: string): string | undefined {
   return trimmed;
 }
 
+function formatEventLog(event: AutoResearchEvent): string | undefined {
+  switch (event.type) {
+    case "TOOL_CALLED":
+      return `Tool: ${oneLine(String(event.payload.command || event.payload.tool || "unknown"))}`;
+    case "PATCH_APPLIED":
+      return `Patch: ${oneLine(String(event.payload.file || "workspace updated"))}`;
+    case "OBS_RECEIVED":
+      return typeof event.payload.text === "string" ? oneLine(event.payload.text) : undefined;
+    case "TEST_FAILED":
+      return `Test failed: ${oneLine(String(event.payload.stderr || event.payload.error || "unknown"))}`;
+    default:
+      return undefined;
+  }
+}
+
 function isConfirmationInput(text: string): boolean {
   const normalized = text.trim().toLowerCase();
-  return isAffirmative(normalized) || isNegative(normalized);
+  return isAffirmative(normalized) || isRunAllRemainingInput(normalized) || isNegative(normalized);
 }
 
 function isClearCollectedPapersIntent(text: string): boolean {
@@ -1925,6 +2343,56 @@ function isClearCollectedPapersIntent(text: string): boolean {
   const hasDelete = /삭제|제거|지워|없애|clear|remove|delete|purge/u.test(lower);
   const hasAll = /모든|모두|전체|전부|all/u.test(lower);
   return hasPaper && hasDelete && hasAll;
+}
+
+export function extractTitleChangeIntent(text: string): { title: string } | undefined {
+  const raw = text.trim();
+  if (!raw) {
+    return undefined;
+  }
+
+  const lower = raw.toLowerCase();
+  const hasTitleWord = /(?:\btitle\b|제목)/iu.test(raw);
+  const hasChangeWord = /바꿔|바꾸|변경|수정|rename|change/u.test(lower);
+  if (!hasTitleWord || !hasChangeWord) {
+    return undefined;
+  }
+
+  const quotedPatterns = [
+    /(?:change|rename)\s+(?:the\s+)?(?:run\s+)?title\s+to\s+["'“”‘’]([^"'“”‘’]{1,120})["'“”‘’]/iu,
+    /(?:title|제목)(?:을|를)?\s*["'“”‘’]([^"'“”‘’]{1,120})["'“”‘’]\s*(?:으로|로)?\s*(?:바꿔|바꾸|변경|수정)?/iu,
+    /["'“”‘’]([^"'“”‘’]{1,120})["'“”‘’]\s*(?:으로|로)\s*(?:title|제목)/iu
+  ];
+  for (const pattern of quotedPatterns) {
+    const quoted = raw.match(pattern)?.[1]?.trim();
+    if (!quoted) {
+      continue;
+    }
+    const title = sanitizeTitle(normalizeTitleIntentCandidate(quoted));
+    if (title) {
+      return { title };
+    }
+  }
+
+  const patterns = [
+    /(.+?)(?:으로|로)\s*(?:title|제목)(?:을|를)?\s*(?:바꿔줘|바꿔|바꾸고|변경해줘|변경|수정해줘|수정)(?:\s+.*)?$/iu,
+    /(?:title|제목)(?:을|를)?\s*(.+?)(?:으로|로)\s*(?:바꿔줘|바꿔|바꾸고|변경해줘|변경|수정해줘|수정)(?:\s+.*)?$/iu,
+    /(?:change|rename)\s+(?:the\s+)?(?:run\s+)?title\s+to\s+(.+?)(?:\s*(?:and|then)\b.*)?$/iu,
+    /(?:run\s+title|title)\s+to\s+(.+?)(?:\s*(?:and|then)\b.*)?$/iu
+  ];
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern)?.[1]?.trim();
+    if (!match) {
+      continue;
+    }
+    const title = sanitizeTitle(normalizeTitleIntentCandidate(match));
+    if (title) {
+      return { title };
+    }
+  }
+
+  return undefined;
 }
 
 export function isPaperCountIntent(text: string): boolean {
@@ -2005,6 +2473,186 @@ function detectQueryLanguage(text: string): "ko" | "en" {
   return /[\p{Script=Hangul}]/u.test(text) ? "ko" : "en";
 }
 
+export interface CompositeNaturalCommandPlan {
+  lines: string[];
+  commands: string[];
+}
+
+function samePendingPlan(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((command, index) => command.trim() === (right[index] || "").trim());
+}
+
+export function buildCompositeNaturalCommandPlan(
+  text: string,
+  context: {
+    runId?: string;
+  }
+): CompositeNaturalCommandPlan | undefined {
+  const runId = context.runId;
+  if (!runId) {
+    return undefined;
+  }
+
+  const language = detectQueryLanguage(text);
+  const candidates: Array<{ start: number; command: string }> = [];
+
+  const nodeAlias = resolveNodeAlias(text);
+  if (nodeAlias) {
+    if (/(?:jump|go to|back to|move to|이동|돌아가|되돌아가)/iu.test(text)) {
+      candidates.push({
+        start: firstMatchIndex(text, [/jump/iu, /go to/iu, /back to/iu, /move to/iu, /이동/u, /돌아가/u, /되돌아가/u]),
+        command: `/agent jump ${nodeAlias} ${runId}`
+      });
+    } else if (/(?:focus|집중)/iu.test(text)) {
+      candidates.push({
+        start: firstMatchIndex(text, [/focus/iu, /집중/u]),
+        command: `/agent focus ${nodeAlias}`
+      });
+    }
+  }
+
+  const titleChange = extractTitleChangeIntent(text);
+  if (titleChange) {
+    candidates.push({
+      start: firstMatchIndex(text, [/title/iu, /제목/u, /rename/iu, /change/iu, /바꿔/u, /변경/u]),
+      command: buildTitleCommand(titleChange.title, runId)
+    });
+  }
+
+  if (isClearCollectedPapersIntent(text)) {
+    candidates.push({
+      start: firstMatchIndex(text, [/clear/iu, /delete/iu, /remove/iu, /삭제/u, /제거/u, /지워/u, /없애/u]),
+      command: `/agent clear collect_papers ${runId}`
+    });
+  }
+
+  const collectRequest = extractCollectRequestFromNatural(text);
+  if (collectRequest) {
+    candidates.push({
+      start: lastMatchIndex(text, [/collect/iu, /gather/iu, /fetch/iu, /search/iu, /수집/u, /모아/u, /찾아/u, /가져와/u]),
+      command: buildCollectSlashCommand(collectRequest, runId)
+    });
+  }
+
+  const commands = candidates
+    .sort((a, b) => a.start - b.start)
+    .map((item) => item.command)
+    .filter((command, index, all) => all.indexOf(command) === index);
+
+  if (commands.length <= 1) {
+    return undefined;
+  }
+
+  const lines = [
+    language === "ko"
+      ? `복합 실행 계획을 인식했습니다. 총 ${commands.length}단계입니다.`
+      : `Detected a multi-step execution plan with ${commands.length} steps.`
+  ];
+  commands.forEach((command, index) => {
+    lines.push(`[${index + 1}/${commands.length}] ${command}`);
+  });
+
+  return {
+    lines,
+    commands
+  };
+}
+
+function firstMatchIndex(text: string, patterns: RegExp[]): number {
+  const indices = patterns
+    .map((pattern) => text.search(pattern))
+    .filter((index) => index >= 0);
+  return indices.length > 0 ? Math.min(...indices) : Number.MAX_SAFE_INTEGER;
+}
+
+function lastMatchIndex(text: string, patterns: RegExp[]): number {
+  const indices = patterns
+    .map((pattern) => {
+      const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+      const globalPattern = new RegExp(pattern.source, flags);
+      let last = -1;
+      for (const match of text.matchAll(globalPattern)) {
+        if (typeof match.index === "number") {
+          last = match.index;
+        }
+      }
+      return last;
+    })
+    .filter((index) => index >= 0);
+  return indices.length > 0 ? Math.max(...indices) : Number.MAX_SAFE_INTEGER;
+}
+
+function parseTitleCommandArgs(args: string[]): { title: string; runQuery?: string; error?: string } {
+  if (args.length === 0) {
+    return {
+      title: "",
+      error: "Usage: /title <new title> [--run <run>]"
+    };
+  }
+
+  let runQuery: string | undefined;
+  const titleParts: string[] = [];
+  for (let idx = 0; idx < args.length; idx += 1) {
+    const token = args[idx];
+    if (token === "--run") {
+      const runId = args[idx + 1];
+      if (!runId) {
+        return {
+          title: "",
+          error: "Usage: /title <new title> [--run <run>]"
+        };
+      }
+      runQuery = runId;
+      idx += 1;
+      continue;
+    }
+    titleParts.push(token);
+  }
+
+  const title = sanitizeTitle(titleParts.join(" "));
+  if (!title) {
+    return {
+      title: "",
+      error: "Usage: /title <new title> [--run <run>]"
+    };
+  }
+
+  return { title, runQuery };
+}
+
+function sanitizeTitle(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim().replace(/^["'“”‘’]+|["'“”‘’]+$/gu, "").slice(0, 120);
+}
+
+function normalizeTitleIntentCandidate(raw: string): string {
+  let out = raw.replace(/\s+/g, " ").trim();
+  const leadingPatterns = [
+    /^(?:논문(?:을|들)?\s*(?:모두|전부|전체)?\s*(?:삭제|제거|지워|없애)(?:하고|한 뒤|후에)\s*)/u,
+    /^(?:현재\s*논문(?:을|들)?\s*(?:모두|전부|전체)?\s*(?:삭제|제거|지워|없애)(?:하고|한 뒤|후에)\s*)/u,
+    /^(?:clear|delete|remove)\s+(?:all\s+)?papers?\s*(?:and|then)\s*/iu
+  ];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of leadingPatterns) {
+      const next = out.replace(pattern, "").trim();
+      if (next !== out) {
+        out = next;
+        changed = true;
+      }
+    }
+  }
+  return out;
+}
+
+function buildTitleCommand(title: string, runId: string): string {
+  const escaped = title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `/title "${escaped}" --run ${runId}`;
+}
+
 function toNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -2043,6 +2691,10 @@ function looksLikePdfUrl(url: string | undefined): boolean {
 
 function isAffirmative(text: string): boolean {
   return ["y", "yes", "ok", "okay", "ㅇ", "네", "예", "응"].includes(text);
+}
+
+function isRunAllRemainingInput(text: string): boolean {
+  return ["a", "all", "run all", "remaining"].includes(text);
 }
 
 function isNegative(text: string): boolean {

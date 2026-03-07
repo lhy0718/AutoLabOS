@@ -8,6 +8,7 @@ export type CodexReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhig
 export interface CodexRunDefaults {
   model?: string;
   reasoningEffort?: CodexReasoningEffort;
+  fastMode?: boolean;
 }
 
 export interface CodexEvent {
@@ -22,6 +23,7 @@ export interface RunTurnOptions {
   systemPrompt?: string;
   model?: string;
   reasoningEffort?: CodexReasoningEffort;
+  fastMode?: boolean;
   sandboxMode: CodexSandboxMode;
   approvalPolicy: CodexApprovalPolicy;
   abortSignal?: AbortSignal;
@@ -52,6 +54,9 @@ export class CodexCliClient {
     }
     if (next.reasoningEffort) {
       this.defaults.reasoningEffort = next.reasoningEffort;
+    }
+    if (typeof next.fastMode === "boolean") {
+      this.defaults.fastMode = next.fastMode;
     }
   }
 
@@ -89,6 +94,7 @@ export class CodexCliClient {
     systemPrompt?: string;
     model?: string;
     reasoningEffort?: CodexReasoningEffort;
+    fastMode?: boolean;
   }): Promise<string> {
     const result = await this.runTurnStream({
       prompt: opts.prompt,
@@ -97,6 +103,7 @@ export class CodexCliClient {
       systemPrompt: opts.systemPrompt,
       model: opts.model,
       reasoningEffort: opts.reasoningEffort,
+      fastMode: opts.fastMode,
       sandboxMode: opts.sandboxMode,
       approvalPolicy: opts.approvalPolicy
     });
@@ -104,7 +111,7 @@ export class CodexCliClient {
   }
 
   async runTurnStream(opts: RunTurnOptions): Promise<RunTurnResult> {
-    const fakeResponse = process.env.AUTORESEARCH_FAKE_CODEX_RESPONSE;
+    const fakeResponse = resolveFakeCodexResponse();
     if (typeof fakeResponse === "string" && fakeResponse.length > 0) {
       const discoveredThreadId = opts.threadId || process.env.AUTORESEARCH_FAKE_CODEX_THREAD_ID || "fake-thread";
       const event = normalizeAgentEvent(
@@ -151,6 +158,11 @@ export class CodexCliClient {
     const reasoningEffort = opts.reasoningEffort || this.defaults.reasoningEffort;
     if (reasoningEffort) {
       args.push("-c", `model_reasoning_effort="${reasoningEffort}"`);
+    }
+
+    const fastMode = typeof opts.fastMode === "boolean" ? opts.fastMode : this.defaults.fastMode;
+    if (typeof fastMode === "boolean") {
+      args.push("-c", `fast_mode=${fastMode ? "true" : "false"}`);
     }
 
     const prompt = opts.systemPrompt ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt;
@@ -285,6 +297,40 @@ export class CodexCliClient {
 
     return { exitCode, stdout, stderr };
   }
+}
+
+let fakeResponseSequenceSource = "";
+let fakeResponseSequenceIndex = 0;
+
+function resolveFakeCodexResponse(): string | undefined {
+  const fakeSequence = process.env.AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE;
+  if (typeof fakeSequence === "string" && fakeSequence.trim()) {
+    if (fakeResponseSequenceSource !== fakeSequence) {
+      fakeResponseSequenceSource = fakeSequence;
+      fakeResponseSequenceIndex = 0;
+    }
+
+    try {
+      const parsed = JSON.parse(fakeSequence) as unknown;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const index = Math.min(fakeResponseSequenceIndex, parsed.length - 1);
+        fakeResponseSequenceIndex += 1;
+        const selected = parsed[index];
+        if (typeof selected === "string") {
+          return selected;
+        }
+        return JSON.stringify(selected);
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  const fakeResponse = process.env.AUTORESEARCH_FAKE_CODEX_RESPONSE;
+  if (typeof fakeResponse === "string" && fakeResponse.length > 0) {
+    return fakeResponse;
+  }
+  return undefined;
 }
 
 function extractFallbackText(events: CodexEvent[]): string {
