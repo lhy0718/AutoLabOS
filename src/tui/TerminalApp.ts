@@ -29,14 +29,15 @@ import { parseSlashCommand } from "../core/commands/parseSlash.js";
 import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../core/commands/naturalAssistant.js";
 import { buildNaturalAssistantResponseWithLlm } from "../core/commands/naturalLlmAssistant.js";
 import {
-  applyCollectRequestContext,
   buildCollectSlashCommand,
-  extractCollectRequestFromNatural,
   formatSupportedNaturalInputLines,
   isSupportedNaturalInputsQuery,
-  resolveNodeAlias,
   resolveDeterministicPendingCommand
 } from "../core/commands/naturalDeterministic.js";
+import {
+  extractStructuredActionPlan,
+  looksLikeStructuredActionRequest
+} from "../core/commands/naturalActionIntent.js";
 import { runDoctor } from "../core/doctor.js";
 import { resolveRunByQuery } from "../core/runs/runResolver.js";
 import { askLine } from "../utils/prompt.js";
@@ -87,6 +88,7 @@ interface ActiveNaturalRequest {
 interface PendingNaturalCommandState {
   command: string;
   commands: string[];
+  displayCommands?: string[];
   sourceInput: string;
   createdAt: string;
   stepIndex: number;
@@ -639,6 +641,7 @@ export class TerminalApp {
 
     const normalized = text.trim().toLowerCase();
     const runAllRemaining = isRunAllRemainingInput(normalized) && pending.totalSteps > 1;
+    const displayCommands = this.resolvePendingDisplayCommands(pending);
     if (isAffirmative(normalized) || runAllRemaining) {
       this.pendingNaturalCommand = undefined;
       await this.runBusyAction(async (abortSignal) => {
@@ -647,17 +650,20 @@ export class TerminalApp {
         }
         const stepNumber = pending.stepIndex + 1;
         if (pending.totalSteps === 1) {
-          this.pushLog(`Confirmed. Running: ${pending.command}`);
+          this.pushLog(`Confirmed. Running: ${displayCommands[0] ?? pending.command}`);
         } else if (runAllRemaining) {
           this.pushLog(
             `Confirmed. Running all remaining steps from ${stepNumber}/${pending.totalSteps}.`
           );
         } else {
-          this.pushLog(`Confirmed. Running step ${stepNumber}/${pending.totalSteps}: ${pending.command}`);
+          this.pushLog(
+            `Confirmed. Running step ${stepNumber}/${pending.totalSteps}: ${displayCommands[0] ?? pending.command}`
+          );
         }
 
         for (let offset = 0; offset < pending.commands.length; offset += 1) {
           const command = pending.commands[offset];
+          const displayCommand = displayCommands[offset] ?? command;
           const currentStepIndex = pending.stepIndex + offset;
           const currentStepNumber = currentStepIndex + 1;
           const parsed = parseSlashCommand(command);
@@ -670,7 +676,7 @@ export class TerminalApp {
           this.render();
 
           if (pending.totalSteps > 1 && (offset > 0 || runAllRemaining)) {
-            this.pushLog(`Step ${currentStepNumber}/${pending.totalSteps}: ${command}`);
+            this.pushLog(`Step ${currentStepNumber}/${pending.totalSteps}: ${displayCommand}`);
           }
 
           const result = await this.executeParsedSlash(parsed.command, parsed.args, abortSignal);
@@ -697,7 +703,8 @@ export class TerminalApp {
                 stepIndex: currentStepIndex + 1,
                 totalSteps: pending.totalSteps,
                 continuation: true,
-                presentation: pending.presentation
+                presentation: pending.presentation,
+                displayCommands: pending.displayCommands?.slice(offset + 1)
               });
               return;
             }
@@ -714,7 +721,7 @@ export class TerminalApp {
     if (isNegative(normalized)) {
       this.pendingNaturalCommand = undefined;
       if (pending.totalSteps === 1) {
-        this.pushLog(`Canceled pending command: ${pending.command}`);
+        this.pushLog(`Canceled pending command: ${displayCommands[0] ?? pending.command}`);
       } else {
         this.pushLog(
           `Canceled pending plan from step ${pending.stepIndex + 1}/${pending.totalSteps}: ${this.describePendingNaturalCommands(pending)}`
@@ -725,7 +732,7 @@ export class TerminalApp {
     }
 
     if (pending.totalSteps === 1) {
-      this.pushLog(`Pending command: ${pending.command}`);
+      this.pushLog(`Pending command: ${displayCommands[0] ?? pending.command}`);
       this.pushLog("Type 'y' to run it, or 'n' to cancel.");
     } else {
       this.pushLog(this.buildPendingPlanReminderLine(pending));
@@ -788,21 +795,38 @@ export class TerminalApp {
     }
 
     const activeRun = this.getActiveIndexedRun();
-    const compositePlan = buildCompositeNaturalCommandPlan(text, {
-      runId: activeRun?.id,
-      run: activeRun
-        ? {
-            title: activeRun.title,
-            topic: activeRun.topic
+    if (looksLikeStructuredActionRequest(text)) {
+      try {
+        const structuredPlan = await extractStructuredActionPlan({
+          input: text,
+          runs: this.runIndex,
+          activeRunId: this.activeRunId,
+          llm: this.getNaturalAssistantClient(),
+          abortSignal,
+          onProgress: (line) => {
+            this.pushLog(oneLine(line));
+            this.render();
           }
-        : undefined
-    });
-    if (compositePlan) {
-      for (const line of compositePlan.lines) {
-        this.pushLog(line);
+        });
+        if (structuredPlan) {
+          if (structuredPlan.targetRunId) {
+            await this.setActiveRunId(structuredPlan.targetRunId);
+          }
+          for (const line of structuredPlan.lines) {
+            this.pushLog(line);
+          }
+          this.armPendingNaturalCommands(text, structuredPlan.commands, {
+            displayCommands: structuredPlan.displayActions
+          });
+          return true;
+        }
+      } catch (error) {
+        if (this.isAbortError(error)) {
+          throw error;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        this.pushLog(`Structured action extraction failed: ${message}`);
       }
-      this.armPendingNaturalCommands(text, compositePlan.commands);
-      return true;
     }
 
     const titleChange = extractTitleChangeIntent(text);
@@ -821,15 +845,83 @@ export class TerminalApp {
       return true;
     }
 
-    if (isClearCollectedPapersIntent(text)) {
-      const run = await this.resolveTargetRun(undefined);
-      if (!run) {
+    const run = await this.resolveTargetRun(undefined);
+    if (run) {
+      const insights = await this.readCorpusInsights(run.id);
+
+      if (isMissingPdfCountIntent(text)) {
+        if (insights.totalPapers === 0) {
+          this.pushLog(
+            language === "ko"
+              ? "현재 run에 수집된 논문이 없습니다."
+              : "No collected papers were found in the current run."
+          );
+          return true;
+        }
+        this.pushLog(
+          language === "ko"
+            ? `PDF 경로가 없는 논문은 ${insights.missingPdfCount}편입니다. (총 ${insights.totalPapers}편)`
+            : `Papers without a PDF path: ${insights.missingPdfCount} (out of ${insights.totalPapers}).`
+        );
         return true;
       }
-      this.pushLog("Detected paper cleanup intent.");
-      this.pushLog(`Running immediately: /agent clear collect_papers ${run.id}`);
-      await this.executeParsedSlash("agent", ["clear", "collect_papers", run.id], abortSignal);
-      return true;
+
+      if (isTopCitationIntent(text)) {
+        if (insights.totalPapers === 0) {
+          this.pushLog(
+            language === "ko"
+              ? "현재 run에 수집된 논문이 없습니다."
+              : "No collected papers were found in the current run."
+          );
+          return true;
+        }
+        if (!insights.topCitation) {
+          this.pushLog(
+            language === "ko"
+              ? "수집된 논문에 citation 정보가 없어 최고 citation 논문을 계산할 수 없습니다."
+              : "Citation metadata is missing, so I cannot compute the top-cited paper."
+          );
+          return true;
+        }
+        this.pushLog(
+          language === "ko"
+            ? `citation이 가장 높은 논문은 "${insights.topCitation.title}"이며 citation_count는 ${insights.topCitation.citationCount}회입니다.`
+            : `The top-cited paper is "${insights.topCitation.title}" with ${insights.topCitation.citationCount} citations.`
+        );
+        return true;
+      }
+
+      if (isPaperCountIntent(text)) {
+        this.pushLog(
+          language === "ko"
+            ? `현재 수집된 논문은 ${insights.totalPapers}편입니다.`
+            : `The current run has ${insights.totalPapers} collected papers.`
+        );
+        return true;
+      }
+
+      if (isPaperTitleIntent(text)) {
+        const limit = extractRequestedTitleCount(text);
+        const titles = insights.titles.slice(0, limit);
+        if (titles.length === 0) {
+          this.pushLog(
+            language === "ko"
+              ? "현재 run에 수집된 논문 제목이 없습니다."
+              : "No collected paper titles were found in the current run."
+          );
+          return true;
+        }
+
+        this.pushLog(
+          language === "ko"
+            ? `논문 제목 ${titles.length}개입니다.`
+            : `Here are ${titles.length} paper title(s).`
+        );
+        titles.forEach((title, idx) => {
+          this.pushLog(`${idx + 1}. ${title}`);
+        });
+        return true;
+      }
     }
 
     const deterministic = resolveDeterministicPendingCommand(text, {
@@ -867,87 +959,6 @@ export class TerminalApp {
       return true;
     }
 
-    const run = await this.resolveTargetRun(undefined);
-    if (!run) {
-      return false;
-    }
-
-    const insights = await this.readCorpusInsights(run.id);
-
-    if (isMissingPdfCountIntent(text)) {
-      if (insights.totalPapers === 0) {
-        this.pushLog(
-          language === "ko"
-            ? "현재 run에 수집된 논문이 없습니다."
-            : "No collected papers were found in the current run."
-        );
-        return true;
-      }
-      this.pushLog(
-        language === "ko"
-          ? `PDF 경로가 없는 논문은 ${insights.missingPdfCount}편입니다. (총 ${insights.totalPapers}편)`
-          : `Papers without a PDF path: ${insights.missingPdfCount} (out of ${insights.totalPapers}).`
-      );
-      return true;
-    }
-
-    if (isTopCitationIntent(text)) {
-      if (insights.totalPapers === 0) {
-        this.pushLog(
-          language === "ko"
-            ? "현재 run에 수집된 논문이 없습니다."
-            : "No collected papers were found in the current run."
-        );
-        return true;
-      }
-      if (!insights.topCitation) {
-        this.pushLog(
-          language === "ko"
-            ? "수집된 논문에 citation 정보가 없어 최고 citation 논문을 계산할 수 없습니다."
-            : "Citation metadata is missing, so I cannot compute the top-cited paper."
-        );
-        return true;
-      }
-      this.pushLog(
-        language === "ko"
-          ? `citation이 가장 높은 논문은 "${insights.topCitation.title}"이며 citation_count는 ${insights.topCitation.citationCount}회입니다.`
-          : `The top-cited paper is "${insights.topCitation.title}" with ${insights.topCitation.citationCount} citations.`
-      );
-      return true;
-    }
-
-    if (isPaperCountIntent(text)) {
-      this.pushLog(
-        language === "ko"
-          ? `현재 수집된 논문은 ${insights.totalPapers}편입니다.`
-          : `The current run has ${insights.totalPapers} collected papers.`
-      );
-      return true;
-    }
-
-    if (isPaperTitleIntent(text)) {
-      const limit = extractRequestedTitleCount(text);
-      const titles = insights.titles.slice(0, limit);
-      if (titles.length === 0) {
-        this.pushLog(
-          language === "ko"
-            ? "현재 run에 수집된 논문 제목이 없습니다."
-            : "No collected paper titles were found in the current run."
-        );
-        return true;
-      }
-
-      this.pushLog(
-        language === "ko"
-          ? `논문 제목 ${titles.length}개입니다.`
-          : `Here are ${titles.length} paper title(s).`
-      );
-      titles.forEach((title, idx) => {
-        this.pushLog(`${idx + 1}. ${title}`);
-      });
-      return true;
-    }
-
     return false;
   }
 
@@ -976,10 +987,10 @@ export class TerminalApp {
         this.pushLog("Replan matched the failed plan. Not re-arming the same commands.");
         return;
       }
-      this.armPendingNaturalCommands(pending.sourceInput, deterministicReplan.commands, {
-        presentation: "collect_replan_summary"
-      });
-      return;
+        this.armPendingNaturalCommands(pending.sourceInput, deterministicReplan.commands, {
+          presentation: "collect_replan_summary"
+        });
+        return;
     }
 
     try {
@@ -2220,6 +2231,7 @@ export class TerminalApp {
       totalSteps?: number;
       continuation?: boolean;
       presentation?: "default" | "collect_replan_summary";
+      displayCommands?: string[];
     }
   ): void {
     const normalizedCommands = commands.map((command) => command.trim()).filter(Boolean);
@@ -2228,18 +2240,22 @@ export class TerminalApp {
     }
     const stepIndex = options?.stepIndex ?? 0;
     const totalSteps = options?.totalSteps ?? normalizedCommands.length;
-    this.pendingNaturalCommand = {
+    const pendingState: PendingNaturalCommandState = {
       command: normalizedCommands[0],
       commands: normalizedCommands,
+      displayCommands: options?.displayCommands?.slice(0, normalizedCommands.length),
       sourceInput,
       createdAt: new Date().toISOString(),
       stepIndex,
       totalSteps,
       presentation: options?.presentation ?? "default"
     };
+    this.pendingNaturalCommand = pendingState;
+
+    const displayCommands = this.resolvePendingDisplayCommands(pendingState);
 
     if (totalSteps === 1) {
-      this.pushLog(`Execution intent detected. Pending command: ${normalizedCommands[0]}`);
+      this.pushLog(`Execution intent detected. Pending command: ${displayCommands[0]}`);
       this.pushLog("Type 'y' to run now, or 'n' to cancel.");
       return;
     }
@@ -2248,10 +2264,10 @@ export class TerminalApp {
       if (this.pendingNaturalCommand.presentation === "collect_replan_summary") {
         this.pushLog(`Next recovery collect step ready (${stepIndex + 1}/${totalSteps}).`);
       } else if (normalizedCommands.length === 1) {
-        this.pushLog(`Next plan step ready (${stepIndex + 1}/${totalSteps}): ${normalizedCommands[0]}`);
+        this.pushLog(`Next plan step ready (${stepIndex + 1}/${totalSteps}): ${displayCommands[0]}`);
       } else {
         this.pushLog(`Remaining plan steps (${stepIndex + 1}-${totalSteps}/${totalSteps}):`);
-        normalizedCommands.forEach((command, index) => {
+        displayCommands.forEach((command, index) => {
           this.pushLog(`- [${stepIndex + index + 1}/${totalSteps}] ${command}`);
         });
       }
@@ -2265,7 +2281,7 @@ export class TerminalApp {
       this.pushLog(`Recovery collect plan prepared with ${totalSteps} smaller step(s).`);
     } else {
       this.pushLog(`Execution plan detected. Pending ${totalSteps}-step plan:`);
-      normalizedCommands.forEach((command, index) => {
+      displayCommands.forEach((command, index) => {
         this.pushLog(`- [${stepIndex + index + 1}/${totalSteps}] ${command}`);
       });
     }
@@ -2285,10 +2301,15 @@ export class TerminalApp {
     if (pending.presentation === "collect_replan_summary") {
       return `recovery collect plan (${pending.totalSteps} step${pending.totalSteps === 1 ? "" : "s"})`;
     }
-    if (pending.commands.length <= 1) {
-      return pending.commands[0] ?? "";
+    const displayCommands = this.resolvePendingDisplayCommands(pending);
+    if (displayCommands.length <= 1) {
+      return displayCommands[0] ?? "";
     }
-    return pending.commands.join(" -> ");
+    return displayCommands.join(" -> ");
+  }
+
+  private resolvePendingDisplayCommands(pending: Pick<PendingNaturalCommandState, "commands" | "displayCommands">): string[] {
+    return pending.commands.map((command, index) => pending.displayCommands?.[index] ?? command);
   }
 
   private async setActiveRunId(runId?: string): Promise<void> {
@@ -2803,7 +2824,7 @@ function formatEventLog(event: AutoResearchEvent): string | undefined {
     case "OBS_RECEIVED":
       return typeof event.payload.text === "string" ? oneLine(event.payload.text) : undefined;
     case "TEST_FAILED":
-      return `Test failed: ${oneLine(String(event.payload.stderr || event.payload.error || "unknown"))}`;
+      return `Test failed: ${oneLine(String(event.payload.stderr || event.payload.error || event.payload.text || "unknown"))}`;
     default:
       return undefined;
   }
@@ -2812,18 +2833,6 @@ function formatEventLog(event: AutoResearchEvent): string | undefined {
 function isConfirmationInput(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   return isAffirmative(normalized) || isRunAllRemainingInput(normalized) || isNegative(normalized);
-}
-
-function isClearCollectedPapersIntent(text: string): boolean {
-  const raw = text.trim();
-  if (!raw) {
-    return false;
-  }
-  const lower = raw.toLowerCase();
-  const hasPaper = /논문|paper|papers/u.test(raw);
-  const hasDelete = /삭제|제거|지워|없애|clear|remove|delete|purge/u.test(lower);
-  const hasAll = /모든|모두|전체|전부|all/u.test(lower);
-  return hasPaper && hasDelete && hasAll;
 }
 
 export function extractTitleChangeIntent(text: string): { title: string } | undefined {
@@ -2883,7 +2892,7 @@ export function isPaperCountIntent(text: string): boolean {
   }
   const lower = raw.toLowerCase();
   const hasPaper = /논문|paper|papers/u.test(raw);
-  const asksCount = /몇|개수|갯수|몇개|몇 개|how many|count|number/u.test(lower);
+  const asksCount = /몇|개수|갯수|몇개|몇 개|몇건|몇 건|how many|count|number/u.test(lower);
   const asksTitles = /제목|title|titles|목록|리스트|list/u.test(lower);
   const asksSpecificAttribute = /pdf|citation|인용|doi|저자|author|venue|journal|year|연도|field|분야|abstract|요약/u.test(
     lower
@@ -2900,7 +2909,7 @@ export function isMissingPdfCountIntent(text: string): boolean {
   const hasPaper = /논문|paper|papers/u.test(raw);
   const hasPdf = /pdf|피디에프/u.test(lower);
   const asksMissing = /없|누락|missing|without|no\s+pdf/u.test(lower);
-  const asksCount = /몇|개수|갯수|몇개|몇 개|how many|count|number/u.test(lower);
+  const asksCount = /몇|개수|갯수|몇개|몇 개|몇건|몇 건|how many|count|number/u.test(lower);
   return hasPaper && hasPdf && asksMissing && asksCount;
 }
 
@@ -2982,121 +2991,11 @@ function describeNodeActivity(node: GraphNodeId): string {
   }
 }
 
-export interface CompositeNaturalCommandPlan {
-  lines: string[];
-  commands: string[];
-}
-
 function samePendingPlan(left: string[], right: string[]): boolean {
   if (left.length !== right.length) {
     return false;
   }
   return left.every((command, index) => command.trim() === (right[index] || "").trim());
-}
-
-export function buildCompositeNaturalCommandPlan(
-  text: string,
-  context: {
-    run?: {
-      title: string;
-      topic: string;
-    };
-    runId?: string;
-  }
-): CompositeNaturalCommandPlan | undefined {
-  const runId = context.runId;
-  if (!runId) {
-    return undefined;
-  }
-
-  const language = detectQueryLanguage(text);
-  const candidates: Array<{ start: number; command: string }> = [];
-
-  const nodeAlias = resolveNodeAlias(text);
-  if (nodeAlias) {
-    if (/(?:jump|go to|back to|move to|이동|돌아가|되돌아가)/iu.test(text)) {
-      candidates.push({
-        start: firstMatchIndex(text, [/jump/iu, /go to/iu, /back to/iu, /move to/iu, /이동/u, /돌아가/u, /되돌아가/u]),
-        command: `/agent jump ${nodeAlias} ${runId}`
-      });
-    } else if (/(?:focus|집중)/iu.test(text)) {
-      candidates.push({
-        start: firstMatchIndex(text, [/focus/iu, /집중/u]),
-        command: `/agent focus ${nodeAlias}`
-      });
-    }
-  }
-
-  const titleChange = extractTitleChangeIntent(text);
-  if (titleChange) {
-    candidates.push({
-      start: firstMatchIndex(text, [/title/iu, /제목/u, /rename/iu, /change/iu, /바꿔/u, /변경/u]),
-      command: buildTitleCommand(titleChange.title, runId)
-    });
-  }
-
-  if (isClearCollectedPapersIntent(text)) {
-    candidates.push({
-      start: firstMatchIndex(text, [/clear/iu, /delete/iu, /remove/iu, /삭제/u, /제거/u, /지워/u, /없애/u]),
-      command: `/agent clear collect_papers ${runId}`
-    });
-  }
-
-  const collectRequest = extractCollectRequestFromNatural(text);
-  if (collectRequest) {
-    const contextualized = applyCollectRequestContext(collectRequest, text, context.run);
-    candidates.push({
-      start: lastMatchIndex(text, [/collect/iu, /gather/iu, /fetch/iu, /search/iu, /수집/u, /모아/u, /찾아/u, /가져와/u]),
-      command: buildCollectSlashCommand(contextualized, runId)
-    });
-  }
-
-  const commands = candidates
-    .sort((a, b) => a.start - b.start)
-    .map((item) => item.command)
-    .filter((command, index, all) => all.indexOf(command) === index);
-
-  if (commands.length <= 1) {
-    return undefined;
-  }
-
-  const lines = [
-    language === "ko"
-      ? `복합 실행 계획을 인식했습니다. 총 ${commands.length}단계입니다.`
-      : `Detected a multi-step execution plan with ${commands.length} steps.`
-  ];
-  commands.forEach((command, index) => {
-    lines.push(`[${index + 1}/${commands.length}] ${command}`);
-  });
-
-  return {
-    lines,
-    commands
-  };
-}
-
-function firstMatchIndex(text: string, patterns: RegExp[]): number {
-  const indices = patterns
-    .map((pattern) => text.search(pattern))
-    .filter((index) => index >= 0);
-  return indices.length > 0 ? Math.min(...indices) : Number.MAX_SAFE_INTEGER;
-}
-
-function lastMatchIndex(text: string, patterns: RegExp[]): number {
-  const indices = patterns
-    .map((pattern) => {
-      const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
-      const globalPattern = new RegExp(pattern.source, flags);
-      let last = -1;
-      for (const match of text.matchAll(globalPattern)) {
-        if (typeof match.index === "number") {
-          last = match.index;
-        }
-      }
-      return last;
-    })
-    .filter((index) => index >= 0);
-  return indices.length > 0 ? Math.max(...indices) : Number.MAX_SAFE_INTEGER;
 }
 
 function parseTitleCommandArgs(args: string[]): { title: string; runQuery?: string; error?: string } {

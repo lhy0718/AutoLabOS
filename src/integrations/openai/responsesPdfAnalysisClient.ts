@@ -34,11 +34,14 @@ export class ResponsesPdfAnalysisClient {
     prompt: string;
     systemPrompt?: string;
     abortSignal?: AbortSignal;
+    onProgress?: (message: string) => void;
   }): Promise<ResponsesPdfAnalysisResult> {
     const apiKey = await this.resolveApiKey();
     if (!apiKey) {
       throw new Error("OPENAI_API_KEY is required for Responses API PDF analysis.");
     }
+
+    args.onProgress?.(`Submitting PDF analysis request to Responses API (${args.model}).`);
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -72,6 +75,7 @@ export class ResponsesPdfAnalysisClient {
       throw new Error(`Responses API request failed: ${response.status}${body ? ` ${body}` : ""}`);
     }
 
+    args.onProgress?.("Responses API returned a successful HTTP response for PDF analysis.");
     const payload = (await response.json()) as ResponsesApiResponse;
     if (payload.error?.message) {
       throw new Error(`Responses API returned an error: ${payload.error.message}`);
@@ -81,6 +85,8 @@ export class ResponsesPdfAnalysisClient {
     if (!text) {
       throw new Error("Responses API returned no output text.");
     }
+
+    args.onProgress?.("Responses API produced PDF analysis text.");
 
     return {
       text,

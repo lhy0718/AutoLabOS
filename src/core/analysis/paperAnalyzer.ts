@@ -1,4 +1,4 @@
-import { LLMClient } from "../llm/client.js";
+import { LLMClient, LLMProgressEvent } from "../llm/client.js";
 import { AnalysisCorpusRow, ResolvedPaperSource, buildAbstractFallbackText } from "./paperText.js";
 import { ResponsesPdfAnalysisClient } from "../../integrations/openai/responsesPdfAnalysisClient.js";
 
@@ -71,16 +71,23 @@ export async function analyzePaperWithLlm(args: {
   paper: AnalysisCorpusRow;
   source: ResolvedPaperSource;
   maxAttempts?: number;
+  onProgress?: (message: string) => void;
 }): Promise<PaperAnalysisResult> {
   const maxAttempts = Math.max(1, args.maxAttempts ?? 2);
   let lastError: Error | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
+      args.onProgress?.(`Starting LLM analysis attempt ${attempt}/${maxAttempts}.`);
       const completion = await args.llm.complete(buildPaperAnalysisPrompt(args.paper, args.source), {
-        systemPrompt: ANALYSIS_SYSTEM_PROMPT
+        systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+        onProgress: (event) => {
+          emitLlmProgress(args.onProgress, event);
+        }
       });
+      args.onProgress?.("Received LLM output. Parsing structured JSON.");
       const parsed = parsePaperAnalysisJson(completion.text);
+      args.onProgress?.("Structured JSON parsed successfully.");
       return {
         ...normalizePaperAnalysis(args.paper, args.source, parsed),
         attempts: attempt,
@@ -88,6 +95,7 @@ export async function analyzePaperWithLlm(args: {
       };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      args.onProgress?.(`Analysis attempt ${attempt}/${maxAttempts} failed: ${lastError.message}`);
     }
   }
 
@@ -101,6 +109,7 @@ export async function analyzePaperWithResponsesPdf(args: {
   model: string;
   maxAttempts?: number;
   abortSignal?: AbortSignal;
+  onProgress?: (message: string) => void;
 }): Promise<PaperAnalysisResult> {
   const maxAttempts = Math.max(1, args.maxAttempts ?? 2);
   let lastError: Error | undefined;
@@ -113,14 +122,18 @@ export async function analyzePaperWithResponsesPdf(args: {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
+      args.onProgress?.(`Starting Responses API PDF analysis attempt ${attempt}/${maxAttempts} with model ${args.model}.`);
       const completion = await args.client.analyzePdf({
         model: args.model,
         pdfUrl: args.pdfUrl,
         prompt: buildPaperAnalysisFilePrompt(args.paper),
         systemPrompt: ANALYSIS_SYSTEM_PROMPT,
-        abortSignal: args.abortSignal
+        abortSignal: args.abortSignal,
+        onProgress: (message) => args.onProgress?.(message)
       });
+      args.onProgress?.("Received Responses API output. Parsing structured JSON.");
       const parsed = parsePaperAnalysisJson(completion.text);
+      args.onProgress?.("Structured JSON parsed successfully.");
       return {
         ...normalizePaperAnalysis(args.paper, sourceHint, parsed),
         attempts: attempt,
@@ -128,10 +141,44 @@ export async function analyzePaperWithResponsesPdf(args: {
       };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      args.onProgress?.(`PDF analysis attempt ${attempt}/${maxAttempts} failed: ${lastError.message}`);
     }
   }
 
   throw lastError ?? new Error("paper_analysis_failed");
+}
+
+export function shouldFallbackResponsesPdfToLocalText(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return [
+    /timeout while downloading/i,
+    /failed to download/i,
+    /unable to download/i,
+    /unable to fetch/i,
+    /could not fetch/i,
+    /file_url/i,
+    /remote file/i
+  ].some((pattern) => pattern.test(message));
+}
+
+function emitLlmProgress(
+  onProgress: ((message: string) => void) | undefined,
+  event: LLMProgressEvent
+): void {
+  if (!onProgress) {
+    return;
+  }
+  if (event.type === "delta") {
+    const text = event.text.trim();
+    if (text) {
+      onProgress(`LLM> ${text}`);
+    }
+    return;
+  }
+  const text = event.text.trim();
+  if (text) {
+    onProgress(text);
+  }
 }
 
 export function buildPaperAnalysisPrompt(paper: AnalysisCorpusRow, source: ResolvedPaperSource): string {

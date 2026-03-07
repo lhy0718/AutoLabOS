@@ -14,9 +14,11 @@ import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 
 const tempDirs: string[] = [];
 const originalCwd = process.cwd();
+const originalFetch = globalThis.fetch;
 
 afterEach(async () => {
   process.chdir(originalCwd);
+  globalThis.fetch = originalFetch;
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
@@ -140,11 +142,11 @@ describe("analyzePapers node", () => {
     expect(summariesRaw).toContain('"summary":"summary 1"');
     expect(evidenceRaw).toContain('"claim":"claim 1"');
     expect(manifestRaw).toContain('"status": "completed"');
-    expect(
-      eventStream.history().some((event) =>
-        String(event.payload?.text ?? "").includes('Analyzed "Paper 1" (1 evidence item(s), source=abstract).')
-      )
-    ).toBe(true);
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes('Resolving analysis source 1/2 for "Paper 1".'))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes('[p1] Starting LLM analysis attempt 1/2.'))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes('Persisted analysis outputs for "Paper 1"'))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes('Analyzed "Paper 1" (1 evidence item(s), source=abstract).'))).toBe(true);
   });
 
   it("persists partial progress and resumes only unfinished papers on rerun", async () => {
@@ -253,6 +255,63 @@ describe("analyzePapers node", () => {
     const summariesRaw = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
     expect(summariesRaw).toContain('"source_type":"full_text"');
     expect(summariesRaw).toContain('"summary":"pdf summary"');
+  });
+
+  it("falls back to local text/abstract analysis when Responses API times out downloading a remote PDF", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-analyze-pdf-fallback-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-pdf-fallback";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Paper 1",
+        abstract: "Abstract 1",
+        authors: ["Alice"],
+        pdf_url: "https://example.com/p1.pdf"
+      }
+    ]);
+
+    globalThis.fetch = (async () => new Response("missing", { status: 404 })) as typeof fetch;
+
+    const eventStream = new InMemoryEventStream();
+    const responseClient = {
+      hasApiKey: async () => true,
+      analyzePdf: async () => {
+        throw new Error(
+          'Responses API request failed: 400 { "error": { "message": "Timeout while downloading https://example.com/p1.pdf" } }'
+        );
+      }
+    } as unknown as ResponsesPdfAnalysisClient;
+
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "responses_api_pdf",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new SequenceJsonLLM([jsonOutput("fallback summary", "fallback claim")]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: responseClient
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const summariesRaw = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw).toContain('"summary":"fallback summary"');
+    expect(summariesRaw).toContain('"source_type":"abstract"');
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Responses API could not download the remote PDF"))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes("Falling back to abstract for \"Paper 1\" after Responses API fallback"))).toBe(true);
   });
 
   it("analyzes only the selected top-N papers when a request is provided", async () => {

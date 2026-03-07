@@ -253,34 +253,9 @@ export function resolveDeterministicPendingCommand(
     );
   }
 
-  const analyzeTopN = extractAnalyzeTopNRequest(text);
-  if (analyzeTopN) {
-    const command = `/agent run analyze_papers${targetRun?.id ? ` ${targetRun.id}` : ""} --top-n ${analyzeTopN.topN}`;
-    return buildPending(
-      language,
-      command,
-      targetRun?.id,
-      `Analyzing the top ${analyzeTopN.topN} ranked papers.`,
-      `상위 ${analyzeTopN.topN}개 논문만 분석합니다.`
-    );
-  }
-
   const nodeCommand = resolveNodeCommand(text, targetRun?.id);
   if (nodeCommand) {
     return buildPending(language, nodeCommand.command, targetRun?.id, nodeCommand.en, nodeCommand.ko);
-  }
-
-  const collectRequest = extractCollectRequestFromNatural(text);
-  if (collectRequest) {
-    const contextualized = applyCollectRequestContext(collectRequest, text, targetRun);
-    const command = buildCollectSlashCommand(contextualized, targetRun?.id);
-    return buildPending(
-      language,
-      command,
-      targetRun?.id,
-      "Paper collection request recognized.",
-      "논문 수집 요청을 인식했습니다."
-    );
   }
 
   return undefined;
@@ -295,33 +270,6 @@ export function resolveNodeAlias(text: string): GraphNodeId | undefined {
   return undefined;
 }
 
-function extractAnalyzeTopNRequest(text: string): { topN: number } | undefined {
-  const raw = text.trim();
-  if (!raw) {
-    return undefined;
-  }
-  const lower = raw.toLowerCase();
-  const hasAnalyzeVerb =
-    /분석/u.test(raw) ||
-    /analy[sz]e|analysis/i.test(lower);
-  if (!hasAnalyzeVerb) {
-    return undefined;
-  }
-
-  const hasPaperHints =
-    /논문|paper|papers/u.test(raw) ||
-    /title|제목|citation|피인용|유사|similar|relevance|관련도/u.test(lower);
-  const topMatch =
-    raw.match(/상위\s*(\d+)\s*(?:개|편)?/u) ||
-    raw.match(/top\s*(\d+)\s*(?:papers?)?/iu) ||
-    raw.match(/(\d+)\s*(?:개|편|papers?)\s*(?:만)?[^.\n]{0,60}(?:분석|analy[sz]e)/iu);
-  const topN = toPositiveInt(topMatch?.[1]);
-  if (!topN || !hasPaperHints && !/상위|top/u.test(raw)) {
-    return undefined;
-  }
-  return { topN };
-}
-
 export function extractCollectRequestFromNatural(text: string): CollectCommandRequest | undefined {
   const raw = text.trim();
   const lower = raw.toLowerCase();
@@ -332,18 +280,22 @@ export function extractCollectRequestFromNatural(text: string): CollectCommandRe
   const quotedQuery = extractQuotedQuery(raw);
 
   const hasCollectVerb =
-    /수집/u.test(raw) ||
+    /수집(?:해|하|할|하고|해서|해줘|해 줘)/u.test(raw) ||
+    /수집(?:을|를)?[^.\n]{0,80}(?:진행|실행|시작)(?:해|하|할|해줘|해 줘)?/u.test(raw) ||
     /collect|gather|fetch|search|lookup|find|research|investigate/i.test(lower) ||
-    /모아줘|모아 줘|찾아줘|찾아 줘|가져와|검색해줘|검색해 줘|조사해줘|조사해 줘|조회해줘|조회해 줘/u.test(raw);
+    /모아줘|모아 줘|찾아줘|찾아 줘|가져와|검색해줘|검색해 줘|조사해줘|조사해 줘|조회해줘|조회해 줘|진행해줘|진행해 줘/u.test(raw);
   const hasPaperWord = /논문|paper|papers/u.test(raw);
   const hasCollectHints =
     hasPaperWord ||
     /최근\s*\d+\s*년|last\s+\d+\s+years?/iu.test(raw) ||
-    /\d+\s*(개|편)|\b\d+\s+(papers?|items?)\b/iu.test(raw) ||
+    /\d+\s*(개|편|건)|\b\d+\s+(papers?|items?)\b/iu.test(raw) ||
     /관련도|relevance|citation|인용|최신|latest|recent|newest/u.test(lower) ||
     /open[- ]access|오픈\s*액세스|오픈액세스|review|리뷰/u.test(lower) ||
     /(nature|science|neurips|iclr|acl|icml|emnlp|naacl|cvpr|iccv|aaai)/iu.test(lower);
-  if ((!hasCollectVerb && !quotedQuery) || !hasCollectHints) {
+  const isCountLikeQuestion =
+    /몇|개수|갯수|몇개|몇 개|몇건|몇 건|how many|count|number/u.test(lower) &&
+    !/더|추가|additional|more/u.test(lower);
+  if ((!hasCollectVerb && !quotedQuery) || !hasCollectHints || (isCountLikeQuestion && !hasCollectVerb)) {
     return undefined;
   }
 
@@ -357,6 +309,8 @@ export function extractCollectRequestFromNatural(text: string): CollectCommandRe
   const openAccessPdf =
     /open[- ]access|오픈\s*액세스|오픈액세스/u.test(lower) ||
     /pdf\s*(?:링크|link|url)?\s*(?:가|이)?\s*있는(?:\s*것(?:들)?)?(?:으로|만)?/u.test(raw) ||
+    /pdf\s*(?:가|이)?\s*가능(?:한)?(?:\s*것(?:들)?|걸|거)?(?:로|만)?/u.test(raw) ||
+    /pdf\s*(?:가능|가능한)\s*(?:것(?:들)?|걸|거)?(?:로|만)?/u.test(raw) ||
     /pdf\s*(?:있는|있는\s*것|있는\s*것들)\s*만/u.test(raw) ||
     /with\s+(?:a\s+)?pdf(?:\s+link)?|pdf\s+available|only\s+papers?\s+with\s+pdf/i.test(lower);
   const publicationTypes = extractPublicationTypes(raw);
@@ -476,46 +430,11 @@ function resolveNodeCommand(
   }
 
   const lower = text.toLowerCase();
-  if (matchesAny(lower, [/clear/i, /remove/i, /delete/i, /삭제/u, /제거/u, /비워/u])) {
-    return {
-      command: `/agent clear ${node}${runId ? ` ${runId}` : ""}`,
-      en: `Clearing artifacts for ${node}.`,
-      ko: `${node} 산출물을 정리합니다.`
-    };
-  }
   if (matchesAny(lower, [/count/i, /how many/i, /개수/u, /몇/u])) {
     return {
       command: `/agent count ${node}${runId ? ` ${runId}` : ""}`,
       en: `Counting artifacts for ${node}.`,
       ko: `${node} 산출물 개수를 조회합니다.`
-    };
-  }
-  if (matchesAny(lower, [/jump/i, /go to/i, /back to/i, /이동/u, /돌아가/u])) {
-    return {
-      command: `/agent jump ${node}${runId ? ` ${runId}` : ""}`,
-      en: `Jumping to ${node}.`,
-      ko: `${node}로 이동합니다.`
-    };
-  }
-  if (matchesAny(lower, [/focus/i, /집중/u])) {
-    return {
-      command: `/agent focus ${node}`,
-      en: `Focusing on ${node}.`,
-      ko: `${node}에 집중합니다.`
-    };
-  }
-  if (matchesAny(lower, [/retry/i, /재시도/u, /다시\s*시도/u, /재실행/u])) {
-    return {
-      command: `/agent retry ${node}${runId ? ` ${runId}` : ""}`,
-      en: `Retrying ${node}.`,
-      ko: `${node}를 재시도합니다.`
-    };
-  }
-  if (matchesAny(lower, [/run/i, /execute/i, /start/i, /실행/u, /시작/u])) {
-    return {
-      command: `/agent run ${node}${runId ? ` ${runId}` : ""}`,
-      en: `Running ${node}.`,
-      ko: `${node}를 실행합니다.`
     };
   }
   return undefined;
@@ -580,8 +499,8 @@ function extractAdditionalCount(text: string): number | undefined {
 
 function extractLimitCount(text: string): number | undefined {
   const match =
-    text.match(/(\d+)\s*(?:개|편)(?:를|을)?\s*(?:수집|collect|gather|fetch|search|lookup|find|research|investigate|검색|조사|조회)/u) ||
-    text.match(/(\d+)\s*(?:개|편)(?!\s*(?:더|추가))/u) ||
+    text.match(/(\d+)\s*(?:개|편|건)(?:를|을)?\s*(?:수집|collect|gather|fetch|search|lookup|find|research|investigate|검색|조사|조회|진행)/u) ||
+    text.match(/(\d+)\s*(?:개|편|건)(?!\s*(?:더|추가))/u) ||
     text.match(/(\d+)\s+(?:papers?|items?)(?!\s*(?:more|additional))/iu) ||
     text.match(/(?:collect|gather|fetch|search|lookup|find|research|investigate)\s+(\d+)\s+(?:papers?|items?)/iu);
   return toPositiveInt(match?.[1]);

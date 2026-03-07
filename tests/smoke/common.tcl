@@ -21,7 +21,8 @@ proc escape_regex {text} {
 
 proc spawn_autoresearch {workdir} {
   global spawn_id
+  set repo_root [file normalize [file join [file dirname [info script]] ../..]]
   cd $workdir
-  spawn env COLUMNS=220 LINES=40 node ../dist/cli/main.js
+  spawn env COLUMNS=220 LINES=40 node [file join $repo_root dist cli main.js]
   catch {stty rows 40 cols 220}
 }

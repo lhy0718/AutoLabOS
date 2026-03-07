@@ -38,10 +38,12 @@ export async function resolvePaperTextSource(args: {
   runId: string;
   paper: AnalysisCorpusRow;
   abortSignal?: AbortSignal;
+  onProgress?: (message: string) => void;
 }): Promise<ResolvedPaperSource> {
   const fallback = buildAbstractFallbackText(args.paper);
   const pdfUrl = resolvePaperPdfUrl(args.paper);
   if (!pdfUrl) {
+    args.onProgress?.("No PDF URL found. Using abstract fallback.");
     return {
       sourceType: "abstract",
       text: fallback,
@@ -56,6 +58,7 @@ export async function resolvePaperTextSource(args: {
 
   const cachedText = await readCachedText(textCachePath);
   if (cachedText) {
+    args.onProgress?.("Reusing cached extracted full text.");
     return {
       sourceType: "full_text",
       text: cachedText,
@@ -67,11 +70,14 @@ export async function resolvePaperTextSource(args: {
   }
 
   try {
+    args.onProgress?.("Downloading PDF for text extraction.");
     await downloadPdf(pdfUrl, pdfCachePath, args.abortSignal);
+    args.onProgress?.("Extracting text from downloaded PDF.");
     const extracted = await extractPdfText(pdfCachePath, args.abortSignal);
     if (extracted) {
       await ensureDir(path.dirname(textCachePath));
       await fs.writeFile(textCachePath, extracted, "utf8");
+      args.onProgress?.("PDF text extraction completed.");
       return {
         sourceType: "full_text",
         text: extracted,
@@ -81,6 +87,7 @@ export async function resolvePaperTextSource(args: {
         textCachePath
       };
     }
+    args.onProgress?.("PDF extraction produced no usable text. Falling back to abstract.");
     return {
       sourceType: "abstract",
       text: fallback,
@@ -91,6 +98,9 @@ export async function resolvePaperTextSource(args: {
       fallbackReason: "pdf_extract_failed"
     };
   } catch (error) {
+    args.onProgress?.(
+      `PDF resolution failed (${error instanceof Error ? error.message : String(error)}). Falling back to abstract.`
+    );
     return {
       sourceType: "abstract",
       text: fallback,

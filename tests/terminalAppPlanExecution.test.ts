@@ -55,6 +55,71 @@ function makeRun(id = "run-1"): any {
 }
 
 describe("TerminalApp pending natural plan execution", () => {
+  it("answers collected-paper count questions directly instead of arming a collect command", async () => {
+    const app = makeApp();
+    const run = makeRun("run-count");
+    app.runIndex = [run];
+    app.activeRunId = run.id;
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.readCorpusInsights = vi.fn().mockResolvedValue({
+      totalPapers: 42,
+      missingPdfCount: 3,
+      titles: [],
+      topCitation: undefined
+    });
+
+    const handled = await app.handleFastNaturalIntent("수집된 논문은 몇건이지?", new AbortController().signal);
+
+    expect(handled).toBe(true);
+    expect(app.logs).toContain("현재 수집된 논문은 42편입니다.");
+    expect(app.pendingNaturalCommand).toBeUndefined();
+  });
+
+  it("arms a pending confirmation for clear-collected-papers natural requests", async () => {
+    const app = makeApp();
+    const run = makeRun("run-clear");
+    app.runIndex = [run];
+    app.activeRunId = run.id;
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.executeParsedSlash = vi.fn();
+    app.codex = {
+      runForText: async () =>
+        JSON.stringify({
+          target_run_id: run.id,
+          actions: [{ type: "clear", node: "collect_papers" }]
+        })
+    };
+
+    const handled = await app.handleFastNaturalIntent("수집된 논문들을 모두 지워줘", new AbortController().signal);
+
+    expect(handled).toBe(true);
+    expect(app.logs).toContain("산출물 정리 요청을 인식했습니다.");
+    expect(app.pendingNaturalCommand?.commands).toEqual([`/agent clear collect_papers ${run.id}`]);
+    expect(app.executeParsedSlash).not.toHaveBeenCalled();
+  });
+
+  it("arms a pending analyze top-n command from structured action extraction", async () => {
+    const app = makeApp();
+    const run = makeRun("run-analyze");
+    app.runIndex = [run];
+    app.activeRunId = run.id;
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.codex = {
+      runForText: async () =>
+        JSON.stringify({
+          target_run_id: run.id,
+          actions: [{ type: "analyze_papers", top_n: 30 }]
+        })
+    };
+
+    const handled = await app.handleFastNaturalIntent("30편 분석 진행해줘", new AbortController().signal);
+
+    expect(handled).toBe(true);
+    expect(app.logs).toContain("Execution intent detected. Pending command: 상위 30개 논문 분석");
+    expect(app.pendingNaturalCommand?.commands).toEqual([`/agent run analyze_papers ${run.id} --top-n 30`]);
+    expect(app.pendingNaturalCommand?.displayCommands).toEqual(["상위 30개 논문 분석"]);
+  });
+
   it("executes one pending plan step at a time and re-arms the remaining steps", async () => {
     const app = makeApp();
     app.pendingNaturalCommand = {

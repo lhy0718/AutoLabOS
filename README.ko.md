@@ -259,12 +259,13 @@ npm run test:smoke:ci
 
 스모크 테스트 안내:
 - smoke harness 파일은 `tests/smoke/` 아래에 있습니다.
-- smoke가 실행하는 예시 workspace는 계속 `/test`를 사용합니다.
-- `test:smoke:natural-collect`는 `/test` 경로에서 실행되며,
+- 수동 실행용 예시 workspace는 `/test` 아래에 둡니다.
+- smoke는 `/test` 루트 상태를 덮어쓰지 않도록 `/test/smoke-workspace`를 별도 workspace로 사용합니다.
+- `test:smoke:natural-collect`는 `/test/smoke-workspace` 경로에서 실행되며,
   자연어 수집 요청 -> pending `/agent collect ...` 생성 흐름을 PTY로 검증합니다.
-- `test:smoke:natural-collect-execute`는 `/test` 경로에서 실행되며,
+- `test:smoke:natural-collect-execute`는 `/test/smoke-workspace` 경로에서 실행되며,
   자연어 수집 요청 -> `y` 실행 -> 수집 산출물 생성까지 PTY로 검증합니다.
-- `test:smoke:all`은 `/test` 기준 전체 로컬 smoke 묶음을 실행합니다.
+- `test:smoke:all`은 `/test/smoke-workspace` 기준 전체 로컬 smoke 묶음을 실행합니다.
 - 실제 Codex 호출 없이 `AUTORESEARCH_FAKE_CODEX_RESPONSE`를 사용합니다.
 - execute 스모크는 `AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE`도 사용합니다.
 - `test:smoke:ci`는 CI 모드 선택 실행입니다.

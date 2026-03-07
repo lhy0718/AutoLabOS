@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 SMOKE_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SMOKE_WORK_DIR="${SMOKE_ROOT_DIR}/test"
+SMOKE_WORK_DIR="${SMOKE_ROOT_DIR}/test/smoke-workspace"
 SMOKE_DEFAULT_RUN_ID="9727e56e-19bc-46bb-bf5c-88d3be06af0d"
 readonly SMOKE_SCENARIO_ORDER=(
   pending

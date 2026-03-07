@@ -259,12 +259,13 @@ npm run test:smoke:ci
 
 Smoke note:
 - Smoke harness files live under `tests/smoke/`.
-- The runnable example workspace used by smoke stays under `/test`.
-- `test:smoke:natural-collect` runs in `/test` and verifies PTY flow for
+- The manual example workspace stays under `/test`.
+- Smoke uses an isolated workspace under `/test/smoke-workspace` so it does not overwrite the root `/test` example state.
+- `test:smoke:natural-collect` runs in `/test/smoke-workspace` and verifies PTY flow for
   natural-language collect request -> pending `/agent collect ...` command.
-- `test:smoke:natural-collect-execute` runs in `/test` and verifies
+- `test:smoke:natural-collect-execute` runs in `/test/smoke-workspace` and verifies
   natural-language collect request -> `y` execute -> collect artifacts created.
-- `test:smoke:all` runs the full local smoke bundle in `/test`.
+- `test:smoke:all` runs the full local smoke bundle in `/test/smoke-workspace`.
 - It uses `AUTORESEARCH_FAKE_CODEX_RESPONSE` to avoid live Codex calls.
 - Execute smoke also uses `AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE`.
 - `test:smoke:ci` runs CI-mode smoke selection.

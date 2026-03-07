@@ -10,7 +10,8 @@ import {
   analyzePaperWithLlm,
   analyzePaperWithResponsesPdf,
   PaperEvidenceRow,
-  PaperSummaryRow
+  PaperSummaryRow,
+  shouldFallbackResponsesPdfToLocalText
 } from "../analysis/paperAnalyzer.js";
 import {
   AnalysisCorpusRow,
@@ -71,6 +72,16 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
   return {
     id: "analyze_papers",
     async execute({ run, abortSignal }) {
+      const emitLog = (text: string) => {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_papers",
+          payload: {
+            text
+          }
+        });
+      };
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
       const corpusRows = await readCorpusRows(run.id);
       const analysisMode = deps.config.analysis.pdf_mode;
@@ -82,24 +93,19 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const request = await loadAnalysisSelectionRequest(runContextMemory);
       await runContextMemory.put("analyze_papers.request", request);
 
-      deps.eventStream.emit({
-        type: "OBS_RECEIVED",
-        runId: run.id,
-        node: "analyze_papers",
-        payload: {
-          text:
-            request.selectionMode === "top_n" && request.topN
-              ? `Ranking ${corpusRows.length} papers and selecting the top ${request.topN} for analysis.`
-              : `Analyzing all ${corpusRows.length} collected papers.`
-        }
-      });
+      emitLog(
+        request.selectionMode === "top_n" && request.topN
+          ? `Ranking ${corpusRows.length} papers and selecting the top ${request.topN} for analysis.`
+          : `Analyzing all ${corpusRows.length} collected papers.`
+      );
 
       const selection = await selectPapersForAnalysis({
         llm: deps.llm,
         runTitle: run.title,
         runTopic: run.topic,
         corpusRows,
-        request
+        request,
+        onProgress: (text) => emitLog(text)
       });
 
       deps.eventStream.emit({
@@ -116,23 +122,17 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       });
 
       if (selection.rerankFallbackReason) {
-        deps.eventStream.emit({
-          type: "OBS_RECEIVED",
-          runId: run.id,
-          node: "analyze_papers",
-          payload: {
-            text: `LLM rerank unavailable, falling back to deterministic order (${selection.rerankFallbackReason}).`
-          }
-        });
+        emitLog(`LLM rerank unavailable, falling back to deterministic order (${selection.rerankFallbackReason}).`);
       } else if (selection.rerankApplied) {
-        deps.eventStream.emit({
-          type: "OBS_RECEIVED",
-          runId: run.id,
-          node: "analyze_papers",
-          payload: {
-            text: `Hybrid rerank selected ${selection.selectedPaperIds.length} paper(s) from ${selection.totalCandidates} candidate(s).`
-          }
-        });
+        emitLog(`Hybrid rerank selected ${selection.selectedPaperIds.length} paper(s) from ${selection.totalCandidates} candidate(s).`);
+      }
+      if (selection.deterministicRankingPreview.length > 0) {
+        emitLog(
+          `Ranking preview: ${selection.deterministicRankingPreview
+            .slice(0, 3)
+            .map((row) => `${row.paper_id}=${row.deterministic_score}`)
+            .join(", ")}`
+        );
       }
 
       const selectedRows = selection.selectedPaperIds
@@ -174,14 +174,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
       for (let index = 0; index < pendingRows.length; index += 1) {
         const row = pendingRows[index];
-        deps.eventStream.emit({
-          type: "OBS_RECEIVED",
-          runId: run.id,
-          node: "analyze_papers",
-          payload: {
-            text: `Resolving analysis source ${index + 1}/${pendingRows.length} for "${row.title}".`
-          }
-        });
+        emitLog(`Analyzing paper ${index + 1}/${pendingRows.length}: "${row.title}".`);
+        emitLog(`Resolving analysis source ${index + 1}/${pendingRows.length} for "${row.title}".`);
 
         deps.eventStream.emit({
           type: "TOOL_CALLED",
@@ -195,7 +189,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
         const pdfUrl = resolvePaperPdfUrl(row);
         const useResponsesPdf = analysisMode === "responses_api_pdf" && Boolean(pdfUrl);
-        const source = useResponsesPdf
+        let source = useResponsesPdf
           ? {
               sourceType: "full_text" as const,
               text: row.abstract || row.title,
@@ -205,41 +199,78 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           : await resolvePaperTextSource({
               runId: run.id,
               paper: row,
-              abortSignal
+              abortSignal,
+              onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
             });
 
-        deps.eventStream.emit({
-          type: "OBS_RECEIVED",
-          runId: run.id,
-          node: "analyze_papers",
-          payload: {
-            text: useResponsesPdf
-              ? `Using Responses API PDF input for "${row.title}".`
-              : source.sourceType === "full_text"
-                ? `Using full text for "${row.title}".`
-                : `Falling back to abstract for "${row.title}" (${source.fallbackReason || "no full text"}).`
-          }
-        });
+        let analysisModeUsed: "responses_api_pdf" | "codex_text_extract" = useResponsesPdf
+          ? "responses_api_pdf"
+          : "codex_text_extract";
+
+        emitLog(
+          useResponsesPdf
+            ? `Using Responses API PDF input for "${row.title}".`
+            : source.sourceType === "full_text"
+              ? `Using full text for "${row.title}".`
+              : `Falling back to abstract for "${row.title}" (${source.fallbackReason || "no full text"}).`
+        );
 
         try {
-          const analysis = useResponsesPdf && pdfUrl
-            ? await analyzePaperWithResponsesPdf({
+          let analysis;
+          if (useResponsesPdf && pdfUrl) {
+            try {
+              analysis = await analyzePaperWithResponsesPdf({
                 client: deps.responsesPdfAnalysis,
                 paper: row,
                 pdfUrl,
                 model: deps.config.analysis.responses_model,
                 maxAttempts: 2,
-                abortSignal
-              })
-            : await analyzePaperWithLlm({
+                abortSignal,
+                onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+              });
+            } catch (error) {
+              if (!shouldFallbackResponsesPdfToLocalText(error)) {
+                throw error;
+              }
+              const reason = error instanceof Error ? error.message : String(error);
+              emitLog(
+                `[${row.paper_id}] Responses API could not download the remote PDF (${reason}). Falling back to local PDF download/text extraction.`
+              );
+              source = await resolvePaperTextSource({
+                runId: run.id,
+                paper: row,
+                abortSignal,
+                onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+              });
+              analysisModeUsed = "codex_text_extract";
+              emitLog(
+                source.sourceType === "full_text"
+                  ? `Using locally extracted full text for "${row.title}" after Responses API fallback.`
+                  : `Falling back to abstract for "${row.title}" after Responses API fallback (${source.fallbackReason || "no full text"}).`
+              );
+              analysis = await analyzePaperWithLlm({
                 llm: deps.llm,
                 paper: row,
                 source,
-                maxAttempts: 2
+                maxAttempts: 2,
+                onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
               });
+            }
+          } else {
+            analysis = await analyzePaperWithLlm({
+              llm: deps.llm,
+              paper: row,
+              source,
+              maxAttempts: 2,
+              onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+            });
+          }
 
           await appendJsonlItems(run, "paper_summaries.jsonl", [analysis.summaryRow]);
           await appendJsonlItems(run, "evidence_store.jsonl", analysis.evidenceRows);
+          emitLog(
+            `Persisted analysis outputs for "${row.title}" (1 summary row, ${analysis.evidenceRows.length} evidence row(s)).`
+          );
 
           const manifestEntry = manifest.papers[row.paper_id];
           manifest.papers[row.paper_id] = {
@@ -252,7 +283,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             summary_count: 1,
             evidence_count: analysis.evidenceRows.length,
             analysis_attempts: analysis.attempts,
-            analysis_mode: useResponsesPdf ? "responses_api_pdf" : "codex_text_extract",
+            analysis_mode: analysisModeUsed,
             pdf_url: source.pdfUrl,
             pdf_cache_path: source.pdfCachePath,
             text_cache_path: source.textCachePath,
@@ -264,14 +295,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           manifest.updatedAt = new Date().toISOString();
           await writeJsonFile(manifestPath, manifest);
 
-          deps.eventStream.emit({
-            type: "OBS_RECEIVED",
-            runId: run.id,
-            node: "analyze_papers",
-            payload: {
-              text: `Analyzed "${row.title}" (${analysis.evidenceRows.length} evidence item(s), source=${source.sourceType}).`
-            }
-          });
+          emitLog(`Analyzed "${row.title}" (${analysis.evidenceRows.length} evidence item(s), source=${source.sourceType}).`);
         } catch (error) {
           failedCount += 1;
           const message = error instanceof Error ? error.message : String(error);
@@ -286,7 +310,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             summary_count: 0,
             evidence_count: 0,
             analysis_attempts: 2,
-            analysis_mode: useResponsesPdf ? "responses_api_pdf" : "codex_text_extract",
+            analysis_mode: analysisModeUsed,
             pdf_url: source.pdfUrl,
             pdf_cache_path: source.pdfCachePath,
             text_cache_path: source.textCachePath,
@@ -301,7 +325,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             runId: run.id,
             node: "analyze_papers",
             payload: {
-              text: `Analysis validation failed for "${row.title}": ${message}`
+              text: `Analysis failed for "${row.title}": ${message}`,
+              error: message
             }
           });
         }
@@ -319,6 +344,9 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       await runContextMemory.put("analyze_papers.selected_count", selection.selectedPaperIds.length);
       await runContextMemory.put("analyze_papers.total_candidates", selection.totalCandidates);
       await runContextMemory.put("analyze_papers.selection_fingerprint", selection.selectionFingerprint);
+      emitLog(
+        `Analysis totals: summaries=${summaryRows.length}, evidence=${evidenceRows.length}, full_text=${fullTextCount}, abstract_fallback=${abstractFallbackCount}.`
+      );
 
       if (failedCount > 0) {
         return {

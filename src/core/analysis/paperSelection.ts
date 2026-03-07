@@ -101,9 +101,14 @@ export async function selectPapersForAnalysis(args: {
   runTopic: string;
   corpusRows: AnalysisCorpusRow[];
   request: AnalysisSelectionRequest;
+  onProgress?: (message: string) => void;
 }): Promise<PaperSelectionResult> {
+  args.onProgress?.(
+    `Deterministic pre-rank started for ${args.corpusRows.length} paper(s) using title/topic similarity, citation count, and recency.`
+  );
   const ranked = rankPapersDeterministically(args.runTitle || args.runTopic, args.corpusRows);
   const totalCandidates = ranked.length;
+  args.onProgress?.(`Deterministic pre-rank completed for ${totalCandidates} candidate(s).`);
   if (args.request.selectionMode === "all" || !args.request.topN || args.request.topN >= totalCandidates) {
     const selectedPaperIds = ranked.map((candidate) => candidate.paper.paper_id);
     const rankedCandidates = ranked.map((candidate, index) => ({
@@ -127,9 +132,30 @@ export async function selectPapersForAnalysis(args: {
 
   const candidatePoolSize = Math.min(totalCandidates, Math.max(args.request.topN * 5, 50));
   const candidatePool = ranked.slice(0, candidatePoolSize);
-  const rerank = await rerankCandidates(args.llm, args.runTitle || args.runTopic, args.runTopic, args.request.topN, candidatePool);
+  args.onProgress?.(
+    `Preparing LLM rerank for ${candidatePool.length} candidate(s) to choose top ${args.request.topN}.`
+  );
+  args.onProgress?.(
+    `Rerank candidate preview: ${candidatePool
+      .slice(0, 5)
+      .map((candidate) => `${candidate.paper.paper_id}:${candidate.deterministicScore}`)
+      .join(", ")}`
+  );
+  const rerank = await rerankCandidates(
+    args.llm,
+    args.runTitle || args.runTopic,
+    args.runTopic,
+    args.request.topN,
+    candidatePool,
+    args.onProgress
+  );
   const rerankedIds = rerank.orderedPaperIds;
   const rerankOrder = new Map<string, number>(rerankedIds.map((paperId, index) => [paperId, index]));
+  args.onProgress?.(
+    rerank.applied
+      ? `LLM rerank completed. Top selection preview: ${rerankedIds.slice(0, Math.min(args.request.topN, 5)).join(", ")}`
+      : `LLM rerank fallback activated. Using deterministic order (${rerank.fallbackReason}).`
+  );
 
   const selectedPaperIds = rerankedIds.slice(0, args.request.topN);
   const selectedSet = new Set(selectedPaperIds);
@@ -218,12 +244,22 @@ async function rerankCandidates(
   referenceTitle: string,
   runTopic: string,
   topN: number,
-  candidates: RankedPaperCandidate[]
+  candidates: RankedPaperCandidate[],
+  onProgress?: (message: string) => void
 ): Promise<{ orderedPaperIds: string[]; applied: boolean; fallbackReason?: string }> {
   try {
+    onProgress?.(`Submitting rerank request for ${candidates.length} candidate(s).`);
     const response = await llm.complete(buildRerankPrompt(referenceTitle, runTopic, topN, candidates), {
-      systemPrompt: RERANK_SYSTEM_PROMPT
+      systemPrompt: RERANK_SYSTEM_PROMPT,
+      onProgress: (event) => {
+        const text = event.text.trim();
+        if (!text) {
+          return;
+        }
+        onProgress?.(event.type === "delta" ? `LLM rerank> ${text}` : text);
+      }
     });
+    onProgress?.("Received rerank response. Parsing JSON ordering.");
     const parsed = parseRerankJson(response.text);
     const seen = new Set<string>();
     const orderedPaperIds = normalizeStringArray(parsed.ordered_paper_ids)
@@ -235,6 +271,7 @@ async function rerankCandidates(
         seen.add(paperId);
         return true;
       });
+    onProgress?.(`Parsed rerank JSON with ${orderedPaperIds.length} explicit paper id(s).`);
 
     const fallbackRemainder = candidates
       .map((candidate) => candidate.paper.paper_id)
@@ -245,6 +282,7 @@ async function rerankCandidates(
       applied: true
     };
   } catch (error) {
+    onProgress?.(`Rerank request failed: ${error instanceof Error ? error.message : String(error)}`);
     return {
       orderedPaperIds: candidates.map((candidate) => candidate.paper.paper_id),
       applied: false,

@@ -22,10 +22,9 @@ dist/
 # AutoResearch runtime artifacts
 .autoresearch/
 
-# Manual real-validation workspace (requested)
+# Manual example / real-validation workspace
 /test/*
 !/test/smoke/
-/test/.autoresearch/
 
 # Logs / coverage
 coverage/
