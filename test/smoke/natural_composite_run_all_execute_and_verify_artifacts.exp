@@ -1,0 +1,83 @@
+#!/usr/bin/expect -f
+
+source [file join [file dirname [info script]] common.tcl]
+
+set timeout 60
+
+if {$argc < 2} {
+  puts "usage: natural_composite_run_all_execute_and_verify_artifacts.exp <workdir> <run_id>"
+  exit 2
+}
+
+set workdir [lindex $argv 0]
+set run_id [lindex $argv 1]
+set query "지금 논문을 모두 삭제하고 최근 5년의 논문을 관련도순으로 pdf 있는 것들만 가져와줘"
+set expected_step1 "/agent clear collect_papers $run_id"
+set expected_step2 "/agent collect --last-years 5 --sort relevance --open-access --run $run_id"
+
+cd $workdir
+spawn node ../dist/cli/main.js
+
+expect {
+  -re "Slash command palette is ready" {}
+  timeout { fail "FAIL: app did not start" }
+}
+
+send -- "$query\r"
+expect {
+  -re "Natural query: $query" {}
+  timeout { fail "FAIL: natural query log not found" }
+}
+
+set escaped_step1 [escape_regex $expected_step1]
+set escaped_step2 [escape_regex $expected_step2]
+
+expect {
+  -re "Execution plan detected\\. Pending 2-step plan:" {}
+  timeout { fail "FAIL: execution plan banner not found" }
+}
+
+expect {
+  -re $escaped_step1 {}
+  timeout { fail "FAIL: first pending step not found" }
+}
+
+expect {
+  -re $escaped_step2 {}
+  timeout { fail "FAIL: second pending step not found" }
+}
+
+send -- "a\r"
+expect {
+  -re "Confirmed\\. Running all remaining steps from 1/2\\." {}
+  timeout { fail "FAIL: run-all confirmation log not found" }
+}
+
+expect {
+  -re "Step 1/2 completed\\." {}
+  timeout { fail "FAIL: step 1 completion log not found" }
+}
+
+expect {
+  -re "Step 2/2: $escaped_step2" {}
+  timeout { fail "FAIL: step 2 run-all log not found" }
+}
+
+expect {
+  -re "collect_papers finished:" {}
+  timeout { fail "FAIL: collect completion log not found" }
+}
+
+expect {
+  -re "Plan completed after 2 step\\(s\\)\\." {}
+  timeout { fail "FAIL: final plan completion log not found" }
+}
+
+send -- "/quit\r"
+expect {
+  -re "Bye" {}
+  timeout { fail "FAIL: quit did not complete" }
+}
+
+expect eof
+puts "PASS: composite natural query executed with run-all approval"

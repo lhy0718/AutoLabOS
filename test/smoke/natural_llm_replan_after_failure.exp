@@ -1,0 +1,92 @@
+#!/usr/bin/expect -f
+
+source [file join [file dirname [info script]] common.tcl]
+
+set timeout 120
+match_max 100000
+
+if {$argc < 2} {
+  puts "usage: natural_llm_replan_after_failure.exp <workdir> <run_id>"
+  exit 2
+}
+
+set workdir [lindex $argv 0]
+set run_id [lindex $argv 1]
+set query "Please rebuild the research library from scratch."
+set bad_step1 "/agent clear collect_papers $run_id"
+set bad_step2 "/agent collect --limit nope --run $run_id"
+set fixed_cmd "/agent collect --limit 20 --run $run_id"
+
+cd $workdir
+spawn node ../dist/cli/main.js
+
+expect {
+  -re "Slash command palette is ready" {}
+  timeout { fail "FAIL: app did not start" }
+}
+
+send -- "$query\r"
+expect {
+  -re "Natural query: $query" {}
+  timeout { fail "FAIL: natural query log not found" }
+}
+
+set escaped_bad_step1 [escape_regex $bad_step1]
+set escaped_bad_step2 [escape_regex $bad_step2]
+set escaped_fixed_cmd [escape_regex $fixed_cmd]
+
+expect {
+  -re "Execution plan detected\\. Pending 2-step plan:" {}
+  timeout { fail "FAIL: initial execution plan banner not found" }
+}
+
+expect {
+  -re $escaped_bad_step1 {}
+  timeout { fail "FAIL: initial bad step 1 not found" }
+}
+
+expect {
+  -re $escaped_bad_step2 {}
+  timeout { fail "FAIL: initial bad step 2 not found" }
+}
+
+send -- "y\r"
+
+expect {
+  -re "Step 1/2 completed\\." {}
+  timeout { fail "FAIL: first step completion log not found" }
+}
+
+expect {
+  -re "Next plan step ready \\(2/2\\): $escaped_bad_step2" {}
+  timeout { fail "FAIL: next step 2/2 prompt not found" }
+}
+
+send -- "y\r"
+
+expect {
+  -re "Stopped remaining plan after step 2/2: .*Invalid --limit value\\. Use a positive integer\\..*" {}
+  timeout { fail "FAIL: failed-step stop log not found" }
+}
+
+after 1000
+send -- "y\r"
+
+expect {
+  -re "Confirmed\\. Running: $escaped_fixed_cmd" {}
+  timeout { fail "FAIL: replanned command confirmation log not found" }
+}
+
+expect {
+  -re "collect_papers finished:" {}
+  timeout { fail "FAIL: replanned collect completion log not found" }
+}
+
+send -- "/quit\r"
+expect {
+  -re "Bye" {}
+  timeout { fail "FAIL: quit did not complete" }
+}
+
+expect eof
+puts "PASS: llm replan after failed step completed"

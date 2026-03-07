@@ -23,7 +23,9 @@ dist/
 .autoresearch/
 
 # Manual real-validation workspace (requested)
-/test/
+/test/*
+!/test/smoke/
+/test/.autoresearch/
 
 # Logs / coverage
 coverage/

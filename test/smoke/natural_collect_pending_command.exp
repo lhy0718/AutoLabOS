@@ -1,0 +1,51 @@
+#!/usr/bin/expect -f
+
+source [file join [file dirname [info script]] common.tcl]
+
+set timeout 40
+
+if {$argc < 2} {
+  puts "usage: natural_collect_pending_command.exp <workdir> <run_id>"
+  exit 2
+}
+
+set workdir [lindex $argv 0]
+set run_id [lindex $argv 1]
+set query "최근 5년 관련도 순으로 100개 수집해줘"
+set expected_cmd "/agent collect --last-years 5 --sort relevance --limit 100 --run $run_id"
+
+cd $workdir
+spawn node ../dist/cli/main.js
+
+expect {
+  -re "Slash command palette is ready" {}
+  timeout { fail "FAIL: app did not start" }
+}
+
+send -- "$query\r"
+
+expect {
+  -re "Natural query: $query" {}
+  timeout { fail "FAIL: natural query log not found" }
+}
+
+set escaped_cmd [escape_regex $expected_cmd]
+expect {
+  -re "Execution intent detected\\. Pending command: $escaped_cmd" {}
+  timeout { fail "FAIL: pending collect command not found" }
+}
+
+send -- "n\r"
+expect {
+  -re "Canceled pending command: $escaped_cmd" {}
+  timeout { fail "FAIL: pending command cancel log not found" }
+}
+
+send -- "/quit\r"
+expect {
+  -re "Bye" {}
+  timeout { fail "FAIL: quit did not complete" }
+}
+
+expect eof
+puts "PASS: natural query produced pending /agent collect command"
