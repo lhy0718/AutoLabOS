@@ -21,6 +21,7 @@ export interface RunTurnOptions {
   threadId?: string;
   agentId?: string;
   systemPrompt?: string;
+  inputImagePaths?: string[];
   model?: string;
   reasoningEffort?: CodexReasoningEffort;
   fastMode?: boolean;
@@ -92,6 +93,7 @@ export class CodexCliClient {
     threadId?: string;
     agentId?: string;
     systemPrompt?: string;
+    inputImagePaths?: string[];
     model?: string;
     reasoningEffort?: CodexReasoningEffort;
     fastMode?: boolean;
@@ -101,6 +103,7 @@ export class CodexCliClient {
       threadId: opts.threadId,
       agentId: opts.agentId,
       systemPrompt: opts.systemPrompt,
+      inputImagePaths: opts.inputImagePaths,
       model: opts.model,
       reasoningEffort: opts.reasoningEffort,
       fastMode: opts.fastMode,
@@ -146,6 +149,11 @@ export class CodexCliClient {
       "--sandbox",
       opts.sandboxMode
     ];
+
+    const inputImagePaths = (opts.inputImagePaths || []).filter(Boolean);
+    if (inputImagePaths.length > 0) {
+      args.push("--image", inputImagePaths.join(","));
+    }
 
     // codex-cli >=0.107 uses config override for approval policy.
     args.push("-c", `approval_policy="${opts.approvalPolicy}"`);

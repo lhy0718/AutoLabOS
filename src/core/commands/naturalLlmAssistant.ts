@@ -428,7 +428,9 @@ async function buildRunFacts(run: RunRecord, workspaceRoot: string): Promise<Run
   const collectFromMemory = toOptionalNumber(contextMap.get("collect_papers.count"));
   const evidenceFromMemory = toOptionalNumber(contextMap.get("analyze_papers.evidence_count"));
   const hypothesisRequestedTopK = toOptionalNumber(contextMap.get("generate_hypotheses.top_k"));
-  const hypothesisCandidateCount = toOptionalNumber(contextMap.get("generate_hypotheses.branch_count"));
+  const hypothesisCandidateCount =
+    toOptionalNumber(contextMap.get("generate_hypotheses.candidate_count")) ??
+    toOptionalNumber(contextMap.get("generate_hypotheses.branch_count"));
   const hypothesisSummary = toOptionalString(contextMap.get("generate_hypotheses.summary"));
 
   const corpusFacts = await readCorpusFacts(path.join(runRoot, "corpus.jsonl"), 20);

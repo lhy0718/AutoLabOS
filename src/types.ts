@@ -121,29 +121,34 @@ export interface AppConfig {
     codex: {
       model: string;
       chat_model?: string;
+      experiment_model?: string;
       pdf_model?: string;
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
       chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+      experiment_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       pdf_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       command_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       fast_mode: boolean;
       chat_fast_mode?: boolean;
+      experiment_fast_mode?: boolean;
       pdf_fast_mode?: boolean;
       auth_required: true;
     };
     openai: {
       model: string;
       chat_model?: string;
+      experiment_model?: string;
       pdf_model?: string;
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
       chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+      experiment_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       pdf_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       command_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       api_key_required: true;
     };
   };
   analysis: {
-    pdf_mode: "codex_text_extract" | "responses_api_pdf";
+    pdf_mode: "codex_text_image_hybrid" | "responses_api_pdf";
     responses_model: string;
     responses_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   };

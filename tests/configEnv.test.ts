@@ -54,29 +54,34 @@ function makeConfig(): AppConfig {
       codex: {
         model: "gpt-5.3-codex",
         chat_model: "gpt-5.3-codex",
+        experiment_model: "gpt-5.3-codex",
         pdf_model: "gpt-5.3-codex",
         reasoning_effort: "xhigh",
         chat_reasoning_effort: "low",
+        experiment_reasoning_effort: "xhigh",
         pdf_reasoning_effort: "xhigh",
         command_reasoning_effort: "low",
         fast_mode: false,
         chat_fast_mode: false,
+        experiment_fast_mode: false,
         pdf_fast_mode: false,
         auth_required: true
       },
       openai: {
         model: "gpt-5.4",
         chat_model: "gpt-5.4",
+        experiment_model: "gpt-5.4",
         pdf_model: "gpt-5.4",
         reasoning_effort: "medium",
         chat_reasoning_effort: "low",
+        experiment_reasoning_effort: "medium",
         pdf_reasoning_effort: "medium",
         command_reasoning_effort: "low",
         api_key_required: true
       }
     },
     analysis: {
-      pdf_mode: "codex_text_extract",
+      pdf_mode: "codex_text_image_hybrid",
       responses_model: "gpt-5.4",
       responses_reasoning_effort: "xhigh"
     },
@@ -254,6 +259,30 @@ describe("config .env overrides", () => {
     expect(config.analysis.pdf_mode).toBe("responses_api_pdf");
     await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("semantic-key");
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
+  });
+
+  it("stores experiment model overrides during non-interactive setup", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-web-setup-experiment-model-"));
+    const paths = resolveAppPaths(cwd);
+
+    const config = await runNonInteractiveSetup(paths, {
+      projectName: "web-project",
+      defaultTopic: "Agent planning",
+      defaultConstraints: ["recent papers"],
+      defaultObjectiveMetric: "sample efficiency",
+      llmMode: "codex_chatgpt_only",
+      pdfAnalysisMode: "codex_text_image_hybrid",
+      semanticScholarApiKey: "semantic-key",
+      codexTaskModelChoice: "gpt-5.3-codex",
+      codexTaskReasoningEffort: "high",
+      codexExperimentModelChoice: "gpt-5.4 (fast)",
+      codexExperimentReasoningEffort: "xhigh"
+    });
+
+    expect(config.providers.codex.model).toBe("gpt-5.3-codex");
+    expect(config.providers.codex.experiment_model).toBe("gpt-5.4");
+    expect(config.providers.codex.experiment_fast_mode).toBe(true);
+    expect(config.providers.codex.experiment_reasoning_effort).toBe("xhigh");
   });
 
   it("still asks for API keys during setup even when existing .env keys are present", async () => {

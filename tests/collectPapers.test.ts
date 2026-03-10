@@ -17,7 +17,7 @@ class JsonLLMClient extends MockLLMClient {
     super();
   }
 
-  override async complete(): Promise<{ text: string }> {
+  override async complete(_prompt: string): Promise<{ text: string }> {
     return { text: this.response };
   }
 }

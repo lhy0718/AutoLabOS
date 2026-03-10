@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   analyzePaperWithLlm,
@@ -17,7 +17,7 @@ class SequenceLLM extends MockLLMClient {
     super();
   }
 
-  override async complete(): Promise<{ text: string }> {
+  override async complete(_prompt: string): Promise<{ text: string }> {
     const next = this.outputs[Math.min(this.index, this.outputs.length - 1)] ?? "";
     this.index += 1;
     return { text: next };
@@ -102,6 +102,43 @@ describe("paperAnalyzer", () => {
     expect(result.attempts).toBe(2);
     expect(result.summaryRow.summary).toBe("Recovered summary");
     expect(result.evidenceRows[0].claim).toBe("Recovered claim");
+  });
+
+  it("passes rendered PDF page images into hybrid LLM analysis", async () => {
+    const llm = {
+      complete: vi.fn(async () => ({
+        text: JSON.stringify({
+          summary: "Hybrid summary",
+          key_findings: ["Hybrid finding"],
+          limitations: [],
+          datasets: [],
+          metrics: [],
+          novelty: "Hybrid novelty",
+          reproducibility_notes: [],
+          evidence_items: [{ claim: "Hybrid claim", confidence: 0.8 }]
+        })
+      }))
+    };
+
+    const result = await analyzePaperWithLlm({
+      llm: llm as any,
+      paper,
+      source: {
+        sourceType: "full_text",
+        text: "Full text with extracted content.",
+        fullTextAvailable: true,
+        pageImagePaths: ["/tmp/page-001.png", "/tmp/page-003.png"],
+        pageImagePages: [1, 3]
+      }
+    });
+
+    expect(result.summaryRow.summary).toBe("Hybrid summary");
+    expect(llm.complete).toHaveBeenCalledWith(
+      expect.stringContaining("Attached page numbers: 1, 3"),
+      expect.objectContaining({
+        inputImagePaths: ["/tmp/page-001.png", "/tmp/page-003.png"]
+      })
+    );
   });
 
   it("normalizes Responses API PDF analysis results", async () => {

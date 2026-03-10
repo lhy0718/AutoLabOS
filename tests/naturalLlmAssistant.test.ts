@@ -266,7 +266,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
                 updatedAt: new Date().toISOString()
               },
               {
-                key: "generate_hypotheses.branch_count",
+                key: "generate_hypotheses.candidate_count",
                 value: 6,
                 updatedAt: new Date().toISOString()
               },

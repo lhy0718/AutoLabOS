@@ -123,10 +123,10 @@ node dist/cli/main.js web
 2. `.autoresearch/config.yaml`이 없으면 TUI에서는 setup wizard가, 웹에서는 onboarding 폼이 열립니다.
 3. 두 흐름 모두 같은 설정과 스캐폴드를 만들고, Semantic Scholar 키를 저장한 뒤 메인 대시보드로 진입합니다.
 4. 기본 LLM provider를 선택합니다.
-   - `codex`: 메인 워크플로를 Codex ChatGPT 로그인으로 실행
+   - `codex`: 메인 워크플로를 Codex ChatGPT 로그인으로 실행 (기본값)
    - `api`: 메인 워크플로를 OpenAI API 모델로 실행 (`OPENAI_API_KEY` 필요)
 5. PDF 분석 모드를 선택합니다.
-   - `codex`: PDF를 로컬에서 텍스트 추출 후 Codex로 분석
+   - `codex`: PDF를 로컬에서 텍스트 추출 후 Codex로 분석 (기본값)
    - `api`: PDF를 Responses API로 직접 전달해 분석 (`OPENAI_API_KEY` 필요)
 6. provider 또는 PDF 분석 모드가 `api`이면 setup wizard와 `/settings`에서 모델을 고를 수 있습니다.
    - 현재 내장 카탈로그: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`

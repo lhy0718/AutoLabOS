@@ -48,7 +48,7 @@ providers:
     reasoning_effort: medium
     api_key_required: true
 analysis:
-  pdf_mode: codex_text_extract
+  pdf_mode: codex_text_image_hybrid
   responses_model: gpt-5.4
 papers:
   max_results: 200

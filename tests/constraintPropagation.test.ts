@@ -21,7 +21,7 @@ class CountingJsonLLMClient extends MockLLMClient {
     super();
   }
 
-  override async complete(): Promise<{ text: string }> {
+  override async complete(_prompt: string): Promise<{ text: string }> {
     this.calls += 1;
     const response = this.responses[Math.min(this.index, this.responses.length - 1)] ?? "";
     this.index += 1;

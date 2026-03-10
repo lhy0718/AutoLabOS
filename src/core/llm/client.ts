@@ -17,16 +17,16 @@ export interface LLMProgressEvent {
   text: string;
 }
 
+export interface LLMCompleteOptions {
+  threadId?: string;
+  systemPrompt?: string;
+  inputImagePaths?: string[];
+  onProgress?: (event: LLMProgressEvent) => void;
+  abortSignal?: AbortSignal;
+}
+
 export interface LLMClient {
-  complete(
-    prompt: string,
-    opts?: {
-      threadId?: string;
-      systemPrompt?: string;
-      onProgress?: (event: LLMProgressEvent) => void;
-      abortSignal?: AbortSignal;
-    }
-  ): Promise<LLMCompletion>;
+  complete(prompt: string, opts?: LLMCompleteOptions): Promise<LLMCompletion>;
 }
 
 interface CodexClientDefaults {
@@ -43,18 +43,14 @@ export class CodexLLMClient implements LLMClient {
 
   async complete(
     prompt: string,
-    opts?: {
-      threadId?: string;
-      systemPrompt?: string;
-      onProgress?: (event: LLMProgressEvent) => void;
-      abortSignal?: AbortSignal;
-    }
+    opts?: LLMCompleteOptions
   ): Promise<LLMCompletion> {
     const progress = createCodexProgressEmitter(opts?.onProgress);
     const result = await this.codex.runTurnStream({
       prompt,
       threadId: opts?.threadId,
       systemPrompt: opts?.systemPrompt,
+      inputImagePaths: opts?.inputImagePaths,
       sandboxMode: "read-only",
       approvalPolicy: "never",
       model: this.defaults.model,
@@ -84,12 +80,7 @@ export class OpenAiResponsesLLMClient implements LLMClient {
 
   async complete(
     prompt: string,
-    opts?: {
-      threadId?: string;
-      systemPrompt?: string;
-      onProgress?: (event: LLMProgressEvent) => void;
-      abortSignal?: AbortSignal;
-    }
+    opts?: LLMCompleteOptions
   ): Promise<LLMCompletion> {
     opts?.onProgress?.({ type: "status", text: "Submitting request to OpenAI Responses API." });
     const text = await this.openai.runForText({
@@ -115,19 +106,14 @@ export class RoutedLLMClient implements LLMClient {
 
   async complete(
     prompt: string,
-    opts?: {
-      threadId?: string;
-      systemPrompt?: string;
-      onProgress?: (event: LLMProgressEvent) => void;
-      abortSignal?: AbortSignal;
-    }
+    opts?: LLMCompleteOptions
   ): Promise<LLMCompletion> {
     return this.resolveClient().complete(prompt, opts);
   }
 }
 
 export class MockLLMClient implements LLMClient {
-  async complete(prompt: string): Promise<LLMCompletion> {
+  async complete(prompt: string, _opts?: LLMCompleteOptions): Promise<LLMCompletion> {
     return {
       text: `[mock] ${prompt.slice(0, 120)}`,
       usage: {

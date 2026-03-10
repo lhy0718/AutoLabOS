@@ -34,7 +34,7 @@ class SequenceJsonLLM extends MockLLMClient {
     super();
   }
 
-  override async complete(): Promise<{ text: string }> {
+  override async complete(_prompt: string): Promise<{ text: string }> {
     const output = this.outputs[Math.min(this.index, this.outputs.length - 1)] ?? "";
     this.index += 1;
     return { text: output };
@@ -116,7 +116,7 @@ describe("analyzePapers node", () => {
     const node = createAnalyzePapersNode({
       config: {
         analysis: {
-          pdf_mode: "codex_text_extract",
+          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -169,7 +169,7 @@ describe("analyzePapers node", () => {
     const firstNode = createAnalyzePapersNode({
       config: {
         analysis: {
-          pdf_mode: "codex_text_extract",
+          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -191,7 +191,7 @@ describe("analyzePapers node", () => {
     const secondNode = createAnalyzePapersNode({
       config: {
         analysis: {
-          pdf_mode: "codex_text_extract",
+          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -421,7 +421,7 @@ describe("analyzePapers node", () => {
     const node = createAnalyzePapersNode({
       config: {
         analysis: {
-          pdf_mode: "codex_text_extract",
+          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -475,7 +475,7 @@ describe("analyzePapers node", () => {
     const firstNode = createAnalyzePapersNode({
       config: {
         analysis: {
-          pdf_mode: "codex_text_extract",
+          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -502,7 +502,7 @@ describe("analyzePapers node", () => {
     const secondNode = createAnalyzePapersNode({
       config: {
         analysis: {
-          pdf_mode: "codex_text_extract",
+          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,

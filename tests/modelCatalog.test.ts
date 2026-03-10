@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_CODEX_MODEL,
   GPT_5_4_FAST_MODEL_LABEL,
   OFFICIAL_CODEX_MODELS,
   buildCodexModelSelectionChoices,
@@ -32,6 +33,7 @@ describe("modelCatalog", () => {
       fastMode: true
     });
     expect(getCurrentCodexModelSelectionValue("gpt-5.4", true)).toBe(GPT_5_4_FAST_MODEL_LABEL);
+    expect(getCurrentCodexModelSelectionValue(undefined, false)).toBe(DEFAULT_CODEX_MODEL);
   });
 
   it("exposes xhigh for Codex models that document it", () => {

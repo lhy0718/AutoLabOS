@@ -163,6 +163,8 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         eventStream: deps.eventStream,
         node: "run_experiments"
       });
+      const experimentMode =
+        (await runContext.get<string>("implement_experiments.mode")) || "real_execution";
       const objectiveEvaluation = evaluateObjectiveMetric(
         parsedMetrics,
         objectiveProfile,
@@ -184,7 +186,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         node: "run_experiments",
         agentRole: "runner",
         payload: {
-          text: `Execution completed. Metrics written to ${resolved.metricsPath}`
+          text: `${formatRunLabel(experimentMode)} completed. Metrics written to ${resolved.metricsPath}`
         }
       });
       deps.eventStream.emit({
@@ -199,10 +201,20 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
 
       return {
         status: "success",
-        summary: `Experiment run completed via ${resolved.command}. ${objectiveEvaluationSummary}`,
+        summary: `${formatRunLabel(experimentMode)} completed via ${resolved.command}. ${objectiveEvaluationSummary}`,
         needsApproval: true,
         toolCallsUsed: resolved.testCommand ? 2 : 1
       };
     }
   };
+}
+
+function formatRunLabel(experimentMode: string): string {
+  if (experimentMode === "synthetic_validation") {
+    return "Synthetic validation run";
+  }
+  if (experimentMode === "hybrid_validation") {
+    return "Hybrid experiment run";
+  }
+  return "Experiment run";
 }

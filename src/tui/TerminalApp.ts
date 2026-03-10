@@ -10,7 +10,7 @@ import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/code
 import { AutoResearchEvent, EventStream } from "../core/events.js";
 import {
   buildCodexModelSelectionChoices,
-  GPT_5_4_FAST_MODEL_LABEL,
+  DEFAULT_CODEX_MODEL,
   getCodexModelSelectionDescription,
   getCurrentCodexModelSelectionValue,
   getReasoningEffortChoicesForModel,
@@ -2264,14 +2264,14 @@ export class TerminalApp {
   private buildPdfAnalysisModeOptions(): SelectionMenuOption[] {
     return [
       {
-        value: "codex_text_extract",
-        label: "codex_text_extract",
-        description: "Download/extract PDF text locally, then analyze with Codex."
+        value: "codex_text_image_hybrid",
+        label: "codex_text_image_hybrid",
+        description: "Default. Download/extract PDF text locally, then attach rendered page images for hybrid analysis."
       },
       {
         value: "responses_api_pdf",
         label: "responses_api_pdf",
-        description: "Send PDF file input to Responses API (requires OPENAI_API_KEY)."
+        description: "Fallback. Send PDF file input to Responses API (requires OPENAI_API_KEY)."
       }
     ];
   }
@@ -2293,12 +2293,12 @@ export class TerminalApp {
       {
         value: "codex_chatgpt_only",
         label: "codex_chatgpt_only",
-        description: "Use Codex ChatGPT login as the main LLM provider."
+        description: "Default. Use Codex ChatGPT login as the main LLM provider."
       },
       {
         value: "openai_api",
         label: "openai_api",
-        description: "Use OpenAI API models as the main LLM provider."
+        description: "Fallback. Use OpenAI API models as the main LLM provider."
       }
     ];
   }
@@ -2394,7 +2394,7 @@ export class TerminalApp {
   }
 
   private describePdfAnalysisMode(mode: AppConfig["analysis"]["pdf_mode"]): string {
-    return mode === "responses_api_pdf" ? "Responses API PDF input" : "Codex text extraction";
+    return mode === "responses_api_pdf" ? "Responses API PDF input" : "Codex text + image hybrid";
   }
 
   private describePrimaryLlmProvider(mode: AppConfig["providers"]["llm_mode"]): string {
@@ -2797,10 +2797,7 @@ export class TerminalApp {
   }
 
   private getRecommendedCodexSelection(slot: "chat" | "task" | "pdf"): string {
-    if (slot === "chat") {
-      return GPT_5_4_FAST_MODEL_LABEL;
-    }
-    return "gpt-5.4";
+    return DEFAULT_CODEX_MODEL;
   }
 
   private getRecommendedOpenAiModel(slot: "chat" | "task" | "pdf"): string {
@@ -4145,7 +4142,7 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
     case "analyze_papers":
       return ["paper_summaries.jsonl", "evidence_store.jsonl", "analysis_manifest.json", "analysis_cache"];
     case "generate_hypotheses":
-      return ["hypotheses.jsonl"];
+      return ["hypotheses.jsonl", "hypothesis_generation"];
     case "design_experiments":
       return ["experiment_plan.yaml"];
     case "implement_experiments":
@@ -4189,7 +4186,7 @@ function nodeContextKeys(node: GraphNodeId): string[] {
       return [
         "generate_hypotheses.request",
         "generate_hypotheses.top_k",
-        "generate_hypotheses.branch_count",
+        "generate_hypotheses.candidate_count",
         "generate_hypotheses.source",
         "generate_hypotheses.pipeline",
         "generate_hypotheses.summary"

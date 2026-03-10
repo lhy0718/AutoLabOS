@@ -313,6 +313,26 @@ button:disabled,
   background: var(--surface-muted);
 }
 
+.config-section {
+  gap: 12px;
+}
+
+.config-section-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.config-section-copy h3 {
+  font-size: 1rem;
+}
+
+.config-section-copy p,
+.form-help {
+  color: var(--muted);
+  line-height: 1.5;
+  font-size: 0.92rem;
+}
+
 .sidebar {
   align-content: start;
 }

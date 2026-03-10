@@ -1,11 +1,14 @@
-import { FormEvent, startTransition, useEffect, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, startTransition, useEffect, useState } from "react";
 
 import {
   ArtifactEntry,
   BootstrapResponse,
   CheckpointEntry,
+  ConfigSummary,
   DoctorCheck,
   RunRecord,
+  WebConfigFormData,
+  WebConfigOptions,
   WebSessionState
 } from "./types";
 
@@ -20,15 +23,21 @@ const NODE_ORDER = [
   "write_paper"
 ] as const;
 
-type TabId = "logs" | "artifacts" | "checkpoints" | "meta" | "doctor";
+type TabId = "logs" | "artifacts" | "checkpoints" | "meta" | "workspace" | "doctor";
 
 const DETAIL_TABS: Array<{ id: TabId; label: string }> = [
   { id: "logs", label: "Live logs" },
   { id: "artifacts", label: "Artifacts" },
   { id: "checkpoints", label: "Checkpoints" },
   { id: "meta", label: "Metadata" },
+  { id: "workspace", label: "Workspace" },
   { id: "doctor", label: "Doctor" }
 ];
+
+type SetupFormState = WebConfigFormData & {
+  semanticScholarApiKey: string;
+  openAiApiKey: string;
+};
 
 export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
@@ -47,16 +56,9 @@ export function App() {
   const [newRunTopic, setNewRunTopic] = useState("");
   const [newRunConstraints, setNewRunConstraints] = useState("");
   const [newRunObjective, setNewRunObjective] = useState("");
-  const [setupForm, setSetupForm] = useState({
-    projectName: "",
-    defaultTopic: "",
-    defaultConstraints: "",
-    defaultObjectiveMetric: "",
-    llmMode: "codex_chatgpt_only",
-    pdfAnalysisMode: "codex_text_extract",
-    semanticScholarApiKey: "",
-    openAiApiKey: ""
-  });
+  const [configOptions, setConfigOptions] = useState<WebConfigOptions>(createDefaultConfigOptions());
+  const [setupForm, setSetupForm] = useState<SetupFormState>(createEmptySetupForm());
+  const [setupSeeded, setSetupSeeded] = useState(false);
 
   useEffect(() => {
     void refreshBootstrap();
@@ -74,21 +76,19 @@ export function App() {
     if (!bootstrap) {
       return;
     }
+    if (bootstrap.configOptions) {
+      setConfigOptions(bootstrap.configOptions);
+    }
     setSession(bootstrap.session);
     setSelectedRunId(bootstrap.activeRunId || bootstrap.runs[0]?.id);
-    if (!setupForm.projectName) {
-      setSetupForm((current) => ({
-        ...current,
-        projectName: bootstrap.setupDefaults.projectName,
-        defaultTopic: bootstrap.setupDefaults.defaultTopic,
-        defaultConstraints: bootstrap.setupDefaults.defaultConstraints.join(", "),
-        defaultObjectiveMetric: bootstrap.setupDefaults.defaultObjectiveMetric
-      }));
+    if (!setupSeeded) {
+      setSetupForm(createSetupFormFromBootstrap(bootstrap));
+      setSetupSeeded(true);
       setNewRunTopic(bootstrap.setupDefaults.defaultTopic);
       setNewRunConstraints(bootstrap.setupDefaults.defaultConstraints.join(", "));
       setNewRunObjective(bootstrap.setupDefaults.defaultObjectiveMetric);
     }
-  }, [bootstrap]);
+  }, [bootstrap, setupSeeded]);
 
   useEffect(() => {
     const source = new EventSource("/api/events/stream");
@@ -298,57 +298,16 @@ export function App() {
             <span className="chip">Live logs</span>
           </div>
         </div>
-        <form className="panel onboarding-form" onSubmit={submitSetup}>
-          <div className="section-heading">
-            <div>
-              <p className="section-kicker">Workspace</p>
-              <h2>Initial setup</h2>
-            </div>
-          </div>
-          <label>
-            Project name
-            <input value={setupForm.projectName} onChange={(event) => setSetupForm((current) => ({ ...current, projectName: event.target.value }))} />
-          </label>
-          <label>
-            Default topic
-            <input value={setupForm.defaultTopic} onChange={(event) => setSetupForm((current) => ({ ...current, defaultTopic: event.target.value }))} />
-          </label>
-          <label>
-            Default constraints
-            <input value={setupForm.defaultConstraints} onChange={(event) => setSetupForm((current) => ({ ...current, defaultConstraints: event.target.value }))} />
-          </label>
-          <label>
-            Objective metric
-            <input value={setupForm.defaultObjectiveMetric} onChange={(event) => setSetupForm((current) => ({ ...current, defaultObjectiveMetric: event.target.value }))} />
-          </label>
-          <div className="inline-fields">
-            <label>
-              Primary provider
-              <select value={setupForm.llmMode} onChange={(event) => setSetupForm((current) => ({ ...current, llmMode: event.target.value }))}>
-                <option value="codex_chatgpt_only">Codex ChatGPT</option>
-                <option value="openai_api">OpenAI API</option>
-              </select>
-            </label>
-            <label>
-              PDF mode
-              <select value={setupForm.pdfAnalysisMode} onChange={(event) => setSetupForm((current) => ({ ...current, pdfAnalysisMode: event.target.value }))}>
-                <option value="codex_text_extract">Codex text extract</option>
-                <option value="responses_api_pdf">Responses API PDF</option>
-              </select>
-            </label>
-          </div>
-          <label>
-            Semantic Scholar API key
-            <input type="password" value={setupForm.semanticScholarApiKey} onChange={(event) => setSetupForm((current) => ({ ...current, semanticScholarApiKey: event.target.value }))} />
-          </label>
-          <label>
-            OpenAI API key
-            <input type="password" value={setupForm.openAiApiKey} onChange={(event) => setSetupForm((current) => ({ ...current, openAiApiKey: event.target.value }))} />
-          </label>
-          <div className="form-actions">
-            <button className="button button-primary" type="submit">Initialize workspace</button>
-          </div>
-        </form>
+        <ConfigEditorForm
+          className="panel onboarding-form"
+          form={setupForm}
+          options={configOptions}
+          onChange={setSetupForm}
+          onSubmit={submitSetup}
+          heading="Initial setup"
+          submitLabel="Initialize workspace"
+          apiKeyHelp="API key fields are required on first setup."
+        />
       </div>
     );
   }
@@ -367,7 +326,8 @@ export function App() {
               <span className="chip">{labelProviderMode(bootstrap.configSummary?.llmMode)}</span>
               <span className="chip">{labelPdfMode(bootstrap.configSummary?.pdfMode)}</span>
             </div>
-            <small>{bootstrap.configSummary?.taskModel}</small>
+            <small>Task: {bootstrap.configSummary?.taskModel} · {bootstrap.configSummary?.taskReasoning}</small>
+            <small>Experiment: {bootstrap.configSummary?.experimentModel} · {bootstrap.configSummary?.experimentReasoning}</small>
           </div>
         </div>
         <div className="section-heading">
@@ -673,6 +633,19 @@ export function App() {
             </div>
           ) : null}
 
+          {activeTab === "workspace" ? (
+            <ConfigEditorForm
+              className="meta-card"
+              form={setupForm}
+              options={configOptions}
+              onChange={setSetupForm}
+              onSubmit={submitSetup}
+              heading="Workspace settings"
+              submitLabel="Save settings"
+              apiKeyHelp="Leave API key fields blank to keep the current stored value."
+            />
+          ) : null}
+
           {activeTab === "doctor" ? (
             <div className="doctor-list">
               {doctorChecks.length === 0 ? (
@@ -723,6 +696,344 @@ export function App() {
   );
 }
 
+interface ConfigEditorFormProps {
+  className: string;
+  form: SetupFormState;
+  options: WebConfigOptions;
+  onChange: Dispatch<SetStateAction<SetupFormState>>;
+  onSubmit: (event: FormEvent) => Promise<void>;
+  heading: string;
+  submitLabel: string;
+  apiKeyHelp: string;
+}
+
+function ConfigEditorForm(props: ConfigEditorFormProps) {
+  return (
+    <form className={props.className} onSubmit={props.onSubmit}>
+      <div className="section-heading">
+        <div>
+          <p className="section-kicker">Workspace</p>
+          <h2>{props.heading}</h2>
+        </div>
+      </div>
+
+      <label>
+        Project name
+        <input value={props.form.projectName} onChange={(event) => patchSetupForm(props.onChange, { projectName: event.target.value })} />
+      </label>
+      <label>
+        Default topic
+        <input value={props.form.defaultTopic} onChange={(event) => patchSetupForm(props.onChange, { defaultTopic: event.target.value })} />
+      </label>
+      <label>
+        Default constraints
+        <input value={props.form.defaultConstraints} onChange={(event) => patchSetupForm(props.onChange, { defaultConstraints: event.target.value })} />
+      </label>
+      <label>
+        Objective metric
+        <input value={props.form.defaultObjectiveMetric} onChange={(event) => patchSetupForm(props.onChange, { defaultObjectiveMetric: event.target.value })} />
+      </label>
+
+      <div className="inline-fields">
+        <label>
+          Primary provider
+          <select
+            value={props.form.llmMode}
+            onChange={(event) =>
+              patchSetupForm(props.onChange, { llmMode: event.target.value as SetupFormState["llmMode"] })
+            }
+          >
+            <option value="codex_chatgpt_only">Codex ChatGPT (Default)</option>
+            <option value="openai_api">OpenAI API</option>
+          </select>
+        </label>
+        <label>
+          PDF mode
+          <select
+            value={props.form.pdfAnalysisMode}
+            onChange={(event) =>
+              patchSetupForm(props.onChange, { pdfAnalysisMode: event.target.value as SetupFormState["pdfAnalysisMode"] })
+            }
+          >
+            <option value="codex_text_image_hybrid">Codex text + image hybrid (Default)</option>
+            <option value="responses_api_pdf">Responses API PDF</option>
+          </select>
+        </label>
+      </div>
+
+      <ConfigModelSection
+        title="Codex chat"
+        description="General chat, titles, and lightweight interactive turns."
+        modelValue={props.form.codexChatModelChoice}
+        effortValue={props.form.codexChatReasoningEffort}
+        modelOptions={props.options.codexModels}
+        effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexChatModelChoice)}
+        onModelChange={(value) => updateModelAndEffort(props.onChange, "codexChatModelChoice", "codexChatReasoningEffort", value, props.options.codexReasoningByModel)}
+        onEffortChange={(value) => patchSetupForm(props.onChange, { codexChatReasoningEffort: value })}
+      />
+      <ConfigModelSection
+        title="Codex task"
+        description="Analysis, hypothesis, and planning tasks."
+        modelValue={props.form.codexTaskModelChoice}
+        effortValue={props.form.codexTaskReasoningEffort}
+        modelOptions={props.options.codexModels}
+        effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexTaskModelChoice)}
+        onModelChange={(value) => updateModelAndEffort(props.onChange, "codexTaskModelChoice", "codexTaskReasoningEffort", value, props.options.codexReasoningByModel)}
+        onEffortChange={(value) => patchSetupForm(props.onChange, { codexTaskReasoningEffort: value })}
+      />
+      <ConfigModelSection
+        title="Codex experiment"
+        description="Used when a real_execution runner needs model calls during experiment execution."
+        modelValue={props.form.codexExperimentModelChoice}
+        effortValue={props.form.codexExperimentReasoningEffort}
+        modelOptions={props.options.codexModels}
+        effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexExperimentModelChoice)}
+        onModelChange={(value) => updateModelAndEffort(props.onChange, "codexExperimentModelChoice", "codexExperimentReasoningEffort", value, props.options.codexReasoningByModel)}
+        onEffortChange={(value) => patchSetupForm(props.onChange, { codexExperimentReasoningEffort: value })}
+      />
+      <ConfigModelSection
+        title="Codex PDF"
+        description="Local text-extract PDF analysis when Codex mode is selected."
+        modelValue={props.form.codexPdfModelChoice}
+        effortValue={props.form.codexPdfReasoningEffort}
+        modelOptions={props.options.codexModels}
+        effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexPdfModelChoice)}
+        onModelChange={(value) => updateModelAndEffort(props.onChange, "codexPdfModelChoice", "codexPdfReasoningEffort", value, props.options.codexReasoningByModel)}
+        onEffortChange={(value) => patchSetupForm(props.onChange, { codexPdfReasoningEffort: value })}
+      />
+
+      <ConfigModelSection
+        title="OpenAI chat"
+        description="General chat model and reasoning for API mode."
+        modelValue={props.form.openAiChatModel}
+        effortValue={props.form.openAiChatReasoningEffort}
+        modelOptions={props.options.openAiModels}
+        effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiChatModel)}
+        onModelChange={(value) => updateModelAndEffort(props.onChange, "openAiChatModel", "openAiChatReasoningEffort", value, props.options.openAiReasoningByModel)}
+        onEffortChange={(value) => patchSetupForm(props.onChange, { openAiChatReasoningEffort: value })}
+      />
+      <ConfigModelSection
+        title="OpenAI task"
+        description="Analysis and hypothesis model for API mode."
+        modelValue={props.form.openAiTaskModel}
+        effortValue={props.form.openAiReasoningEffort}
+        modelOptions={props.options.openAiModels}
+        effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiTaskModel)}
+        onModelChange={(value) => updateModelAndEffort(props.onChange, "openAiTaskModel", "openAiReasoningEffort", value, props.options.openAiReasoningByModel)}
+        onEffortChange={(value) => patchSetupForm(props.onChange, { openAiReasoningEffort: value })}
+      />
+      <ConfigModelSection
+        title="OpenAI experiment"
+        description="Used when a real_execution runner should call the OpenAI API."
+        modelValue={props.form.openAiExperimentModel}
+        effortValue={props.form.openAiExperimentReasoningEffort}
+        modelOptions={props.options.openAiModels}
+        effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiExperimentModel)}
+        onModelChange={(value) => updateModelAndEffort(props.onChange, "openAiExperimentModel", "openAiExperimentReasoningEffort", value, props.options.openAiReasoningByModel)}
+        onEffortChange={(value) => patchSetupForm(props.onChange, { openAiExperimentReasoningEffort: value })}
+      />
+      <ConfigModelSection
+        title="OpenAI PDF"
+        description="Text-based PDF analysis when API mode is selected."
+        modelValue={props.form.openAiPdfModel}
+        effortValue={props.form.openAiPdfReasoningEffort}
+        modelOptions={props.options.openAiModels}
+        effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiPdfModel)}
+        onModelChange={(value) => updateModelAndEffort(props.onChange, "openAiPdfModel", "openAiPdfReasoningEffort", value, props.options.openAiReasoningByModel)}
+        onEffortChange={(value) => patchSetupForm(props.onChange, { openAiPdfReasoningEffort: value })}
+      />
+      <ConfigModelSection
+        title="Responses PDF"
+        description="Vision-capable PDF analysis when Responses API PDF mode is selected."
+        modelValue={props.form.responsesPdfModel}
+        effortValue={props.form.responsesPdfReasoningEffort}
+        modelOptions={props.options.responsesPdfModels}
+        effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.responsesPdfModel)}
+        onModelChange={(value) => updateModelAndEffort(props.onChange, "responsesPdfModel", "responsesPdfReasoningEffort", value, props.options.openAiReasoningByModel)}
+        onEffortChange={(value) => patchSetupForm(props.onChange, { responsesPdfReasoningEffort: value })}
+      />
+
+      <label>
+        Semantic Scholar API key
+        <input type="password" value={props.form.semanticScholarApiKey} onChange={(event) => patchSetupForm(props.onChange, { semanticScholarApiKey: event.target.value })} />
+      </label>
+      <label>
+        OpenAI API key
+        <input type="password" value={props.form.openAiApiKey} onChange={(event) => patchSetupForm(props.onChange, { openAiApiKey: event.target.value })} />
+      </label>
+      <p className="form-help">{props.apiKeyHelp}</p>
+
+      <div className="form-actions">
+        <button className="button button-primary" type="submit">{props.submitLabel}</button>
+      </div>
+    </form>
+  );
+}
+
+interface ConfigModelSectionProps {
+  title: string;
+  description: string;
+  modelValue: string;
+  effortValue: string;
+  modelOptions: string[];
+  effortOptions: string[];
+  onModelChange: (value: string) => void;
+  onEffortChange: (value: string) => void;
+}
+
+function ConfigModelSection(props: ConfigModelSectionProps) {
+  return (
+    <section className="subtle-card config-section">
+      <div className="config-section-copy">
+        <h3>{props.title}</h3>
+        <p>{props.description}</p>
+      </div>
+      <div className="inline-fields">
+        <label>
+          Model
+          <select value={props.modelValue} onChange={(event) => props.onModelChange(event.target.value)}>
+            {props.modelOptions.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Reasoning effort
+          <select value={props.effortValue} onChange={(event) => props.onEffortChange(event.target.value)}>
+            {props.effortOptions.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+    </section>
+  );
+}
+
+function createEmptySetupForm(): SetupFormState {
+  return {
+    ...createDefaultConfigForm(),
+    semanticScholarApiKey: "",
+    openAiApiKey: ""
+  };
+}
+
+function createSetupFormFromBootstrap(bootstrap: BootstrapResponse): SetupFormState {
+  return {
+    ...(bootstrap.configForm || {
+      ...createDefaultConfigForm(),
+      projectName: bootstrap.setupDefaults.projectName,
+      defaultTopic: bootstrap.setupDefaults.defaultTopic,
+      defaultConstraints: bootstrap.setupDefaults.defaultConstraints.join(", "),
+      defaultObjectiveMetric: bootstrap.setupDefaults.defaultObjectiveMetric
+    }),
+    semanticScholarApiKey: "",
+    openAiApiKey: ""
+  };
+}
+
+function createDefaultConfigForm(): WebConfigFormData {
+  return {
+    projectName: "",
+    defaultTopic: "",
+    defaultConstraints: "",
+    defaultObjectiveMetric: "",
+    llmMode: "codex_chatgpt_only",
+    pdfAnalysisMode: "codex_text_image_hybrid",
+    codexChatModelChoice: "gpt-5.3-codex",
+    codexChatReasoningEffort: "low",
+    codexTaskModelChoice: "gpt-5.3-codex",
+    codexTaskReasoningEffort: "xhigh",
+    codexExperimentModelChoice: "gpt-5.3-codex",
+    codexExperimentReasoningEffort: "xhigh",
+    codexPdfModelChoice: "gpt-5.3-codex",
+    codexPdfReasoningEffort: "xhigh",
+    openAiChatModel: "gpt-5.4",
+    openAiChatReasoningEffort: "low",
+    openAiTaskModel: "gpt-5.4",
+    openAiReasoningEffort: "medium",
+    openAiExperimentModel: "gpt-5.4",
+    openAiExperimentReasoningEffort: "medium",
+    openAiPdfModel: "gpt-5.4",
+    openAiPdfReasoningEffort: "medium",
+    responsesPdfModel: "gpt-5.4",
+    responsesPdfReasoningEffort: "xhigh"
+  };
+}
+
+function createDefaultConfigOptions(): WebConfigOptions {
+  return {
+    codexModels: [
+      "gpt-5.4",
+      "gpt-5.4 (fast)",
+      "gpt-5.3-codex",
+      "gpt-5.3-codex-spark",
+      "gpt-5.2-codex",
+      "gpt-5.2",
+      "gpt-5.1-codex-max",
+      "gpt-5.1",
+      "gpt-5.1-codex",
+      "gpt-5-codex",
+      "gpt-5-codex-mini",
+      "gpt-5"
+    ],
+    codexReasoningByModel: {
+      "gpt-5.4": ["low", "medium", "high", "xhigh"],
+      "gpt-5.4 (fast)": ["low", "medium", "high", "xhigh"],
+      "gpt-5.3-codex": ["low", "medium", "high", "xhigh"],
+      "gpt-5.3-codex-spark": ["low", "medium", "high"],
+      "gpt-5.2-codex": ["low", "medium", "high", "xhigh"],
+      "gpt-5.2": ["low", "medium", "high"],
+      "gpt-5.1-codex-max": ["low", "medium", "high"],
+      "gpt-5.1": ["low", "medium", "high"],
+      "gpt-5.1-codex": ["low", "medium", "high", "xhigh"],
+      "gpt-5-codex": ["low", "medium", "high"],
+      "gpt-5-codex-mini": ["low", "medium", "high"],
+      "gpt-5": ["minimal", "low", "medium", "high"]
+    },
+    openAiModels: ["gpt-5.4", "gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4o", "gpt-4o-mini"],
+    openAiReasoningByModel: {
+      "gpt-5.4": ["minimal", "low", "medium", "high", "xhigh"],
+      "gpt-5": ["minimal", "low", "medium", "high", "xhigh"],
+      "gpt-5-mini": ["minimal", "low", "medium", "high", "xhigh"],
+      "gpt-4.1": ["medium"],
+      "gpt-4o": ["medium"],
+      "gpt-4o-mini": ["medium"]
+    },
+    responsesPdfModels: ["gpt-5.4", "gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4o", "gpt-4o-mini"],
+    responsesPdfReasoning: ["minimal", "low", "medium", "high", "xhigh"]
+  };
+}
+
+function patchSetupForm(
+  setter: Dispatch<SetStateAction<SetupFormState>>,
+  patch: Partial<SetupFormState>
+) {
+  setter((current) => ({ ...current, ...patch }));
+}
+
+function updateModelAndEffort(
+  setter: Dispatch<SetStateAction<SetupFormState>>,
+  modelKey: keyof SetupFormState,
+  effortKey: keyof SetupFormState,
+  nextModel: string,
+  optionsByModel: Record<string, string[]>
+) {
+  setter((current) => {
+    const effortOptions = getEffortOptions(optionsByModel, nextModel);
+    const currentEffort = String(current[effortKey] || "");
+    return {
+      ...current,
+      [modelKey]: nextModel,
+      [effortKey]: effortOptions.includes(currentEffort) ? currentEffort : effortOptions[0]
+    };
+  });
+}
+
+function getEffortOptions(optionsByModel: Record<string, string[]>, model: string): string[] {
+  return optionsByModel[model] || ["medium"];
+}
+
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     headers: {
@@ -745,12 +1056,12 @@ function formatStatusLabel(value: string): string {
   return toHeadline(value.replace(/_/g, " "));
 }
 
-function labelProviderMode(value: BootstrapResponse["configSummary"]["llmMode"] | undefined): string {
+function labelProviderMode(value: ConfigSummary["llmMode"] | undefined): string {
   return value === "openai_api" ? "OpenAI API" : "Codex ChatGPT";
 }
 
-function labelPdfMode(value: BootstrapResponse["configSummary"]["pdfMode"] | undefined): string {
-  return value === "responses_api_pdf" ? "Responses API PDF" : "Codex text extract";
+function labelPdfMode(value: ConfigSummary["pdfMode"] | undefined): string {
+  return value === "responses_api_pdf" ? "Responses API PDF" : "Codex text + image hybrid";
 }
 
 function labelArtifactKind(value: ArtifactEntry["kind"]): string {

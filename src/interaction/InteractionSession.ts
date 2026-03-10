@@ -2027,7 +2027,7 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
     case "analyze_papers":
       return ["paper_summaries.jsonl", "evidence_store.jsonl", "analysis_manifest.json", "analysis_cache"];
     case "generate_hypotheses":
-      return ["hypotheses.jsonl"];
+      return ["hypotheses.jsonl", "hypothesis_generation"];
     case "design_experiments":
       return ["experiment_plan.yaml"];
     case "implement_experiments":
@@ -2051,7 +2051,7 @@ function nodeContextKeys(node: GraphNodeId): string[] {
       return [
         "generate_hypotheses.request",
         "generate_hypotheses.top_k",
-        "generate_hypotheses.branch_count",
+        "generate_hypotheses.candidate_count",
         "generate_hypotheses.source",
         "generate_hypotheses.pipeline",
         "generate_hypotheses.summary"

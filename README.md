@@ -46,8 +46,8 @@
 | Slash-first TUI | Operate the system from `/new`, `/agent ...`, `/model`, `/settings`, and `/doctor` |
 | Local Web Ops UI | Run `autoresearch web` for onboarding, dashboard controls, artifacts, checkpoints, and live session state in the browser |
 | Deterministic natural-language routing | Common intents map to local handlers or slash commands before LLM fallback |
-| Hybrid provider model | Use Codex login for the primary flow or move to OpenAI API models when you want explicit API-backed execution |
-| PDF analysis modes | Analyze PDFs via local extraction + Codex, or send them directly to the Responses API |
+| Hybrid provider model | Default to Codex login for the primary flow, or move to OpenAI API models when you want explicit API-backed execution |
+| PDF analysis modes | Default to local extraction + Codex hybrid PDF analysis, or send PDFs directly to the Responses API when needed |
 | Research runtime patterns | ReAct, ReWOO, ToT, and Reflexion are used where they make sense |
 | Local ACI execution | `implement_experiments` and `run_experiments` execute through file, command, and test actions |
 
@@ -124,10 +124,10 @@ node dist/cli/main.js web
 2. If `.autoresearch/config.yaml` does not exist, the TUI opens the setup wizard and the web app shows the onboarding form.
 3. Both flows create the same scaffold/config, store your Semantic Scholar key, and open the main dashboard.
 4. Choose the primary LLM provider:
-   - `codex`: use Codex ChatGPT login for the main workflow
+   - `codex`: use Codex ChatGPT login for the main workflow (default)
    - `api`: use OpenAI API models for the main workflow (`OPENAI_API_KEY` required)
 5. Choose the PDF analysis mode:
-   - `codex`: download and extract PDF text locally, then analyze with Codex
+   - `codex`: download and extract PDF text locally, then analyze with Codex (default)
    - `api`: send the PDF directly to the Responses API (`OPENAI_API_KEY` required)
 6. If the provider or PDF mode is `api`, setup wizard and `/settings` let you choose a model.
    - Current built-in catalog: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`

@@ -1,6 +1,7 @@
 import type { CodexReasoningEffort } from "./codexCliClient.js";
 
 export const GPT_5_4_FAST_MODEL_LABEL = "gpt-5.4 (fast)";
+export const DEFAULT_CODEX_MODEL = "gpt-5.3-codex";
 
 // Official Codex model list from developers.openai.com/codex/models
 // (recommended + alternative models), verified 2026-03-06.
@@ -45,6 +46,7 @@ export function buildCodexModelSelectionChoices(currentModel?: string, rawEnvCho
     .filter(Boolean);
   const deduped = new Set<string>([
     ...(current ? [current] : []),
+    DEFAULT_CODEX_MODEL,
     "gpt-5.4",
     GPT_5_4_FAST_MODEL_LABEL,
     ...OFFICIAL_CODEX_MODELS.filter((model) => model !== "gpt-5.4"),
@@ -101,7 +103,7 @@ export function getCurrentCodexModelSelectionValue(model: string | undefined, fa
   if (model === "gpt-5.4" && fastMode) {
     return GPT_5_4_FAST_MODEL_LABEL;
   }
-  return model?.trim() || "gpt-5.4";
+  return model?.trim() || DEFAULT_CODEX_MODEL;
 }
 
 export function getCodexModelSelectionDescription(choice: string): string | undefined {

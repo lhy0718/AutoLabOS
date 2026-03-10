@@ -19,6 +19,20 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports compare-analysis mode", () => {
+    expect(resolveCliAction(["compare-analysis", "--run", "run-123", "--limit", "5", "--no-judge"])).toEqual({
+      kind: "compare-analysis",
+      runId: "run-123",
+      limit: 5,
+      judge: false
+    });
+  });
+
+  it("requires a run id for compare-analysis", () => {
+    const action = resolveCliAction(["compare-analysis"]);
+    expect(action.kind).toBe("error");
+  });
+
   it("rejects init subcommand", () => {
     const action = resolveCliAction(["init"]);
     expect(action.kind).toBe("error");

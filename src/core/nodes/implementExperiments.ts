@@ -4,6 +4,7 @@ import { NodeExecutionDeps } from "./types.js";
 
 export function createImplementExperimentsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   const sessions = new ImplementSessionManager({
+    config: deps.config,
     codex: deps.codex,
     eventStream: deps.eventStream,
     runStore: deps.runStore,

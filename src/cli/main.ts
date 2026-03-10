@@ -2,6 +2,7 @@
 import { runAutoresearchApp } from "../app.js";
 import { resolveCliAction } from "./args.js";
 import { runAutoresearchWebServer } from "../web/server.js";
+import { runCompareAnalysisCli } from "./compareAnalysis.js";
 
 function printHelp(): void {
   process.stdout.write([
@@ -13,6 +14,7 @@ function printHelp(): void {
     "Usage:",
     "  autoresearch",
     "  autoresearch web [--host 127.0.0.1] [--port 4317]",
+    "  autoresearch compare-analysis --run <run-id> [--limit 3] [--no-judge]",
     "  autoresearch --help",
     "  autoresearch --version"
   ].join("\n") + "\n");
@@ -42,6 +44,16 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       host: action.host,
       port: action.port
+    });
+    return;
+  }
+
+  if (action.kind === "compare-analysis") {
+    await runCompareAnalysisCli({
+      cwd: process.cwd(),
+      runId: action.runId,
+      limit: action.limit,
+      judge: action.judge
     });
     return;
   }

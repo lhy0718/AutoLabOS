@@ -66,9 +66,23 @@ export interface HypothesisReview {
 
 export interface HypothesisSelectionScore {
   candidate_id: string;
+  raw_base_score: number;
   base_score: number;
+  implementation_bonus: number;
+  bundling_penalty: number;
+  scope_penalty: number;
   diversity_penalty: number;
   final_score: number;
+}
+
+export interface HypothesisLlmExchange {
+  prompt: string;
+  completion: string;
+}
+
+export interface HypothesisDraftLlmExchange extends HypothesisLlmExchange {
+  kind: HypothesisGeneratorKind;
+  requested_count: number;
 }
 
 export interface HypothesisPlanningArtifacts {
@@ -80,6 +94,12 @@ export interface HypothesisPlanningArtifacts {
     selected_ids: string[];
     ranked_ids: string[];
     scores: HypothesisSelectionScore[];
+  };
+  llm_trace: {
+    axes?: HypothesisLlmExchange;
+    drafts: HypothesisDraftLlmExchange[];
+    review?: HypothesisLlmExchange;
+    single_pass?: HypothesisLlmExchange;
   };
 }
 
@@ -264,8 +284,16 @@ export async function generateHypothesesFromEvidence(args: {
 
     try {
       args.onProgress?.(`Submitting single-pass hypothesis generation request for ${args.evidenceSeeds.length} evidence seed(s).`);
+      const singlePassPrompt = buildHypothesisPrompt(
+        args.runTitle,
+        args.runTopic,
+        args.objectiveMetric,
+        args.evidenceSeeds,
+        branchCount,
+        topK
+      );
       const completion = await args.llm.complete(
-        buildHypothesisPrompt(args.runTitle, args.runTopic, args.objectiveMetric, args.evidenceSeeds, branchCount, topK),
+        singlePassPrompt,
         {
           systemPrompt: HYPOTHESIS_SYSTEM_PROMPT,
           onProgress: (event) => emitProgress(args.onProgress, "Hypothesis LLM", event)
@@ -302,6 +330,13 @@ export async function generateHypothesesFromEvidence(args: {
             selected_ids: selected.selected.map((candidate) => candidate.id),
             ranked_ids: selected.ranked.map((candidate) => candidate.id),
             scores: selected.scores
+          },
+          llm_trace: {
+            drafts: [],
+            single_pass: {
+              prompt: singlePassPrompt,
+              completion: completion.text
+            }
           }
         }
       };
@@ -326,10 +361,17 @@ export async function generateHypothesesFromEvidence(args: {
             ranked_ids: fallback.candidates.map((candidate) => candidate.id),
             scores: fallback.candidates.map((candidate) => ({
               candidate_id: candidate.id,
+              raw_base_score: scoreHypothesis(candidate),
               base_score: scoreHypothesis(candidate),
+              implementation_bonus: 0,
+              bundling_penalty: 0,
+              scope_penalty: 0,
               diversity_penalty: 0,
               final_score: scoreHypothesis(candidate)
             }))
+          },
+          llm_trace: {
+            drafts: []
           }
         }
       };
@@ -349,16 +391,24 @@ async function runStagedHypothesisPipeline(args: {
 }): Promise<HypothesisPlanningResult> {
   const evidencePanel = selectHypothesisEvidencePanel(args.evidenceSeeds, 24);
   let toolCallsUsed = 0;
+  const llmTrace: HypothesisPlanningArtifacts["llm_trace"] = {
+    drafts: []
+  };
 
   args.onProgress?.(`Synthesizing evidence axes from ${evidencePanel.length} curated evidence item(s).`);
+  const axesPrompt = buildHypothesisAxesPrompt(args.runTitle, args.runTopic, args.objectiveMetric, evidencePanel);
   const axesCompletion = await args.llm.complete(
-    buildHypothesisAxesPrompt(args.runTitle, args.runTopic, args.objectiveMetric, evidencePanel),
+    axesPrompt,
     {
       systemPrompt: HYPOTHESIS_AXIS_SYSTEM_PROMPT,
       onProgress: (event) => emitProgress(args.onProgress, "Hypothesis axes", event)
     }
   );
   toolCallsUsed += 1;
+  llmTrace.axes = {
+    prompt: axesPrompt,
+    completion: axesCompletion.text
+  };
   const parsedAxes = parseHypothesisAxisJson(axesCompletion.text);
   const axes = normalizeHypothesisAxes(parsedAxes.axes, evidencePanel);
   if (axes.length === 0) {
@@ -379,22 +429,29 @@ async function runStagedHypothesisPipeline(args: {
       continue;
     }
     args.onProgress?.(`Generating ${roleLabel(role.kind)} hypothesis drafts (${role.count}).`);
+    const rolePrompt = buildHypothesisRolePrompt(
+      role.kind,
+      args.runTitle,
+      args.runTopic,
+      args.objectiveMetric,
+      axes,
+      evidencePanel,
+      role.count
+    );
     const completion = await args.llm.complete(
-      buildHypothesisRolePrompt(
-        role.kind,
-        args.runTitle,
-        args.runTopic,
-        args.objectiveMetric,
-        axes,
-        evidencePanel,
-        role.count
-      ),
+      rolePrompt,
       {
         systemPrompt: HYPOTHESIS_SYSTEM_PROMPT,
         onProgress: (event) => emitProgress(args.onProgress, `${roleLabel(role.kind)} drafts`, event)
       }
     );
     toolCallsUsed += 1;
+    llmTrace.drafts.push({
+      kind: role.kind,
+      requested_count: role.count,
+      prompt: rolePrompt,
+      completion: completion.text
+    });
     const parsed = parseHypothesisJson(completion.text);
     const normalized = normalizeHypothesisCandidates(parsed.candidates, role.count, evidencePanel, role.kind);
     draftGroups.push(normalized);
@@ -406,14 +463,19 @@ async function runStagedHypothesisPipeline(args: {
   }
 
   args.onProgress?.(`Reviewing ${drafts.length} hypothesis draft(s) for causal clarity and experimentability.`);
+  const reviewPrompt = buildHypothesisReviewPrompt(args.runTitle, args.runTopic, args.objectiveMetric, axes, drafts, args.topK);
   const reviewCompletion = await args.llm.complete(
-    buildHypothesisReviewPrompt(args.runTitle, args.runTopic, args.objectiveMetric, axes, drafts, args.topK),
+    reviewPrompt,
     {
       systemPrompt: HYPOTHESIS_REVIEW_SYSTEM_PROMPT,
       onProgress: (event) => emitProgress(args.onProgress, "Hypothesis review", event)
     }
   );
   toolCallsUsed += 1;
+  llmTrace.review = {
+    prompt: reviewPrompt,
+    completion: reviewCompletion.text
+  };
   const parsedReviews = parseHypothesisReviewJson(reviewCompletion.text);
   const reviews = normalizeHypothesisReviews(parsedReviews.reviews, drafts);
   const reviewedCandidates = dedupeHypothesisCandidates(applyHypothesisReviews(drafts, reviews));
@@ -441,7 +503,8 @@ async function runStagedHypothesisPipeline(args: {
         selected_ids: selection.selected.map((candidate) => candidate.id),
         ranked_ids: selection.ranked.map((candidate) => candidate.id),
         scores: selection.scores
-      }
+      },
+      llm_trace: llmTrace
     }
   };
 }
@@ -1024,9 +1087,16 @@ function selectHypothesesWithDiversity(
   const reviewMap = new Map(reviews.map((review) => [review.candidate_id, review] as const));
   const kept = candidates.filter((candidate) => reviewMap.get(candidate.id)?.keep !== false);
   const pool = kept.length >= topK ? kept : candidates;
+  const adjustedBaseById = new Map(
+    pool.map((candidate) => [
+      candidate.id,
+      buildHypothesisSelectionBase(candidate, reviewMap.get(candidate.id), objectiveMetric)
+    ] as const)
+  );
   const ranked = [...pool].sort(
     (a, b) =>
-      hypothesisBaseScore(b, objectiveMetric) - hypothesisBaseScore(a, objectiveMetric) ||
+      (adjustedBaseById.get(b.id)?.base_score ?? hypothesisBaseScore(b, objectiveMetric)) -
+        (adjustedBaseById.get(a.id)?.base_score ?? hypothesisBaseScore(a, objectiveMetric)) ||
       b.testability - a.testability ||
       b.feasibility - a.feasibility ||
       a.cost - b.cost ||
@@ -1038,20 +1108,31 @@ function selectHypothesesWithDiversity(
   const remaining = [...ranked];
 
   while (selected.length < topK && remaining.length > 0) {
-    let bestIndex = 0;
+    let bestIndex = -1;
     let bestScore = Number.NEGATIVE_INFINITY;
-    let bestPenalty = 0;
+    let bestSelection: HypothesisSelectionScore | undefined;
+    const requireImplementableTopSlot =
+      selected.length === 0 && remaining.some((candidate) => (candidate.experimentability ?? 0) >= 4);
 
     for (let index = 0; index < remaining.length; index += 1) {
       const candidate = remaining[index]!;
-      const baseScore = hypothesisBaseScore(candidate, objectiveMetric);
-      const diversityPenalty = calculateDiversityPenalty(candidate, selected);
-      const finalScore = baseScore - diversityPenalty;
-      if (finalScore > bestScore) {
-        bestIndex = index;
-        bestScore = finalScore;
-        bestPenalty = diversityPenalty;
+      if (requireImplementableTopSlot && (candidate.experimentability ?? 0) < 4) {
+        continue;
       }
+      const score = buildHypothesisSelectionScore(
+        candidate,
+        selected,
+        adjustedBaseById.get(candidate.id) ?? buildHypothesisSelectionBase(candidate, reviewMap.get(candidate.id), objectiveMetric)
+      );
+      if (score.final_score > bestScore) {
+        bestIndex = index;
+        bestScore = score.final_score;
+        bestSelection = score;
+      }
+    }
+
+    if (bestIndex < 0) {
+      break;
     }
 
     const [chosen] = remaining.splice(bestIndex, 1);
@@ -1059,26 +1140,22 @@ function selectHypothesesWithDiversity(
       break;
     }
     selected.push(chosen);
-    scores.push({
-      candidate_id: chosen.id,
-      base_score: hypothesisBaseScore(chosen, objectiveMetric),
-      diversity_penalty: bestPenalty,
-      final_score: bestScore
-    });
+    if (bestSelection) {
+      scores.push(bestSelection);
+    }
   }
 
   for (const candidate of ranked) {
     if (scores.some((entry) => entry.candidate_id === candidate.id)) {
       continue;
     }
-    scores.push({
-      candidate_id: candidate.id,
-      base_score: hypothesisBaseScore(candidate, objectiveMetric),
-      diversity_penalty: calculateDiversityPenalty(candidate, selected.filter((item) => item.id !== candidate.id)),
-      final_score:
-        hypothesisBaseScore(candidate, objectiveMetric) -
-        calculateDiversityPenalty(candidate, selected.filter((item) => item.id !== candidate.id))
-    });
+    scores.push(
+      buildHypothesisSelectionScore(
+        candidate,
+        selected.filter((item) => item.id !== candidate.id),
+        adjustedBaseById.get(candidate.id) ?? buildHypothesisSelectionBase(candidate, reviewMap.get(candidate.id), objectiveMetric)
+      )
+    );
   }
 
   return { selected, ranked, scores };
@@ -1494,6 +1571,158 @@ function hypothesisBaseScore(candidate: HypothesisCandidate, objectiveMetric?: s
   }
 
   return score;
+}
+
+function buildHypothesisSelectionBase(
+  candidate: HypothesisCandidate,
+  review: HypothesisReview | undefined,
+  objectiveMetric?: string
+): {
+  raw_base_score: number;
+  base_score: number;
+  implementation_bonus: number;
+  bundling_penalty: number;
+  scope_penalty: number;
+} {
+  const rawBaseScore = hypothesisBaseScore(candidate, objectiveMetric);
+  const implementationBonus = hypothesisImplementationBonus(candidate, review);
+  const bundlingPenalty = hypothesisBundlingPenalty(candidate, review);
+  const scopePenalty = hypothesisScopePenalty(candidate, review);
+  return {
+    raw_base_score: rawBaseScore,
+    base_score: rawBaseScore + implementationBonus - bundlingPenalty - scopePenalty,
+    implementation_bonus: implementationBonus,
+    bundling_penalty: bundlingPenalty,
+    scope_penalty: scopePenalty
+  };
+}
+
+function buildHypothesisSelectionScore(
+  candidate: HypothesisCandidate,
+  selected: HypothesisCandidate[],
+  adjustedBase: {
+    raw_base_score: number;
+    base_score: number;
+    implementation_bonus: number;
+    bundling_penalty: number;
+    scope_penalty: number;
+  }
+): HypothesisSelectionScore {
+  const diversityPenalty = calculateDiversityPenalty(candidate, selected);
+  return {
+    candidate_id: candidate.id,
+    raw_base_score: adjustedBase.raw_base_score,
+    base_score: adjustedBase.base_score,
+    implementation_bonus: adjustedBase.implementation_bonus,
+    bundling_penalty: adjustedBase.bundling_penalty,
+    scope_penalty: adjustedBase.scope_penalty,
+    diversity_penalty: diversityPenalty,
+    final_score: adjustedBase.base_score - diversityPenalty
+  };
+}
+
+function hypothesisImplementationBonus(
+  candidate: HypothesisCandidate,
+  review: HypothesisReview | undefined
+): number {
+  let bonus = 0;
+  const experimentability = candidate.experimentability ?? 0;
+  if (experimentability >= 5) {
+    bonus += 2.5;
+  } else if (experimentability >= 4) {
+    bonus += 2;
+  } else if (experimentability >= 3) {
+    bonus += 0.5;
+  }
+
+  if (candidate.measurement_hint) {
+    bonus += 0.75;
+  }
+  if ((candidate.reproducibility_signals?.length ?? 0) >= 2) {
+    bonus += 0.5;
+  }
+  if (candidate.cost <= 4) {
+    bonus += 0.5;
+  }
+
+  const strengthsText = (review?.strengths ?? []).join(" ").toLowerCase();
+  if (/(directly implementable|clear baseline|clear control|concrete intervention|direct intervention)/.test(strengthsText)) {
+    bonus += 0.5;
+  }
+
+  return bonus;
+}
+
+function hypothesisBundlingPenalty(
+  candidate: HypothesisCandidate,
+  review: HypothesisReview | undefined
+): number {
+  const text = buildHypothesisSelectionText(candidate, review);
+  let penalty = 0;
+
+  if (
+    /(separate arms|combined treatment|multiple interventions|conflat|merges? two distinct|over-bundle|overbundle)/.test(text)
+  ) {
+    penalty = Math.max(penalty, 4);
+  } else if (
+    /(one package|package rather than isolating|treats several .* as one package|not isolate|combined method|bundled|bundles|merged|consisting of .* and .* and )/.test(
+      text
+    )
+  ) {
+    penalty = Math.max(penalty, 2);
+  }
+
+  if ((candidate.axis_ids?.length ?? 0) > 1) {
+    penalty += 0.5;
+  }
+
+  return Math.min(5, penalty);
+}
+
+function hypothesisScopePenalty(
+  candidate: HypothesisCandidate,
+  review: HypothesisReview | undefined
+): number {
+  const text = buildHypothesisSelectionText(candidate, review);
+  let penalty = 0;
+  const trainingLike = /(train each regime|training regime|fine-tun|policy optimization|distillation|supervised fine-tuning|sft|checkpoint)/.test(
+    text
+  );
+
+  if (trainingLike) {
+    penalty += 1.5;
+  }
+  if (trainingLike && /checkpoints?/.test(text)) {
+    penalty += 0.75;
+  }
+  if (trainingLike && /(downstream tasks|cross-task|task outcomes|task-success|near ceiling|single-agent baseline)/.test(text)) {
+    penalty += 0.75;
+  }
+  if (trainingLike && /(interaction-data|data regime|data size|sweep)/.test(text)) {
+    penalty += 0.5;
+  }
+  if (/(too broad and expensive|unnecessarily wide|scope unnecessarily wide|experimental scope)/.test(text)) {
+    penalty = Math.max(penalty, 3);
+  }
+
+  return Math.min(3.5, penalty);
+}
+
+function buildHypothesisSelectionText(
+  candidate: HypothesisCandidate,
+  review: HypothesisReview | undefined
+): string {
+  return [
+    candidate.text,
+    candidate.measurement_hint,
+    candidate.critique_summary,
+    review?.critique_summary,
+    ...(review?.strengths ?? []),
+    ...(review?.weaknesses ?? [])
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 }
 
 function calculateDiversityPenalty(candidate: HypothesisCandidate, selected: HypothesisCandidate[]): number {

@@ -7,7 +7,7 @@ export async function runDoctor(
   codex: CodexCliClient,
   opts?: {
     llmMode?: "codex_chatgpt_only" | "openai_api";
-    pdfAnalysisMode?: "codex_text_extract" | "responses_api_pdf";
+    pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf";
     openAiApiKeyConfigured?: boolean;
   }
 ): Promise<DoctorCheck[]> {
@@ -22,6 +22,11 @@ export async function runDoctor(
   checks.push(await runBinaryCheck("python3", ["--version"], "python"));
   checks.push(await runBinaryCheck("pip3", ["--version"], "pip"));
   checks.push(await runBinaryCheck("pdflatex", ["--version"], "latex"));
+  if (opts?.pdfAnalysisMode === "codex_text_image_hybrid") {
+    checks.push(await runBinaryCheck("pdftotext", ["-v"], "pdftotext"));
+    checks.push(await runBinaryCheck("pdfinfo", ["-v"], "pdfinfo"));
+    checks.push(await runBinaryCheck("pdftoppm", ["-v"], "pdftoppm"));
+  }
   if (opts?.llmMode === "openai_api" || opts?.pdfAnalysisMode === "responses_api_pdf") {
     checks.push({
       name: "openai-api-key",

@@ -9,6 +9,7 @@ import { MockLLMClient } from "../src/core/llm/client.js";
 import { createAnalyzeResultsNode } from "../src/core/nodes/analyzeResults.js";
 import { createRunExperimentsNode } from "../src/core/nodes/runExperiments.js";
 import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
+import { buildPublicPaperDir } from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
@@ -139,5 +140,7 @@ describe("objective metric propagation", () => {
     expect(tex).toContain("Primary objective: accuracy at least 0.9.");
     expect(tex).toContain("Objective evaluation: Objective metric met: accuracy=0.91 >= 0.9.");
     expect(tex).toContain("Result emphasis:");
+    const publicTex = await readFile(path.join(buildPublicPaperDir(root, run), "main.tex"), "utf8");
+    expect(publicTex).toContain("Primary objective: accuracy at least 0.9.");
   });
 });

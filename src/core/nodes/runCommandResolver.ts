@@ -20,6 +20,8 @@ export async function resolveRunCommand(
 ): Promise<ResolvedRunCommand> {
   const runDir = path.join(workspaceRoot, ".autoresearch", "runs", run.id);
   const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+  const publicDir =
+    resolveMaybeRelative(await runContext.get<string>("implement_experiments.public_dir"), workspaceRoot) || undefined;
   const metricsPath =
     resolveMaybeRelative(await runContext.get<string>("implement_experiments.metrics_path"), workspaceRoot) ||
     path.join(runDir, "metrics.json");
@@ -43,40 +45,56 @@ export async function resolveRunCommand(
   if (scriptPath && (await fileExists(scriptPath))) {
     return {
       command: inferCommandForScript(scriptPath),
-      cwd: workspaceRoot,
+      cwd: explicitCwd,
       source: "run_context.script",
       metricsPath,
       testCommand: testCommand || undefined,
-      testCwd: workspaceRoot
+      testCwd: explicitCwd
     };
   }
 
-  for (const relative of ["experiment.py", "experiment.js", "experiment.sh"]) {
-    const candidate = path.join(runDir, relative);
-    if (await fileExists(candidate)) {
-      return {
-        command: inferCommandForScript(candidate),
-        cwd: workspaceRoot,
-        source: `run_dir.${relative}`,
-        metricsPath,
-        testCommand: testCommand || undefined,
-        testCwd: workspaceRoot
-      };
+  for (const [dir, sourcePrefix, cwd] of [
+    [publicDir, "public_dir", publicDir || workspaceRoot],
+    [runDir, "run_dir", workspaceRoot]
+  ] as const) {
+    if (!dir) {
+      continue;
+    }
+    for (const relative of ["experiment.py", "experiment.js", "experiment.sh"]) {
+      const candidate = path.join(dir, relative);
+      if (await fileExists(candidate)) {
+        return {
+          command: inferCommandForScript(candidate),
+          cwd,
+          source: `${sourcePrefix}.${relative}`,
+          metricsPath,
+          testCommand: testCommand || undefined,
+          testCwd: cwd
+        };
+      }
     }
   }
 
-  const packageJsonPath = path.join(runDir, "package.json");
-  if (await fileExists(packageJsonPath)) {
-    const packageJson = await readPackageJson(packageJsonPath);
-    if (packageJson?.scripts?.experiment) {
-      return {
-        command: "npm run experiment",
-        cwd: runDir,
-        source: "run_dir.package_json#experiment",
-        metricsPath,
-        testCommand: packageJson.scripts.test ? "npm test -- --runInBand" : testCommand || undefined,
-        testCwd: runDir
-      };
+  for (const [dir, sourcePrefix] of [
+    [publicDir, "public_dir"],
+    [runDir, "run_dir"]
+  ] as const) {
+    if (!dir) {
+      continue;
+    }
+    const packageJsonPath = path.join(dir, "package.json");
+    if (await fileExists(packageJsonPath)) {
+      const packageJson = await readPackageJson(packageJsonPath);
+      if (packageJson?.scripts?.experiment) {
+        return {
+          command: "npm run experiment",
+          cwd: dir,
+          source: `${sourcePrefix}.package_json#experiment`,
+          metricsPath,
+          testCommand: packageJson.scripts.test ? "npm test -- --runInBand" : testCommand || undefined,
+          testCwd: dir
+        };
+      }
     }
   }
 

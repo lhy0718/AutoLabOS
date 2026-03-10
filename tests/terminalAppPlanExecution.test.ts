@@ -68,7 +68,7 @@ describe("TerminalApp pending natural plan execution", () => {
           openai: { model: "gpt-5.4", reasoning_effort: "medium" }
         },
         analysis: {
-          pdf_mode: "codex_text_extract",
+          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         research: {
@@ -98,7 +98,7 @@ describe("TerminalApp pending natural plan execution", () => {
     app.openSelectionMenu = vi
       .fn()
       .mockResolvedValueOnce("codex_chatgpt_only")
-      .mockResolvedValueOnce("codex_text_extract");
+      .mockResolvedValueOnce("codex_text_image_hybrid");
     app.selectCodexSlot = vi
       .fn()
       .mockResolvedValueOnce({ selection: "gpt-5.3-codex", effort: "low" })
@@ -117,7 +117,7 @@ describe("TerminalApp pending natural plan execution", () => {
       2,
       "Select PDF analysis mode",
       expect.any(Array),
-      "codex_text_extract"
+      "codex_text_image_hybrid"
     );
     expect(app.selectCodexSlot).toHaveBeenCalledTimes(3);
     expect(saveConfig).toHaveBeenCalledTimes(1);
@@ -136,7 +136,7 @@ describe("TerminalApp pending natural plan execution", () => {
           openai: { model: "gpt-5.4", reasoning_effort: "medium", command_reasoning_effort: "low" }
         },
         analysis: {
-          pdf_mode: "codex_text_extract",
+          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         research: {
@@ -193,17 +193,17 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs).toContain("Current model slots:");
     expect(
       app.logs.some((line: string) =>
-        line.includes("- general chat:") && line.includes("Recommended: gpt-5.4 (fast) + low")
+        line.includes("- general chat:") && line.includes("Recommended: gpt-5.3-codex + low")
       )
     ).toBe(true);
     expect(
       app.logs.some((line: string) =>
-        line.includes("- analysis/hypothesis:") && line.includes("Recommended: gpt-5.4 + xhigh")
+        line.includes("- analysis/hypothesis:") && line.includes("Recommended: gpt-5.3-codex + xhigh")
       )
     ).toBe(true);
     expect(
       app.logs.some((line: string) =>
-        line.includes("- PDF analysis:") && line.includes("Recommended: gpt-5.4 + xhigh")
+        line.includes("- PDF analysis:") && line.includes("Recommended: gpt-5.3-codex + xhigh")
       )
     ).toBe(true);
     expect(app.openSelectionMenu).toHaveBeenCalledWith(
@@ -211,15 +211,15 @@ describe("TerminalApp pending natural plan execution", () => {
       expect.arrayContaining([
         expect.objectContaining({
           value: "chat",
-          description: expect.stringContaining("Recommended: gpt-5.4 (fast) + low")
+          description: expect.stringContaining("Recommended: gpt-5.3-codex + low")
         }),
         expect.objectContaining({
           value: "task",
-          description: expect.stringContaining("Recommended: gpt-5.4 + xhigh")
+          description: expect.stringContaining("Recommended: gpt-5.3-codex + xhigh")
         }),
         expect.objectContaining({
           value: "pdf",
-          description: expect.stringContaining("Recommended: gpt-5.4 + xhigh")
+          description: expect.stringContaining("Recommended: gpt-5.3-codex + xhigh")
         })
       ]),
       "task"
@@ -245,7 +245,7 @@ describe("TerminalApp pending natural plan execution", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_extract",
+          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         research: {

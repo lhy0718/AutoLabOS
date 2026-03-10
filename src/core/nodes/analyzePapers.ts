@@ -54,7 +54,7 @@ interface AnalysisManifestEntry {
   summary_count: number;
   evidence_count: number;
   analysis_attempts: number;
-  analysis_mode?: "codex_text_extract" | "responses_api_pdf";
+  analysis_mode?: "codex_text_image_hybrid" | "responses_api_pdf";
   pdf_url?: string;
   pdf_cache_path?: string;
   text_cache_path?: string;
@@ -176,6 +176,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
       const pendingRows = selectedRows.filter((row) => manifest!.papers[row.paper_id]?.status !== "completed");
       const analysisConcurrency = getAnalysisConcurrency(analysisMode);
+      const includePageImages = deps.config.providers?.llm_mode === "codex_chatgpt_only";
       if (pendingRows.length > 0) {
         emitLog(`Analyzing ${pendingRows.length} paper(s) with concurrency ${analysisConcurrency}.`);
       }
@@ -208,19 +209,24 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           : await resolvePaperTextSource({
               runId: run.id,
               paper: row,
+              includePageImages,
               abortSignal,
               onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
             });
 
-        let analysisModeUsed: "responses_api_pdf" | "codex_text_extract" = useResponsesPdf
+        let analysisModeUsed: "responses_api_pdf" | "codex_text_image_hybrid" = useResponsesPdf
           ? "responses_api_pdf"
-          : "codex_text_extract";
+          : "codex_text_image_hybrid";
 
         emitLog(
           useResponsesPdf
             ? `Using Responses API PDF input for "${row.title}".`
             : source.sourceType === "full_text"
-              ? `Using full text for "${row.title}".`
+              ? source.pageImagePaths && source.pageImagePaths.length > 0
+                ? `Using full text plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}".`
+                : `Using full text for "${row.title}".`
+              : source.pageImagePaths && source.pageImagePaths.length > 0
+                ? `Falling back to abstract plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}" (${source.fallbackReason || "no full text"}).`
               : `Falling back to abstract for "${row.title}" (${source.fallbackReason || "no full text"}).`
         );
 
@@ -244,18 +250,23 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               }
               const reason = error instanceof Error ? error.message : String(error);
               emitLog(
-                `[${row.paper_id}] Responses API could not download the remote PDF (${reason}). Falling back to local PDF download/text extraction.`
+                `[${row.paper_id}] Responses API could not download the remote PDF (${reason}). Falling back to local PDF download/text-plus-image analysis.`
               );
               source = await resolvePaperTextSource({
                 runId: run.id,
                 paper: row,
+                includePageImages,
                 abortSignal,
                 onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
               });
-              analysisModeUsed = "codex_text_extract";
+              analysisModeUsed = "codex_text_image_hybrid";
               emitLog(
                 source.sourceType === "full_text"
-                  ? `Using locally extracted full text for "${row.title}" after Responses API fallback.`
+                  ? source.pageImagePaths && source.pageImagePaths.length > 0
+                    ? `Using locally extracted full text plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}" after Responses API fallback.`
+                    : `Using locally extracted full text for "${row.title}" after Responses API fallback.`
+                  : source.pageImagePaths && source.pageImagePaths.length > 0
+                    ? `Falling back to abstract plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}" after Responses API fallback (${source.fallbackReason || "no full text"}).`
                   : `Falling back to abstract for "${row.title}" after Responses API fallback (${source.fallbackReason || "no full text"}).`
               );
               analysis = await analyzePaperWithLlm({
@@ -403,7 +414,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
   };
 }
 
-function getAnalysisConcurrency(analysisMode: "codex_text_extract" | "responses_api_pdf"): number {
+function getAnalysisConcurrency(analysisMode: "codex_text_image_hybrid" | "responses_api_pdf"): number {
   return analysisMode === "responses_api_pdf" ? 2 : 3;
 }
 
@@ -564,7 +575,7 @@ async function bootstrapManifestFromExistingOutputs(
       summary_count: 1,
       evidence_count: evidenceCountByPaper.get(summary.paper_id) ?? 0,
       analysis_attempts: 1,
-      analysis_mode: "codex_text_extract",
+      analysis_mode: "codex_text_image_hybrid",
       has_table_references: false,
       table_reference_count: 0,
       has_figure_references: false,

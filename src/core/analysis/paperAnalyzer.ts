@@ -80,8 +80,14 @@ export async function analyzePaperWithLlm(args: {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       args.onProgress?.(`Starting LLM analysis attempt ${attempt}/${maxAttempts}.`);
+      if ((args.source.pageImagePaths?.length ?? 0) > 0) {
+        args.onProgress?.(
+          `Attaching ${args.source.pageImagePaths?.length ?? 0} rendered PDF page image(s) for hybrid analysis.`
+        );
+      }
       const completion = await args.llm.complete(buildPaperAnalysisPrompt(args.paper, args.source), {
         systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+        inputImagePaths: args.source.pageImagePaths,
         abortSignal: args.abortSignal,
         onProgress: (event) => {
           emitLlmProgress(args.onProgress, event);
@@ -204,6 +210,18 @@ function isAbortError(error: unknown): boolean {
 }
 
 export function buildPaperAnalysisPrompt(paper: AnalysisCorpusRow, source: ResolvedPaperSource): string {
+  const attachedImagesNote =
+    source.pageImagePaths && source.pageImagePaths.length > 0
+      ? [
+          `Attached page images: ${source.pageImagePaths.length}`,
+          source.pageImagePages && source.pageImagePages.length > 0
+            ? `Attached page numbers: ${formatAttachedPageNumbers(source.pageImagePages)}`
+            : undefined,
+          "Use the attached page images to recover figure, table, equation, and layout details that may be weak in extracted text.",
+          "If image content conflicts with extracted text, prefer the page image for localized visual details."
+        ].filter(Boolean)
+      : [];
+
   return [
     "Analyze the following paper and extract structured evidence.",
     "Return JSON with this exact top-level shape:",
@@ -236,9 +254,34 @@ export function buildPaperAnalysisPrompt(paper: AnalysisCorpusRow, source: Resol
     `Authors: ${paper.authors.join(", ") || "unknown"}`,
     `Citation count: ${paper.citation_count ?? "unknown"}`,
     `Source type: ${source.sourceType}`,
+    ...attachedImagesNote,
     "Source text:",
     source.text
   ].join("\n");
+}
+
+function formatAttachedPageNumbers(pages: number[]): string {
+  if (pages.length === 0) {
+    return "";
+  }
+
+  const ranges: string[] = [];
+  let start = pages[0];
+  let end = pages[0];
+
+  for (let index = 1; index < pages.length; index += 1) {
+    const page = pages[index];
+    if (page === end + 1) {
+      end = page;
+      continue;
+    }
+    ranges.push(start === end ? String(start) : `${start}-${end}`);
+    start = page;
+    end = page;
+  }
+
+  ranges.push(start === end ? String(start) : `${start}-${end}`);
+  return ranges.join(", ");
 }
 
 export function buildPaperAnalysisFilePrompt(paper: AnalysisCorpusRow): string {

@@ -18,7 +18,7 @@ class QueueJsonLLMClient extends MockLLMClient {
     super();
   }
 
-  override async complete(): Promise<{ text: string }> {
+  override async complete(_prompt: string): Promise<{ text: string }> {
     const output = this.outputs[Math.min(this.index, this.outputs.length - 1)] ?? "";
     this.index += 1;
     return { text: output };
@@ -84,6 +84,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
           evidence_id: "ev_1",
           paper_id: "paper_1",
           claim: "Structured communication reduces ambiguity.",
+          evidence_span: "Structured communication reduces ambiguity by forcing typed handoffs.",
           limitation_slot: "Not isolated against routing alone.",
           dataset_slot: "HumanEval",
           metric_slot: "pass@1 variance",
@@ -93,11 +94,20 @@ describe("normalizeGenerateHypothesesRequest", () => {
           evidence_id: "ev_2",
           paper_id: "paper_2",
           claim: "Execution feedback improves iterative correction.",
+          evidence_span: "Execution feedback improves iterative correction through repeated test-repair loops.",
           limitation_slot: "Adds validator cost.",
           dataset_slot: "MBPP",
           metric_slot: "executability",
           confidence: 0.94
         })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      [
+        JSON.stringify({ paper_id: "paper_1", title: "Paper One" }),
+        JSON.stringify({ paper_id: "paper_2", title: "Paper Two" })
       ].join("\n") + "\n",
       "utf8"
     );
@@ -238,13 +248,26 @@ describe("normalizeGenerateHypothesesRequest", () => {
     const axes = await readFile(path.join(runDir, "hypothesis_generation", "evidence_axes.json"), "utf8");
     const drafts = await readFile(path.join(runDir, "hypothesis_generation", "drafts.jsonl"), "utf8");
     const reviews = await readFile(path.join(runDir, "hypothesis_generation", "reviews.jsonl"), "utf8");
+    const llmTrace = await readFile(path.join(runDir, "hypothesis_generation", "llm_trace.json"), "utf8");
     const selection = await readFile(path.join(runDir, "hypothesis_generation", "selection.json"), "utf8");
+    const selectionJson = JSON.parse(selection) as {
+      scores?: Array<{ implementation_bonus?: number; bundling_penalty?: number }>;
+    };
 
     expect(hypotheses).toContain('"candidate_id":"intervention_1"');
     expect(hypotheses).toContain('"candidate_id":"mechanism_1"');
+    expect(hypotheses).toContain('"selection_rank":1');
+    expect(hypotheses).toContain('"evidence_snippets"');
+    expect(hypotheses).toContain('"paper_titles":["Paper Two"]');
     expect(axes).toContain('"label": "Structured communication"');
     expect(drafts).toContain('"generator_kind":"mechanism"');
     expect(reviews).toContain('"candidate_id":"intervention_1"');
+    expect(llmTrace).toContain('"axes"');
+    expect(llmTrace).toContain('"review"');
+    expect(llmTrace).toContain('"prompt"');
+    expect(llmTrace).toContain('"completion"');
     expect(selection).toContain('"selected_ids"');
+    expect(selectionJson.scores?.[0]?.implementation_bonus).toBeTypeOf("number");
+    expect(selectionJson.scores?.[0]?.bundling_penalty).toBeTypeOf("number");
   });
 });

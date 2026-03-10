@@ -4,8 +4,23 @@ import { promises as fs } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import {
+  buildCodexModelSelectionChoices,
+  DEFAULT_CODEX_MODEL,
+  getCurrentCodexModelSelectionValue,
+  getReasoningEffortChoicesForModel
+} from "../integrations/codex/modelCatalog.js";
+import {
+  buildOpenAiResponsesModelChoices,
+  buildOpenAiResponsesReasoningChoices
+} from "../integrations/openai/modelCatalog.js";
+import { buildResponsesPdfModelChoices } from "../integrations/openai/pdfModelCatalog.js";
+import {
+  DEFAULT_PDF_ANALYSIS_MODE,
+  DEFAULT_PRIMARY_LLM_MODE,
   ensureScaffold,
   hasOpenAiApiKey,
+  resolveOpenAiApiKey,
+  resolveSemanticScholarApiKey,
   resolveAppPaths,
   runNonInteractiveSetup
 } from "../config.js";
@@ -14,7 +29,14 @@ import { bootstrapAutoresearchRuntime, AutoresearchRuntime } from "../runtime/cr
 import { GraphNodeId, PendingPlan, RunRecord, WebSessionState } from "../types.js";
 import { InteractionSession } from "../interaction/InteractionSession.js";
 import { listRunArtifacts, readRunArtifact } from "./artifacts.js";
-import { BootstrapResponse, ConfigSummary, DoctorResponse, SessionInputResponse } from "./contracts.js";
+import {
+  BootstrapResponse,
+  ConfigSummary,
+  DoctorResponse,
+  SessionInputResponse,
+  WebConfigFormData,
+  WebConfigOptions
+} from "./contracts.js";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const WEB_DIST_DIR = path.join(PACKAGE_ROOT, "web", "dist");
@@ -31,7 +53,25 @@ interface SetupRequestBody {
   defaultConstraints?: string[];
   defaultObjectiveMetric?: string;
   llmMode?: "codex_chatgpt_only" | "openai_api";
-  pdfAnalysisMode?: "codex_text_extract" | "responses_api_pdf";
+  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf";
+  codexChatModelChoice?: string;
+  codexChatReasoningEffort?: string;
+  codexTaskModelChoice?: string;
+  codexTaskReasoningEffort?: string;
+  codexExperimentModelChoice?: string;
+  codexExperimentReasoningEffort?: string;
+  codexPdfModelChoice?: string;
+  codexPdfReasoningEffort?: string;
+  openAiChatModel?: string;
+  openAiChatReasoningEffort?: string;
+  openAiTaskModel?: string;
+  openAiReasoningEffort?: string;
+  openAiExperimentModel?: string;
+  openAiExperimentReasoningEffort?: string;
+  openAiPdfModel?: string;
+  openAiPdfReasoningEffort?: string;
+  responsesPdfModel?: string;
+  responsesPdfReasoningEffort?: string;
   semanticScholarApiKey?: string;
   openAiApiKey?: string;
 }
@@ -128,12 +168,15 @@ class AutoresearchWebController {
 
       if (pathname === "/api/setup" && method === "POST") {
         const body = (await readJsonBody(req)) as SetupRequestBody;
-        if (!body.semanticScholarApiKey?.trim()) {
+        const semanticScholarApiKey =
+          body.semanticScholarApiKey?.trim() || (await resolveSemanticScholarApiKey(this.cwd));
+        const openAiApiKey = body.openAiApiKey?.trim() || (await resolveOpenAiApiKey(this.cwd));
+        if (!semanticScholarApiKey) {
           return jsonResponse(res, 400, { error: "semanticScholarApiKey is required." });
         }
         if (
           (body.llmMode === "openai_api" || body.pdfAnalysisMode === "responses_api_pdf") &&
-          !body.openAiApiKey?.trim()
+          !openAiApiKey
         ) {
           return jsonResponse(res, 400, { error: "openAiApiKey is required for the selected provider/mode." });
         }
@@ -144,8 +187,26 @@ class AutoresearchWebController {
           defaultObjectiveMetric: body.defaultObjectiveMetric,
           llmMode: body.llmMode,
           pdfAnalysisMode: body.pdfAnalysisMode,
-          semanticScholarApiKey: body.semanticScholarApiKey.trim(),
-          openAiApiKey: body.openAiApiKey?.trim()
+          semanticScholarApiKey,
+          openAiApiKey,
+          codexChatModelChoice: body.codexChatModelChoice,
+          codexChatReasoningEffort: body.codexChatReasoningEffort as any,
+          codexTaskModelChoice: body.codexTaskModelChoice,
+          codexTaskReasoningEffort: body.codexTaskReasoningEffort as any,
+          codexExperimentModelChoice: body.codexExperimentModelChoice,
+          codexExperimentReasoningEffort: body.codexExperimentReasoningEffort as any,
+          codexPdfModelChoice: body.codexPdfModelChoice,
+          codexPdfReasoningEffort: body.codexPdfReasoningEffort as any,
+          openAiChatModel: body.openAiChatModel,
+          openAiChatReasoningEffort: body.openAiChatReasoningEffort as any,
+          openAiTaskModel: body.openAiTaskModel,
+          openAiReasoningEffort: body.openAiReasoningEffort as any,
+          openAiExperimentModel: body.openAiExperimentModel,
+          openAiExperimentReasoningEffort: body.openAiExperimentReasoningEffort as any,
+          openAiPdfModel: body.openAiPdfModel,
+          openAiPdfReasoningEffort: body.openAiPdfReasoningEffort as any,
+          responsesPdfModel: body.responsesPdfModel,
+          responsesPdfReasoningEffort: body.responsesPdfReasoningEffort as any
         });
         await ensureScaffold(this.paths);
         const runtime = (
@@ -374,19 +435,22 @@ class AutoresearchWebController {
   }
 
   private async buildBootstrapResponse(): Promise<BootstrapResponse> {
+    const config = this.runtime?.config;
     return {
       configured: Boolean(this.runtime && this.session),
       setupDefaults: {
         projectName: path.basename(this.cwd),
-        defaultTopic: this.runtime?.config.research.default_topic || "Multi-agent collaboration",
-        defaultConstraints: this.runtime?.config.research.default_constraints || ["recent papers", "last 5 years"],
+        defaultTopic: config?.research.default_topic || "Multi-agent collaboration",
+        defaultConstraints: config?.research.default_constraints || ["recent papers", "last 5 years"],
         defaultObjectiveMetric:
-          this.runtime?.config.research.default_objective_metric || "state-of-the-art reproducibility"
+          config?.research.default_objective_metric || "state-of-the-art reproducibility"
       },
       session: this.session?.snapshot() || emptySessionState(),
       runs: this.runtime ? await this.runtime.runStore.listRuns() : [],
       activeRunId: this.session?.getActiveRunId(),
-      configSummary: this.runtime ? summarizeConfig(this.runtime.config) : undefined
+      configSummary: config ? summarizeConfig(config) : undefined,
+      configForm: buildConfigFormData(config, this.cwd),
+      configOptions: buildConfigOptions(config)
     };
   }
 
@@ -489,12 +553,106 @@ function summarizeConfig(config: AutoresearchRuntime["config"]): ConfigSummary {
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.chat_model || config.providers.openai.model
         : config.providers.codex.chat_model || config.providers.codex.model,
+    experimentModel:
+      config.providers.llm_mode === "openai_api"
+        ? config.providers.openai.experiment_model || config.providers.openai.model
+        : config.providers.codex.experiment_model || config.providers.codex.model,
     pdfModel:
       config.analysis.pdf_mode === "responses_api_pdf"
         ? config.analysis.responses_model
         : config.providers.llm_mode === "openai_api"
           ? config.providers.openai.pdf_model || config.providers.openai.model
-          : config.providers.codex.pdf_model || config.providers.codex.model
+          : config.providers.codex.pdf_model || config.providers.codex.model,
+    taskReasoning:
+      config.providers.llm_mode === "openai_api"
+        ? config.providers.openai.reasoning_effort
+        : config.providers.codex.reasoning_effort,
+    chatReasoning:
+      config.providers.llm_mode === "openai_api"
+        ? config.providers.openai.chat_reasoning_effort || config.providers.openai.reasoning_effort
+        : config.providers.codex.chat_reasoning_effort || config.providers.codex.reasoning_effort,
+    experimentReasoning:
+      config.providers.llm_mode === "openai_api"
+        ? config.providers.openai.experiment_reasoning_effort || config.providers.openai.reasoning_effort
+        : config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort,
+    pdfReasoning:
+      config.analysis.pdf_mode === "responses_api_pdf"
+        ? config.analysis.responses_reasoning_effort || "xhigh"
+        : config.providers.llm_mode === "openai_api"
+          ? config.providers.openai.pdf_reasoning_effort || config.providers.openai.reasoning_effort
+          : config.providers.codex.pdf_reasoning_effort || config.providers.codex.reasoning_effort
+  };
+}
+
+function buildConfigFormData(
+  config?: AutoresearchRuntime["config"],
+  cwd = process.cwd()
+): WebConfigFormData {
+  const codexModel = config?.providers.codex.model || DEFAULT_CODEX_MODEL;
+  const codexChatModel = config?.providers.codex.chat_model || codexModel;
+  const codexExperimentModel = config?.providers.codex.experiment_model || codexModel;
+  const codexPdfModel = config?.providers.codex.pdf_model || codexModel;
+  const openAiModel = config?.providers.openai.model || "gpt-5.4";
+  const openAiChatModel = config?.providers.openai.chat_model || openAiModel;
+  const openAiExperimentModel = config?.providers.openai.experiment_model || openAiModel;
+  const openAiPdfModel = config?.providers.openai.pdf_model || openAiModel;
+
+  return {
+    projectName: config?.project_name || path.basename(cwd),
+    defaultTopic: config?.research.default_topic || "Multi-agent collaboration",
+    defaultConstraints: (config?.research.default_constraints || ["recent papers", "last 5 years"]).join(", "),
+    defaultObjectiveMetric: config?.research.default_objective_metric || "state-of-the-art reproducibility",
+    llmMode: config?.providers.llm_mode || DEFAULT_PRIMARY_LLM_MODE,
+    pdfAnalysisMode: config?.analysis.pdf_mode || DEFAULT_PDF_ANALYSIS_MODE,
+    codexChatModelChoice: getCurrentCodexModelSelectionValue(codexChatModel, config?.providers.codex.chat_fast_mode),
+    codexChatReasoningEffort:
+      config?.providers.codex.chat_reasoning_effort || config?.providers.codex.reasoning_effort || "low",
+    codexTaskModelChoice: getCurrentCodexModelSelectionValue(codexModel, config?.providers.codex.fast_mode),
+    codexTaskReasoningEffort: config?.providers.codex.reasoning_effort || "xhigh",
+    codexExperimentModelChoice: getCurrentCodexModelSelectionValue(
+      codexExperimentModel,
+      config?.providers.codex.experiment_fast_mode
+    ),
+    codexExperimentReasoningEffort:
+      config?.providers.codex.experiment_reasoning_effort || config?.providers.codex.reasoning_effort || "xhigh",
+    codexPdfModelChoice: getCurrentCodexModelSelectionValue(codexPdfModel, config?.providers.codex.pdf_fast_mode),
+    codexPdfReasoningEffort:
+      config?.providers.codex.pdf_reasoning_effort || config?.providers.codex.reasoning_effort || "xhigh",
+    openAiChatModel,
+    openAiChatReasoningEffort:
+      config?.providers.openai.chat_reasoning_effort || config?.providers.openai.reasoning_effort || "low",
+    openAiTaskModel: openAiModel,
+    openAiReasoningEffort: config?.providers.openai.reasoning_effort || "medium",
+    openAiExperimentModel,
+    openAiExperimentReasoningEffort:
+      config?.providers.openai.experiment_reasoning_effort || config?.providers.openai.reasoning_effort || "medium",
+    openAiPdfModel,
+    openAiPdfReasoningEffort:
+      config?.providers.openai.pdf_reasoning_effort || config?.providers.openai.reasoning_effort || "medium",
+    responsesPdfModel: config?.analysis.responses_model || "gpt-5.4",
+    responsesPdfReasoningEffort: config?.analysis.responses_reasoning_effort || "xhigh"
+  };
+}
+
+function buildConfigOptions(config?: AutoresearchRuntime["config"]): WebConfigOptions {
+  const codexModels = buildCodexModelSelectionChoices(config?.providers.codex.model);
+  const codexReasoningByModel = Object.fromEntries(
+    codexModels.map((modelChoice) => {
+      const normalized = modelChoice === "gpt-5.4 (fast)" ? "gpt-5.4" : modelChoice;
+      return [modelChoice, [...getReasoningEffortChoicesForModel(normalized)]];
+    })
+  );
+  const openAiModels = buildOpenAiResponsesModelChoices();
+  const openAiReasoningByModel = Object.fromEntries(
+    openAiModels.map((model) => [model, [...buildOpenAiResponsesReasoningChoices(model)]])
+  );
+  return {
+    codexModels,
+    codexReasoningByModel,
+    openAiModels,
+    openAiReasoningByModel,
+    responsesPdfModels: buildResponsesPdfModelChoices(),
+    responsesPdfReasoning: [...buildOpenAiResponsesReasoningChoices(config?.analysis.responses_model || "gpt-5.4")]
   };
 }
 

@@ -1,9 +1,14 @@
+import path from "node:path";
+import { promises as fs } from "node:fs";
+
 import { GraphNodeHandler } from "../stateGraph/types.js";
 import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { ConstraintProfile } from "../runConstraints.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
+import { ensureDir } from "../../utils/fs.js";
+import { buildPublicPaperDir } from "../publicArtifacts.js";
 import {
   ObjectiveMetricEvaluation,
   ObjectiveMetricProfile,
@@ -76,12 +81,18 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await writeRunArtifact(run, "paper/main.tex", tex);
       await writeRunArtifact(run, "paper/references.bib", references);
       await writeRunArtifact(run, "paper/evidence_links.json", evidenceMap);
+      const publicPaperDir = buildPublicPaperDir(process.cwd(), run);
+      await ensureDir(publicPaperDir);
+      await fs.writeFile(path.join(publicPaperDir, "main.tex"), tex, "utf8");
+      await fs.writeFile(path.join(publicPaperDir, "references.bib"), references, "utf8");
+      await fs.writeFile(path.join(publicPaperDir, "evidence_links.json"), evidenceMap, "utf8");
+      await runContextMemory.put("write_paper.public_dir", publicPaperDir);
 
       deps.eventStream.emit({
         type: "NODE_COMPLETED",
         runId: run.id,
         node: "write_paper",
-        payload: { artifacts: ["paper/main.tex", "paper/references.bib"] }
+        payload: { artifacts: ["paper/main.tex", "paper/references.bib", publicPaperDir] }
       });
 
       return {
