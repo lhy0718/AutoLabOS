@@ -1,9 +1,10 @@
 <div align="center">
   <h1>AutoResearch</h1>
-  <p><strong>Slash-first TUI for AI-agent-driven research automation.</strong></p>
+  <p><strong>AI-agent-driven research automation with a slash-first TUI and local web ops UI.</strong></p>
   <p>
-    Collect papers, analyze evidence, generate hypotheses, design experiments,
-    run implementations, and keep the whole workflow checkpointed.
+    Move from paper collection and evidence analysis to experiment execution and
+    paper drafting with a checkpointed, inspectable workflow that stays local to
+    your workspace.
   </p>
   <p>
     <a href="./README.md"><strong>English</strong></a>
@@ -16,10 +17,13 @@
     </a>
     <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white" />
     <img alt="TypeScript" src="https://img.shields.io/badge/typescript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
-    <img alt="OpenAI supported" src="https://img.shields.io/badge/OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="Semantic Scholar required" src="https://img.shields.io/badge/Semantic%20Scholar-required-1857B6?style=flat-square" />
+    <img alt="Codex and OpenAI supported" src="https://img.shields.io/badge/Codex%20%2B%20OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
+    <img alt="8-node workflow" src="https://img.shields.io/badge/workflow-8%20nodes-0F766E?style=flat-square" />
+    <img alt="Local Web Ops UI" src="https://img.shields.io/badge/web%20ops-local-0EA5E9?style=flat-square" />
+    <img alt="Checkpointed runs" src="https://img.shields.io/badge/checkpoints-built%20in-CA8A04?style=flat-square" />
   </p>
   <p>
+    <img alt="Semantic Scholar required" src="https://img.shields.io/badge/Semantic%20Scholar-required-1857B6?style=flat-square" />
     <a href="https://github.com/lhy0718/AutoResearch/stargazers">
       <img alt="GitHub stars" src="https://img.shields.io/github/stars/lhy0718/AutoResearch?style=flat-square" />
     </a>
@@ -155,19 +159,112 @@ Typical web flow:
 
 ```mermaid
 flowchart LR
-    A["collect_papers"] --> B["analyze_papers"]
-    B --> C["generate_hypotheses"]
-    C --> D["design_experiments"]
-    D --> E["implement_experiments"]
-    E --> F["run_experiments"]
-    F --> G["analyze_results"]
-    G --> H["write_paper"]
-    B -. "retry / jump" .-> A
-    D -. "checkpoint" .-> D
-    F -. "checkpoint" .-> F
+    Start["Create or resume run"] --> A
+
+    subgraph Phase1["1. Discovery"]
+        A["collect_papers<br/>query + filters + Semantic Scholar + PDF/BibTeX enrichment"]
+    end
+
+    subgraph Phase2["2. Evidence and Ideation"]
+        B["analyze_papers<br/>summaries + evidence extraction + analysis manifest"]
+        C["generate_hypotheses<br/>candidate ideas + rationale + staged artifacts"]
+    end
+
+    subgraph Phase3["3. Design and Execution"]
+        D["design_experiments<br/>plan + metrics + constraints + evaluation notes"]
+        E["implement_experiments<br/>files + commands + tests via local ACI"]
+        F["run_experiments<br/>execution logs + outputs + objective metrics"]
+    end
+
+    subgraph Phase4["4. Synthesis"]
+        G["analyze_results<br/>comparisons + objective evaluation + summaries"]
+        H["write_paper<br/>main.tex + references.bib + evidence_links.json"]
+    end
+
+    A --> B --> C --> D --> E --> F --> G --> H
+
+    Control["Runtime controls<br/>approval gates + budgets + retry / jump + checkpoint resume"]
+    Memory["Run memory<br/>context + episodes + node artifacts"]
+
+    Control -. "applies to every node" .-> A
+    Control -. "applies to every node" .-> D
+    Control -. "applies to every node" .-> F
+    Control -. "applies to every node" .-> H
+
+    Memory -. "updated after each node" .-> B
+    Memory -. "updated after each node" .-> D
+    Memory -. "updated after each node" .-> G
 ```
 
-Default flow is linear `1 -> 8`, but runtime controls let you retry, jump, resume from checkpoints, and apply approval gates between steps.
+Default flow is still linear `1 -> 8`, but each node now shows its main responsibility and artifacts, while runtime controls let you retry, jump, resume from checkpoints, and apply approval gates between steps.
+
+### Artifact Flow
+
+```mermaid
+flowchart TB
+    A["collect_papers"] --> A1["collect_request.json<br/>collect_result.json<br/>collect_enrichment.jsonl<br/>corpus.jsonl<br/>bibtex.bib"]
+    A1 --> B["analyze_papers"]
+    B --> B1["analysis_manifest.json<br/>paper_summaries.jsonl<br/>evidence_store.jsonl"]
+    B1 --> C["generate_hypotheses"]
+    C --> C1["hypotheses.jsonl<br/>hypothesis_generation/selection.json<br/>hypothesis_generation/drafts.jsonl<br/>hypothesis_generation/reviews.jsonl"]
+    C1 --> D["design_experiments"]
+    D --> D1["experiment_plan.yaml"]
+    D1 --> E["implement_experiments"]
+    E --> F["run_experiments"]
+    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json"]
+    F1 --> G["analyze_results"]
+    G --> G1["result_analysis.json<br/>figures/performance.png"]
+    G1 --> H["write_paper"]
+    H --> H1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json"]
+```
+
+All run artifacts live under `.autoresearch/runs/<run_id>/`, which makes the pipeline inspectable from both the TUI and the local web UI.
+
+### Control Surfaces
+
+```mermaid
+flowchart TB
+    TUI["Slash-first TUI<br/>/new + /agent + /model + /doctor"] --> Session["Interaction session"]
+    Web["Local Web Ops UI<br/>onboarding + dashboard + composer + artifact browser"] --> Session
+    Natural["Natural-language routing<br/>deterministic first, LLM fallback second"] --> Session
+
+    Session --> Runtime["Shared runtime<br/>run store + checkpoint store + event stream + orchestrator"]
+    Runtime --> Nodes["8-node workflow execution"]
+    Runtime --> Artifacts["Run artifacts<br/>.autoresearch/runs/<run_id>"]
+    Runtime --> State["Run state and memory<br/>context + episodes + long-term store"]
+
+    Artifacts --> Web
+    State --> TUI
+```
+
+### Architecture
+
+```mermaid
+flowchart LR
+    UI["CLI / TUI / Web UI"] --> Session["InteractionSession"]
+    Session --> Bootstrap["bootstrapAutoresearchRuntime"]
+    Bootstrap --> Runtime["AutoresearchRuntime"]
+
+    Runtime --> Stores["RunStore + CheckpointStore"]
+    Runtime --> Events["InMemoryEventStream"]
+    Runtime --> Graph["StateGraphRuntime + AgentOrchestrator"]
+    Runtime --> Registry["DefaultNodeRegistry"]
+
+    Registry --> Nodes["core/nodes/*"]
+    Nodes --> Memory["RunContextMemory + EpisodeMemory + LongTermStore"]
+    Nodes --> Providers["Codex / OpenAI / Responses API"]
+    Nodes --> Tools["Semantic Scholar + Local ACI"]
+    Nodes --> Artifacts[".autoresearch/runs/<run_id>"]
+```
+
+Key source areas:
+
+- `src/runtime/createRuntime.ts`: wires config, providers, stores, event stream, runtime, and orchestrator
+- `src/interaction/*`: shared command/session layer used by the TUI and the web composer
+- `src/core/stateGraph/*`: node execution, retries, approvals, budgets, jumps, and checkpoints
+- `src/core/nodes/*`: the 8 workflow handlers and their artifact-writing logic
+- `src/integrations/*` and `src/tools/*`: provider clients, Semantic Scholar access, and local execution adapters
+- `src/web/*` and `web/src/*`: local HTTP server plus browser UI on top of the same runtime
 
 ## Most-Used Commands
 

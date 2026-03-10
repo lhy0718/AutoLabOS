@@ -1,9 +1,9 @@
 <div align="center">
   <h1>AutoResearch</h1>
-  <p><strong>AI 에이전트 기반 연구 자동화를 위한 Slash-first TUI</strong></p>
+  <p><strong>AI 에이전트 기반 연구 자동화를 위한 slash-first TUI와 로컬 web ops UI</strong></p>
   <p>
-    논문 수집부터 근거 분석, 가설 생성, 실험 설계와 실행, 결과 정리까지
-    하나의 체크포인트 가능한 워크플로로 묶습니다.
+    논문 수집과 근거 분석부터 실험 실행, 논문 초안 작성까지 이어지는 흐름을
+    워크스페이스 로컬에 머무는 체크포인트 가능한 워크플로로 묶습니다.
   </p>
   <p>
     <a href="./README.md"><strong>English</strong></a>
@@ -16,10 +16,13 @@
     </a>
     <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white" />
     <img alt="TypeScript" src="https://img.shields.io/badge/typescript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
-    <img alt="OpenAI supported" src="https://img.shields.io/badge/OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="Semantic Scholar required" src="https://img.shields.io/badge/Semantic%20Scholar-required-1857B6?style=flat-square" />
+    <img alt="Codex and OpenAI supported" src="https://img.shields.io/badge/Codex%20%2B%20OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
+    <img alt="8-node workflow" src="https://img.shields.io/badge/workflow-8%20nodes-0F766E?style=flat-square" />
+    <img alt="Local Web Ops UI" src="https://img.shields.io/badge/web%20ops-local-0EA5E9?style=flat-square" />
+    <img alt="Checkpointed runs" src="https://img.shields.io/badge/checkpoints-built%20in-CA8A04?style=flat-square" />
   </p>
   <p>
+    <img alt="Semantic Scholar required" src="https://img.shields.io/badge/Semantic%20Scholar-required-1857B6?style=flat-square" />
     <a href="https://github.com/lhy0718/AutoResearch/stargazers">
       <img alt="GitHub stars" src="https://img.shields.io/github/stars/lhy0718/AutoResearch?style=flat-square" />
     </a>
@@ -155,19 +158,112 @@ node dist/cli/main.js web
 
 ```mermaid
 flowchart LR
-    A["collect_papers"] --> B["analyze_papers"]
-    B --> C["generate_hypotheses"]
-    C --> D["design_experiments"]
-    D --> E["implement_experiments"]
-    E --> F["run_experiments"]
-    F --> G["analyze_results"]
-    G --> H["write_paper"]
-    B -. "retry / jump" .-> A
-    D -. "checkpoint" .-> D
-    F -. "checkpoint" .-> F
+    Start["run 생성 또는 재개"] --> A
+
+    subgraph Phase1["1. 수집 단계"]
+        A["collect_papers<br/>query + 필터 + Semantic Scholar + PDF/BibTeX 보강"]
+    end
+
+    subgraph Phase2["2. 근거와 가설 단계"]
+        B["analyze_papers<br/>요약 + 근거 추출 + 분석 매니페스트"]
+        C["generate_hypotheses<br/>후보 아이디어 + 근거 + 중간 아티팩트"]
+    end
+
+    subgraph Phase3["3. 설계와 실행 단계"]
+        D["design_experiments<br/>계획 + 지표 + 제약 + 평가 메모"]
+        E["implement_experiments<br/>로컬 ACI 기반 파일 + 명령 + 테스트"]
+        F["run_experiments<br/>실행 로그 + 산출물 + 목표 지표"]
+    end
+
+    subgraph Phase4["4. 결과 종합 단계"]
+        G["analyze_results<br/>비교 + 목표 평가 + 요약"]
+        H["write_paper<br/>main.tex + references.bib + evidence_links.json"]
+    end
+
+    A --> B --> C --> D --> E --> F --> G --> H
+
+    Control["런타임 제어<br/>승인 게이트 + 예산 + retry / jump + checkpoint 재개"]
+    Memory["run 메모리<br/>컨텍스트 + 에피소드 + 노드 아티팩트"]
+
+    Control -. "모든 노드에 적용" .-> A
+    Control -. "모든 노드에 적용" .-> D
+    Control -. "모든 노드에 적용" .-> F
+    Control -. "모든 노드에 적용" .-> H
+
+    Memory -. "각 노드 이후 갱신" .-> B
+    Memory -. "각 노드 이후 갱신" .-> D
+    Memory -. "각 노드 이후 갱신" .-> G
 ```
 
-기본 흐름은 선형 `1 -> 8`이지만, 런타임 제어를 통해 재시도, 점프, 체크포인트 재개, 단계별 승인 흐름을 적용할 수 있습니다.
+기본 흐름은 여전히 선형 `1 -> 8`이지만, 이제 각 노드의 주요 역할과 아티팩트를 그래프에서 함께 보여 주고, 런타임 제어를 통해 재시도, 점프, 체크포인트 재개, 단계별 승인 흐름을 적용할 수 있습니다.
+
+### 아티팩트 흐름
+
+```mermaid
+flowchart TB
+    A["collect_papers"] --> A1["collect_request.json<br/>collect_result.json<br/>collect_enrichment.jsonl<br/>corpus.jsonl<br/>bibtex.bib"]
+    A1 --> B["analyze_papers"]
+    B --> B1["analysis_manifest.json<br/>paper_summaries.jsonl<br/>evidence_store.jsonl"]
+    B1 --> C["generate_hypotheses"]
+    C --> C1["hypotheses.jsonl<br/>hypothesis_generation/selection.json<br/>hypothesis_generation/drafts.jsonl<br/>hypothesis_generation/reviews.jsonl"]
+    C1 --> D["design_experiments"]
+    D --> D1["experiment_plan.yaml"]
+    D1 --> E["implement_experiments"]
+    E --> F["run_experiments"]
+    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json"]
+    F1 --> G["analyze_results"]
+    G --> G1["result_analysis.json<br/>figures/performance.png"]
+    G1 --> H["write_paper"]
+    H --> H1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json"]
+```
+
+모든 run 아티팩트는 `.autoresearch/runs/<run_id>/` 아래에 저장되므로, TUI와 로컬 웹 UI 양쪽에서 같은 실행 결과를 추적하고 점검할 수 있습니다.
+
+### 제어 표면
+
+```mermaid
+flowchart TB
+    TUI["Slash-first TUI<br/>/new + /agent + /model + /doctor"] --> Session["인터랙션 세션"]
+    Web["로컬 Web Ops UI<br/>온보딩 + 대시보드 + 컴포저 + 아티팩트 브라우저"] --> Session
+    Natural["자연어 라우팅<br/>먼저 deterministic, 이후 LLM fallback"] --> Session
+
+    Session --> Runtime["공유 런타임<br/>run store + checkpoint store + event stream + orchestrator"]
+    Runtime --> Nodes["8개 노드 워크플로 실행"]
+    Runtime --> Artifacts["run 아티팩트<br/>.autoresearch/runs/<run_id>"]
+    Runtime --> State["run 상태와 메모리<br/>context + episodes + long-term store"]
+
+    Artifacts --> Web
+    State --> TUI
+```
+
+### 아키텍처
+
+```mermaid
+flowchart LR
+    UI["CLI / TUI / Web UI"] --> Session["InteractionSession"]
+    Session --> Bootstrap["bootstrapAutoresearchRuntime"]
+    Bootstrap --> Runtime["AutoresearchRuntime"]
+
+    Runtime --> Stores["RunStore + CheckpointStore"]
+    Runtime --> Events["InMemoryEventStream"]
+    Runtime --> Graph["StateGraphRuntime + AgentOrchestrator"]
+    Runtime --> Registry["DefaultNodeRegistry"]
+
+    Registry --> Nodes["core/nodes/*"]
+    Nodes --> Memory["RunContextMemory + EpisodeMemory + LongTermStore"]
+    Nodes --> Providers["Codex / OpenAI / Responses API"]
+    Nodes --> Tools["Semantic Scholar + Local ACI"]
+    Nodes --> Artifacts[".autoresearch/runs/<run_id>"]
+```
+
+핵심 소스 영역:
+
+- `src/runtime/createRuntime.ts`: 설정, provider, store, event stream, runtime, orchestrator를 조립
+- `src/interaction/*`: TUI와 웹 컴포저가 함께 쓰는 공용 command/session 레이어
+- `src/core/stateGraph/*`: 노드 실행, 재시도, 승인, 예산, 점프, 체크포인트 처리
+- `src/core/nodes/*`: 8개 워크플로 핸들러와 아티팩트 생성 로직
+- `src/integrations/*`, `src/tools/*`: provider 클라이언트, Semantic Scholar 연동, 로컬 실행 어댑터
+- `src/web/*`, `web/src/*`: 같은 런타임 위에 얹힌 로컬 HTTP 서버와 브라우저 UI
 
 ## 자주 쓰는 명령어
 

@@ -1,16 +1,51 @@
 {
   "name": "autoresearch",
   "version": "1.0.0",
-  "description": "Slash-first AutoResearch TUI",
+  "description": "AI-agent-driven research automation with a slash-first TUI and local web ops UI.",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lhy0718/AutoResearch.git"
+  },
+  "homepage": "https://github.com/lhy0718/AutoResearch#readme",
+  "bugs": {
+    "url": "https://github.com/lhy0718/AutoResearch/issues"
+  },
+  "keywords": [
+    "research-automation",
+    "ai-agents",
+    "scientific-workflows",
+    "literature-review",
+    "terminal-ui",
+    "web-ui",
+    "openai-api",
+    "semantic-scholar",
+    "pdf-analysis",
+    "typescript",
+    "nodejs"
+  ],
   "bin": {
     "autoresearch": "dist/cli/main.js"
   },
+  "files": [
+    "dist",
+    "web/dist",
+    "README.md",
+    "README.ko.md",
+    "LICENSE",
+    ".env.example"
+  ],
   "scripts": {
+    "web:install": "npm --prefix web install",
+    "prebuild": "npm run web:install",
     "build": "tsc -p tsconfig.json && npm --prefix web run build",
     "dev": "tsx src/cli/main.ts",
+    "predev:web": "npm run web:install",
     "dev:web": "npm --prefix web run build && tsx src/cli/main.ts web",
+    "pretest": "npm run web:install",
     "test": "vitest run && npm --prefix web run test",
+    "pretest:web": "npm run web:install",
     "test:web": "npm --prefix web run test",
     "test:watch": "vitest",
     "test:smoke:natural-collect": "bash tests/smoke/run_natural_collect_pending_command.sh",
@@ -19,7 +54,7 @@
     "test:smoke:natural-composite-all": "bash tests/smoke/run_natural_composite_run_all_execute_and_verify_artifacts.sh",
     "test:smoke:natural-llm-composite-all": "bash tests/smoke/run_natural_llm_composite_run_all_execute_and_verify_artifacts.sh",
     "test:smoke:ci": "CI=true bash tests/smoke/run_ci_smoke.sh",
-    "postinstall": "npm --prefix web install"
+    "prepack": "npm run build"
   },
   "engines": {
     "node": ">=18"
