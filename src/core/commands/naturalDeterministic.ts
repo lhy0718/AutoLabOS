@@ -149,6 +149,7 @@ const NODE_ALIASES: Array<{ node: GraphNodeId; patterns: RegExp[] }> = [
   { node: "design_experiments", patterns: [/design_experiments/i, /experiment\s*design/i, /실험\s*설계/u, /설계\s*단계/u] },
   { node: "implement_experiments", patterns: [/implement_experiments/i, /implement/i, /implementation/i, /실험\s*구현/u, /구현\s*단계/u, /코딩/u] },
   { node: "run_experiments", patterns: [/run_experiments/i, /execute\s+experiments/i, /run\s+experiments/i, /실험\s*실행/u, /실행\s*단계/u] },
+  { node: "review", patterns: [/review/i, /manual\s+review/i, /검토/u, /리뷰/u] },
   { node: "write_paper", patterns: [/write_paper/i, /paper\s+writing/i, /write\s+paper/i, /논문\s*작성/u, /논문\s*생성/u] }
 ];
 

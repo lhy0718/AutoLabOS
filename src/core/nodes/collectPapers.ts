@@ -94,7 +94,12 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         typeof requestFromContext?.additional === "number" && requestFromContext.additional > 0
           ? "additional"
           : "replace";
+      const additionalLimit =
+        mode === "additional" && typeof requestFromContext?.additional === "number" && requestFromContext.additional > 0
+          ? Math.floor(requestFromContext.additional)
+          : undefined;
       const existingCorpus = mode === "additional" ? await readExistingCorpus(run) : [];
+      const existingEnrichmentLogs = mode === "additional" ? await readExistingEnrichmentLogs(run) : [];
       const storedRows = new Map<string, StoredCorpusRow>(
         existingCorpus.map((row) => [row.paper_id, row])
       );
@@ -105,7 +110,10 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       let pdfRecovered = 0;
       let bibtexEnriched = 0;
       const fallbackSources = new Set<string>();
-      const enrichmentLogs = new Map<string, CollectEnrichmentLogEntry>();
+      const currentEnrichmentLogs = new Map<string, CollectEnrichmentLogEntry>();
+      const persistedEnrichmentLogs = new Map<string, CollectEnrichmentLogEntry>(
+        existingEnrichmentLogs.map((entry) => [entry.paper_id, entry])
+      );
       let diagnostics: SemanticScholarSearchDiagnostics =
         deps.semanticScholar.getLastSearchDiagnostics?.() ?? emptyCollectDiagnostics();
 
@@ -127,6 +135,9 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           let changed = false;
           for (const paper of batch) {
             const currentRow = storedRows.get(paper.paperId);
+            if (!currentRow && additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
+              continue;
+            }
             const mergedRow = mergeStoredCorpusRows(currentRow, normalizeCorpusRow(paper));
             const prevSerialized = currentRow ? JSON.stringify(currentRow) : undefined;
             const nextSerialized = JSON.stringify(mergedRow);
@@ -159,10 +170,10 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 completed: false,
                 pdfRecovered,
                 bibtexEnriched,
-                fallbackAttempts: countFallbackAttempts(enrichmentLogs),
+                fallbackAttempts: countFallbackAttempts(currentEnrichmentLogs),
                 fallbackSources: Array.from(fallbackSources)
               }),
-              enrichmentLogs: Array.from(enrichmentLogs.values()),
+              enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
               bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode)
             });
             deps.eventStream.emit({
@@ -183,6 +194,9 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               text: `Fetched Semantic Scholar batch ${Math.min(batchIndex, estimatedTotalBatches)}/${estimatedTotalBatches} (${batch.length} paper(s)). Deferred enrichment will run after fetch completes.`
             }
           });
+          if (additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
+            break;
+          }
           if (fetchedPapers.length < normalizedRequest.limit) {
             deps.eventStream.emit({
               type: "OBS_RECEIVED",
@@ -235,7 +249,8 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           pdfRecovered,
           bibtexEnriched,
           fallbackSources,
-          enrichmentLogs,
+          currentEnrichmentLogs,
+          persistedEnrichmentLogs,
           storedCount,
           newPaperIds
         });
@@ -259,7 +274,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         fetchError,
         pdfRecovered,
         bibtexEnriched,
-        fallbackAttempts: countFallbackAttempts(enrichmentLogs),
+        fallbackAttempts: countFallbackAttempts(currentEnrichmentLogs),
         fallbackSources: Array.from(fallbackSources)
       });
 
@@ -269,7 +284,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         mode,
         request: normalizedRequest,
         resultMeta,
-        enrichmentLogs: Array.from(enrichmentLogs.values()),
+        enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
         bibtexMode
       });
 
@@ -503,7 +518,8 @@ async function runEnrichmentPass(input: {
   pdfRecovered: number;
   bibtexEnriched: number;
   fallbackSources: Set<string>;
-  enrichmentLogs: Map<string, CollectEnrichmentLogEntry>;
+  currentEnrichmentLogs: Map<string, CollectEnrichmentLogEntry>;
+  persistedEnrichmentLogs: Map<string, CollectEnrichmentLogEntry>;
   storedCount: number;
   newPaperIds: Set<string>;
 }): Promise<{
@@ -536,10 +552,10 @@ async function runEnrichmentPass(input: {
         completed: false,
         pdfRecovered: input.pdfRecovered,
         bibtexEnriched: input.bibtexEnriched,
-        fallbackAttempts: countFallbackAttempts(input.enrichmentLogs),
+        fallbackAttempts: countFallbackAttempts(input.currentEnrichmentLogs),
         fallbackSources: Array.from(input.fallbackSources)
       }),
-      enrichmentLogs: Array.from(input.enrichmentLogs.values()),
+      enrichmentLogs: Array.from(input.persistedEnrichmentLogs.values()),
       bibtexMode: input.bibtexMode
     });
     changedSinceLastPersist = false;
@@ -582,14 +598,17 @@ async function runEnrichmentPass(input: {
       for (const source of enriched.fallbackSources) {
         input.fallbackSources.add(source);
       }
-      input.enrichmentLogs.set(paper.paperId, enriched.log);
+      input.currentEnrichmentLogs.set(paper.paperId, enriched.log);
+      input.persistedEnrichmentLogs.set(paper.paperId, enriched.log);
       enrichedRow = mergeStoredCorpusRows(currentRow, enriched.row);
     } catch (error) {
-      input.enrichmentLogs.set(paper.paperId, {
+      const failedLog = {
         paper_id: paper.paperId,
         attempts: [],
         errors: [error instanceof Error ? error.message : String(error)]
-      });
+      };
+      input.currentEnrichmentLogs.set(paper.paperId, failedLog);
+      input.persistedEnrichmentLogs.set(paper.paperId, failedLog);
     }
 
     const previous = JSON.stringify(currentRow);
@@ -660,6 +679,22 @@ async function readExistingCorpus(run: { id: string }): Promise<StoredCorpusRow[
       }
     })
     .filter((row): row is StoredCorpusRow => Boolean(row?.paper_id));
+}
+
+async function readExistingEnrichmentLogs(run: { id: string }): Promise<CollectEnrichmentLogEntry[]> {
+  const raw = await safeRead(`.autolabos/runs/${run.id}/collect_enrichment.jsonl`);
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line) as CollectEnrichmentLogEntry;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((entry): entry is CollectEnrichmentLogEntry => Boolean(entry?.paper_id));
 }
 
 function buildCollectResultMeta(input: {

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -8,6 +8,7 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import { LLMCompleteOptions, MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createAnalyzeResultsNode } from "../src/core/nodes/analyzeResults.js";
+import { createReviewNode } from "../src/core/nodes/review.js";
 import { createRunExperimentsNode } from "../src/core/nodes/runExperiments.js";
 import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
 import { buildPublicPaperDir } from "../src/core/publicArtifacts.js";
@@ -69,6 +70,63 @@ function makeRun(runId: string): RunRecord {
       episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
     }
   };
+}
+
+async function seedWritePaperInputs(runDir: string): Promise<void> {
+  await writeFile(
+    path.join(runDir, "paper_summaries.jsonl"),
+    `${JSON.stringify({
+      paper_id: "paper_1",
+      title: "Coordination Benchmark",
+      source_type: "full_text",
+      summary: "Structured coordination improves reproducibility.",
+      key_findings: ["Structured coordination improves reproducibility."],
+      limitations: ["Benchmark coverage is limited."],
+      datasets: ["AgentBench-mini"],
+      metrics: ["accuracy", "reproducibility_score"],
+      novelty: "Constraint-aware coordination",
+      reproducibility_notes: ["Repeated runs are included."]
+    })}\n`,
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "evidence_store.jsonl"),
+    `${JSON.stringify({
+      evidence_id: "ev_1",
+      paper_id: "paper_1",
+      claim: "Structured coordination improves reproducibility.",
+      method_slot: "shared state schema",
+      result_slot: "higher reproducibility_score",
+      limitation_slot: "limited benchmark coverage",
+      dataset_slot: "AgentBench-mini",
+      metric_slot: "reproducibility_score",
+      evidence_span: "Repeated runs improved reproducibility_score.",
+      source_type: "full_text",
+      confidence: 0.9
+    })}\n`,
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "hypotheses.jsonl"),
+    `${JSON.stringify({
+      hypothesis_id: "h_1",
+      text: "Structured coordination improves reproducibility.",
+      evidence_links: ["ev_1"]
+    })}\n`,
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "corpus.jsonl"),
+    `${JSON.stringify({
+      paper_id: "paper_1",
+      title: "Coordination Benchmark",
+      abstract: "Structured coordination improves reproducibility.",
+      authors: ["Alice Doe"],
+      year: 2025,
+      venue: "ACL"
+    })}\n`,
+    "utf8"
+  );
 }
 
 describe("objective metric propagation", () => {
@@ -210,6 +268,20 @@ describe("objective metric propagation", () => {
       ),
       "utf8"
     );
+    await seedWritePaperInputs(runDir);
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.12,
+          f1: 0.08,
+          stale: true
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
 
     const eventStream = new InMemoryEventStream();
     const aci = {
@@ -296,6 +368,7 @@ describe("objective metric propagation", () => {
 
     const runNode = createRunExperimentsNode(deps);
     const analyzeNode = createAnalyzeResultsNode(deps);
+    const reviewNode = createReviewNode(deps);
     const writeNode = createWritePaperNode(deps);
 
     const runResult = await runNode.execute({ run, graph: run.graph });
@@ -305,10 +378,14 @@ describe("objective metric propagation", () => {
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("run_experiments.trigger")).toBe("auto_handoff");
     expect(await memory.get("implement_experiments.pending_handoff_to_run_experiments")).toBe(false);
+    const previousMetricsBackup = await memory.get<string>("run_experiments.previous_metrics_backup");
+    expect(previousMetricsBackup).toContain("exec_logs/preexisting_metrics_");
 
     const evaluationRaw = await readFile(path.join(runDir, "objective_evaluation.json"), "utf8");
     expect(evaluationRaw).toContain('"status": "met"');
     expect(evaluationRaw).toContain('"matchedMetricKey": "accuracy"');
+    const backupRaw = await readFile(path.join(root, previousMetricsBackup as string), "utf8");
+    expect(backupRaw).toContain('"stale": true');
 
     const analyzeResult = await analyzeNode.execute({ run, graph: run.graph });
     expect(analyzeResult.status).toBe("success");
@@ -399,7 +476,7 @@ describe("objective metric propagation", () => {
     ).toBe(true);
     expect(analysis.transition_recommendation).toMatchObject({
       action: "advance",
-      targetNode: "write_paper"
+      targetNode: "review"
     });
     expect(analysis.synthesis?.source).toBe("llm");
     expect(analysis.synthesis?.discussion_points[0]).toContain("shared-state schema");
@@ -409,6 +486,19 @@ describe("objective metric propagation", () => {
     expect(synthesisRaw).toContain('"source": "llm"');
     const transitionRaw = await readFile(path.join(runDir, "transition_recommendation.json"), "utf8");
     expect(transitionRaw).toContain('"action": "advance"');
+
+    const reviewResult = await reviewNode.execute({ run, graph: run.graph });
+    expect(reviewResult.status).toBe("success");
+    expect(reviewResult.summary).toContain("Approve review to continue to write_paper");
+
+    const reviewPacketRaw = await readFile(path.join(runDir, "review", "review_packet.json"), "utf8");
+    expect(reviewPacketRaw).toContain('"objective_status": "met"');
+    expect(reviewPacketRaw).toContain('"action": "advance"');
+    const reviewChecklistRaw = await readFile(path.join(runDir, "review", "checklist.md"), "utf8");
+    expect(reviewChecklistRaw).toContain("Recommendation: advance -> review");
+    expect(reviewChecklistRaw).toContain("/agent run write_paper");
+
+    expect(await memory.get("review.last_summary")).toContain("Objective metric met");
 
     const figureRaw = await readFile(path.join(runDir, "figures", "performance.svg"), "utf8");
     expect(figureRaw).toContain("<svg");
@@ -467,6 +557,398 @@ describe("objective metric propagation", () => {
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("analyze_results.last_error")).toBeTruthy();
+  });
+
+  it("fails second-stage verification when only stale metrics output exists", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-stale-metrics-"));
+    process.chdir(root);
+
+    const runId = "run-stale-metrics";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: "python3 experiment.py",
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: root,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.33,
+          stale: true
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new StructuredResultAnalysisLLM(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => ({
+          status: "ok" as const,
+          stdout: "completed without writing metrics",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 10
+        }),
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("without metrics output");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const feedback = await memory.get<{
+      status: string;
+      stage: string;
+      summary: string;
+    }>("implement_experiments.runner_feedback");
+    expect(feedback).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(feedback?.summary).toContain("without metrics output");
+
+    const backups = await readdir(path.join(runDir, "exec_logs"));
+    expect(backups.some((name) => name.startsWith("preexisting_metrics_"))).toBe(true);
+    const metricsPath = path.join(runDir, "metrics.json");
+    await expect(readFile(metricsPath, "utf8")).rejects.toThrow();
+  });
+
+  it("reads a configured metrics_path during structured result analysis", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-custom-metrics-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-custom-metrics";
+    const run = makeRun(runId);
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const artifactDir = path.join(root, "artifacts");
+    const customMetricsPath = path.join(artifactDir, "metrics-custom.json");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(artifactDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.metrics_path",
+            value: customMetricsPath,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      customMetricsPath,
+      JSON.stringify(
+        {
+          accuracy: 0.91,
+          f1: 0.88
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new StructuredResultAnalysisLLM(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.summary).toContain("Objective metric met");
+
+    const analysisRaw = await readFile(path.join(runDir, "result_analysis.json"), "utf8");
+    expect(analysisRaw).toContain('"objective_status": "met"');
+    expect(analysisRaw).toContain('"matched_metric_key": "accuracy"');
+  });
+
+  it("recommends an implementation backtrack when the objective metric is missing from metrics", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-missing-objective-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-missing-objective";
+    const run = makeRun(runId);
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          latency_ms: 123,
+          throughput: 42
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new StructuredResultAnalysisLLM(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_implement",
+      targetNode: "implement_experiments"
+    });
+
+    const transitionRaw = await readFile(path.join(runDir, "transition_recommendation.json"), "utf8");
+    expect(transitionRaw).toContain('"action": "backtrack_to_implement"');
+  });
+
+  it("pauses for human review and writes fallback synthesis when the objective metric is unknown", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-unknown-objective-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-unknown-objective";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "overall improvement"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.91
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "pause_for_human"
+    });
+
+    const synthesisRaw = await readFile(path.join(runDir, "result_analysis_synthesis.json"), "utf8");
+    expect(synthesisRaw).toContain('"source": "fallback"');
+  });
+
+  it("downgrades unsupported-hypothesis backtracks when only risk-level evidence is available", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-risk-evidence-gap-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-risk-evidence-gap";
+    const run = makeRun(runId);
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.82,
+          comparison: {
+            shared_state_vs_free_form: {
+              accuracy_delta: -0.08,
+              hypothesis_supported: false
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_hypotheses",
+      targetNode: "generate_hypotheses",
+      confidence: 0.72,
+      autoExecutable: false
+    });
+  });
+
+  it("uses scope-limit risks as transition evidence when recommending a design backtrack", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-scope-risk-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-scope-risk";
+    const run = makeRun(runId);
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const publicDir = path.join(root, "public-bundle");
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(runDir, "memory", "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "selected_design:",
+        '  title: "Accuracy benchmark"',
+        "  risks:",
+        '    - "Small sample size may exaggerate gains."'
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.82,
+          ci95_accuracy: [0.79, 0.85]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(publicDir, "confirmatory_metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.83
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(publicDir, "quick_check_metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.81
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_design",
+      targetNode: "design_experiments",
+      confidence: 0.8,
+      autoExecutable: true
+    });
+    expect(result.transitionRecommendation?.evidence).toContain(
+      "Scope limitation: Small sample size may exaggerate gains."
+    );
   });
 
   it("stores structured runner feedback when second-stage verification fails", async () => {
@@ -554,6 +1036,290 @@ describe("objective metric propagation", () => {
     const reportRaw = await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8");
     expect(reportRaw).toContain('"stage": "command"');
     expect(reportRaw).toContain("ModuleNotFoundError");
+  });
+
+  it("completes second-stage verification when metrics JSON is valid", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-success-"));
+    process.chdir(root);
+
+    const runId = "run-success";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: "python3 experiment.py",
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: root,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.pending_handoff_to_run_experiments",
+            value: true,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                accuracy: 0.91,
+                f1: 0.88
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "done",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.toolCallsUsed).toBe(1);
+    expect(result.summary).toContain("Objective metric met");
+
+    const reportRaw = await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8");
+    expect(reportRaw).toContain('"stage": "success"');
+    expect(reportRaw).toContain('"status": "pass"');
+
+    const evaluationRaw = await readFile(path.join(runDir, "objective_evaluation.json"), "utf8");
+    expect(evaluationRaw).toContain('"status": "met"');
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("run_experiments.trigger")).toBe("auto_handoff");
+    expect(await memory.get("run_experiments.last_error")).toBeUndefined();
+  });
+
+  it("fails second-stage verification when metrics.json is not a JSON object", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-invalid-metrics-"));
+    process.chdir(root);
+
+    const runId = "run-invalid-metrics";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: "python3 experiment.py",
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: root,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(path.join(runDir, "metrics.json"), "[]", "utf8");
+          return {
+            status: "ok" as const,
+            stdout: "done",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("invalid metrics JSON");
+    expect(result.toolCallsUsed).toBe(1);
+
+    const reportRaw = await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8");
+    expect(reportRaw).toContain('"stage": "metrics"');
+    expect(reportRaw).toContain("metrics.json must decode to an object");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("implement_experiments.runner_feedback")).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(await memory.get("run_experiments.last_error")).toMatch(/invalid metrics JSON/u);
+  });
+
+  it("counts both preflight and run commands when command execution fails after preflight", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-tool-calls-"));
+    process.chdir(root);
+
+    const runId = "run-tool-calls";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: "python3 experiment.py",
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.test_command",
+            value: "python3 -m py_compile experiment.py",
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: root,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => ({
+          status: "error" as const,
+          stdout: "",
+          stderr: "boom",
+          exit_code: 1,
+          duration_ms: 10
+        }),
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("failure");
+    expect(result.toolCallsUsed).toBe(2);
+  });
+
+  it("stores runner feedback when no runnable experiment artifact can be resolved", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-unresolved-command-"));
+    process.chdir(root);
+
+    const runId = "run-unresolved-command";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({ version: 1, items: [] }),
+      "utf8"
+    );
+
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("No runnable experiment artifact found");
+    expect(result.toolCallsUsed).toBe(0);
+
+    const reportRaw = await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8");
+    expect(reportRaw).toContain('"stage": "command"');
+    expect(reportRaw).toContain("No runnable experiment artifact found");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("implement_experiments.runner_feedback")).toMatchObject({
+      status: "fail",
+      stage: "command"
+    });
   });
 
   it("stores policy-blocked runner feedback when the run command violates execution policy", async () => {

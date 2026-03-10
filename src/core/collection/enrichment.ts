@@ -330,12 +330,31 @@ export function mergeStoredCorpusRows(existing: StoredCorpusRow | undefined, inc
 
   const merged: StoredCorpusRow = {
     ...existing,
-    ...incoming,
+    title: preferNonEmptyString(existing.title, incoming.title) ?? existing.title,
+    abstract: preferNonEmptyString(existing.abstract, incoming.abstract) ?? existing.abstract,
+    year: incoming.year ?? existing.year,
+    venue: preferNonEmptyString(existing.venue, incoming.venue),
+    url: mergePreferredSourceUrl(existing.url, incoming.url),
+    landing_url: preferNonEmptyString(existing.landing_url, incoming.landing_url),
     authors: incoming.authors.length > 0 ? incoming.authors : existing.authors
   };
+  merged.citation_count = incoming.citation_count ?? existing.citation_count;
+  merged.influential_citation_count =
+    incoming.influential_citation_count ?? existing.influential_citation_count;
+  merged.publication_date = preferNonEmptyString(existing.publication_date, incoming.publication_date);
+  merged.publication_types =
+    incoming.publication_types && incoming.publication_types.length > 0
+      ? incoming.publication_types
+      : existing.publication_types;
+  merged.fields_of_study =
+    incoming.fields_of_study && incoming.fields_of_study.length > 0
+      ? incoming.fields_of_study
+      : existing.fields_of_study;
 
   if (!existing.pdf_url && incoming.pdf_url) {
     merged.pdf_url = incoming.pdf_url;
+    merged.pdf_url_source = incoming.pdf_url_source;
+  } else if (existing.pdf_url && existing.pdf_url === incoming.pdf_url && !existing.pdf_url_source && incoming.pdf_url_source) {
     merged.pdf_url_source = incoming.pdf_url_source;
   }
 
@@ -361,6 +380,36 @@ export function mergeStoredCorpusRows(existing: StoredCorpusRow | undefined, inc
   }
 
   return merged;
+}
+
+function preferNonEmptyString(existing: string | undefined, incoming: string | undefined): string | undefined {
+  if (typeof incoming === "string" && incoming.trim()) {
+    return incoming;
+  }
+  return existing;
+}
+
+function mergePreferredSourceUrl(existing: string | undefined, incoming: string | undefined): string | undefined {
+  if (!incoming) {
+    return existing;
+  }
+  if (!existing) {
+    return incoming;
+  }
+  const existingIsSemanticScholar = isSemanticScholarHost(existing);
+  const incomingIsSemanticScholar = isSemanticScholarHost(incoming);
+  if (existingIsSemanticScholar && !incomingIsSemanticScholar) {
+    return incoming;
+  }
+  if (!existingIsSemanticScholar && incomingIsSemanticScholar) {
+    return existing;
+  }
+  return incoming;
+}
+
+function isSemanticScholarHost(url: string): boolean {
+  const host = safeHost(url);
+  return Boolean(host && host.endsWith("semanticscholar.org"));
 }
 
 async function resolveArxiv(

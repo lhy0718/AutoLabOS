@@ -107,8 +107,8 @@ export function buildNaturalAssistantResponse(ctx: NaturalAssistantContext): Nat
     lines.push(
       localize(
         language,
-        "Workflow: collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> write_paper",
-        "워크플로: collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> write_paper"
+        "Workflow: collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> review -> write_paper",
+        "워크플로: collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> review -> write_paper"
       )
     );
   }

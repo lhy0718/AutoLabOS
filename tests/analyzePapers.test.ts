@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createAnalyzePapersNode } from "../src/core/nodes/analyzePapers.js";
+import { createGenerateHypothesesNode } from "../src/core/nodes/generateHypotheses.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
@@ -97,6 +98,123 @@ function jsonOutput(summary: string, claim: string): string {
       }
     ]
   });
+}
+
+function hypothesisPipelineOutputs(evidenceId = "ev_p1_1"): string[] {
+  return [
+    JSON.stringify({
+      summary: "Mapped evidence into one intervention axis.",
+      axes: [
+        {
+          id: "ax_1",
+          label: "Execution feedback",
+          mechanism: "Validator-backed correction reduces downstream errors.",
+          intervention: "Add bounded execute-test-repair loops.",
+          evidence_links: [evidenceId]
+        }
+      ]
+    }),
+    JSON.stringify({
+      summary: "Generated mechanism drafts.",
+      candidates: [
+        {
+          text: "Validator-backed repair loops will reduce failure variance across repeated runs.",
+          novelty: 4,
+          feasibility: 4,
+          testability: 5,
+          cost: 2,
+          expected_gain: 5,
+          evidence_links: [evidenceId],
+          axis_ids: ["ax_1"],
+          rationale: "Directly operationalizes the recovered evidence."
+        }
+      ]
+    }),
+    JSON.stringify({
+      summary: "Generated contradiction drafts.",
+      candidates: [
+        {
+          text: "Repair loops help less when tasks already have deterministic validators.",
+          novelty: 3,
+          feasibility: 4,
+          testability: 3,
+          cost: 2,
+          expected_gain: 2,
+          evidence_links: [evidenceId],
+          axis_ids: ["ax_1"],
+          rationale: "Captures a plausible boundary condition."
+        }
+      ]
+    }),
+    JSON.stringify({
+      summary: "Generated intervention drafts.",
+      candidates: [
+        {
+          text: "Batched execute-test-repair loops will improve reproducibility more than discussion-only retries.",
+          novelty: 4,
+          feasibility: 5,
+          testability: 5,
+          cost: 2,
+          expected_gain: 5,
+          evidence_links: [evidenceId],
+          axis_ids: ["ax_1"],
+          rationale: "Turns evidence into a concrete, testable intervention."
+        }
+      ]
+    }),
+    JSON.stringify({
+      summary: "Selected the strongest drafts.",
+      reviews: [
+        {
+          candidate_id: "mechanism_1",
+          keep: true,
+          groundedness: 5,
+          causal_clarity: 5,
+          falsifiability: 5,
+          experimentability: 5,
+          reproducibility_specificity: 4,
+          reproducibility_signals: ["repeatability"],
+          measurement_hint: "Measure repeated-run failure variance on the repaired benchmark.",
+          limitation_reflection: 4,
+          measurement_readiness: 5,
+          strengths: ["Directly tied to the evidence."],
+          weaknesses: ["Needs benchmark scoping."],
+          critique_summary: "Strong."
+        },
+        {
+          candidate_id: "contradiction_1",
+          keep: false,
+          groundedness: 3,
+          causal_clarity: 3,
+          falsifiability: 3,
+          experimentability: 2,
+          reproducibility_specificity: 2,
+          reproducibility_signals: [],
+          limitation_reflection: 2,
+          measurement_readiness: 1,
+          strengths: ["Reasonable boundary condition."],
+          weaknesses: ["Less actionable."],
+          critique_summary: "Too weak for top selection."
+        },
+        {
+          candidate_id: "intervention_1",
+          keep: true,
+          groundedness: 5,
+          causal_clarity: 5,
+          falsifiability: 5,
+          experimentability: 5,
+          reproducibility_specificity: 5,
+          reproducibility_signals: ["repeated runs", "variance reduction"],
+          measurement_hint: "Compare repeated-run variance against discussion-only retries.",
+          limitation_reflection: 4,
+          measurement_readiness: 5,
+          strengths: ["Highly testable."],
+          weaknesses: ["Adds execution cost."],
+          critique_summary: "Excellent."
+        }
+      ]
+    })
+  ];
 }
 
 describe("analyzePapers node", () => {
@@ -526,5 +644,164 @@ describe("analyzePapers node", () => {
     expect(evidenceRaw.trim().split("\n")).toHaveLength(1);
     expect(summariesRaw).toContain('"paper_id":"p2"');
     expect(summariesRaw).not.toContain('"paper_id":"p1"');
+  });
+
+  it("re-analyzes papers when the analysis mode fingerprint changes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-mode-change-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-mode-change";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Paper 1",
+        abstract: "Abstract 1",
+        authors: ["Alice"],
+        pdf_url: "https://example.com/p1.pdf"
+      }
+    ]);
+
+    globalThis.fetch = (async () => new Response("missing", { status: 404 })) as typeof fetch;
+
+    const firstNode = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequenceJsonLLM([jsonOutput("local summary", "local claim")]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const first = await firstNode.execute({ run, graph: run.graph });
+    expect(first.status).toBe("success");
+
+    let analyzePdfCalls = 0;
+    const secondEventStream = new InMemoryEventStream();
+    const secondNode = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "responses_api_pdf",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: secondEventStream,
+      llm: new SequenceJsonLLM(["should-not-be-used"]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => {
+          analyzePdfCalls += 1;
+          return { text: jsonOutput("pdf summary", "pdf claim") };
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const second = await secondNode.execute({ run, graph: run.graph });
+    expect(second.status).toBe("success");
+    expect(analyzePdfCalls).toBe(1);
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw.trim().split("\n")).toHaveLength(1);
+    expect(summariesRaw).toContain('"summary":"pdf summary"');
+    expect(summariesRaw).toContain('"source_type":"full_text"');
+    expect(summariesRaw).not.toContain('"summary":"local summary"');
+    const loggedTexts = secondEventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Analysis settings changed since the previous run."))).toBe(true);
+  });
+
+  it("repairs missing output artifacts and restores downstream hypothesis generation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-repair-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-repair";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      { paper_id: "p1", title: "Paper 1", abstract: "Abstract 1", authors: ["Alice"] }
+    ]);
+
+    const firstNode = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequenceJsonLLM([jsonOutput("summary 1", "claim 1")]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const first = await firstNode.execute({ run, graph: run.graph });
+    expect(first.status).toBe("success");
+
+    await rm(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), { force: true });
+
+    const secondEventStream = new InMemoryEventStream();
+    const secondNode = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: secondEventStream,
+      llm: new SequenceJsonLLM([jsonOutput("summary repaired", "claim repaired")]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const second = await secondNode.execute({ run, graph: run.graph });
+    expect(second.status).toBe("success");
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
+    expect(summariesRaw.trim().split("\n")).toHaveLength(1);
+    expect(evidenceRaw.trim().split("\n")).toHaveLength(1);
+    expect(summariesRaw).toContain('"summary":"summary repaired"');
+    expect(summariesRaw).not.toContain('"summary":"summary 1"');
+
+    const analyzeLogs = secondEventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(analyzeLogs.some((text) => text.includes("Detected inconsistent analysis artifacts."))).toBe(true);
+    expect(analyzeLogs.some((text) => text.includes("Re-queueing 1 completed paper(s)"))).toBe(true);
+
+    const generateNode = createGenerateHypothesesNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequenceJsonLLM(hypothesisPipelineOutputs("ev_p1_1")),
+      pdfTextLlm: new SequenceJsonLLM([]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const generated = await generateNode.execute({ run, graph: run.graph });
+    expect(generated.status).toBe("success");
+
+    const hypothesesRaw = await readFile(path.join(".autolabos", "runs", runId, "hypotheses.jsonl"), "utf8");
+    expect(hypothesesRaw.trim().split("\n").length).toBeGreaterThan(0);
+    expect(hypothesesRaw).toContain('"evidence_links":["ev_p1_1"]');
+    expect(hypothesesRaw).toContain('"paper_titles":["Paper 1"]');
   });
 });

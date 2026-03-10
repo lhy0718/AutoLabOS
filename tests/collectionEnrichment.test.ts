@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { enrichCollectedPaper } from "../src/core/collection/enrichment.js";
+import { enrichCollectedPaper, mergeStoredCorpusRows } from "../src/core/collection/enrichment.js";
 import { StoredCorpusRow } from "../src/core/collection/types.js";
 import { SemanticScholarPaper } from "../src/tools/semanticScholar.js";
 
@@ -38,6 +38,63 @@ afterEach(() => {
 });
 
 describe("collection enrichment", () => {
+  it("preserves richer stored metadata when a duplicate Semantic Scholar row is sparse", () => {
+    const merged = mergeStoredCorpusRows(
+      makeRow({
+        abstract: "Recovered abstract",
+        venue: "ACL",
+        url: "https://publisher.example/paper-1",
+        landing_url: "https://publisher.example/paper-1",
+        pdf_url: "https://publisher.example/paper-1.pdf",
+        pdf_url_source: "landing_page",
+        citation_count: 42,
+        influential_citation_count: 7,
+        publication_date: "2025-01-01",
+        publication_types: ["Review"],
+        fields_of_study: ["Computer Science"],
+        semantic_scholar_bibtex: "@article{s2existing,\n  title = {Existing}\n}",
+        bibtex: "@inproceedings{better,\n  title = {Existing}\n}",
+        bibtex_source: "acl_anthology",
+        bibtex_richness: 12
+      }),
+      makeRow({
+        abstract: "",
+        authors: [],
+        venue: undefined,
+        url: "https://www.semanticscholar.org/paper/paper-1",
+        landing_url: undefined,
+        pdf_url: undefined,
+        pdf_url_source: undefined,
+        citation_count: undefined,
+        influential_citation_count: undefined,
+        publication_date: undefined,
+        publication_types: undefined,
+        fields_of_study: undefined,
+        semantic_scholar_bibtex: undefined,
+        bibtex: undefined,
+        bibtex_source: undefined,
+        bibtex_richness: undefined
+      })
+    );
+
+    expect(merged.abstract).toBe("Recovered abstract");
+    expect(merged.authors).toEqual(["Alice Kim", "Bob Lee"]);
+    expect(merged.venue).toBe("ACL");
+    expect(merged.url).toBe("https://publisher.example/paper-1");
+    expect(merged.landing_url).toBe("https://publisher.example/paper-1");
+    expect(merged.pdf_url).toBe("https://publisher.example/paper-1.pdf");
+    expect(merged.pdf_url_source).toBe("landing_page");
+    expect(merged.citation_count).toBe(42);
+    expect(merged.influential_citation_count).toBe(7);
+    expect(merged.publication_date).toBe("2025-01-01");
+    expect(merged.publication_types).toEqual(["Review"]);
+    expect(merged.fields_of_study).toEqual(["Computer Science"]);
+    expect(merged.semantic_scholar_bibtex).toContain("@article{s2existing");
+    expect(merged.bibtex).toContain("@inproceedings{better");
+    expect(merged.bibtex_source).toBe("acl_anthology");
+    expect(merged.bibtex_richness).toBe(12);
+  });
+
   it("recovers arxiv pdf and generated bibtex", async () => {
     vi.stubGlobal(
       "fetch",

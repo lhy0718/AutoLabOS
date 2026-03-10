@@ -2,7 +2,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { appendJsonlItems, runArtifactsDir, safeRead } from "./helpers.js";
+import { appendJsonl, appendJsonlItems, runArtifactsDir, safeRead } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { readJsonFile, writeJsonFile } from "../../utils/fs.js";
@@ -27,10 +27,11 @@ import {
 } from "../analysis/paperSelection.js";
 
 interface AnalysisManifest {
-  version: 2;
+  version: 2 | 3;
   updatedAt: string;
   request: AnalysisSelectionRequest;
   selectionFingerprint: string;
+  analysisFingerprint?: string;
   totalCandidates: number;
   candidatePoolSize: number;
   selectedPaperIds: string[];
@@ -96,6 +97,13 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
       const request = await loadAnalysisSelectionRequest(runContextMemory);
       await runContextMemory.put("analyze_papers.request", request);
+      const includePageImages = deps.config.providers?.llm_mode === "codex_chatgpt_only";
+      const analysisFingerprint = buildAnalysisFingerprint({
+        analysisMode,
+        responsesModel: deps.config.analysis.responses_model,
+        responsesReasoningEffort: deps.config.analysis.responses_reasoning_effort,
+        includePageImages
+      });
 
       emitLog(
         request.selectionMode === "top_n" && request.topN
@@ -158,25 +166,58 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       }
 
       const existingManifest = await readExistingManifest(manifestPath);
+      const resetReason =
+        existingManifest && existingManifest.selectionFingerprint !== selection.selectionFingerprint
+          ? "selection_changed"
+          : existingManifest && !existingManifest.analysisFingerprint
+            ? "legacy_manifest"
+            : existingManifest && existingManifest.analysisFingerprint !== analysisFingerprint
+              ? "analysis_config_changed"
+              : undefined;
       let manifest =
-        existingManifest && existingManifest.selectionFingerprint === selection.selectionFingerprint
+        existingManifest &&
+        existingManifest.selectionFingerprint === selection.selectionFingerprint &&
+        existingManifest.analysisFingerprint === analysisFingerprint
           ? existingManifest
           : undefined;
 
       if (!manifest && !existingManifest && selection.request.selectionMode === "all") {
-        manifest = await bootstrapManifestFromExistingOutputs(selection, summaryPath, evidencePath);
+        manifest = await bootstrapManifestFromExistingOutputs(selection, summaryPath, evidencePath, analysisFingerprint);
         await writeJsonFile(manifestPath, manifest);
       }
 
       if (!manifest) {
+        if (resetReason === "selection_changed") {
+          emitLog("Analysis selection changed since the previous run. Resetting summaries/evidence for the new paper set.");
+        } else if (resetReason === "legacy_manifest") {
+          emitLog("Existing analysis manifest lacks configuration fingerprint metadata. Resetting summaries/evidence to rebuild a consistent analysis state.");
+        } else if (resetReason === "analysis_config_changed") {
+          emitLog("Analysis settings changed since the previous run. Resetting summaries/evidence and re-analyzing the selected papers.");
+        }
         await resetAnalysisOutputs(summaryPath, evidencePath);
-        manifest = createFreshManifest(selection);
+        manifest = createFreshManifest(selection, analysisFingerprint);
+        await writeJsonFile(manifestPath, manifest);
+      }
+
+      const existingSummaryRows = await readSummaryRows(summaryPath);
+      const existingEvidenceRows = await readEvidenceRows(evidencePath);
+      const reconciledState = reconcileManifestWithOutputs(manifest, existingSummaryRows, existingEvidenceRows);
+      manifest = reconciledState.manifest;
+      if (reconciledState.changed) {
+        if (reconciledState.requeuedPaperIds.length > 0 || reconciledState.droppedSummaryRows > 0 || reconciledState.droppedEvidenceRows > 0) {
+          emitLog(
+            `Detected inconsistent analysis artifacts. Re-queueing ${reconciledState.requeuedPaperIds.length} completed paper(s) and pruning ${reconciledState.droppedSummaryRows} summary row(s) / ${reconciledState.droppedEvidenceRows} evidence row(s).`
+          );
+        } else {
+          emitLog("Reconciled analysis manifest metadata with the persisted summaries/evidence.");
+        }
+        await appendJsonl(run, "paper_summaries.jsonl", reconciledState.summaryRows);
+        await appendJsonl(run, "evidence_store.jsonl", reconciledState.evidenceRows);
         await writeJsonFile(manifestPath, manifest);
       }
 
       const pendingRows = selectedRows.filter((row) => manifest!.papers[row.paper_id]?.status !== "completed");
       const analysisConcurrency = getAnalysisConcurrency(analysisMode);
-      const includePageImages = deps.config.providers?.llm_mode === "codex_chatgpt_only";
       if (pendingRows.length > 0) {
         emitLog(`Analyzing ${pendingRows.length} paper(s) with concurrency ${analysisConcurrency}.`);
       }
@@ -496,7 +537,7 @@ async function readCorpusRows(runId: string): Promise<AnalysisCorpusRow[]> {
 async function readExistingManifest(manifestPath: string): Promise<AnalysisManifest | undefined> {
   try {
     const manifest = await readJsonFile<AnalysisManifest>(manifestPath);
-    if (manifest?.version === 2 && manifest.papers && typeof manifest.papers === "object") {
+    if ((manifest?.version === 2 || manifest?.version === 3) && manifest.papers && typeof manifest.papers === "object") {
       return manifest;
     }
   } catch {
@@ -505,13 +546,14 @@ async function readExistingManifest(manifestPath: string): Promise<AnalysisManif
   return undefined;
 }
 
-function createFreshManifest(selection: PaperSelectionResult): AnalysisManifest {
+function createFreshManifest(selection: PaperSelectionResult, analysisFingerprint: string): AnalysisManifest {
   const now = new Date().toISOString();
   return {
-    version: 2,
+    version: 3,
     updatedAt: now,
     request: selection.request,
     selectionFingerprint: selection.selectionFingerprint,
+    analysisFingerprint,
     totalCandidates: selection.totalCandidates,
     candidatePoolSize: selection.candidatePoolSize,
     selectedPaperIds: selection.selectedPaperIds,
@@ -552,28 +594,40 @@ async function resetAnalysisOutputs(summaryPath: string, evidencePath: string): 
 async function bootstrapManifestFromExistingOutputs(
   selection: PaperSelectionResult,
   summaryPath: string,
-  evidencePath: string
+  evidencePath: string,
+  analysisFingerprint: string
 ): Promise<AnalysisManifest> {
-  const manifest = createFreshManifest(selection);
+  const manifest = createFreshManifest(selection, analysisFingerprint);
   const summaries = await readSummaryRows(summaryPath);
   const evidences = await readEvidenceRows(evidencePath);
+  const summariesByPaper = new Map<string, PaperSummaryRow[]>();
   const evidenceCountByPaper = new Map<string, number>();
 
+  for (const summary of summaries) {
+    const rows = summariesByPaper.get(summary.paper_id) ?? [];
+    rows.push(summary);
+    summariesByPaper.set(summary.paper_id, rows);
+  }
   for (const evidence of evidences) {
     evidenceCountByPaper.set(evidence.paper_id, (evidenceCountByPaper.get(evidence.paper_id) ?? 0) + 1);
   }
 
-  for (const summary of summaries) {
-    const entry = manifest.papers[summary.paper_id];
+  for (const [paperId, summaryRows] of summariesByPaper.entries()) {
+    const entry = manifest.papers[paperId];
     if (!entry || !entry.selected) {
       continue;
     }
-    manifest.papers[summary.paper_id] = {
+    const summary = summaryRows[0];
+    const evidenceCount = evidenceCountByPaper.get(paperId) ?? 0;
+    if (summaryRows.length !== 1 || evidenceCount === 0) {
+      continue;
+    }
+    manifest.papers[paperId] = {
       ...entry,
       status: "completed",
       source_type: summary.source_type,
       summary_count: 1,
-      evidence_count: evidenceCountByPaper.get(summary.paper_id) ?? 0,
+      evidence_count: evidenceCount,
       analysis_attempts: 1,
       analysis_mode: "codex_text_image_hybrid",
       has_table_references: false,
@@ -586,6 +640,123 @@ async function bootstrapManifestFromExistingOutputs(
   }
 
   return manifest;
+}
+
+function buildAnalysisFingerprint(args: {
+  analysisMode: "codex_text_image_hybrid" | "responses_api_pdf";
+  responsesModel?: string;
+  responsesReasoningEffort?: string;
+  includePageImages: boolean;
+}): string {
+  const modeSpecificConfig =
+    args.analysisMode === "responses_api_pdf"
+      ? {
+          responsesModel: args.responsesModel ?? null,
+          responsesReasoningEffort: args.responsesReasoningEffort ?? null
+        }
+      : {
+          includePageImages: args.includePageImages
+        };
+  return JSON.stringify({
+    analysisMode: args.analysisMode,
+    ...modeSpecificConfig
+  });
+}
+
+function reconcileManifestWithOutputs(
+  manifest: AnalysisManifest,
+  summaryRows: PaperSummaryRow[],
+  evidenceRows: PaperEvidenceRow[]
+): {
+  manifest: AnalysisManifest;
+  summaryRows: PaperSummaryRow[];
+  evidenceRows: PaperEvidenceRow[];
+  changed: boolean;
+  requeuedPaperIds: string[];
+  droppedSummaryRows: number;
+  droppedEvidenceRows: number;
+} {
+  const now = new Date().toISOString();
+  const nextManifest: AnalysisManifest = {
+    ...manifest,
+    papers: { ...manifest.papers }
+  };
+  const summariesByPaper = new Map<string, PaperSummaryRow[]>();
+  const evidencesByPaper = new Map<string, PaperEvidenceRow[]>();
+  let changed = false;
+  const requeuedPaperIds: string[] = [];
+
+  for (const row of summaryRows) {
+    const rows = summariesByPaper.get(row.paper_id) ?? [];
+    rows.push(row);
+    summariesByPaper.set(row.paper_id, rows);
+  }
+  for (const row of evidenceRows) {
+    const rows = evidencesByPaper.get(row.paper_id) ?? [];
+    rows.push(row);
+    evidencesByPaper.set(row.paper_id, rows);
+  }
+
+  const retainedPaperIds = new Set<string>();
+  for (const [paperId, entry] of Object.entries(manifest.papers)) {
+    if (!entry.selected || entry.status !== "completed") {
+      continue;
+    }
+    const paperSummaries = summariesByPaper.get(paperId) ?? [];
+    const paperEvidence = evidencesByPaper.get(paperId) ?? [];
+    if (paperSummaries.length !== 1 || paperEvidence.length === 0) {
+      changed = true;
+      requeuedPaperIds.push(paperId);
+      nextManifest.papers[paperId] = {
+        ...entry,
+        status: "pending",
+        summary_count: 0,
+        evidence_count: 0,
+        last_error: "missing_analysis_outputs",
+        updatedAt: now,
+        completedAt: undefined
+      };
+      continue;
+    }
+
+    retainedPaperIds.add(paperId);
+    const summary = paperSummaries[0];
+    if (
+      entry.summary_count !== 1 ||
+      entry.evidence_count !== paperEvidence.length ||
+      entry.source_type !== summary.source_type
+    ) {
+      changed = true;
+      nextManifest.papers[paperId] = {
+        ...entry,
+        source_type: summary.source_type,
+        summary_count: 1,
+        evidence_count: paperEvidence.length,
+        updatedAt: now
+      };
+    }
+  }
+
+  const nextSummaryRows = summaryRows.filter((row) => retainedPaperIds.has(row.paper_id));
+  const nextEvidenceRows = evidenceRows.filter((row) => retainedPaperIds.has(row.paper_id));
+  if (nextSummaryRows.length !== summaryRows.length || nextEvidenceRows.length !== evidenceRows.length) {
+    changed = true;
+  }
+  if (changed) {
+    nextManifest.updatedAt = now;
+  }
+
+  const droppedSummaryRows = summaryRows.length - nextSummaryRows.length;
+  const droppedEvidenceRows = evidenceRows.length - nextEvidenceRows.length;
+  return {
+    manifest: nextManifest,
+    summaryRows: nextSummaryRows,
+    evidenceRows: nextEvidenceRows,
+    changed,
+    requeuedPaperIds,
+    droppedSummaryRows,
+    droppedEvidenceRows
+  };
 }
 
 async function readSummaryRows(filePath: string): Promise<PaperSummaryRow[]> {

@@ -92,6 +92,7 @@ const SUPPORTED_NODES: GraphNodeId[] = [
   "implement_experiments",
   "run_experiments",
   "analyze_results",
+  "review",
   "write_paper"
 ];
 

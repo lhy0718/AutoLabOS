@@ -30,7 +30,11 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
     async execute({ run }) {
       const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
-      const metricsPath = path.join(".autolabos", "runs", run.id, "metrics.json");
+      const metricsPath =
+        resolveMaybeRelative(
+          await runContextMemory.get<string>("implement_experiments.metrics_path"),
+          process.cwd()
+        ) || path.join(".autolabos", "runs", run.id, "metrics.json");
       let metrics: Record<string, unknown> = {};
       const inputWarnings: string[] = [];
       let metricsLoadError: string | undefined;
@@ -265,11 +269,44 @@ function buildTransitionRecommendation(summary: AnalysisReport): TransitionRecom
     });
   }
 
+  if (summary.overview.objective_status === "missing") {
+    return createRecommendation({
+      action: "backtrack_to_implement",
+      targetNode: "implement_experiments",
+      reason:
+        "The run did not record the objective metric needed for evaluation, so implementation should export the expected metric before another analysis pass.",
+      confidence: 0.9,
+      autoExecutable: true,
+      evidence: collectEvidence(
+        summary,
+        summary.overview.objective_summary,
+        summary.failure_taxonomy.find((item) => item.id === "missing_numeric_metrics")?.summary,
+        summary.synthesis?.follow_up_actions?.[0]
+      )
+    });
+  }
+
+  if (summary.overview.objective_status === "unknown") {
+    return createRecommendation({
+      action: "pause_for_human",
+      reason:
+        "The objective metric could not be matched to a concrete numeric metric key, so the run needs manual clarification before proceeding.",
+      confidence: 0.86,
+      autoExecutable: false,
+      evidence: collectEvidence(
+        summary,
+        summary.overview.objective_summary,
+        summary.synthesis?.confidence_statement,
+        summary.synthesis?.follow_up_actions?.[0]
+      )
+    });
+  }
+
   if (summary.overview.objective_status === "not_met") {
     const supportedComparison = summary.condition_comparisons.some((item) => item.hypothesis_supported === true);
     const unsupportedComparison = summary.condition_comparisons.some((item) => item.hypothesis_supported === false);
-    const evidenceGap = findFailure(summary.failure_taxonomy, "evidence_gap");
-    const scopeLimit = findFailure(summary.failure_taxonomy, "scope_limit");
+    const evidenceGap = findFailure(summary.failure_taxonomy, "evidence_gap", ["observed", "risk"]);
+    const scopeLimit = findFailure(summary.failure_taxonomy, "scope_limit", ["observed", "risk"]);
     const unsupportedSummary = firstUnsupportedComparison(summary.condition_comparisons)?.summary;
     const strongHypothesisReset = Boolean(unsupportedSummary) && !evidenceGap;
 
@@ -309,9 +346,18 @@ function buildTransitionRecommendation(summary: AnalysisReport): TransitionRecom
 
   return createRecommendation({
     action: "advance",
-    targetNode: "write_paper",
-    reason: "The objective is met and no blocking runtime issue remains, so the run can proceed to paper writing.",
-    confidence: summary.synthesis?.confidence_statement ? 0.88 : 0.82,
+    targetNode: "review",
+    reason:
+      summary.overview.objective_status === "observed"
+        ? "The primary metric was observed and no blocking runtime issue remains, so the run can proceed to review before paper writing with explicit caveats."
+        : "The objective is met and no blocking runtime issue remains, so the run can proceed to review before paper writing.",
+    confidence: summary.synthesis?.confidence_statement
+      ? summary.overview.objective_status === "observed"
+        ? 0.84
+        : 0.88
+      : summary.overview.objective_status === "observed"
+        ? 0.78
+        : 0.82,
     autoExecutable: true,
     evidence: collectEvidence(
       summary,
@@ -365,9 +411,10 @@ function collectEvidence(summary: AnalysisReport, ...items: Array<string | undef
 
 function findFailure(
   failures: AnalysisFailureCategory[],
-  category: AnalysisFailureCategory["category"]
+  category: AnalysisFailureCategory["category"],
+  statuses: AnalysisFailureCategory["status"][] = ["observed"]
 ): AnalysisFailureCategory | undefined {
-  return failures.find((item) => item.category === category && item.status === "observed");
+  return failures.find((item) => item.category === category && statuses.includes(item.status));
 }
 
 function firstUnsupportedComparison(

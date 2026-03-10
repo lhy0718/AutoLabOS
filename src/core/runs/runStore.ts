@@ -192,11 +192,15 @@ function normalizeRunsV3(runsFile: RunsFile): RunsFile {
       graph: {
         ...createDefaultGraphState(),
         ...run.graph,
-        nodeStates: run.graph?.nodeStates ?? createDefaultGraphState().nodeStates,
+        nodeStates: {
+          ...createDefaultGraphState().nodeStates,
+          ...(run.graph?.nodeStates ?? {})
+        },
         retryCounters: run.graph?.retryCounters ?? {},
         rollbackCounters: run.graph?.rollbackCounters ?? {},
         researchCycle: run.graph?.researchCycle ?? 0,
-        transitionHistory: run.graph?.transitionHistory ?? []
+        transitionHistory: run.graph?.transitionHistory ?? [],
+        pendingTransition: normalizePendingTransition(run.graph?.pendingTransition)
       },
       nodeThreads: run.nodeThreads ?? {},
       memoryRefs: run.memoryRefs ?? {
@@ -206,4 +210,23 @@ function normalizeRunsV3(runsFile: RunsFile): RunsFile {
       }
     }))
   };
+}
+
+function normalizePendingTransition(
+  transition: RunRecord["graph"]["pendingTransition"]
+): RunRecord["graph"]["pendingTransition"] {
+  if (!transition) {
+    return undefined;
+  }
+  if (
+    transition.sourceNode === "analyze_results" &&
+    transition.action === "advance" &&
+    transition.targetNode === "write_paper"
+  ) {
+    return {
+      ...transition,
+      targetNode: "review"
+    };
+  }
+  return transition;
 }

@@ -8,6 +8,7 @@ import { createDesignExperimentsNode } from "../nodes/designExperiments.js";
 import { createImplementExperimentsNode } from "../nodes/implementExperiments.js";
 import { createRunExperimentsNode } from "../nodes/runExperiments.js";
 import { createAnalyzeResultsNode } from "../nodes/analyzeResults.js";
+import { createReviewNode } from "../nodes/review.js";
 import { createWritePaperNode } from "../nodes/writePaper.js";
 
 export class DefaultNodeRegistry implements GraphNodeRegistry {
@@ -22,6 +23,7 @@ export class DefaultNodeRegistry implements GraphNodeRegistry {
       implement_experiments: createImplementExperimentsNode(deps),
       run_experiments: createRunExperimentsNode(deps),
       analyze_results: createAnalyzeResultsNode(deps),
+      review: createReviewNode(deps),
       write_paper: createWritePaperNode(deps)
     };
   }

@@ -126,7 +126,7 @@ describe("buildFrame", () => {
         lines: [
           "Objective: met - accuracy reached the configured target.",
           "Top issue: Only one confirmatory configuration was executed.",
-          "Recommendation: advance -> write_paper (88%)",
+          "Recommendation: advance -> review (88%)",
           "Next: Run an additional confirmatory configuration.",
           "Confidence: Overall confidence is moderate."
         ],
@@ -201,7 +201,7 @@ describe("buildFrame", () => {
     expect(insightTitleIndex).toBeGreaterThan(0);
     expect(logsIndex).toBeGreaterThan(insightTitleIndex);
     expect(plain).toContain("• Objective: met - accuracy reached the configured target.");
-    expect(plain).toContain("• Recommendation: advance -> write_paper (88%)");
+    expect(plain).toContain("• Recommendation: advance -> review (88%)");
     expect(plain).toContain("• Next: Run an additional confirmatory configuration.");
     expect(plain).toContain("› Run recommendation: /approve");
     expect(plain).toContain("> [COMPARISON] Comparison: Treatment vs baseline: result_analysis.json");
@@ -593,7 +593,7 @@ describe("buildFrame", () => {
         title: "Multi-agent collaboration in recent papers: five-year state-of-the-art reproducibility benchmark"
       }),
       logs: [
-        "Graph nodes: collect_papers, analyze_papers, generate_hypotheses, design_experiments, implement_experiments, run_experiments, analyze_results, write_paper"
+        "Graph nodes: collect_papers, analyze_papers, generate_hypotheses, design_experiments, implement_experiments, run_experiments, analyze_results, review, write_paper"
       ],
       input: "",
       inputCursor: 0,
@@ -605,7 +605,7 @@ describe("buildFrame", () => {
     const plain = frame.lines.map((line) => stripAnsi(line));
     expect(plain.some((line) => line.includes("reproducibility benchmark"))).toBe(true);
     expect(
-      plain.filter((line) => line.includes("Graph nodes:") || line.includes("generate_hypotheses") || line.includes("write_paper")).length
+      plain.filter((line) => line.includes("Graph nodes:") || line.includes("generate_hypotheses") || line.includes("review") || line.includes("write_paper")).length
     ).toBeGreaterThan(1);
     expect(plain[frame.inputLineIndex - 1]).toBe("> ");
   });

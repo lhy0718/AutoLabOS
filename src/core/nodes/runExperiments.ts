@@ -17,7 +17,6 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
   return {
     id: "run_experiments",
     async execute({ run, abortSignal }) {
-      const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
       const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
       const pendingHandoff =
         (await runContext.get<boolean>("implement_experiments.pending_handoff_to_run_experiments")) === true;
@@ -39,7 +38,39 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         });
         await runContext.put("implement_experiments.pending_handoff_to_run_experiments", false);
       }
-      const resolved = await resolveRunCommand(run, process.cwd());
+      let resolved: Awaited<ReturnType<typeof resolveRunCommand>>;
+      try {
+        resolved = await resolveRunCommand(run, process.cwd());
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const report = buildRunVerifierReport({
+          status: "fail",
+          trigger,
+          stage: "command",
+          summary: message,
+          suggestedNextAction:
+            "Publish a runnable experiment command, script, or package.json experiment target before retrying."
+        });
+        deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            stderr: message
+          }
+        });
+        await persistRunVerifierReport(run, runContext, report);
+        await persistRunFailureState(runContext, {
+          error: message
+        });
+        return {
+          status: "failure",
+          error: message,
+          toolCallsUsed: 0
+        };
+      }
+      const commandToolCallsUsed = resolved.testCommand ? 2 : 1;
 
       if (resolved.testCommand) {
         deps.eventStream.emit({
@@ -88,13 +119,34 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             }
           });
           await persistRunVerifierReport(run, runContext, report);
-          await runContext.put("run_experiments.last_error", testObs.stderr || "preflight tests failed");
+          await persistRunFailureState(runContext, {
+            command: resolved.testCommand,
+            cwd: resolved.testCwd || resolved.cwd,
+            exitCode: testObs.exit_code ?? 1,
+            error: testObs.stderr || "preflight tests failed"
+          });
           return {
             status: "failure",
             error: testObs.stderr || "Preflight tests failed",
             toolCallsUsed: 1
           };
         }
+      }
+
+      const previousMetricsBackup = await clearPreexistingMetricsOutput(run, resolved.metricsPath);
+      if (previousMetricsBackup) {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            text: `Archived previous metrics output before execution to ${previousMetricsBackup}.`
+          }
+        });
+        await runContext.put("run_experiments.previous_metrics_backup", previousMetricsBackup);
+      } else {
+        await runContext.put("run_experiments.previous_metrics_backup", null);
       }
 
       deps.eventStream.emit({
@@ -155,15 +207,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           }
         });
         await persistRunVerifierReport(run, runContext, report);
-        await runContext.put("run_experiments.command", resolved.command);
-        await runContext.put("run_experiments.cwd", resolved.cwd);
-        await runContext.put("run_experiments.last_log_file", logFile);
-        await runContext.put("run_experiments.exit_code", obs.exit_code ?? 1);
-        await runContext.put("run_experiments.last_error", obs.stderr || "Experiment command failed");
+        await persistRunFailureState(runContext, {
+          command: resolved.command,
+          cwd: resolved.cwd,
+          logFile,
+          exitCode: obs.exit_code ?? 1,
+          error: obs.stderr || "Experiment command failed"
+        });
         return {
           status: "failure",
           error: obs.stderr || "Experiment command failed",
-          toolCallsUsed: 1
+          toolCallsUsed: commandToolCallsUsed
         };
       }
 
@@ -196,15 +250,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           }
         });
         await persistRunVerifierReport(run, runContext, report);
-        await runContext.put("run_experiments.command", resolved.command);
-        await runContext.put("run_experiments.cwd", resolved.cwd);
-        await runContext.put("run_experiments.last_log_file", logFile);
-        await runContext.put("run_experiments.exit_code", obs.exit_code ?? 0);
-        await runContext.put("run_experiments.last_error", missingMessage);
+        await persistRunFailureState(runContext, {
+          command: resolved.command,
+          cwd: resolved.cwd,
+          logFile,
+          exitCode: obs.exit_code ?? 0,
+          error: missingMessage
+        });
         return {
           status: "failure",
           error: missingMessage,
-          toolCallsUsed: 1
+          toolCallsUsed: commandToolCallsUsed
         };
       }
 
@@ -225,9 +281,54 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       let parsedMetrics: Record<string, unknown> = {};
       try {
         const rawMetrics = await fs.readFile(resolved.metricsPath, "utf8");
-        parsedMetrics = JSON.parse(rawMetrics) as Record<string, unknown>;
-      } catch {
-        parsedMetrics = {};
+        const parsed = JSON.parse(rawMetrics) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("metrics.json must decode to an object");
+        }
+        parsedMetrics = parsed as Record<string, unknown>;
+      } catch (error) {
+        const metricsError = `Experiment produced invalid metrics JSON at ${resolved.metricsPath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        const report = buildRunVerifierReport({
+          status: "fail",
+          trigger,
+          stage: "metrics",
+          summary: metricsError,
+          command: resolved.command,
+          cwd: resolved.cwd,
+          metricsPath: resolved.metricsPath,
+          exitCode: obs.exit_code ?? 0,
+          stdout: obs.stdout,
+          stderr: metricsError,
+          logFile,
+          suggestedNextAction:
+            "Ensure the experiment writes valid JSON metrics objects to the required metrics path before finishing."
+        });
+        deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            command: resolved.command,
+            metrics_path: resolved.metricsPath,
+            stderr: metricsError
+          }
+        });
+        await persistRunVerifierReport(run, runContext, report);
+        await persistRunFailureState(runContext, {
+          command: resolved.command,
+          cwd: resolved.cwd,
+          logFile,
+          exitCode: obs.exit_code ?? 0,
+          error: metricsError
+        });
+        return {
+          status: "failure",
+          error: metricsError,
+          toolCallsUsed: commandToolCallsUsed
+        };
       }
 
       const objectiveProfile = await resolveObjectiveMetricProfile({
@@ -294,10 +395,28 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         status: "success",
         summary: `${formatRunLabel(experimentMode, trigger)} completed via ${resolved.command}. ${objectiveEvaluationSummary}`,
         needsApproval: true,
-        toolCallsUsed: resolved.testCommand ? 2 : 1
+        toolCallsUsed: commandToolCallsUsed
       };
     }
   };
+}
+
+async function clearPreexistingMetricsOutput(
+  run: Parameters<typeof writeRunArtifact>[0],
+  metricsPath: string
+): Promise<string | undefined> {
+  if (!(await fileExists(metricsPath))) {
+    return undefined;
+  }
+
+  const existingMetrics = await fs.readFile(metricsPath, "utf8");
+  const backupPath = await writeRunArtifact(
+    run,
+    `exec_logs/preexisting_metrics_${Date.now()}.json`,
+    existingMetrics
+  );
+  await fs.unlink(metricsPath);
+  return backupPath;
 }
 
 function formatRunLabel(experimentMode: string, trigger = "manual"): string {
@@ -361,6 +480,23 @@ async function persistRunVerifierReport(
   }
   await runContext.put("run_experiments.feedback_for_implementer", null);
   await runContext.put("implement_experiments.runner_feedback", null);
+}
+
+async function persistRunFailureState(
+  runContext: RunContextMemory,
+  input: {
+    command?: string;
+    cwd?: string;
+    logFile?: string;
+    exitCode?: number;
+    error: string;
+  }
+): Promise<void> {
+  await runContext.put("run_experiments.command", input.command);
+  await runContext.put("run_experiments.cwd", input.cwd);
+  await runContext.put("run_experiments.last_log_file", input.logFile);
+  await runContext.put("run_experiments.exit_code", input.exitCode);
+  await runContext.put("run_experiments.last_error", input.error);
 }
 
 function trimExcerpt(value: string | undefined): string | undefined {

@@ -16,6 +16,7 @@ import {
   buildPaperBibtex,
   buildPaperEvidenceMap,
   collectPaperCitationIds,
+  PaperWritingBundle,
   parseCorpusRows,
   parseEvidenceRows,
   parseExperimentPlan,
@@ -61,6 +62,17 @@ interface PaperCompileResult {
   repair_error?: string;
 }
 
+interface PaperInputValidationIssue {
+  artifact: string;
+  path: string;
+  reason: string;
+}
+
+interface PaperInputValidationReport {
+  ok: boolean;
+  issues: PaperInputValidationIssue[];
+}
+
 export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler {
   const sessions = new PaperWriterSessionManager({
     config: deps.config,
@@ -83,6 +95,27 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           payload: { text }
         });
       };
+      const bundleResult = await loadValidatedPaperBundle(run);
+      await writeRunArtifact(
+        run,
+        "paper/input_validation.json",
+        `${JSON.stringify(bundleResult.report, null, 2)}\n`
+      );
+      await runContextMemory.put("write_paper.input_validation", bundleResult.report);
+      if (!bundleResult.bundle) {
+        emitLog(bundleResult.error);
+        await runContextMemory.put("write_paper.last_error", bundleResult.error);
+        await runContextMemory.put("write_paper.compile_status", null);
+        await runContextMemory.put("write_paper.compile_report", null);
+        await runContextMemory.put("write_paper.pdf_path", null);
+        return {
+          status: "failure",
+          error: bundleResult.error,
+          summary: bundleResult.error,
+          toolCallsUsed: 0
+        };
+      }
+      await runContextMemory.put("write_paper.last_error", null);
 
       const constraintProfile = await resolveConstraintProfile({
         run,
@@ -99,19 +132,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         node: "write_paper"
       });
       const objectiveEvaluation = await loadObjectiveEvaluation(runContextMemory, run.id);
-      const runRoot = path.join(".autolabos", "runs", run.id);
-      const bundle = {
-        runTitle: run.title,
-        topic: run.topic,
-        objectiveMetric: run.objectiveMetric,
-        constraints: run.constraints,
-        paperSummaries: parsePaperSummaries(await safeRead(path.join(runRoot, "paper_summaries.jsonl"))),
-        evidenceRows: parseEvidenceRows(await safeRead(path.join(runRoot, "evidence_store.jsonl"))),
-        hypotheses: parseHypotheses(await safeRead(path.join(runRoot, "hypotheses.jsonl"))),
-        corpus: parseCorpusRows(await safeRead(path.join(runRoot, "corpus.jsonl"))),
-        experimentPlan: parseExperimentPlan(await safeRead(path.join(runRoot, "experiment_plan.yaml"))),
-        resultAnalysis: parseResultAnalysis(await safeRead(path.join(runRoot, "result_analysis.json")))
-      };
+      const bundle = bundleResult.bundle;
 
       emitLog(
         `Preparing paper draft from ${bundle.paperSummaries.length} summaries, ${bundle.evidenceRows.length} evidence items, and ${bundle.hypotheses.length} hypotheses.`
@@ -173,6 +194,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         emitLog,
         publicPaperDir
       });
+      const toolCallsUsed = Math.max(1, 4 - sessionResult.stageFallbacks) + compileResult.toolCallsUsed;
 
       await runContextMemory.put("write_paper.public_dir", publicPaperDir);
       await runContextMemory.put("write_paper.source", sessionResult.source);
@@ -180,10 +202,21 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.cited_paper_ids", bibtex.usedPaperIds);
       await runContextMemory.put("write_paper.last_draft", paperDraft);
       await runContextMemory.put("write_paper.validation", validation);
-      await runContextMemory.put("write_paper.last_error", sessionResult.errors[0] || null);
       await runContextMemory.put("write_paper.compile_status", compileResult.status);
       await runContextMemory.put("write_paper.compile_report", compileResult);
       await runContextMemory.put("write_paper.pdf_path", compileResult.pdf_path || null);
+      if (compileResult.status === "failed") {
+        const compileError = buildCompileFailureError(compileResult);
+        emitLog(compileError);
+        await runContextMemory.put("write_paper.last_error", compileError);
+        return {
+          status: "failure",
+          error: compileError,
+          summary: compileError,
+          toolCallsUsed
+        };
+      }
+      await runContextMemory.put("write_paper.last_error", sessionResult.errors[0] || null);
 
       deps.eventStream.emit({
         type: "NODE_COMPLETED",
@@ -206,9 +239,126 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
             ? `Paper draft generated in LaTeX using staged fallbacks. Validation warnings: ${validation.issues.length}. PDF: ${describeCompileStatus(compileResult)}.`
             : `Paper draft generated in LaTeX from ${paperDraft.sections.length} structured section(s) via ${sessionResult.source} with ${validation.issues.length} validation warning(s). PDF: ${describeCompileStatus(compileResult)}.`,
         needsApproval: true,
-        toolCallsUsed: Math.max(1, 4 - sessionResult.stageFallbacks) + compileResult.toolCallsUsed
+        toolCallsUsed
       };
     }
+  };
+}
+
+async function loadValidatedPaperBundle(
+  run: Parameters<GraphNodeHandler["execute"]>[0]["run"]
+): Promise<{
+  bundle?: PaperWritingBundle;
+  report: PaperInputValidationReport;
+  error: string;
+}> {
+  const runRoot = path.join(".autolabos", "runs", run.id);
+  const issues: PaperInputValidationIssue[] = [];
+  const paperSummariesPath = path.join(runRoot, "paper_summaries.jsonl");
+  const evidenceStorePath = path.join(runRoot, "evidence_store.jsonl");
+  const hypothesesPath = path.join(runRoot, "hypotheses.jsonl");
+  const corpusPath = path.join(runRoot, "corpus.jsonl");
+  const experimentPlanPath = path.join(runRoot, "experiment_plan.yaml");
+  const resultAnalysisPath = path.join(runRoot, "result_analysis.json");
+
+  const [
+    paperSummariesRaw,
+    evidenceRowsRaw,
+    hypothesesRaw,
+    corpusRaw,
+    experimentPlanRaw,
+    resultAnalysisRaw
+  ] = await Promise.all([
+    readRequiredRunArtifact(paperSummariesPath, "paper_summaries.jsonl", issues),
+    readRequiredRunArtifact(evidenceStorePath, "evidence_store.jsonl", issues),
+    readRequiredRunArtifact(hypothesesPath, "hypotheses.jsonl", issues),
+    readRequiredRunArtifact(corpusPath, "corpus.jsonl", issues),
+    readRequiredRunArtifact(experimentPlanPath, "experiment_plan.yaml", issues),
+    readRequiredRunArtifact(resultAnalysisPath, "result_analysis.json", issues)
+  ]);
+
+  const paperSummaries = paperSummariesRaw ? parsePaperSummaries(paperSummariesRaw) : [];
+  if (paperSummariesRaw && paperSummaries.length === 0) {
+    issues.push({
+      artifact: "paper_summaries.jsonl",
+      path: paperSummariesPath,
+      reason: "no valid paper summaries were found"
+    });
+  }
+
+  const evidenceRows = evidenceRowsRaw ? parseEvidenceRows(evidenceRowsRaw) : [];
+  if (evidenceRowsRaw && evidenceRows.length === 0) {
+    issues.push({
+      artifact: "evidence_store.jsonl",
+      path: evidenceStorePath,
+      reason: "no valid evidence rows were found"
+    });
+  }
+
+  const hypotheses = hypothesesRaw ? parseHypotheses(hypothesesRaw) : [];
+  if (hypothesesRaw && hypotheses.length === 0) {
+    issues.push({
+      artifact: "hypotheses.jsonl",
+      path: hypothesesPath,
+      reason: "no valid hypotheses were found"
+    });
+  }
+
+  const corpus = corpusRaw ? parseCorpusRows(corpusRaw) : [];
+  if (corpusRaw && corpus.length === 0) {
+    issues.push({
+      artifact: "corpus.jsonl",
+      path: corpusPath,
+      reason: "no valid corpus rows were found"
+    });
+  }
+
+  const experimentPlan = experimentPlanRaw ? parseExperimentPlan(experimentPlanRaw) : undefined;
+  if (experimentPlanRaw && !experimentPlan) {
+    issues.push({
+      artifact: "experiment_plan.yaml",
+      path: experimentPlanPath,
+      reason: "the experiment plan could not be parsed"
+    });
+  }
+
+  const resultAnalysis = resultAnalysisRaw ? parseResultAnalysis(resultAnalysisRaw) : undefined;
+  if (resultAnalysisRaw && !resultAnalysis) {
+    issues.push({
+      artifact: "result_analysis.json",
+      path: resultAnalysisPath,
+      reason: "the result analysis could not be parsed"
+    });
+  }
+
+  const report: PaperInputValidationReport = {
+    ok: issues.length === 0,
+    issues
+  };
+
+  if (issues.length > 0) {
+    const artifactList = [...new Set(issues.map((item) => item.artifact))].join(", ");
+    return {
+      report,
+      error: `write_paper requires valid upstream artifacts before drafting. Missing or invalid inputs: ${artifactList}.`
+    };
+  }
+
+  return {
+    bundle: {
+      runTitle: run.title,
+      topic: run.topic,
+      objectiveMetric: run.objectiveMetric,
+      constraints: run.constraints,
+      paperSummaries,
+      evidenceRows,
+      hypotheses,
+      corpus,
+      experimentPlan,
+      resultAnalysis
+    },
+    report,
+    error: ""
   };
 }
 
@@ -224,6 +374,32 @@ async function loadObjectiveEvaluation(
     const raw = await safeRead(`.autolabos/runs/${runId}/objective_evaluation.json`);
     return raw ? (JSON.parse(raw) as ObjectiveMetricEvaluation) : undefined;
   } catch {
+    return undefined;
+  }
+}
+
+async function readRequiredRunArtifact(
+  filePath: string,
+  artifact: string,
+  issues: PaperInputValidationIssue[]
+): Promise<string | undefined> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    if (!raw.trim()) {
+      issues.push({
+        artifact,
+        path: filePath,
+        reason: "file is empty"
+      });
+      return undefined;
+    }
+    return raw;
+  } catch (error) {
+    issues.push({
+      artifact,
+      path: filePath,
+      reason: error instanceof Error ? error.message : String(error)
+    });
     return undefined;
   }
 }
@@ -520,6 +696,14 @@ function describeCompileStatus(result: PaperCompileResult): string {
     default:
       return "build skipped";
   }
+}
+
+function buildCompileFailureError(result: PaperCompileResult): string {
+  const latestAttempt = [...result.attempts].reverse().find((item) => item.status === "failed");
+  const detail = (result.repair_error || latestAttempt?.error || "unknown LaTeX compilation error").trim();
+  const normalizedDetail = /[.!?]$/.test(detail) ? detail : `${detail}.`;
+  const buildLogHint = result.build_log_path ? ` See ${result.build_log_path}.` : "";
+  return `write_paper generated LaTeX artifacts but the configured PDF build failed: ${normalizedDetail}${buildLogHint}`;
 }
 
 function isMissingBinaryObservation(obs: { stderr?: string; exit_code?: number }): boolean {

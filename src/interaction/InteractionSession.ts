@@ -25,6 +25,11 @@ import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
 import { parseAnalysisReport } from "../core/resultAnalysis.js";
 import {
+  buildReviewInsightCard,
+  formatReviewPacketLines,
+  parseReviewPacket
+} from "../core/reviewPacket.js";
+import {
   buildAnalyzeResultsInsightCard,
   formatAnalyzeResultsArtifactLines
 } from "../core/resultAnalysisPresentation.js";
@@ -989,7 +994,7 @@ export class InteractionSession {
     this.pushLog("/help | /runs | /run <run> | /resume <run> | /title <new title>");
     this.pushLog("/doctor | /approve | /retry");
     this.pushLog("/agent list | /agent status [run] | /agent graph [run] | /agent budget [run]");
-    this.pushLog("/agent transition [run] | /agent apply [run] | /agent overnight [run]");
+    this.pushLog("/agent review [run] | /agent transition [run] | /agent apply [run] | /agent overnight [run]");
     this.pushLog("/agent run <node> [run] [--top-n <n> | --top-k <n> --branch-count <n>]");
     this.pushLog("/agent collect [query] [options] | /agent jump <node> [run] [--force]");
   }
@@ -1145,6 +1150,10 @@ export class InteractionSession {
         this.pushLog(`Reason: ${run.graph.pendingTransition.reason}`);
       }
       return { ok: true };
+    }
+
+    if (sub === "review") {
+      return this.handleAgentReview(args.slice(1).join(" ").trim() || undefined, abortSignal);
     }
 
     if (sub === "collect") {
@@ -1353,7 +1362,7 @@ export class InteractionSession {
     }
 
     this.pushLog(
-      "Usage: /agent list | run | status | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | budget | transition | apply | overnight"
+      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | budget | transition | apply | overnight"
     );
     return { ok: false, reason: `unknown /agent subcommand ${sub}` };
   }
@@ -1453,6 +1462,67 @@ export class InteractionSession {
     const updated = await this.orchestrator.approveCurrent(run.id);
     this.pushLog(updated.status === "completed" ? "Run completed." : `Approved ${run.currentNode}. Next node is ${updated.currentNode}.`);
     await this.refreshRunIndex();
+    return { ok: true };
+  }
+
+  private async handleAgentReview(
+    runQuery?: string,
+    abortSignal?: AbortSignal
+  ): Promise<SlashExecutionResult> {
+    const run = await this.resolveTargetRun(runQuery);
+    if (!run) {
+      return { ok: false, reason: "target run not found" };
+    }
+
+    if (AGENT_ORDER.indexOf(run.currentNode) < AGENT_ORDER.indexOf("analyze_results")) {
+      this.pushLog("Review is only available after analyze_results has produced a report.");
+      return { ok: false, reason: "review not available yet" };
+    }
+
+    await this.setActiveRunId(run.id);
+    let workingRun = run;
+    const packetPath = path.join(this.workspaceRoot, ".autolabos", "runs", run.id, "review", "review_packet.json");
+
+    if (workingRun.currentNode === "analyze_results") {
+      const analyzeState = workingRun.graph.nodeStates.analyze_results;
+      if (analyzeState.status === "needs_approval") {
+        workingRun = await this.orchestrator.approveCurrent(workingRun.id);
+        this.pushLog("Approved analyze_results and moved into review.");
+        await this.refreshRunIndex();
+      }
+    }
+
+    const packetBeforeRun = parseReviewPacket(await safeRead(packetPath));
+    const reviewState = workingRun.graph.nodeStates.review;
+    const shouldRunReview =
+      workingRun.currentNode === "review" &&
+      (!packetBeforeRun || reviewState.status === "pending" || reviewState.status === "failed");
+
+    if (shouldRunReview) {
+      const response = await this.orchestrator.runAgentWithOptions(workingRun.id, "review", { abortSignal });
+      await this.refreshRunIndex();
+      if (this.wasAgentRunCanceled(response.run, "review")) {
+        throw new Error("Operation aborted by user");
+      }
+      if (response.result.status === "failure") {
+        this.pushLog(`review failed: ${response.result.error || "unknown error"}`);
+        return { ok: false, reason: response.result.error || "review failed" };
+      }
+      workingRun = response.run;
+      this.pushLog(`review finished: ${oneLine(response.result.summary)}`);
+    }
+
+    const packet = parseReviewPacket(await safeRead(packetPath));
+    if (!packet) {
+      this.pushLog("No review packet is available yet.");
+      return { ok: false, reason: "review packet missing" };
+    }
+
+    for (const line of formatReviewPacketLines(packet)) {
+      this.pushLog(line);
+    }
+    await this.refreshActiveRunInsight();
+    this.notify();
     return { ok: true };
   }
 
@@ -1677,8 +1747,18 @@ export class InteractionSession {
 
     const runDir = path.join(this.workspaceRoot, ".autolabos", "runs", this.activeRunId);
     try {
+      const run = await this.runStore.getRun(this.activeRunId);
+      const reviewPacket = parseReviewPacket(await safeRead(path.join(runDir, "review", "review_packet.json")));
+      if ((run?.currentNode === "review" || run?.currentNode === "write_paper") && reviewPacket) {
+        this.activeRunInsight = buildReviewInsightCard(reviewPacket);
+        return;
+      }
       const report = parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")));
-      this.activeRunInsight = report ? buildAnalyzeResultsInsightCard(report) : undefined;
+      if (report) {
+        this.activeRunInsight = buildAnalyzeResultsInsightCard(report);
+        return;
+      }
+      this.activeRunInsight = reviewPacket ? buildReviewInsightCard(reviewPacket) : undefined;
     } catch {
       this.activeRunInsight = undefined;
     }
@@ -1699,6 +1779,9 @@ export class InteractionSession {
       const sub = (args[0] || "").toLowerCase();
       if (sub === "collect" || sub === "recollect") {
         return "Collecting...";
+      }
+      if (sub === "review") {
+        return "Preparing review...";
       }
       if (sub === "run" && isGraphNodeId(args[1])) {
         return describeNodeActivity(args[1]);
@@ -1845,6 +1928,19 @@ export class InteractionSession {
           report
         });
       }
+      case "review": {
+        const reviewFiles = ["review/review_packet.json", "review/checklist.md"];
+        let count = 0;
+        for (const relative of reviewFiles) {
+          if (await pathExists(path.join(runDir, relative))) {
+            count += 1;
+          }
+        }
+        const packet = parseReviewPacket(await safeRead(path.join(runDir, "review", "review_packet.json")));
+        return packet
+          ? [`Count(${node}): ${count}/${reviewFiles.length} review artifacts`, ...formatReviewPacketLines(packet)]
+          : [`Count(${node}): ${count}/${reviewFiles.length} review artifacts`];
+      }
       case "write_paper": {
         const paperFiles = ["paper/main.tex", "paper/references.bib", "paper/evidence_links.json"];
         let count = 0;
@@ -1915,6 +2011,8 @@ function describeNodeActivity(node: GraphNodeId): string {
       return "Running experiments...";
     case "analyze_results":
       return "Analyzing results...";
+    case "review":
+      return "Reviewing...";
     case "write_paper":
       return "Writing paper...";
   }
@@ -2140,6 +2238,8 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
       return ["exec_logs/observations.jsonl", "exec_logs/run_experiments.txt", "metrics.json"];
     case "analyze_results":
       return ["figures", "metrics.json", "result_analysis.json", "result_analysis_synthesis.json"];
+    case "review":
+      return ["review/review_packet.json", "review/checklist.md"];
     case "write_paper":
       return ["paper/main.tex", "paper/references.bib", "paper/evidence_links.json"];
   }
@@ -2166,6 +2266,8 @@ function nodeContextKeys(node: GraphNodeId): string[] {
       return ["implement_experiments.script"];
     case "analyze_results":
       return ["analyze_results.last_summary", "analyze_results.last_error", "analyze_results.last_synthesis"];
+    case "review":
+      return ["review.packet", "review.last_summary", "review.last_recommendation"];
     default:
       return [];
   }

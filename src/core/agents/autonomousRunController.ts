@@ -147,6 +147,19 @@ export class AutonomousRunController {
             transitionsApplied += 1;
             continue;
           }
+
+          this.emit(
+            run,
+            `Overnight autonomy paused for manual review at ${run.currentNode}: pending recommendation ${key}.`
+          );
+          return {
+            run,
+            status: "stopped",
+            reason: `Manual review required for recommendation ${key} at ${run.currentNode}.`,
+            approvalsApplied,
+            transitionsApplied,
+            iterations
+          };
         }
 
         if (policy.autoApproveNodes.includes(run.currentNode)) {

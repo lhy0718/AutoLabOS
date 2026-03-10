@@ -64,7 +64,7 @@ describe("paperAnalyzer", () => {
           limitation_slot: "Only tested on one benchmark.",
           dataset_slot: "ScienceBench",
           metric_slot: "Accuracy",
-          evidence_span: "Accuracy improved by 10%.",
+          evidence_span: "This paper studies agentic workflows and reports strong results.",
           confidence: 0.8
         }
       ]
@@ -77,9 +77,10 @@ describe("paperAnalyzer", () => {
     expect(normalized.evidenceRows[0].confidence).toBe(0.8);
   });
 
-  it("retries once when the first LLM output is invalid JSON", async () => {
+  it("retries once when the staged pipeline produces unusable JSON", async () => {
     const llm = new SequenceLLM([
       "not-json",
+      "still-not-json",
       JSON.stringify({
         summary: "Recovered summary",
         key_findings: ["Recovered finding"],
@@ -102,6 +103,49 @@ describe("paperAnalyzer", () => {
     expect(result.attempts).toBe(2);
     expect(result.summaryRow.summary).toBe("Recovered summary");
     expect(result.evidenceRows[0].claim).toBe("Recovered claim");
+  });
+
+  it("uses planner and reviewer stages to refine the final analysis", async () => {
+    const llm = new SequenceLLM([
+      JSON.stringify({
+        focus_sections: ["method", "results"],
+        target_claims: ["main result", "limitation"],
+        extraction_priorities: ["prefer explicit metrics"],
+        verification_checks: ["drop unsupported claims"],
+        risk_flags: ["abstract may omit setup details"]
+      }),
+      JSON.stringify({
+        summary: "Draft summary",
+        key_findings: ["Draft finding"],
+        limitations: ["Draft limitation"],
+        datasets: ["Draft dataset"],
+        metrics: ["Draft metric"],
+        novelty: "Draft novelty",
+        reproducibility_notes: ["Draft repro"],
+        evidence_items: [{ claim: "Draft claim", evidence_span: "Draft span", confidence: 0.9 }]
+      }),
+      JSON.stringify({
+        summary: "Reviewed summary",
+        key_findings: ["Reviewed finding"],
+        limitations: ["Reviewed limitation"],
+        datasets: ["Reviewed dataset"],
+        metrics: ["Reviewed metric"],
+        novelty: "Reviewed novelty",
+        reproducibility_notes: ["Reviewed repro"],
+        evidence_items: [{ claim: "Reviewed claim", evidence_span: "Reviewed summary", confidence: 0.6 }]
+      })
+    ]);
+
+    const result = await analyzePaperWithLlm({
+      llm,
+      paper,
+      source,
+      maxAttempts: 1
+    });
+
+    expect(result.attempts).toBe(1);
+    expect(result.summaryRow.summary).toBe("Reviewed summary");
+    expect(result.evidenceRows[0].claim).toBe("Reviewed claim");
   });
 
   it("passes rendered PDF page images into hybrid LLM analysis", async () => {
@@ -167,6 +211,32 @@ describe("paperAnalyzer", () => {
     expect(result.summaryRow.summary).toBe("PDF summary");
     expect(result.summaryRow.source_type).toBe("full_text");
     expect(result.evidenceRows[0].claim).toBe("PDF claim");
+  });
+
+  it("caps confidence when the evidence span is not grounded in the source text", () => {
+    const normalized = normalizePaperAnalysis(paper, source, {
+      summary: "A concise summary",
+      key_findings: ["Finding A"],
+      limitations: ["Limitation A"],
+      datasets: ["Dataset A"],
+      metrics: ["Accuracy"],
+      novelty: "Novel contribution",
+      reproducibility_notes: ["Code unavailable"],
+      evidence_items: [
+        {
+          claim: "Agents improve performance.",
+          method_slot: "Prompted agent workflow",
+          result_slot: "Accuracy improved by 10%.",
+          limitation_slot: "Only tested on one benchmark.",
+          dataset_slot: "ScienceBench",
+          metric_slot: "Accuracy",
+          evidence_span: "This span does not appear in the source text.",
+          confidence: 0.95
+        }
+      ]
+    });
+
+    expect(normalized.evidenceRows[0].confidence).toBe(0.45);
   });
 
   it("propagates abort during text LLM analysis", async () => {

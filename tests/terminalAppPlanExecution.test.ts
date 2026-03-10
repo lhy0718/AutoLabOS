@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { TerminalApp } from "../src/tui/TerminalApp.js";
@@ -521,6 +521,99 @@ describe("TerminalApp pending natural plan execution", () => {
     const stored = JSON.parse(await readFile(run.memoryRefs.runContextPath, "utf8"));
     const requestItem = stored.items.find((item: { key: string }) => item.key === "generate_hypotheses.request");
     expect(requestItem?.value).toEqual({ topK: 3, branchCount: 8 });
+  });
+
+  it("summarizes an existing review packet through /agent review", async () => {
+    const app = makeApp();
+    const run = makeRun("run-review-command");
+    run.status = "paused";
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.graph.nodeStates.review.status = "pending";
+
+    const reviewDir = path.join(".autolabos", "runs", run.id, "review");
+    await rm(path.join(".autolabos", "runs", run.id), { recursive: true, force: true });
+    await mkdir(reviewDir, { recursive: true });
+
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.setActiveRunId = vi.fn();
+    app.refreshRunIndex = vi.fn();
+    app.refreshActiveRunInsight = vi.fn();
+    app.orchestrator = {
+      runAgentWithOptions: vi.fn(async () => {
+        await writeFile(
+          path.join(reviewDir, "review_packet.json"),
+          `${JSON.stringify(
+            {
+              generated_at: "2026-03-10T10:00:00.000Z",
+              readiness: {
+                status: "warning",
+                ready_checks: 4,
+                warning_checks: 1,
+                blocking_checks: 0,
+                manual_checks: 1
+              },
+              objective_status: "met",
+              objective_summary: "Objective metric met: accuracy=0.91 >= 0.9.",
+              recommendation: {
+                action: "advance",
+                target: "review",
+                confidence_pct: 88,
+                reason: "The run can proceed to manual review before paper writing.",
+                evidence: ["accuracy reached the configured target."]
+              },
+              checks: [
+                {
+                  id: "paper_narrative",
+                  label: "Paper narrative inputs",
+                  status: "warning",
+                  detail: "Synthesis or grounded paper claims are incomplete."
+                },
+                {
+                  id: "human_signoff",
+                  label: "Human sign-off",
+                  status: "manual",
+                  detail: "Confirm the claims, evidence quality, and next action before approving write_paper."
+                }
+              ],
+              suggested_actions: ["/approve", "/agent run write_paper"]
+            },
+            null,
+            2
+          )}\n`,
+          "utf8"
+        );
+        const updated = {
+          ...run,
+          status: "paused",
+          graph: {
+            ...run.graph,
+            nodeStates: {
+              ...run.graph.nodeStates,
+              review: {
+                ...run.graph.nodeStates.review,
+                status: "needs_approval",
+                note: "Review packet prepared."
+              }
+            }
+          }
+        };
+        return {
+          run: updated,
+          result: { status: "success" as const, summary: "Review packet prepared." }
+        };
+      })
+    };
+
+    const result = await app.handleAgent(["review"]);
+
+    expect(result.ok).toBe(true);
+    expect(app.orchestrator.runAgentWithOptions).toHaveBeenCalledWith(run.id, "review", {
+      abortSignal: undefined
+    });
+    expect(app.logs).toContain("review finished: Review packet prepared.");
+    expect(app.logs.some((line: string) => line.includes("Review readiness: warning"))).toBe(true);
+    expect(app.logs.some((line: string) => line.includes("Manual: Human sign-off"))).toBe(true);
   });
 
   it("treats ctrl+c like escape while busy", async () => {

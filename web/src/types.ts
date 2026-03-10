@@ -6,6 +6,7 @@ export type NodeId =
   | "implement_experiments"
   | "run_experiments"
   | "analyze_results"
+  | "review"
   | "write_paper";
 
 export interface PendingPlan {

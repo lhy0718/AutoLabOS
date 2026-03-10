@@ -1,10 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
+import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 
 const tempDirs: string[] = [];
@@ -63,5 +65,64 @@ describe("RunStore", () => {
 
     const byTitle = await store.searchRuns("benchmark");
     expect(byTitle.length).toBe(1);
+  });
+
+  it("normalizes existing v3 runs to include review state and review-target transitions", async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runnormalize-"));
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    const graph = createDefaultGraphState();
+    delete (graph.nodeStates as Partial<typeof graph.nodeStates>).review;
+    graph.currentNode = "analyze_results";
+    graph.nodeStates.analyze_results.status = "needs_approval";
+    graph.pendingTransition = {
+      action: "advance",
+      sourceNode: "analyze_results",
+      targetNode: "write_paper",
+      reason: "legacy target",
+      confidence: 0.88,
+      autoExecutable: true,
+      evidence: ["ok"],
+      suggestedCommands: ["/approve"],
+      generatedAt: new Date().toISOString()
+    };
+
+    await writeFile(
+      paths.runsFile,
+      `${JSON.stringify({
+        version: 3,
+        runs: [
+          {
+            version: 3,
+            workflowVersion: 3,
+            id: "legacy-run",
+            title: "Legacy",
+            topic: "topic",
+            constraints: [],
+            objectiveMetric: "acc",
+            status: "paused",
+            currentNode: "analyze_results",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            nodeThreads: {},
+            graph,
+            memoryRefs: {
+              runContextPath: ".autolabos/runs/legacy-run/memory/run_context.json",
+              longTermPath: ".autolabos/runs/legacy-run/memory/long_term.jsonl",
+              episodePath: ".autolabos/runs/legacy-run/memory/episodes.jsonl"
+            }
+          }
+        ]
+      }, null, 2)}\n`,
+      "utf8"
+    );
+
+    const store = new RunStore(paths);
+    const run = await store.getRun("legacy-run");
+
+    expect(run?.graph.nodeStates.review.status).toBe("pending");
+    expect(run?.graph.pendingTransition?.targetNode).toBe("review");
   });
 });

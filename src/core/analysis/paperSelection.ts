@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { LLMClient } from "../llm/client.js";
-import { AnalysisCorpusRow } from "./paperText.js";
+import { AnalysisCorpusRow, resolvePaperPdfUrl } from "./paperText.js";
 
 export interface AnalysisSelectionRequest {
   topN: number | null;
@@ -224,7 +224,7 @@ function rankPapersDeterministically(referenceTitle: string, corpusRows: Analysi
           ? Math.log1p(paper.citation_count ?? 0) / maxLogCitation
           : 0;
       const recencyScore = computeRecencyScore(paper.year, currentYear);
-      const pdfAvailabilityScore = paper.pdf_url ? 1 : 0;
+      const pdfAvailabilityScore = resolvePaperPdfUrl(paper) ? 1 : 0;
       const deterministicScore = Number(
         (
           titleSimilarityScore * 0.45 +

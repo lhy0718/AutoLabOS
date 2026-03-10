@@ -351,6 +351,8 @@ function naturalPromptForNode(node: RunRecord["currentNode"], language: Guidance
       return localize(language, "run the experiments", "실험을 실행해줘");
     case "analyze_results":
       return localize(language, "analyze the experiment results", "실험 결과를 분석해줘");
+    case "review":
+      return localize(language, "prepare the review packet", "검토 패킷을 준비해줘");
     case "write_paper":
       return localize(language, "write the paper draft", "논문 초안을 작성해줘");
     default:
@@ -387,6 +389,11 @@ function nodeSpecificCommandExample(run: RunRecord, language: GuidanceLanguage):
       return {
         label: `/agent run generate_hypotheses ${run.id} --top-k 3 --branch-count 6`,
         description: localize(language, "Generate focused hypothesis branches", "집중된 가설 브랜치 생성")
+      };
+    case "review":
+      return {
+        label: "/approve",
+        description: localize(language, "Approve review and continue to write_paper", "검토를 승인하고 write_paper로 진행")
       };
     default:
       return undefined;

@@ -76,8 +76,8 @@ describe("App", () => {
                 title: "Result analysis",
                 lines: [
                   "Objective: met - accuracy reached the configured target.",
-                  "Recommendation: advance -> write_paper (88%)",
-                  "Next: Approve the transition into paper writing."
+                  "Recommendation: advance -> review (88%)",
+                  "Next: Approve the transition into review."
                 ],
                 actions: [{ label: "Run recommendation", command: "/approve" }],
                 references: [
@@ -177,12 +177,13 @@ describe("App", () => {
                     implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                     run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                     analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    review: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" },
                     write_paper: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" }
                   },
                   pendingTransition: {
                     action: "advance",
-                    targetNode: "write_paper",
-                    reason: "The objective is met and the paper can be drafted.",
+                    targetNode: "review",
+                    reason: "The objective is met and the run can move into review before paper writing.",
                     confidence: 0.88,
                     autoExecutable: true,
                     evidence: ["accuracy reached the configured target."],
@@ -261,12 +262,13 @@ describe("App", () => {
                   implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                   run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                   analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  review: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" },
                   write_paper: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" }
                 },
                 pendingTransition: {
                   action: "advance",
-                  targetNode: "write_paper",
-                  reason: "The objective is met and the paper can be drafted.",
+                  targetNode: "review",
+                  reason: "The objective is met and the run can move into review before paper writing.",
                   confidence: 0.88,
                   autoExecutable: true,
                   evidence: ["accuracy reached the configured target."],
@@ -378,7 +380,7 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Result analysis")).toBeInTheDocument();
-      expect(screen.getByText("Recommendation: advance -> write_paper (88%)")).toBeInTheDocument();
+      expect(screen.getByText("Recommendation: advance -> review (88%)")).toBeInTheDocument();
       expect(screen.getByText("Comparison")).toBeInTheDocument();
       expect(screen.getByText("Statistics")).toBeInTheDocument();
       expect(screen.getByText("Treatment improved accuracy over the baseline by 0.05.")).toBeInTheDocument();
@@ -415,6 +417,246 @@ describe("App", () => {
       expect(
         fetchMock.mock.calls.some(([url]) => String(url) === "/api/runs/run-1/artifact?path=result_analysis.json")
       ).toBe(true);
+    });
+  });
+
+  it("renders a structured review packet preview and runs the refresh command", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/bootstrap")) {
+        return new Response(
+          JSON.stringify({
+            configured: true,
+            setupDefaults: {
+              projectName: "AutoLabOS",
+              defaultTopic: "Multi-agent collaboration",
+              defaultConstraints: ["recent papers", "last 5 years"],
+              defaultObjectiveMetric: "state-of-the-art reproducibility"
+            },
+            session: {
+              activeRunId: "run-1",
+              busy: false,
+              logs: [],
+              canCancel: false
+            },
+            runs: [
+              {
+                id: "run-1",
+                title: "Run one",
+                topic: "topic",
+                constraints: ["recent papers"],
+                objectiveMetric: "accuracy",
+                status: "paused",
+                currentNode: "review",
+                latestSummary: "Review packet prepared.",
+                updatedAt: "2026-03-10T10:00:00.000Z",
+                graph: {
+                  currentNode: "review",
+                  checkpointSeq: 4,
+                  retryCounters: {},
+                  rollbackCounters: {},
+                  budget: {
+                    toolCallsUsed: 5,
+                    wallClockMsUsed: 125000,
+                    usdUsed: 0,
+                    policy: {
+                      maxToolCalls: 20,
+                      maxWallClockMinutes: 60,
+                      maxUsd: 5
+                    }
+                  },
+                  nodeStates: {
+                    collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    generate_hypotheses: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    design_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    review: { status: "needs_approval", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    write_paper: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" }
+                  }
+                }
+              }
+            ]
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/doctor")) {
+        return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1/artifacts")) {
+        return new Response(
+          JSON.stringify({
+            artifacts: [
+              {
+                path: "review/review_packet.json",
+                kind: "json",
+                size: 1024,
+                modifiedAt: "2026-03-10T10:00:00.000Z",
+                previewable: true
+              },
+              {
+                path: "review/checklist.md",
+                kind: "text",
+                size: 512,
+                modifiedAt: "2026-03-10T10:00:00.000Z",
+                previewable: true
+              }
+            ]
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/runs/run-1/checkpoints")) {
+        return new Response(JSON.stringify({ checkpoints: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1") && !url.includes("/actions")) {
+        return new Response(
+          JSON.stringify({
+            run: {
+              id: "run-1",
+              title: "Run one",
+              topic: "topic",
+              constraints: ["recent papers"],
+              objectiveMetric: "accuracy",
+              status: "paused",
+              currentNode: "review",
+              latestSummary: "Review packet prepared.",
+              updatedAt: "2026-03-10T10:00:00.000Z",
+              graph: {
+                currentNode: "review",
+                checkpointSeq: 4,
+                retryCounters: {},
+                rollbackCounters: {},
+                budget: {
+                  toolCallsUsed: 5,
+                  wallClockMsUsed: 125000,
+                  usdUsed: 0,
+                  policy: {
+                    maxToolCalls: 20,
+                    maxWallClockMinutes: 60,
+                    maxUsd: 5
+                  }
+                },
+                nodeStates: {
+                  collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  generate_hypotheses: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  design_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  review: { status: "needs_approval", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  write_paper: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" }
+                }
+              }
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/runs/run-1/artifact?path=review%2Freview_packet.json")) {
+        return new Response(
+          JSON.stringify(
+            {
+              generated_at: "2026-03-10T10:00:00.000Z",
+              readiness: {
+                status: "blocking",
+                ready_checks: 3,
+                warning_checks: 2,
+                blocking_checks: 1,
+                manual_checks: 1
+              },
+              objective_status: "met",
+              objective_summary: "Objective metric met: accuracy=0.91 >= 0.9.",
+              recommendation: {
+                action: "advance",
+                target: "review",
+                confidence_pct: 88,
+                reason: "The run can proceed to manual review before paper writing.",
+                evidence: ["accuracy reached the configured target."]
+              },
+              checks: [
+                {
+                  id: "evidence_bundle",
+                  label: "Evidence bundle",
+                  status: "blocking",
+                  detail: "Missing required paper inputs: evidence_store.jsonl."
+                },
+                {
+                  id: "paper_narrative",
+                  label: "Paper narrative inputs",
+                  status: "warning",
+                  detail: "Synthesis or grounded paper claims are incomplete."
+                },
+                {
+                  id: "human_signoff",
+                  label: "Human sign-off",
+                  status: "manual",
+                  detail: "Confirm the claims, evidence quality, and next action before approving write_paper."
+                }
+              ],
+              suggested_actions: ["/agent apply", "/agent jump analyze_results"]
+            },
+            null,
+            2
+          ),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/session/input")) {
+        expect(JSON.parse(String(init?.body))).toEqual({ text: "/agent review" });
+        return new Response(
+          JSON.stringify({
+            session: {
+              activeRunId: "run-1",
+              busy: false,
+              logs: ["Review packet refreshed."],
+              canCancel: false
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener() {}
+        close() {}
+      } as unknown as typeof EventSource
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Selected run")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Artifacts" }));
+    fireEvent.click(screen.getByRole("button", { name: /review\/review_packet\.json/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Review readiness")).toBeInTheDocument();
+      expect(screen.getAllByText("Blocking").length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: /refresh review/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /refresh review/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/session/input",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ text: "/agent review" })
+        })
+      );
     });
   });
 
@@ -473,6 +715,7 @@ describe("App", () => {
                       implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                       run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                       analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                      review: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" },
                       write_paper: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" }
                     }
                   }
@@ -529,6 +772,7 @@ describe("App", () => {
                     implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                     run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                     analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    review: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" },
                     write_paper: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" }
                   }
                 }

@@ -1,11 +1,12 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 
 import { createGenerateHypothesesNode, normalizeGenerateHypothesesRequest } from "../src/core/nodes/generateHypotheses.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
+import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
@@ -197,6 +198,11 @@ describe("normalizeGenerateHypothesesRequest", () => {
             causal_clarity: 5,
             falsifiability: 5,
             experimentability: 5,
+            reproducibility_specificity: 5,
+            reproducibility_signals: ["run_to_run_variance"],
+            measurement_hint: "Measure run-to-run variance across repeated seeded runs.",
+            limitation_reflection: 4,
+            measurement_readiness: 5,
             strengths: ["Clear baseline and intervention."],
             weaknesses: ["Benchmark-specific."],
             critique_summary: "Strong."
@@ -208,6 +214,10 @@ describe("normalizeGenerateHypothesesRequest", () => {
             causal_clarity: 3,
             falsifiability: 2,
             experimentability: 2,
+            reproducibility_specificity: 2,
+            reproducibility_signals: [],
+            limitation_reflection: 2,
+            measurement_readiness: 1,
             strengths: ["Interesting boundary condition."],
             weaknesses: ["Still underspecified."],
             critique_summary: "Needs more operational detail."
@@ -219,6 +229,11 @@ describe("normalizeGenerateHypothesesRequest", () => {
             causal_clarity: 5,
             falsifiability: 5,
             experimentability: 5,
+            reproducibility_specificity: 5,
+            reproducibility_signals: ["failure_mode_stability", "run_to_run_variance"],
+            measurement_hint: "Track failure-mode stability and repeated-run variance.",
+            limitation_reflection: 4,
+            measurement_readiness: 5,
             strengths: ["Directly implementable."],
             weaknesses: ["Adds execution cost."],
             critique_summary: "Excellent."
@@ -269,5 +284,40 @@ describe("normalizeGenerateHypothesesRequest", () => {
     expect(selection).toContain('"selected_ids"');
     expect(selectionJson.scores?.[0]?.implementation_bonus).toBeTypeOf("number");
     expect(selectionJson.scores?.[0]?.bundling_penalty).toBeTypeOf("number");
+  });
+
+  it("fails fast when no evidence items are available", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-node-empty-"));
+    process.chdir(root);
+
+    const runId = "run-hypothesis-empty";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(path.join(runDir, "evidence_store.jsonl"), "", "utf8");
+
+    const llm = new QueueJsonLLMClient([]);
+    const node = createGenerateHypothesesNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      pdfTextLlm: llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+
+    expect(result.status).toBe("failure");
+    expect(result.summary).toContain("No evidence is available");
+    await expect(access(path.join(runDir, "hypotheses.jsonl"))).rejects.toThrow();
+    await expect(runContext.get("generate_hypotheses.top_k")).resolves.toBe(0);
+    await expect(runContext.get("generate_hypotheses.candidate_count")).resolves.toBe(0);
+    await expect(runContext.get("generate_hypotheses.source")).resolves.toBe("missing_evidence");
   });
 });

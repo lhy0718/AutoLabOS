@@ -210,11 +210,15 @@ function normalizeRunsV3(file: RunsFile): RunsFile {
       graph: {
         ...createDefaultGraphState(),
         ...run.graph,
-        nodeStates: run.graph?.nodeStates ?? createDefaultGraphState().nodeStates,
+        nodeStates: {
+          ...createDefaultGraphState().nodeStates,
+          ...(run.graph?.nodeStates ?? {})
+        },
         retryCounters: run.graph?.retryCounters ?? {},
         rollbackCounters: run.graph?.rollbackCounters ?? {},
         researchCycle: run.graph?.researchCycle ?? 0,
-        transitionHistory: run.graph?.transitionHistory ?? []
+        transitionHistory: run.graph?.transitionHistory ?? [],
+        pendingTransition: normalizePendingTransition(run.graph?.pendingTransition)
       },
       memoryRefs: run.memoryRefs ?? {
         runContextPath: `.autolabos/runs/${run.id}/memory/run_context.json`,
@@ -250,6 +254,25 @@ function defaultNodeState(updatedAt: string): NodeState {
 
 function normalizeStatus(status: RunRecordV2["status"]): RunRecord["status"] {
   return status;
+}
+
+function normalizePendingTransition(
+  transition: RunRecord["graph"]["pendingTransition"]
+): RunRecord["graph"]["pendingTransition"] {
+  if (!transition) {
+    return undefined;
+  }
+  if (
+    transition.sourceNode === "analyze_results" &&
+    transition.action === "advance" &&
+    transition.targetNode === "write_paper"
+  ) {
+    return {
+      ...transition,
+      targetNode: "review"
+    };
+  }
+  return transition;
 }
 
 function mapStageToAgentV2(stage: StageIdV1): AgentIdV2 {

@@ -17,7 +17,7 @@
     <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white" />
     <img alt="TypeScript" src="https://img.shields.io/badge/typescript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
     <img alt="Codex and OpenAI supported" src="https://img.shields.io/badge/Codex%20%2B%20OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="8-node workflow" src="https://img.shields.io/badge/workflow-8%20nodes-0F766E?style=flat-square" />
+    <img alt="9-node workflow" src="https://img.shields.io/badge/workflow-9%20nodes-0F766E?style=flat-square" />
     <img alt="Local Web Ops UI" src="https://img.shields.io/badge/web%20ops-local-0EA5E9?style=flat-square" />
     <img alt="Checkpointed runs" src="https://img.shields.io/badge/checkpoints-built%20in-CA8A04?style=flat-square" />
   </p>
@@ -34,7 +34,7 @@
 
 ## 왜 AutoLabOS인가?
 
-- `collect_papers`부터 `write_paper`까지 연구 루프를 고정 8단계 상태 그래프로 다룹니다.
+- `collect_papers`부터 `write_paper`까지 연구 루프를 고정 9단계 상태 그래프로 다루며, `review`를 집필 전 수동 게이트로 둡니다.
 - 메인 워크플로는 `codex` 또는 `OpenAI API` 중에서 고를 수 있고, PDF 분석 모드는 별도로 바꿀 수 있습니다.
 - 체크포인트, 예산, 재시도, 점프, 런별 메모리를 통해 작업 상태를 로컬에서 추적하고 복구할 수 있습니다.
 
@@ -174,9 +174,10 @@ flowchart TB
         N5["implement_experiments"]
         N6["run_experiments"]
         N7["analyze_results"]
-        N8["write_paper"]
+        N8["review"]
+        N9["write_paper"]
 
-        O --> N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7 --> N8
+        O --> N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7 --> N8 --> N9
     end
 
     subgraph Roles["역할 레이어 (`agentRole`)"]
@@ -198,8 +199,8 @@ flowchart TB
     N5 -. 주 역할 .-> R5
     N6 -. 주 역할 .-> R6
     N7 -. 주 역할 .-> R7
-    N8 -. 초안 작성 .-> R8
-    N8 -. 리뷰 .-> R9
+    N8 -. 주 역할 .-> R9
+    N9 -. 주 역할 .-> R8
 ```
 
 ### 실행 그래프
@@ -213,20 +214,19 @@ stateDiagram-v2
     design_experiments --> implement_experiments: approve
     implement_experiments --> run_experiments: auto_handoff 또는 approve
     run_experiments --> analyze_results: approve
-    analyze_results --> write_paper: advance 또는 approve
+    analyze_results --> review: advance 또는 approve
     analyze_results --> implement_experiments: backtrack_to_implement
     analyze_results --> design_experiments: backtrack_to_design
     analyze_results --> generate_hypotheses: backtrack_to_hypotheses
-    analyze_results --> manual_review: pause_for_human
-    manual_review --> analyze_results: retry 또는 jump
+    review --> write_paper: approve
     write_paper --> [*]: approve
 ```
 
-기본 `agent_approval` 모드에서는 각 노드가 끝날 때마다 멈춥니다. 예외적으로 `implement_experiments`는 `run_experiments`로 자동 handoff할 수 있고, `analyze_results`는 결과에 따라 그래프를 뒤로 되돌리는 추천을 낼 수 있습니다.
+기본 `agent_approval` 모드에서는 각 노드가 끝날 때마다 멈춥니다. 예외적으로 `implement_experiments`는 `run_experiments`로 자동 handoff할 수 있고, `analyze_results`는 결과에 따라 그래프를 뒤로 되돌리는 추천을 낼 수 있으며, `review`는 `write_paper` 직전의 수동 검토 게이트입니다.
 
 ### 단계별 연결 그래프
 
-아래 4개의 그래프는 전체 8개 노드를 모두 덮으며, 각 단계 안에서 실제로 어떤 역할 에이전트나 세션 매니저가 일을 수행하는지 보여줍니다.
+아래 4개의 그래프는 전체 9개 노드를 모두 덮으며, 각 단계 안에서 실제로 어떤 역할 에이전트나 세션 매니저가 일을 수행하는지 보여줍니다.
 
 #### 수집과 읽기
 
@@ -288,7 +288,7 @@ flowchart LR
     AR --> Analyst["analyst_statistician"]
     Analyst --> Synth["analysis synthesis + transition recommendation"]
 
-    Synth -->|advance| WP["write_paper"]
+    Synth -->|advance| RV["review"]
     Synth -->|backtrack_to_implement| IE
     Synth -->|backtrack_to_design| DE["design_experiments"]
     Synth -->|backtrack_to_hypotheses| GH["generate_hypotheses"]
@@ -317,7 +317,7 @@ flowchart LR
 | 그래프 노드 | 주 역할 | 현재 구현 형태 |
 | --- | --- | --- |
 | `collect_papers` | `collector_curator` | Semantic Scholar 검색, 중복 제거, 보강, BibTeX 생성 |
-| `analyze_papers` | `reader_evidence_extractor` | 논문 선택 랭킹과 로컬/Responses API PDF 분석 |
+| `analyze_papers` | `reader_evidence_extractor` | 논문 선택 랭킹과 재개 가능한 planner -> extractor -> reviewer 기반 로컬/Responses API PDF 분석 |
 | `generate_hypotheses` | `hypothesis_agent` | evidence-axis -> draft -> review -> selection 단계형 파이프라인 |
 | `design_experiments` | `experiment_designer` | 실험 후보 설계 생성과 `experiment_plan.yaml` 선택 |
 | `implement_experiments` | `implementer` | `ImplementSessionManager`, localization, Codex 패치, 검증, optional handoff |
@@ -343,11 +343,15 @@ flowchart TB
     F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_verify_report.json"]
     F1 --> G["analyze_results"]
     G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg"]
-    G1 --> H["write_paper"]
-    H --> H1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/main.pdf (optional)"]
+    G1 --> H["review"]
+    H --> H1["review/review_packet.json<br/>review/checklist.md"]
+    H1 --> I["write_paper"]
+    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/main.pdf (optional)"]
 ```
 
 모든 run 아티팩트는 `.autolabos/runs/<run_id>/` 아래에 저장되므로, TUI와 로컬 웹 UI 양쪽에서 같은 실행 결과를 추적하고 점검할 수 있습니다.
+
+`analyze_papers`는 `analysis_manifest.json`을 이용해 미완료 작업만 재개합니다. 선택된 논문 집합이 바뀌거나, 분석 설정이 바뀌거나, `paper_summaries.jsonl` / `evidence_store.jsonl`가 manifest와 어긋나면 AutoLabOS는 오래된 행을 정리하고 영향받은 논문만 다시 큐에 넣은 뒤 downstream 노드를 계속 진행합니다.
 
 ### 제어 표면
 
@@ -358,7 +362,7 @@ flowchart TB
     Natural["자연어 라우팅<br/>먼저 deterministic, 이후 LLM fallback"] --> Session
 
     Session --> Runtime["공유 런타임<br/>run store + checkpoint store + event stream + orchestrator"]
-    Runtime --> Nodes["8개 노드 워크플로 실행"]
+    Runtime --> Nodes["9개 노드 워크플로 실행"]
     Runtime --> Artifacts["run 아티팩트<br/>.autolabos/runs/<run_id>"]
     Runtime --> State["run 상태와 메모리<br/>context + episodes + long-term store"]
 
@@ -383,6 +387,7 @@ flowchart LR
     Registry --> Impl["implement_experiments"]
     Registry --> Run["run_experiments"]
     Registry --> Results["analyze_results"]
+    Registry --> Review["review"]
     Registry --> Paper["write_paper"]
 
     Collect --> Scholar["Semantic Scholar + enrichment"]

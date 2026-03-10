@@ -45,6 +45,23 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         });
       };
 
+      if (evidenceRows.length === 0) {
+        const message =
+          "No evidence is available for hypothesis generation. Run analyze_papers first and confirm evidence_store.jsonl contains evidence items.";
+        emitLog(message);
+        await runContextMemory.put("generate_hypotheses.top_k", 0);
+        await runContextMemory.put("generate_hypotheses.candidate_count", 0);
+        await runContextMemory.put("generate_hypotheses.source", "missing_evidence");
+        await runContextMemory.put("generate_hypotheses.pipeline", "missing_evidence");
+        await runContextMemory.put("generate_hypotheses.summary", message);
+        return {
+          status: "failure",
+          summary: message,
+          error: "generate_hypotheses requires at least one evidence item from analyze_papers.",
+          toolCallsUsed: 0
+        };
+      }
+
       emitLog(
         `Generating hypotheses from ${evidenceRows.length} evidence item(s) with branchCount=${request.branchCount} and topK=${request.topK}.`
       );
@@ -102,6 +119,9 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         reproducibility_specificity: candidate.reproducibility_specificity,
         reproducibility_signals: candidate.reproducibility_signals,
         measurement_hint: candidate.measurement_hint,
+        boundary_condition: candidate.boundary_condition,
+        limitation_reflection: candidate.limitation_reflection,
+        measurement_readiness: candidate.measurement_readiness,
         critique_summary: candidate.critique_summary
       }));
 
@@ -253,6 +273,8 @@ function scoreCandidate(candidate: HypothesisCandidate): number {
     (candidate.falsifiability ?? 0) +
     (candidate.experimentability ?? 0) -
     candidate.cost +
-    (candidate.reproducibility_specificity ?? 0)
+    (candidate.reproducibility_specificity ?? 0) +
+    (candidate.limitation_reflection ?? 0) +
+    (candidate.measurement_readiness ?? 0)
   );
 }

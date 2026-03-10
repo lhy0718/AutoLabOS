@@ -32,6 +32,9 @@ export interface HypothesisCandidate {
   reproducibility_specificity?: number;
   reproducibility_signals?: string[];
   measurement_hint?: string;
+  boundary_condition?: string;
+  limitation_reflection?: number;
+  measurement_readiness?: number;
   critique_summary?: string;
 }
 
@@ -57,6 +60,8 @@ export interface HypothesisReview {
   reproducibility_specificity: number;
   reproducibility_signals: string[];
   measurement_hint?: string;
+  limitation_reflection: number;
+  measurement_readiness: number;
   strengths: string[];
   weaknesses: string[];
   critique_summary?: string;
@@ -125,6 +130,9 @@ export interface DesignInputHypothesis {
   reproducibility_specificity?: number;
   reproducibility_signals?: string[];
   measurement_hint?: string;
+  boundary_condition?: string;
+  limitation_reflection?: number;
+  measurement_readiness?: number;
   critique_summary?: string;
 }
 
@@ -169,6 +177,7 @@ const HYPOTHESIS_AXIS_SYSTEM_PROMPT = [
 const HYPOTHESIS_REVIEW_SYSTEM_PROMPT = [
   "You are the AutoLabOS skeptical reviewer.",
   "Critique hypothesis drafts for groundedness, causal clarity, falsifiability, experimentability, and objective-metric alignment.",
+  "Apply hard gates: hypotheses with too few evidence links, ignored limitations/counterexamples, or no operational measurement plan should not survive review.",
   "When the objective is reproducibility, penalize performance-only hypotheses that do not specify a repeated-run or stability-based outcome.",
   "Revise weak wording instead of praising it.",
   "Return one JSON object only.",
@@ -200,6 +209,9 @@ interface RawHypothesisCandidate {
   evidence_links?: unknown;
   rationale?: unknown;
   axis_ids?: unknown;
+  reproducibility_signals?: unknown;
+  measurement_hint?: unknown;
+  boundary_condition?: unknown;
 }
 
 interface RawHypothesisAxisJson {
@@ -232,6 +244,8 @@ interface RawHypothesisReview {
   reproducibility_specificity?: unknown;
   reproducibility_signals?: unknown;
   measurement_hint?: unknown;
+  limitation_reflection?: unknown;
+  measurement_readiness?: unknown;
   strengths?: unknown;
   weaknesses?: unknown;
   critique_summary?: unknown;
@@ -307,24 +321,34 @@ export async function generateHypothesesFromEvidence(args: {
         args.evidenceSeeds,
         "single_pass"
       );
-      const selected = selectHypothesesWithDiversity(normalizedCandidates, [], topK, args.objectiveMetric);
-      if (normalizedCandidates.length === 0 || selected.selected.length === 0) {
+      const gatedCandidates = applyHypothesisHardGates({
+        candidates: normalizedCandidates,
+        evidenceSeeds: args.evidenceSeeds,
+        objectiveMetric: args.objectiveMetric
+      });
+      if (gatedCandidates.rejected.length > 0) {
+        args.onProgress?.(
+          `Hard-gated ${gatedCandidates.rejected.length} single-pass hypothesis candidate(s) for weak grounding or missing measurement detail.`
+        );
+      }
+      const selected = selectHypothesesWithDiversity(gatedCandidates.kept, [], topK, args.objectiveMetric);
+      if (gatedCandidates.kept.length === 0 || selected.selected.length === 0) {
         throw new Error("No valid hypothesis candidates were returned.");
       }
       const summary =
         toOptionalString(parsed.summary) ||
-        buildHypothesisSelectionSummary(normalizedCandidates, selected.selected, [], "single-pass");
+        buildHypothesisSelectionSummary(gatedCandidates.kept, selected.selected, [], "single-pass");
       return {
         source: "llm",
         summary,
-        candidates: normalizedCandidates,
+        candidates: gatedCandidates.kept,
         selected: selected.selected,
         fallbackReason: stagedReason,
         toolCallsUsed: 1,
         artifacts: {
           pipeline: "single_pass",
           evidence_axes: [],
-          drafts: normalizedCandidates,
+          drafts: gatedCandidates.kept,
           reviews: [],
           selection: {
             selected_ids: selected.selected.map((candidate) => candidate.id),
@@ -463,7 +487,15 @@ async function runStagedHypothesisPipeline(args: {
   }
 
   args.onProgress?.(`Reviewing ${drafts.length} hypothesis draft(s) for causal clarity and experimentability.`);
-  const reviewPrompt = buildHypothesisReviewPrompt(args.runTitle, args.runTopic, args.objectiveMetric, axes, drafts, args.topK);
+  const reviewPrompt = buildHypothesisReviewPrompt(
+    args.runTitle,
+    args.runTopic,
+    args.objectiveMetric,
+    axes,
+    evidencePanel,
+    drafts,
+    args.topK
+  );
   const reviewCompletion = await args.llm.complete(
     reviewPrompt,
     {
@@ -478,8 +510,27 @@ async function runStagedHypothesisPipeline(args: {
   };
   const parsedReviews = parseHypothesisReviewJson(reviewCompletion.text);
   const reviews = normalizeHypothesisReviews(parsedReviews.reviews, drafts);
+  if (reviews.length === 0) {
+    throw new Error("no_hypothesis_reviews");
+  }
+  const reviewedIds = new Set(reviews.map((review) => review.candidate_id));
+  const missingReviewCount = drafts.filter((candidate) => !reviewedIds.has(candidate.id)).length;
+  if (missingReviewCount > 0) {
+    throw new Error(`incomplete_hypothesis_reviews:${missingReviewCount}`);
+  }
   const reviewedCandidates = dedupeHypothesisCandidates(applyHypothesisReviews(drafts, reviews));
-  const selection = selectHypothesesWithDiversity(reviewedCandidates, reviews, args.topK, args.objectiveMetric);
+  const gatedCandidates = applyHypothesisHardGates({
+    candidates: reviewedCandidates,
+    reviews,
+    evidenceSeeds: evidencePanel,
+    objectiveMetric: args.objectiveMetric
+  });
+  if (gatedCandidates.rejected.length > 0) {
+    args.onProgress?.(
+      `Hard-gated ${gatedCandidates.rejected.length} staged hypothesis candidate(s) for weak grounding or missing measurement detail.`
+    );
+  }
+  const selection = selectHypothesesWithDiversity(gatedCandidates.kept, reviews, args.topK, args.objectiveMetric);
 
   if (selection.selected.length === 0) {
     throw new Error("no_selected_hypotheses");
@@ -490,8 +541,8 @@ async function runStagedHypothesisPipeline(args: {
     summary:
       toOptionalString(parsedReviews.summary) ||
       toOptionalString(parsedAxes.summary) ||
-      buildHypothesisSelectionSummary(reviewedCandidates, selection.selected, axes, "staged"),
-    candidates: reviewedCandidates,
+      buildHypothesisSelectionSummary(gatedCandidates.kept, selection.selected, axes, "staged"),
+    candidates: gatedCandidates.kept,
     selected: selection.selected,
     toolCallsUsed,
     artifacts: {
@@ -598,7 +649,10 @@ function buildHypothesisPrompt(
     '      "cost": 0,',
     '      "expected_gain": 0,',
     '      "evidence_links": ["ev_1"],',
-    '      "rationale": "short rationale"',
+    '      "rationale": "short rationale",',
+    '      "reproducibility_signals": ["run_to_run_variance"],',
+    '      "measurement_hint": "how to measure the claim",',
+    '      "boundary_condition": "when the effect may weaken or fail"',
     "    }",
     "  ],",
     '  "selected_ids": ["cand_1"]',
@@ -699,7 +753,10 @@ function buildHypothesisRolePrompt(
     '      "expected_gain": 0,',
     '      "evidence_links": ["ev_1"],',
     '      "axis_ids": ["ax_1"],',
-    '      "rationale": "why this hypothesis follows from the evidence"',
+    '      "rationale": "why this hypothesis follows from the evidence",',
+    '      "reproducibility_signals": ["run_to_run_variance"],',
+    '      "measurement_hint": "how to measure the claim",',
+    '      "boundary_condition": "when the effect may weaken or fail"',
     "    }",
     "  ]",
     "}",
@@ -740,13 +797,18 @@ function buildHypothesisReviewPrompt(
   runTopic: string,
   objectiveMetric: string,
   axes: HypothesisEvidenceAxis[],
+  evidenceSeeds: HypothesisEvidenceSeed[],
   candidates: HypothesisCandidate[],
   topK: number
 ): string {
+  const evidenceById = new Map(
+    evidenceSeeds.map((seed, index) => [seed.evidence_id || `ev_${index + 1}`, seed] as const)
+  );
   const lines = [
     "Review the hypothesis drafts skeptically.",
     "Reject unsupported or conflated hypotheses. Revise wording when the idea is salvageable.",
     "Prefer hypotheses that are grounded in evidence, isolate the intervention, and can be falsified by a concrete experiment.",
+    "Use hard gates before allowing a draft to survive: require enough distinct evidence links, evidence-aware limitation handling, and an operational measurement plan.",
     "If the objective metric is reproducibility, prefer hypotheses that explicitly predict repeated-run stability, variance reduction, artifact consistency, or failure-mode stability rather than raw performance alone.",
     "Return JSON with this exact shape:",
     "{",
@@ -762,6 +824,8 @@ function buildHypothesisReviewPrompt(
     '      "reproducibility_specificity": 0,',
     '      "reproducibility_signals": ["run_to_run_variance"],',
     '      "measurement_hint": "how to operationalize the reproducibility outcome",',
+    '      "limitation_reflection": 0,',
+    '      "measurement_readiness": 0,',
     '      "strengths": ["short point"],',
     '      "weaknesses": ["short point"],',
     '      "critique_summary": "one-line verdict",',
@@ -804,7 +868,16 @@ function buildHypothesisReviewPrompt(
         candidate.generator_kind ? `generator=${candidate.generator_kind}` : undefined,
         candidate.axis_ids?.length ? `axis_ids=${candidate.axis_ids.join(",")}` : undefined,
         candidate.evidence_links.length > 0 ? `evidence_links=${candidate.evidence_links.join(",")}` : undefined,
-        candidate.rationale ? `rationale=${candidate.rationale}` : undefined
+        candidate.evidence_links.length > 0
+          ? `linked_limitations=${dedupeStrings(
+              candidate.evidence_links
+                .map((evidenceId) => evidenceById.get(evidenceId)?.limitation_slot || "")
+                .filter(Boolean)
+            ).join(" || ")}`
+          : undefined,
+        candidate.rationale ? `rationale=${candidate.rationale}` : undefined,
+        candidate.measurement_hint ? `measurement_hint=${candidate.measurement_hint}` : undefined,
+        candidate.boundary_condition ? `boundary_condition=${candidate.boundary_condition}` : undefined
       ]
         .filter(Boolean)
         .join(" | ")
@@ -879,6 +952,13 @@ function buildDesignPrompt(
           ? `reproducibility_signals=${hypothesis.reproducibility_signals.join(",")}`
           : undefined,
         hypothesis.measurement_hint ? `measurement_hint=${hypothesis.measurement_hint}` : undefined,
+        hypothesis.boundary_condition ? `boundary_condition=${hypothesis.boundary_condition}` : undefined,
+        typeof hypothesis.limitation_reflection === "number"
+          ? `limitation_reflection=${hypothesis.limitation_reflection}`
+          : undefined,
+        typeof hypothesis.measurement_readiness === "number"
+          ? `measurement_readiness=${hypothesis.measurement_readiness}`
+          : undefined,
         hypothesis.critique_summary ? `critique=${hypothesis.critique_summary}` : undefined,
         hypothesis.evidence_links?.length ? `evidence_links=${hypothesis.evidence_links.join(",")}` : undefined
       ]
@@ -963,7 +1043,10 @@ function normalizeHypothesisCandidate(
     evidence_links: dedupeStrings(fallbackEvidence),
     rationale: toOptionalString(raw.rationale),
     generator_kind: generatorKind,
-    axis_ids: normalizeStringArray(raw.axis_ids)
+    axis_ids: normalizeStringArray(raw.axis_ids),
+    reproducibility_signals: normalizeStringArray(raw.reproducibility_signals),
+    measurement_hint: toOptionalString(raw.measurement_hint),
+    boundary_condition: toOptionalString(raw.boundary_condition)
   };
 }
 
@@ -1040,6 +1123,8 @@ function normalizeHypothesisReview(raw: RawHypothesisReview): HypothesisReview |
     reproducibility_specificity: clampScore(raw.reproducibility_specificity),
     reproducibility_signals: normalizeStringArray(raw.reproducibility_signals),
     measurement_hint: toOptionalString(raw.measurement_hint),
+    limitation_reflection: clampScore(raw.limitation_reflection),
+    measurement_readiness: clampScore(raw.measurement_readiness),
     strengths: normalizeStringArray(raw.strengths),
     weaknesses: normalizeStringArray(raw.weaknesses),
     critique_summary: toOptionalString(raw.critique_summary),
@@ -1068,7 +1153,9 @@ function applyHypothesisReviews(
       experimentability: review.experimentability,
       reproducibility_specificity: review.reproducibility_specificity,
       reproducibility_signals: review.reproducibility_signals,
-      measurement_hint: review.measurement_hint,
+      measurement_hint: review.measurement_hint || candidate.measurement_hint,
+      limitation_reflection: review.limitation_reflection,
+      measurement_readiness: review.measurement_readiness,
       critique_summary: review.critique_summary
     };
   });
@@ -1078,6 +1165,108 @@ function buildHypothesisCandidateId(generatorKind: HypothesisGeneratorKind, inde
   return `${generatorKind}_${index + 1}`;
 }
 
+function applyHypothesisHardGates(args: {
+  candidates: HypothesisCandidate[];
+  reviews?: HypothesisReview[];
+  evidenceSeeds: HypothesisEvidenceSeed[];
+  objectiveMetric?: string;
+}): {
+  kept: HypothesisCandidate[];
+  rejected: Array<{ candidate_id: string; reasons: string[] }>;
+} {
+  const reviewMap = new Map((args.reviews || []).map((review) => [review.candidate_id, review] as const));
+  const evidenceById = new Map(
+    args.evidenceSeeds.map((seed, index) => [seed.evidence_id || `ev_${index + 1}`, seed] as const)
+  );
+  const availableEvidenceCount = new Set(
+    args.evidenceSeeds.map((seed, index) => seed.evidence_id || `ev_${index + 1}`)
+  ).size;
+  const minimumEvidenceLinks = availableEvidenceCount >= 3 ? 2 : 1;
+  const kept: HypothesisCandidate[] = [];
+  const rejected: Array<{ candidate_id: string; reasons: string[] }> = [];
+
+  for (const candidate of args.candidates) {
+    const review = reviewMap.get(candidate.id);
+    const reasons = evaluateHypothesisHardGate(candidate, review, evidenceById, minimumEvidenceLinks, args.objectiveMetric);
+    if (reasons.length > 0) {
+      rejected.push({ candidate_id: candidate.id, reasons });
+      continue;
+    }
+    kept.push(candidate);
+  }
+
+  return { kept, rejected };
+}
+
+function evaluateHypothesisHardGate(
+  candidate: HypothesisCandidate,
+  review: HypothesisReview | undefined,
+  evidenceById: Map<string, HypothesisEvidenceSeed>,
+  minimumEvidenceLinks: number,
+  objectiveMetric?: string
+): string[] {
+  const reasons: string[] = [];
+  const evidenceLinkCount = dedupeStrings(candidate.evidence_links).length;
+  if (evidenceLinkCount < minimumEvidenceLinks) {
+    reasons.push(`too_few_evidence_links:${evidenceLinkCount}<${minimumEvidenceLinks}`);
+  }
+
+  if (review) {
+    if (review.groundedness < 3) {
+      reasons.push("groundedness_below_threshold");
+    }
+    if (review.falsifiability < 3) {
+      reasons.push("falsifiability_below_threshold");
+    }
+  }
+
+  const requiresLimitationReflection =
+    candidate.generator_kind === "contradiction" ||
+    candidate.evidence_links.some((evidenceId) => Boolean(evidenceById.get(evidenceId)?.limitation_slot));
+  const limitationReflection = review?.limitation_reflection ?? candidate.limitation_reflection ?? inferLimitationReflection(candidate);
+  if (requiresLimitationReflection && limitationReflection < 3) {
+    reasons.push("limitation_not_reflected");
+  }
+
+  const measurementHint = candidate.measurement_hint?.trim() || "";
+  const measurementReadiness =
+    review?.measurement_readiness ?? candidate.measurement_readiness ?? inferMeasurementReadiness(candidate);
+  if (!measurementHint) {
+    reasons.push("missing_measurement_hint");
+  } else if (measurementReadiness < 3) {
+    reasons.push("measurement_not_operationalized");
+  }
+
+  if (isReproducibilityObjective(objectiveMetric) && (candidate.reproducibility_signals?.length ?? 0) === 0) {
+    reasons.push("missing_reproducibility_signal");
+  }
+
+  return reasons;
+}
+
+function inferLimitationReflection(candidate: HypothesisCandidate): number {
+  let score = candidate.boundary_condition ? 4 : 0;
+  const text = [candidate.text, candidate.rationale, candidate.boundary_condition]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (/(only when|unless|except|less when|weaken|reverse|boundary|counterfactual|limitation|under )/.test(text)) {
+    score += 1;
+  }
+  return Math.min(5, score);
+}
+
+function inferMeasurementReadiness(candidate: HypothesisCandidate): number {
+  let score = candidate.measurement_hint ? 3 : 0;
+  if ((candidate.reproducibility_signals?.length ?? 0) > 0) {
+    score += 1;
+  }
+  if (candidate.testability >= 4) {
+    score += 1;
+  }
+  return Math.min(5, score);
+}
+
 function selectHypothesesWithDiversity(
   candidates: HypothesisCandidate[],
   reviews: HypothesisReview[],
@@ -1085,8 +1274,7 @@ function selectHypothesesWithDiversity(
   objectiveMetric?: string
 ): { selected: HypothesisCandidate[]; ranked: HypothesisCandidate[]; scores: HypothesisSelectionScore[] } {
   const reviewMap = new Map(reviews.map((review) => [review.candidate_id, review] as const));
-  const kept = candidates.filter((candidate) => reviewMap.get(candidate.id)?.keep !== false);
-  const pool = kept.length >= topK ? kept : candidates;
+  const pool = reviews.length > 0 ? candidates.filter((candidate) => reviewMap.get(candidate.id)?.keep === true) : candidates;
   const adjustedBaseById = new Map(
     pool.map((candidate) => [
       candidate.id,
@@ -1356,8 +1544,10 @@ function normalizeDesignCandidate(
   if (!title || !planSummary) {
     return undefined;
   }
-  const hypothesisIds = normalizeStringArray(raw.hypothesis_ids);
-  const fallbackHypothesisIds = hypothesisIds.length > 0 ? hypothesisIds : hypotheses.slice(0, 1).map((item) => item.hypothesis_id);
+  const knownHypothesisIds = new Set(hypotheses.map((item) => item.hypothesis_id));
+  const hypothesisIds = normalizeStringArray(raw.hypothesis_ids).filter((item) => knownHypothesisIds.has(item));
+  const fallbackHypothesisIds =
+    hypothesisIds.length > 0 ? hypothesisIds : hypotheses.slice(0, 1).map((item) => item.hypothesis_id);
   const matchedHypotheses = hypotheses.filter((item) => fallbackHypothesisIds.includes(item.hypothesis_id));
   const guidance = mergeDesignGuidance(
     matchedHypotheses.map((hypothesis) => buildHypothesisDesignGuidance(hypothesis, objectiveProfile))
@@ -1545,7 +1735,15 @@ function mergeDesignGuidance(items: DesignGuidance[]): DesignGuidance {
 }
 
 function scoreHypothesis(candidate: HypothesisCandidate): number {
-  return candidate.novelty + candidate.feasibility + candidate.testability + candidate.expected_gain - candidate.cost;
+  return (
+    candidate.novelty +
+    candidate.feasibility +
+    candidate.testability +
+    candidate.expected_gain -
+    candidate.cost +
+    (candidate.limitation_reflection ?? 0) +
+    (candidate.measurement_readiness ?? 0)
+  );
 }
 
 function hypothesisBaseScore(candidate: HypothesisCandidate, objectiveMetric?: string): number {
@@ -1558,7 +1756,9 @@ function hypothesisBaseScore(candidate: HypothesisCandidate, objectiveMetric?: s
     (candidate.causal_clarity ?? 0) * 1.25 +
     (candidate.falsifiability ?? 0) * 1.5 +
     (candidate.experimentability ?? 0) * 1.5 -
-    candidate.cost * 1.25;
+    candidate.cost * 1.25 +
+    (candidate.limitation_reflection ?? 0) * 0.75 +
+    (candidate.measurement_readiness ?? 0);
 
   score += (candidate.reproducibility_specificity ?? 0) * 1.5;
 
@@ -1714,6 +1914,7 @@ function buildHypothesisSelectionText(
 ): string {
   return [
     candidate.text,
+    candidate.boundary_condition,
     candidate.measurement_hint,
     candidate.critique_summary,
     review?.critique_summary,

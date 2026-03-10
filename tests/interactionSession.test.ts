@@ -320,8 +320,8 @@ describe("InteractionSession", () => {
           transition_recommendation: {
             action: "advance",
             sourceNode: "analyze_results",
-            targetNode: "write_paper",
-            reason: "The objective is met and no blocking runtime issue remains, so the run can proceed to paper writing.",
+            targetNode: "review",
+            reason: "The objective is met and no blocking runtime issue remains, so the run can proceed to review before paper writing.",
             confidence: 0.88,
             autoExecutable: true,
             evidence: ["accuracy reached the configured target."],
@@ -377,7 +377,7 @@ describe("InteractionSession", () => {
     expect(result.logs.some((line) => line.includes("Confidence: Overall confidence is moderate"))).toBe(true);
     expect(snapshot.activeRunInsight?.title).toBe("Result analysis");
     expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Objective: met"))).toBe(true);
-    expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Recommendation: advance -> write_paper"))).toBe(
+    expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Recommendation: advance -> review"))).toBe(
       true
     );
     expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Next: Run an additional confirmatory configuration."))).toBe(
@@ -425,7 +425,7 @@ describe("InteractionSession", () => {
           summary: "accuracy reached the configured target.",
           facts: expect.arrayContaining([
             expect.objectContaining({ label: "Confidence", value: "88%" }),
-            expect.objectContaining({ label: "Target", value: "write_paper" })
+            expect.objectContaining({ label: "Target", value: "review" })
           ])
         }),
         expect.objectContaining({
@@ -441,5 +441,168 @@ describe("InteractionSession", () => {
         })
       ])
     );
+  });
+
+  it("prepares review from analyze_results and logs the review summary", async () => {
+    const run = await runStore.createRun({
+      title: "Review command run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
+    const current = await runStore.getRun(run.id);
+    if (!current) {
+      throw new Error("expected run");
+    }
+    current.status = "paused";
+    current.currentNode = "analyze_results";
+    current.graph.currentNode = "analyze_results";
+    current.graph.nodeStates.analyze_results = {
+      status: "needs_approval",
+      updatedAt: new Date().toISOString(),
+      note: "Analysis ready for review."
+    };
+    current.graph.nodeStates.review = {
+      status: "pending",
+      updatedAt: new Date().toISOString()
+    };
+    current.graph.pendingTransition = {
+      action: "advance",
+      sourceNode: "analyze_results",
+      targetNode: "review",
+      reason: "Proceed to review.",
+      confidence: 0.88,
+      autoExecutable: true,
+      evidence: ["accuracy reached the configured target."],
+      suggestedCommands: ["/approve"],
+      generatedAt: new Date().toISOString()
+    };
+    await runStore.updateRun(current);
+
+    const reviewPacket = {
+      generated_at: "2026-03-10T10:00:00.000Z",
+      readiness: {
+        status: "blocking",
+        ready_checks: 3,
+        warning_checks: 1,
+        blocking_checks: 1,
+        manual_checks: 1
+      },
+      objective_status: "met",
+      objective_summary: "Objective metric met: accuracy=0.91 >= 0.9.",
+      recommendation: {
+        action: "advance",
+        target: "review",
+        confidence_pct: 88,
+        reason: "The run can proceed to manual review before paper writing.",
+        evidence: ["accuracy reached the configured target."]
+      },
+      checks: [
+        {
+          id: "evidence_bundle",
+          label: "Evidence bundle",
+          status: "blocking",
+          detail: "Missing required paper inputs: evidence_store.jsonl."
+        },
+        {
+          id: "human_signoff",
+          label: "Human sign-off",
+          status: "manual",
+          detail: "Confirm the claims, evidence quality, and next action before approving write_paper."
+        }
+      ],
+      suggested_actions: ["/agent apply", "/agent jump analyze_results"]
+    };
+
+    const approveCurrent = vi.fn(async (runId: string) => {
+      const stored = await runStore.getRun(runId);
+      if (!stored) {
+        throw new Error("expected stored run");
+      }
+      stored.currentNode = "review";
+      stored.graph.currentNode = "review";
+      stored.status = "running";
+      stored.graph.nodeStates.analyze_results.status = "completed";
+      stored.graph.nodeStates.review.status = "pending";
+      stored.graph.pendingTransition = undefined;
+      await runStore.updateRun(stored);
+      return stored;
+    });
+
+    const runAgentWithOptions = vi.fn(async (runId: string) => {
+      await fs.mkdir(path.join(runDir, "review"), { recursive: true });
+      await fs.writeFile(
+        path.join(runDir, "review", "review_packet.json"),
+        `${JSON.stringify(reviewPacket, null, 2)}\n`,
+        "utf8"
+      );
+      const stored = await runStore.getRun(runId);
+      if (!stored) {
+        throw new Error("expected stored run");
+      }
+      stored.currentNode = "review";
+      stored.graph.currentNode = "review";
+      stored.status = "paused";
+      stored.graph.nodeStates.review = {
+        status: "needs_approval",
+        updatedAt: new Date().toISOString(),
+        note: "Review packet prepared."
+      };
+      await runStore.updateRun(stored);
+      return {
+        run: stored,
+        result: { status: "success" as const, summary: "Review packet prepared." }
+      };
+    });
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        },
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+          openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+        },
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        },
+        papers: { max_results: 100 }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {
+        approveCurrent,
+        runAgentWithOptions
+      } as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const result = await session.submitInput("/agent review");
+    const snapshot = session.snapshot();
+
+    expect(result.logs.some((line) => line.includes("Approved analyze_results and moved into review."))).toBe(true);
+    expect(result.logs.some((line) => line.includes("review finished: Review packet prepared."))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Review readiness: blocking"))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Blocking: Evidence bundle"))).toBe(true);
+    expect(approveCurrent).toHaveBeenCalledWith(run.id);
+    expect(runAgentWithOptions).toHaveBeenCalledWith(
+      run.id,
+      "review",
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) })
+    );
+    expect(snapshot.activeRunInsight?.title).toBe("Review packet");
+    expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Review readiness: blocking"))).toBe(true);
   });
 });

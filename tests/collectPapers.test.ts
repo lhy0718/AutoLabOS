@@ -460,6 +460,232 @@ describe("collectPapers bibtex", () => {
     expect(resultMetaRaw).toContain('"stored": 3');
   });
 
+  it("caps additional collection at the requested number of newly added papers", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-additional-cap-"));
+    process.chdir(root);
+
+    const runId = "run-collect-additional-cap";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Multi-Agent Collaboration",
+      topic: "AI agent automation",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      `${JSON.stringify({
+        paper_id: "paper-1",
+        title: "Existing Paper",
+        abstract: "",
+        authors: ["Alice Kim"]
+      })}\n`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Multi-Agent Collaboration",
+              additional: 1,
+              limit: 2,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers: vi.fn(() =>
+          batchStream([
+            {
+              paperId: "paper-2",
+              title: "New Paper 2",
+              authors: ["Bob Lee"]
+            },
+            {
+              paperId: "paper-3",
+              title: "New Paper 3",
+              authors: ["Chris Park"]
+            }
+          ])
+        ),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.summary).toBe(
+      'Semantic Scholar stored 2 total papers for "Multi-Agent Collaboration" (1 newly added). PDF recovered 0; BibTeX enriched 0.'
+    );
+    const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
+    expect(corpus).toContain('"paper_id":"paper-1"');
+    expect(corpus).toContain('"paper_id":"paper-2"');
+    expect(corpus).not.toContain('"paper_id":"paper-3"');
+    const resultMetaRaw = await readFile(path.join(runDir, "collect_result.json"), "utf8");
+    expect(resultMetaRaw).toContain('"mode": "additional"');
+    expect(resultMetaRaw).toContain('"added": 1');
+    expect(resultMetaRaw).toContain('"stored": 2');
+    expect(resultMetaRaw).toContain('"fetched": 2');
+  });
+
+  it("preserves prior enrichment logs during additional collection when no new enrichment runs", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-enrichment-preserve-"));
+    process.chdir(root);
+
+    const runId = "run-collect-enrichment-preserve";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Multi-Agent Collaboration",
+      topic: "AI agent automation",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      `${JSON.stringify({
+        paper_id: "paper-1",
+        title: "Existing Paper",
+        abstract: "",
+        authors: ["Alice Kim"]
+      })}\n`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "collect_enrichment.jsonl"),
+      `${JSON.stringify({
+        paper_id: "paper-1",
+        attempts: [{ stage: "existing", ok: true }],
+        errors: []
+      })}\n`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Multi-Agent Collaboration",
+              additional: 1,
+              limit: 2,
+              sort: { field: "relevance", order: "desc" },
+              bibtexMode: "generated"
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers: vi.fn(() =>
+          batchStream([
+            {
+              paperId: "paper-2",
+              title: "New Paper 2",
+              openAccessPdfUrl: "https://example.org/paper-2.pdf",
+              authors: ["Bob Lee"]
+            }
+          ])
+        ),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    const enrichmentRaw = await readFile(path.join(runDir, "collect_enrichment.jsonl"), "utf8");
+    expect(enrichmentRaw).toContain('"paper_id":"paper-1"');
+    expect(enrichmentRaw).toContain('"stage":"existing"');
+    expect(enrichmentRaw).not.toBe("");
+  });
+
   it("persists partial collected papers before a later 429 failure", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-partial-"));
     process.chdir(root);

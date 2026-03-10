@@ -19,8 +19,6 @@ interface RawAnalysisSynthesis {
 }
 
 export async function synthesizeAnalysisReport(args: SynthesizeAnalysisArgs): Promise<AnalysisSynthesis> {
-  const fallback = buildFallbackAnalysisSynthesis(args.report);
-
   try {
     args.eventStream?.emit({
       type: "OBS_RECEIVED",
@@ -68,6 +66,7 @@ export async function synthesizeAnalysisReport(args: SynthesizeAnalysisArgs): Pr
         text: `Result analysis synthesis fallback: ${reason}`
       }
     });
+    const fallback = buildSafeFallbackAnalysisSynthesis(args.report);
     return {
       ...fallback,
       fallback_reason: reason
@@ -285,6 +284,24 @@ function buildFallbackAnalysisSynthesis(report: AnalysisReport): AnalysisSynthes
   };
 }
 
+function buildSafeFallbackAnalysisSynthesis(report: AnalysisReport): AnalysisSynthesis {
+  try {
+    return buildFallbackAnalysisSynthesis(report);
+  } catch {
+    return {
+      source: "fallback",
+      discussion_points: [report.overview.objective_summary],
+      failure_analysis: [
+        "Structured fallback synthesis was reduced to a minimal summary because some optional report sections were missing."
+      ],
+      follow_up_actions: [
+        "Review the structured analysis report and fill in the missing evidence before making stronger claims."
+      ],
+      confidence_statement: buildFallbackConfidenceStatement(report)
+    };
+  }
+}
+
 function buildFallbackConfidenceStatement(report: AnalysisReport): string {
   const objectiveStatus = report.overview.objective_status;
   const hasIntervals = report.statistical_summary.confidence_intervals.length > 0;
@@ -332,6 +349,12 @@ function cleanString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function uniqueStrings(items: string[]): string[] {
-  return [...new Set(items.map((item) => item.trim()).filter(Boolean))];
+function uniqueStrings(items: Array<string | undefined | null>): string[] {
+  return [
+    ...new Set(
+      items
+        .map((item) => (typeof item === "string" ? item.trim() : ""))
+        .filter(Boolean)
+    )
+  ];
 }

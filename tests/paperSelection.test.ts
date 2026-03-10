@@ -103,6 +103,38 @@ describe("paperSelection", () => {
     expect(selection.selectedPaperIds).toContain("p1");
   });
 
+  it("treats PDF-like URLs in paper.url as PDF-available for ranking", async () => {
+    const selection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm("not-json"),
+      runTitle: "Multi-agent collaboration reproducibility",
+      runTopic: "Multi-agent collaboration reproducibility",
+      request: normalizeAnalysisSelectionRequest(1),
+      corpusRows: [
+        {
+          paper_id: "p1",
+          title: "Multi-agent collaboration reproducibility benchmark",
+          abstract: "A",
+          authors: [],
+          citation_count: 60,
+          year: 2024,
+          url: "https://example.com/p1.pdf"
+        },
+        {
+          paper_id: "p2",
+          title: "Multi-agent collaboration reproducibility study",
+          abstract: "B",
+          authors: [],
+          citation_count: 70,
+          year: 2025
+        }
+      ]
+    });
+
+    const p1 = selection.rankedCandidates.find((candidate) => candidate.paper.paper_id === "p1");
+    expect(p1?.scoreBreakdown.pdf_availability_score).toBe(1);
+    expect(selection.selectedPaperIds).toEqual(["p1"]);
+  });
+
   it("uses min(total, min(max(3N, 30), 90)) for the rerank candidate pool", async () => {
     const corpusRows = Array.from({ length: 80 }, (_, index) => ({
       paper_id: `p${index + 1}`,

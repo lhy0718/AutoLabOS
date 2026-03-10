@@ -119,6 +119,15 @@ async function seedRun(root: string, run: RunRecord): Promise<string> {
     "utf8"
   );
   await writeFile(
+    path.join(runDir, "experiment_plan.yaml"),
+    [
+      "selected_design:",
+      '  title: "Thread-backed drafting benchmark"',
+      '  summary: "Compare persistent drafting support across repeated revisions."'
+    ].join("\n"),
+    "utf8"
+  );
+  await writeFile(
     path.join(runDir, "result_analysis.json"),
     JSON.stringify(
       {
@@ -199,7 +208,7 @@ function buildSessionResponses(): string[] {
   return [outline, draft, review, draft];
 }
 
-function createPdfBuildAci(options?: { failFirstCompile?: boolean }) {
+function createPdfBuildAci(options?: { failFirstCompile?: boolean; failAllCompiles?: boolean }) {
   const commands: string[] = [];
   let firstCompileFailed = false;
 
@@ -210,6 +219,15 @@ function createPdfBuildAci(options?: { failFirstCompile?: boolean }) {
         commands.push(command);
         if (!cwd) {
           throw new Error("Expected cwd for paper compilation.");
+        }
+        if (options?.failAllCompiles && command.startsWith("pdflatex")) {
+          return {
+            status: "error" as const,
+            stdout: "",
+            stderr: "main.tex:42: Undefined control sequence \\badcommand",
+            exit_code: 1,
+            duration_ms: 5
+          };
         }
         if (options?.failFirstCompile && !firstCompileFailed && command.startsWith("pdflatex")) {
           firstCompileFailed = true;
@@ -379,5 +397,69 @@ describe("writePaper PDF build", () => {
     expect(await memory.get("write_paper.pdf_path")).toBe(
       path.join(".autolabos", "runs", run.id, "paper", "main.pdf")
     );
+  });
+
+  it("fails the node when PDF compilation still fails after repair", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-pdf-fail-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-pdf-fail");
+    const runDir = await seedRun(root, run);
+    const aci = createPdfBuildAci({ failAllCompiles: true });
+    const eventStream = new InMemoryEventStream();
+    const llm = new SequencedLLMClient([
+      ...buildSessionResponses(),
+      "\\documentclass{article}\n\\begin{document}\nStill broken.\n\\end{document}\n"
+    ]);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          template: "acl",
+          build_pdf: true,
+          latex_engine: "auto_install"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      codex: {} as any,
+      aci: aci.api as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("configured PDF build failed");
+    expect(result.error).toContain("Undefined control sequence");
+    expect(aci.commands).toEqual([
+      "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
+      "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex"
+    ]);
+
+    expect(await exists(path.join(runDir, "paper", "main.tex"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "compile_report.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "main.pdf"))).toBe(false);
+    expect(await exists(path.join(buildPublicPaperDir(root, run), "main.pdf"))).toBe(false);
+
+    const report = JSON.parse(await readFile(path.join(runDir, "paper", "compile_report.json"), "utf8")) as {
+      status: string;
+      repaired: boolean;
+      attempts: Array<{ repaired: boolean; status: string; error?: string }>;
+    };
+    expect(report.status).toBe("failed");
+    expect(report.repaired).toBe(true);
+    expect(report.attempts).toHaveLength(2);
+    expect(report.attempts[0]).toMatchObject({ repaired: false, status: "failed" });
+    expect(report.attempts[1]).toMatchObject({ repaired: true, status: "failed" });
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("write_paper.compile_status")).toBe("failed");
+    expect(await memory.get("write_paper.pdf_path")).toBe(null);
+    expect(await memory.get("write_paper.last_error")).toMatch(/configured PDF build failed/i);
+
+    expect(eventStream.history().some((event) => event.type === "NODE_COMPLETED")).toBe(false);
+    expect(eventStream.history().some((event) => event.type === "TEST_FAILED")).toBe(true);
   });
 });

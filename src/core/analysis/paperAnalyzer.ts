@@ -51,6 +51,22 @@ interface RawPaperAnalysis {
   evidence_items?: unknown;
 }
 
+interface RawPaperAnalysisPlan {
+  focus_sections?: unknown;
+  target_claims?: unknown;
+  extraction_priorities?: unknown;
+  verification_checks?: unknown;
+  risk_flags?: unknown;
+}
+
+interface PaperAnalysisPlan {
+  focus_sections: string[];
+  target_claims: string[];
+  extraction_priorities: string[];
+  verification_checks: string[];
+  risk_flags: string[];
+}
+
 export interface PaperAnalysisResult {
   summaryRow: PaperSummaryRow;
   evidenceRows: PaperEvidenceRow[];
@@ -64,6 +80,22 @@ export const ANALYSIS_SYSTEM_PROMPT = [
   "No markdown, no prose before or after the JSON.",
   "Be faithful to the provided source. Do not invent claims.",
   "If the source is weak, keep fields concise and conservative."
+].join(" ");
+
+const ANALYSIS_PLANNER_SYSTEM_PROMPT = [
+  "You are the planning agent for AutoLabOS paper analysis.",
+  "Read the paper source and produce a compact extraction plan before evidence synthesis.",
+  "Return one JSON object only.",
+  "No markdown, no prose outside JSON.",
+  "Prioritize sections, claims, datasets, metrics, and verification checks that will improve grounded extraction."
+].join(" ");
+
+const ANALYSIS_REVIEWER_SYSTEM_PROMPT = [
+  "You are the verification agent for AutoLabOS paper analysis.",
+  "Audit a draft structured analysis against the supplied paper source.",
+  "Return one corrected JSON object only.",
+  "No markdown, no prose outside JSON.",
+  "Remove unsupported claims, tighten evidence spans, and lower confidence when provenance is weak."
 ].join(" ");
 
 export async function analyzePaperWithLlm(args: {
@@ -85,21 +117,39 @@ export async function analyzePaperWithLlm(args: {
           `Attaching ${args.source.pageImagePaths?.length ?? 0} rendered PDF page image(s) for hybrid analysis.`
         );
       }
-      const completion = await args.llm.complete(buildPaperAnalysisPrompt(args.paper, args.source), {
-        systemPrompt: ANALYSIS_SYSTEM_PROMPT,
-        inputImagePaths: args.source.pageImagePaths,
+      args.onProgress?.("Planning analysis focus, claim targets, and verification checks.");
+      const plannerResolution = await planPaperAnalysisWithLlm({
+        llm: args.llm,
+        paper: args.paper,
+        source: args.source,
         abortSignal: args.abortSignal,
-        onProgress: (event) => {
-          emitLlmProgress(args.onProgress, event);
-        }
+        onProgress: args.onProgress
       });
-      args.onProgress?.("Received LLM output. Parsing structured JSON.");
-      const parsed = parsePaperAnalysisJson(completion.text);
-      args.onProgress?.("Structured JSON parsed successfully.");
+      const parsed = plannerResolution.draft
+        ? plannerResolution.draft
+        : await extractPaperAnalysisWithLlm({
+            llm: args.llm,
+            paper: args.paper,
+            source: args.source,
+            plan: plannerResolution.plan,
+            abortSignal: args.abortSignal,
+            onProgress: args.onProgress
+          });
+      const reviewed = plannerResolution.draft
+        ? parsed
+        : await reviewPaperAnalysisWithLlm({
+            llm: args.llm,
+            paper: args.paper,
+            source: args.source,
+            plan: plannerResolution.plan,
+            draft: parsed,
+            abortSignal: args.abortSignal,
+            onProgress: args.onProgress
+          });
       return {
-        ...normalizePaperAnalysis(args.paper, args.source, parsed),
+        ...normalizePaperAnalysis(args.paper, args.source, reviewed),
         attempts: attempt,
-        rawJson: parsed
+        rawJson: reviewed
       };
     } catch (error) {
       if (isAbortError(error)) {
@@ -135,22 +185,45 @@ export async function analyzePaperWithResponsesPdf(args: {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       args.onProgress?.(`Starting Responses API PDF analysis attempt ${attempt}/${maxAttempts} with model ${args.model}.`);
-      const completion = await args.client.analyzePdf({
-        model: args.model,
+      args.onProgress?.("Planning PDF analysis focus, claim targets, and verification checks.");
+      const plannerResolution = await planPaperAnalysisWithResponsesPdf({
+        client: args.client,
+        paper: args.paper,
         pdfUrl: args.pdfUrl,
-        prompt: buildPaperAnalysisFilePrompt(args.paper),
-        systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+        model: args.model,
         reasoningEffort: args.reasoningEffort,
         abortSignal: args.abortSignal,
-        onProgress: (message) => args.onProgress?.(message)
+        onProgress: args.onProgress
       });
-      args.onProgress?.("Received Responses API output. Parsing structured JSON.");
-      const parsed = parsePaperAnalysisJson(completion.text);
-      args.onProgress?.("Structured JSON parsed successfully.");
+      const parsed = plannerResolution.draft
+        ? plannerResolution.draft
+        : await extractPaperAnalysisWithResponsesPdf({
+            client: args.client,
+            paper: args.paper,
+            pdfUrl: args.pdfUrl,
+            model: args.model,
+            reasoningEffort: args.reasoningEffort,
+            plan: plannerResolution.plan,
+            abortSignal: args.abortSignal,
+            onProgress: args.onProgress
+          });
+      const reviewed = plannerResolution.draft
+        ? parsed
+        : await reviewPaperAnalysisWithResponsesPdf({
+            client: args.client,
+            paper: args.paper,
+            pdfUrl: args.pdfUrl,
+            model: args.model,
+            reasoningEffort: args.reasoningEffort,
+            plan: plannerResolution.plan,
+            draft: parsed,
+            abortSignal: args.abortSignal,
+            onProgress: args.onProgress
+          });
       return {
-        ...normalizePaperAnalysis(args.paper, sourceHint, parsed),
+        ...normalizePaperAnalysis(args.paper, sourceHint, reviewed),
         attempts: attempt,
-        rawJson: parsed
+        rawJson: reviewed
       };
     } catch (error) {
       if (isAbortError(error)) {
@@ -162,6 +235,224 @@ export async function analyzePaperWithResponsesPdf(args: {
   }
 
   throw lastError ?? new Error("paper_analysis_failed");
+}
+
+async function planPaperAnalysisWithLlm(args: {
+  llm: LLMClient;
+  paper: AnalysisCorpusRow;
+  source: ResolvedPaperSource;
+  abortSignal?: AbortSignal;
+  onProgress?: (message: string) => void;
+}): Promise<{ plan: PaperAnalysisPlan; draft?: RawPaperAnalysis }> {
+  try {
+    const completion = await args.llm.complete(buildPaperAnalysisPlannerPrompt(args.paper, args.source), {
+      systemPrompt: ANALYSIS_PLANNER_SYSTEM_PROMPT,
+      inputImagePaths: args.source.pageImagePaths,
+      abortSignal: args.abortSignal,
+      onProgress: (event) => emitLlmProgress(args.onProgress, event)
+    });
+    const planned = resolvePlannerOutput(completion.text, args.paper, args.source);
+    if (planned.draft) {
+      args.onProgress?.("Planner returned a directly usable structured analysis; reusing it as the extractor draft.");
+    } else {
+      args.onProgress?.(
+        `Planner identified ${planned.plan.focus_sections.length} focus section(s) and ${planned.plan.target_claims.length} target claim(s).`
+      );
+    }
+    return planned;
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+    args.onProgress?.(`Planner unavailable, falling back to direct extraction: ${error instanceof Error ? error.message : String(error)}`);
+    return {
+      plan: buildFallbackAnalysisPlan(args.paper, args.source)
+    };
+  }
+}
+
+async function extractPaperAnalysisWithLlm(args: {
+  llm: LLMClient;
+  paper: AnalysisCorpusRow;
+  source: ResolvedPaperSource;
+  plan: PaperAnalysisPlan;
+  abortSignal?: AbortSignal;
+  onProgress?: (message: string) => void;
+}): Promise<RawPaperAnalysis> {
+  const completion = await args.llm.complete(buildPaperAnalysisPrompt(args.paper, args.source, args.plan), {
+    systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+    inputImagePaths: args.source.pageImagePaths,
+    abortSignal: args.abortSignal,
+    onProgress: (event) => emitLlmProgress(args.onProgress, event)
+  });
+  args.onProgress?.("Received extractor output. Parsing structured JSON.");
+  const parsed = parsePaperAnalysisJson(completion.text);
+  args.onProgress?.("Extractor JSON parsed successfully.");
+  return parsed;
+}
+
+async function reviewPaperAnalysisWithLlm(args: {
+  llm: LLMClient;
+  paper: AnalysisCorpusRow;
+  source: ResolvedPaperSource;
+  plan: PaperAnalysisPlan;
+  draft: RawPaperAnalysis;
+  abortSignal?: AbortSignal;
+  onProgress?: (message: string) => void;
+}): Promise<RawPaperAnalysis> {
+  try {
+    const completion = await args.llm.complete(buildPaperAnalysisReviewPrompt(args.paper, args.source, args.plan, args.draft), {
+      systemPrompt: ANALYSIS_REVIEWER_SYSTEM_PROMPT,
+      inputImagePaths: args.source.pageImagePaths,
+      abortSignal: args.abortSignal,
+      onProgress: (event) => emitLlmProgress(args.onProgress, event)
+    });
+    args.onProgress?.("Received reviewer output. Parsing corrected structured JSON.");
+    const parsed = parsePaperAnalysisJson(completion.text);
+    args.onProgress?.("Reviewer JSON parsed successfully.");
+    return parsed;
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+    args.onProgress?.(`Reviewer unavailable, using extractor draft as-is: ${error instanceof Error ? error.message : String(error)}`);
+    return args.draft;
+  }
+}
+
+async function planPaperAnalysisWithResponsesPdf(args: {
+  client: ResponsesPdfAnalysisClient;
+  paper: AnalysisCorpusRow;
+  pdfUrl: string;
+  model: string;
+  reasoningEffort?: string;
+  abortSignal?: AbortSignal;
+  onProgress?: (message: string) => void;
+}): Promise<{ plan: PaperAnalysisPlan; draft?: RawPaperAnalysis }> {
+  try {
+    const completion = await args.client.analyzePdf({
+      model: args.model,
+      pdfUrl: args.pdfUrl,
+      prompt: buildPaperAnalysisFilePlannerPrompt(args.paper),
+      systemPrompt: ANALYSIS_PLANNER_SYSTEM_PROMPT,
+      reasoningEffort: args.reasoningEffort,
+      abortSignal: args.abortSignal,
+      onProgress: (message) => args.onProgress?.(message)
+    });
+    const planned = resolvePlannerOutput(
+      completion.text,
+      args.paper,
+      {
+        sourceType: "full_text",
+        text: buildAbstractFallbackText(args.paper),
+        fullTextAvailable: true,
+        pdfUrl: args.pdfUrl
+      }
+    );
+    if (planned.draft) {
+      args.onProgress?.("Planner returned a directly usable structured PDF analysis; reusing it as the extractor draft.");
+    } else {
+      args.onProgress?.(
+        `Planner identified ${planned.plan.focus_sections.length} focus section(s) and ${planned.plan.target_claims.length} target claim(s) for the PDF analysis.`
+      );
+    }
+    return planned;
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+    args.onProgress?.(`PDF planner unavailable, falling back to direct extraction: ${error instanceof Error ? error.message : String(error)}`);
+    return {
+      plan: buildFallbackAnalysisPlan(args.paper, {
+        sourceType: "full_text",
+        text: buildAbstractFallbackText(args.paper),
+        fullTextAvailable: true,
+        pdfUrl: args.pdfUrl
+      })
+    };
+  }
+}
+
+async function extractPaperAnalysisWithResponsesPdf(args: {
+  client: ResponsesPdfAnalysisClient;
+  paper: AnalysisCorpusRow;
+  pdfUrl: string;
+  model: string;
+  reasoningEffort?: string;
+  plan: PaperAnalysisPlan;
+  abortSignal?: AbortSignal;
+  onProgress?: (message: string) => void;
+}): Promise<RawPaperAnalysis> {
+  const completion = await args.client.analyzePdf({
+    model: args.model,
+    pdfUrl: args.pdfUrl,
+    prompt: buildPaperAnalysisFilePrompt(args.paper, args.plan),
+    systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+    reasoningEffort: args.reasoningEffort,
+    abortSignal: args.abortSignal,
+    onProgress: (message) => args.onProgress?.(message)
+  });
+  args.onProgress?.("Received Responses API extractor output. Parsing structured JSON.");
+  const parsed = parsePaperAnalysisJson(completion.text);
+  args.onProgress?.("Responses API extractor JSON parsed successfully.");
+  return parsed;
+}
+
+async function reviewPaperAnalysisWithResponsesPdf(args: {
+  client: ResponsesPdfAnalysisClient;
+  paper: AnalysisCorpusRow;
+  pdfUrl: string;
+  model: string;
+  reasoningEffort?: string;
+  plan: PaperAnalysisPlan;
+  draft: RawPaperAnalysis;
+  abortSignal?: AbortSignal;
+  onProgress?: (message: string) => void;
+}): Promise<RawPaperAnalysis> {
+  try {
+    const completion = await args.client.analyzePdf({
+      model: args.model,
+      pdfUrl: args.pdfUrl,
+      prompt: buildPaperAnalysisFileReviewPrompt(args.paper, args.plan, args.draft),
+      systemPrompt: ANALYSIS_REVIEWER_SYSTEM_PROMPT,
+      reasoningEffort: args.reasoningEffort,
+      abortSignal: args.abortSignal,
+      onProgress: (message) => args.onProgress?.(message)
+    });
+    args.onProgress?.("Received Responses API reviewer output. Parsing corrected structured JSON.");
+    const parsed = parsePaperAnalysisJson(completion.text);
+    args.onProgress?.("Responses API reviewer JSON parsed successfully.");
+    return parsed;
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+    args.onProgress?.(`PDF reviewer unavailable, using extractor draft as-is: ${error instanceof Error ? error.message : String(error)}`);
+    return args.draft;
+  }
+}
+
+function resolvePlannerOutput(
+  text: string,
+  paper: AnalysisCorpusRow,
+  source: ResolvedPaperSource
+): { plan: PaperAnalysisPlan; draft?: RawPaperAnalysis } {
+  try {
+    return {
+      plan: normalizePaperAnalysisPlan(parsePaperAnalysisPlanJson(text), paper, source)
+    };
+  } catch {
+    try {
+      return {
+        plan: buildFallbackAnalysisPlan(paper, source),
+        draft: parsePaperAnalysisJson(text)
+      };
+    } catch {
+      return {
+        plan: buildFallbackAnalysisPlan(paper, source)
+      };
+    }
+  }
 }
 
 export function shouldFallbackResponsesPdfToLocalText(error: unknown): boolean {
@@ -209,7 +500,11 @@ function isAbortError(error: unknown): boolean {
   return message.includes("aborted") || message.includes("abort");
 }
 
-export function buildPaperAnalysisPrompt(paper: AnalysisCorpusRow, source: ResolvedPaperSource): string {
+export function buildPaperAnalysisPrompt(
+  paper: AnalysisCorpusRow,
+  source: ResolvedPaperSource,
+  plan?: PaperAnalysisPlan
+): string {
   const attachedImagesNote =
     source.pageImagePaths && source.pageImagePaths.length > 0
       ? [
@@ -225,27 +520,7 @@ export function buildPaperAnalysisPrompt(paper: AnalysisCorpusRow, source: Resol
   return [
     "Analyze the following paper and extract structured evidence.",
     "Return JSON with this exact top-level shape:",
-    "{",
-    '  "summary": "string",',
-    '  "key_findings": ["string"],',
-    '  "limitations": ["string"],',
-    '  "datasets": ["string"],',
-    '  "metrics": ["string"],',
-    '  "novelty": "string",',
-    '  "reproducibility_notes": ["string"],',
-    '  "evidence_items": [',
-    "    {",
-    '      "claim": "string",',
-    '      "method_slot": "string",',
-    '      "result_slot": "string",',
-    '      "limitation_slot": "string",',
-    '      "dataset_slot": "string",',
-    '      "metric_slot": "string",',
-    '      "evidence_span": "string",',
-    '      "confidence": 0.0',
-    "    }",
-    "  ]",
-    "}",
+    ...buildPaperAnalysisSchemaLines(),
     "",
     `Paper ID: ${paper.paper_id}`,
     `Title: ${paper.title}`,
@@ -255,6 +530,7 @@ export function buildPaperAnalysisPrompt(paper: AnalysisCorpusRow, source: Resol
     `Citation count: ${paper.citation_count ?? "unknown"}`,
     `Source type: ${source.sourceType}`,
     ...attachedImagesNote,
+    ...buildPlanContextLines(plan),
     "Source text:",
     source.text
   ].join("\n");
@@ -284,11 +560,125 @@ function formatAttachedPageNumbers(pages: number[]): string {
   return ranges.join(", ");
 }
 
-export function buildPaperAnalysisFilePrompt(paper: AnalysisCorpusRow): string {
+export function buildPaperAnalysisFilePrompt(paper: AnalysisCorpusRow, plan?: PaperAnalysisPlan): string {
   return [
     "Analyze the attached PDF paper and extract structured evidence.",
     "The attached PDF is the primary source. Use the metadata and abstract below only as supplemental context.",
     "Return JSON with this exact top-level shape:",
+    ...buildPaperAnalysisSchemaLines(),
+    "",
+    `Paper ID: ${paper.paper_id}`,
+    `Title: ${paper.title}`,
+    `Year: ${paper.year ?? "unknown"}`,
+    `Venue: ${paper.venue ?? "unknown"}`,
+    `Authors: ${paper.authors.join(", ") || "unknown"}`,
+    `Citation count: ${paper.citation_count ?? "unknown"}`,
+    ...buildPlanContextLines(plan),
+    "Abstract/context:",
+    paper.abstract?.trim() || "Abstract unavailable."
+  ].join("\n");
+}
+
+export function buildPaperAnalysisPlannerPrompt(paper: AnalysisCorpusRow, source: ResolvedPaperSource): string {
+  const attachedImagesNote =
+    source.pageImagePaths && source.pageImagePaths.length > 0
+      ? [
+          `Attached page images: ${source.pageImagePaths.length}`,
+          source.pageImagePages && source.pageImagePages.length > 0
+            ? `Attached page numbers: ${formatAttachedPageNumbers(source.pageImagePages)}`
+            : undefined
+        ].filter(Boolean)
+      : [];
+
+  return [
+    "Plan a grounded paper-analysis workflow before extraction.",
+    "Return JSON with this exact top-level shape:",
+    "{",
+    '  "focus_sections": ["string"],',
+    '  "target_claims": ["string"],',
+    '  "extraction_priorities": ["string"],',
+    '  "verification_checks": ["string"],',
+    '  "risk_flags": ["string"]',
+    "}",
+    "",
+    `Paper ID: ${paper.paper_id}`,
+    `Title: ${paper.title}`,
+    `Year: ${paper.year ?? "unknown"}`,
+    `Venue: ${paper.venue ?? "unknown"}`,
+    `Source type: ${source.sourceType}`,
+    ...attachedImagesNote,
+    "Source text:",
+    source.text
+  ].join("\n");
+}
+
+export function buildPaperAnalysisFilePlannerPrompt(paper: AnalysisCorpusRow): string {
+  return [
+    "Plan a grounded PDF-paper analysis workflow before extraction.",
+    "The attached PDF is the primary source. Use the metadata and abstract below only as supplemental context.",
+    "Return JSON with this exact top-level shape:",
+    "{",
+    '  "focus_sections": ["string"],',
+    '  "target_claims": ["string"],',
+    '  "extraction_priorities": ["string"],',
+    '  "verification_checks": ["string"],',
+    '  "risk_flags": ["string"]',
+    "}",
+    "",
+    `Paper ID: ${paper.paper_id}`,
+    `Title: ${paper.title}`,
+    `Year: ${paper.year ?? "unknown"}`,
+    `Venue: ${paper.venue ?? "unknown"}`,
+    "Abstract/context:",
+    paper.abstract?.trim() || "Abstract unavailable."
+  ].join("\n");
+}
+
+export function buildPaperAnalysisReviewPrompt(
+  paper: AnalysisCorpusRow,
+  source: ResolvedPaperSource,
+  plan: PaperAnalysisPlan,
+  draft: RawPaperAnalysis
+): string {
+  return [
+    "Audit the draft paper analysis against the supplied source and correct it.",
+    "Prefer dropping unsupported items over guessing.",
+    "Return JSON with this exact top-level shape:",
+    ...buildPaperAnalysisSchemaLines(),
+    "",
+    `Paper ID: ${paper.paper_id}`,
+    ...buildPlanContextLines(plan),
+    "Draft analysis JSON:",
+    JSON.stringify(draft, null, 2),
+    "",
+    "Source text:",
+    source.text
+  ].join("\n");
+}
+
+export function buildPaperAnalysisFileReviewPrompt(
+  paper: AnalysisCorpusRow,
+  plan: PaperAnalysisPlan,
+  draft: RawPaperAnalysis
+): string {
+  return [
+    "Audit the draft PDF-paper analysis against the attached PDF and correct it.",
+    "The attached PDF is the primary source. Prefer dropping unsupported items over guessing.",
+    "Return JSON with this exact top-level shape:",
+    ...buildPaperAnalysisSchemaLines(),
+    "",
+    `Paper ID: ${paper.paper_id}`,
+    ...buildPlanContextLines(plan),
+    "Draft analysis JSON:",
+    JSON.stringify(draft, null, 2),
+    "",
+    "Abstract/context:",
+    paper.abstract?.trim() || "Abstract unavailable."
+  ].join("\n");
+}
+
+function buildPaperAnalysisSchemaLines(): string[] {
+  return [
     "{",
     '  "summary": "string",',
     '  "key_findings": ["string"],',
@@ -309,17 +699,22 @@ export function buildPaperAnalysisFilePrompt(paper: AnalysisCorpusRow): string {
     '      "confidence": 0.0',
     "    }",
     "  ]",
-    "}",
-    "",
-    `Paper ID: ${paper.paper_id}`,
-    `Title: ${paper.title}`,
-    `Year: ${paper.year ?? "unknown"}`,
-    `Venue: ${paper.venue ?? "unknown"}`,
-    `Authors: ${paper.authors.join(", ") || "unknown"}`,
-    `Citation count: ${paper.citation_count ?? "unknown"}`,
-    "Abstract/context:",
-    paper.abstract?.trim() || "Abstract unavailable."
-  ].join("\n");
+    "}"
+  ];
+}
+
+function buildPlanContextLines(plan: PaperAnalysisPlan | undefined): string[] {
+  if (!plan) {
+    return [];
+  }
+  return [
+    "Analysis plan:",
+    `Focus sections: ${plan.focus_sections.join(" | ") || "none"}`,
+    `Target claims: ${plan.target_claims.join(" | ") || "none"}`,
+    `Extraction priorities: ${plan.extraction_priorities.join(" | ") || "none"}`,
+    `Verification checks: ${plan.verification_checks.join(" | ") || "none"}`,
+    plan.risk_flags.length > 0 ? `Risk flags: ${plan.risk_flags.join(" | ")}` : "Risk flags: none"
+  ];
 }
 
 export function parsePaperAnalysisJson(text: string): RawPaperAnalysis {
@@ -337,6 +732,70 @@ export function parsePaperAnalysisJson(text: string): RawPaperAnalysis {
   return parsed;
 }
 
+function parsePaperAnalysisPlanJson(text: string): RawPaperAnalysisPlan {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error("empty_analysis_plan");
+  }
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]+?)```/i)?.[1]?.trim();
+  const candidate = fenced || extractFirstJsonObject(trimmed);
+  const parsed = JSON.parse(candidate) as RawPaperAnalysisPlan;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !isPaperAnalysisPlanLike(parsed)) {
+    throw new Error("invalid_analysis_plan");
+  }
+  return parsed;
+}
+
+function normalizePaperAnalysisPlan(
+  parsed: RawPaperAnalysisPlan,
+  paper: AnalysisCorpusRow,
+  source: ResolvedPaperSource
+): PaperAnalysisPlan {
+  const fallbackSections =
+    source.sourceType === "full_text"
+      ? ["method", "results", "limitations", "datasets/metrics"]
+      : ["abstract", "metadata", "reported outcomes", "limitations"];
+  const fallbackClaims = [
+    `Core contribution of ${paper.title}`,
+    "Main quantitative or qualitative result",
+    "Dataset and metric details",
+    "Primary limitation or caveat"
+  ];
+  return {
+    focus_sections: normalizeStringArray(parsed.focus_sections).slice(0, 6).concat(
+      normalizeStringArray(parsed.focus_sections).length > 0 ? [] : fallbackSections
+    ),
+    target_claims: normalizeStringArray(parsed.target_claims).slice(0, 6).concat(
+      normalizeStringArray(parsed.target_claims).length > 0 ? [] : fallbackClaims
+    ),
+    extraction_priorities: normalizeStringArray(parsed.extraction_priorities).slice(0, 6).concat(
+      normalizeStringArray(parsed.extraction_priorities).length > 0
+        ? []
+        : ["Prefer claims with explicit supporting evidence spans.", "Capture datasets, metrics, and limitations before novelty claims."]
+    ),
+    verification_checks: normalizeStringArray(parsed.verification_checks).slice(0, 6).concat(
+      normalizeStringArray(parsed.verification_checks).length > 0
+        ? []
+        : ["Remove unsupported claims.", "Lower confidence when the source span is weak or indirect."]
+    ),
+    risk_flags: normalizeStringArray(parsed.risk_flags).slice(0, 6)
+  };
+}
+
+function buildFallbackAnalysisPlan(paper: AnalysisCorpusRow, source: ResolvedPaperSource): PaperAnalysisPlan {
+  return normalizePaperAnalysisPlan({}, paper, source);
+}
+
+function isPaperAnalysisPlanLike(value: RawPaperAnalysisPlan): boolean {
+  return [
+    value.focus_sections,
+    value.target_claims,
+    value.extraction_priorities,
+    value.verification_checks,
+    value.risk_flags
+  ].some((field) => Array.isArray(field));
+}
+
 export function normalizePaperAnalysis(
   paper: AnalysisCorpusRow,
   source: ResolvedPaperSource,
@@ -351,6 +810,24 @@ export function normalizePaperAnalysis(
   const novelty = fallbackString(parsed.novelty, keyFindings[0] || "Novelty not specified.");
   const evidenceItems = normalizeEvidenceItems(parsed.evidence_items, summary, paper, source);
 
+  const evidenceRows = calibrateEvidenceRows(
+    evidenceItems.map((item, index) => ({
+      evidence_id: buildEvidenceId(paper.paper_id, index),
+      paper_id: paper.paper_id,
+      claim: fallbackString(item.claim, summary),
+      method_slot: fallbackString(item.method_slot, "Not specified."),
+      result_slot: fallbackString(item.result_slot, keyFindings[0] || summary),
+      limitation_slot: fallbackString(item.limitation_slot, limitations[0] || "Not specified."),
+      dataset_slot: fallbackString(item.dataset_slot, datasets[0] || "Not specified."),
+      metric_slot: fallbackString(item.metric_slot, metrics[0] || "Not specified."),
+      evidence_span: fallbackString(item.evidence_span, summary),
+      source_type: source.sourceType,
+      confidence: normalizeConfidence(item.confidence)
+    })),
+    source.text,
+    source.sourceType
+  );
+
   return {
     summaryRow: {
       paper_id: paper.paper_id,
@@ -364,19 +841,7 @@ export function normalizePaperAnalysis(
       novelty,
       reproducibility_notes: reproducibilityNotes
     },
-    evidenceRows: evidenceItems.map((item, index) => ({
-      evidence_id: buildEvidenceId(paper.paper_id, index),
-      paper_id: paper.paper_id,
-      claim: fallbackString(item.claim, summary),
-      method_slot: fallbackString(item.method_slot, "Not specified."),
-      result_slot: fallbackString(item.result_slot, keyFindings[0] || summary),
-      limitation_slot: fallbackString(item.limitation_slot, limitations[0] || "Not specified."),
-      dataset_slot: fallbackString(item.dataset_slot, datasets[0] || "Not specified."),
-      metric_slot: fallbackString(item.metric_slot, metrics[0] || "Not specified."),
-      evidence_span: fallbackString(item.evidence_span, summary),
-      source_type: source.sourceType,
-      confidence: normalizeConfidence(item.confidence)
-    }))
+    evidenceRows
   };
 }
 
@@ -403,6 +868,31 @@ function normalizeEvidenceItems(
   return raw
     .filter((item): item is RawEvidenceItem => Boolean(item && typeof item === "object" && !Array.isArray(item)))
     .slice(0, 4);
+}
+
+function calibrateEvidenceRows(
+  rows: PaperEvidenceRow[],
+  sourceText: string,
+  sourceType: "full_text" | "abstract"
+): PaperEvidenceRow[] {
+  const normalizedSource = normalizeForMatch(sourceText);
+  if (!normalizedSource) {
+    return rows;
+  }
+  return rows.map((row) => {
+    const normalizedSpan = normalizeForMatch(row.evidence_span);
+    if (!normalizedSpan || normalizedSpan.length < 12 || normalizedSource.includes(normalizedSpan)) {
+      return row;
+    }
+    return {
+      ...row,
+      confidence: Math.min(row.confidence, sourceType === "full_text" ? 0.35 : 0.45)
+    };
+  });
+}
+
+function normalizeForMatch(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function normalizeStringArray(value: unknown): string[] {

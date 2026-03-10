@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -1069,6 +1069,332 @@ describe("ImplementSessionManager", () => {
     expect(prompts[0]).toContain('"branch_id": "branch_primary"');
     expect(prompts[1]).toContain('"branch_id": "branch_alternate_2"');
     expect(prompts[1]).toContain(path.basename(alternateCandidate));
+  });
+
+  it("requires approval when local verification is deferred to run_experiments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-manual-handoff-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Manual Handoff Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-impl-manual-handoff",
+        finalText: JSON.stringify({
+          summary: "Prepared an npm-based experiment entry point.",
+          run_command: "npm run experiment",
+          working_dir: workspace,
+          metrics_path: path.join(runDir, "metrics.json"),
+          experiment_mode: "real_execution"
+        }),
+        events: []
+      })
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: {
+        version: 1,
+        project_name: "test",
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            experiment_model: "gpt-5.4",
+            pdf_model: "gpt-5.4",
+            reasoning_effort: "xhigh",
+            chat_reasoning_effort: "low",
+            experiment_reasoning_effort: "xhigh",
+            pdf_reasoning_effort: "xhigh",
+            command_reasoning_effort: "low",
+            fast_mode: false,
+            chat_fast_mode: false,
+            experiment_fast_mode: false,
+            pdf_fast_mode: false,
+            auth_required: true
+          },
+          openai: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            experiment_model: "gpt-5.4",
+            pdf_model: "gpt-5.4",
+            reasoning_effort: "medium",
+            chat_reasoning_effort: "low",
+            experiment_reasoning_effort: "medium",
+            pdf_reasoning_effort: "medium",
+            command_reasoning_effort: "low",
+            api_key_required: true
+          }
+        },
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4",
+          responses_reasoning_effort: "xhigh"
+        },
+        papers: { max_results: 200, per_second_limit: 1 },
+        research: {
+          default_topic: "Multi-agent collaboration",
+          default_constraints: ["recent papers"],
+          default_objective_metric: "reproducibility"
+        },
+        workflow: { mode: "agent_approval", wizard_enabled: true },
+        experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
+        paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
+      },
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+
+    expect(result.autoHandoffToRunExperiments).toBe(false);
+    expect(result.verifyReport).toMatchObject({
+      status: "not_run",
+      next_action: "handoff_to_run_experiments"
+    });
+    expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(false);
+    expect(await memory.get("implement_experiments.pending_handoff_to_run_experiments")).toBe(false);
+  });
+
+  it("fails when the implementer response provides no structured result or runnable artifact", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-invalid-response-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Invalid Implementer Response",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        return {
+          threadId: "thread-impl-invalid-response",
+          finalText: "Implemented it, but here is prose instead of the required JSON.",
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: {
+        version: 1,
+        project_name: "test",
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            experiment_model: "gpt-5.4",
+            pdf_model: "gpt-5.4",
+            reasoning_effort: "xhigh",
+            chat_reasoning_effort: "low",
+            experiment_reasoning_effort: "xhigh",
+            pdf_reasoning_effort: "xhigh",
+            command_reasoning_effort: "low",
+            fast_mode: false,
+            chat_fast_mode: false,
+            experiment_fast_mode: false,
+            pdf_fast_mode: false,
+            auth_required: true
+          },
+          openai: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            experiment_model: "gpt-5.4",
+            pdf_model: "gpt-5.4",
+            reasoning_effort: "medium",
+            chat_reasoning_effort: "low",
+            experiment_reasoning_effort: "medium",
+            pdf_reasoning_effort: "medium",
+            command_reasoning_effort: "low",
+            api_key_required: true
+          }
+        },
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4",
+          responses_reasoning_effort: "xhigh"
+        },
+        papers: { max_results: 200, per_second_limit: 1 },
+        research: {
+          default_topic: "Multi-agent collaboration",
+          default_constraints: ["recent papers"],
+          default_objective_metric: "reproducibility"
+        },
+        workflow: { mode: "agent_approval", wizard_enabled: true },
+        experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
+        paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
+      },
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await expect(manager.run(run)).rejects.toThrow("Implementer did not return the required JSON result or any runnable artifact.");
+
+    expect(callCount).toBe(3);
+    expect(await memory.get<{ status: string; failure_type: string; next_action: string }>("implement_experiments.verify_report")).toMatchObject({
+      status: "fail",
+      failure_type: "spec",
+      next_action: "retry_patch"
+    });
+    expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(false);
+  });
+
+  it("ignores model-supplied paths that escape the workspace", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-path-guard-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Path Guard Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const escapeRoot = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-escape-"));
+    tempDirs.push(escapeRoot);
+    const outsidePublicDir = path.join(escapeRoot, "published");
+    const outsideMetricsPath = path.join(escapeRoot, "metrics.json");
+    const outsideScriptPath = path.join(escapeRoot, "experiment.py");
+    const escapedPublicDir = path.relative(workspace, outsidePublicDir);
+    const escapedScriptPath = path.relative(workspace, outsideScriptPath);
+    const insideScriptPath = path.join(runDir, "experiment.py");
+    const defaultPublicDir = buildPublicExperimentDir(workspace, run);
+
+    const codex = {
+      runTurnStream: async () => {
+        writeFileSync(insideScriptPath, "print('ok')\n", "utf8");
+        return {
+          threadId: "thread-impl-path-guard",
+          finalText: JSON.stringify({
+            summary: "Implemented a runnable experiment script.",
+            run_command: `python3 ${JSON.stringify(insideScriptPath)}`,
+            changed_files: [insideScriptPath, escapedScriptPath],
+            artifacts: [insideScriptPath, outsideMetricsPath],
+            public_dir: escapedPublicDir,
+            public_artifacts: [outsideScriptPath],
+            script_path: escapedScriptPath,
+            metrics_path: outsideMetricsPath,
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: {
+        version: 1,
+        project_name: "test",
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            experiment_model: "gpt-5.4",
+            pdf_model: "gpt-5.4",
+            reasoning_effort: "xhigh",
+            chat_reasoning_effort: "low",
+            experiment_reasoning_effort: "xhigh",
+            pdf_reasoning_effort: "xhigh",
+            command_reasoning_effort: "low",
+            fast_mode: false,
+            chat_fast_mode: false,
+            experiment_fast_mode: false,
+            pdf_fast_mode: false,
+            auth_required: true
+          },
+          openai: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            experiment_model: "gpt-5.4",
+            pdf_model: "gpt-5.4",
+            reasoning_effort: "medium",
+            chat_reasoning_effort: "low",
+            experiment_reasoning_effort: "medium",
+            pdf_reasoning_effort: "medium",
+            command_reasoning_effort: "low",
+            api_key_required: true
+          }
+        },
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4",
+          responses_reasoning_effort: "xhigh"
+        },
+        papers: { max_results: 200, per_second_limit: 1 },
+        research: {
+          default_topic: "Multi-agent collaboration",
+          default_constraints: ["recent papers"],
+          default_objective_metric: "reproducibility"
+        },
+        workflow: { mode: "agent_approval", wizard_enabled: true },
+        experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
+        paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
+      },
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+
+    expect(result.publicDir).toBe(defaultPublicDir);
+    expect(result.metricsPath).toBe(path.join(runDir, "metrics.json"));
+    expect(result.scriptPath).toBe(path.join(defaultPublicDir, "experiment.py"));
+    expect(result.runCommand).toContain(path.join(defaultPublicDir, "experiment.py"));
+    expect(result.runCommand).not.toContain(outsideScriptPath);
+    expect(result.changedFiles).not.toContain(outsideScriptPath);
+    expect(result.artifacts).not.toContain(outsideMetricsPath);
+    expect(result.publicArtifacts).not.toContain(outsideScriptPath);
+    expect(await memory.get("implement_experiments.public_dir")).toBe(defaultPublicDir);
+    expect(await memory.get("implement_experiments.metrics_path")).toBe(path.join(runDir, "metrics.json"));
+    expect(await memory.get("implement_experiments.script")).toBe(path.join(defaultPublicDir, "experiment.py"));
+    expect(existsSync(outsidePublicDir)).toBe(false);
   });
 
   it("stops when the local verification command is blocked by policy", async () => {

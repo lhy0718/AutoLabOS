@@ -113,6 +113,17 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
 
       const hypothesesPath = path.join(".autolabos", "runs", run.id, "hypotheses.jsonl");
       const hypotheses = parseHypotheses(await safeRead(hypothesesPath));
+      if (hypotheses.length === 0) {
+        const message =
+          "No valid hypotheses were found for experiment design. Generate hypotheses first or repair hypotheses.jsonl.";
+        emitLog(message);
+        return {
+          status: "failure",
+          error: message,
+          summary: message,
+          toolCallsUsed: 0
+        };
+      }
       const filtered = filterDesignHypotheses(hypotheses, objectiveMetricProfile);
       if (filtered.dropped.length > 0) {
         emitLog(
@@ -198,6 +209,9 @@ function parseHypotheses(raw: string): DesignInputHypothesis[] {
           reproducibility_specificity: parsed.reproducibility_specificity,
           reproducibility_signals: parsed.reproducibility_signals,
           measurement_hint: parsed.measurement_hint,
+          boundary_condition: parsed.boundary_condition,
+          limitation_reflection: parsed.limitation_reflection,
+          measurement_readiness: parsed.measurement_readiness,
           critique_summary: parsed.critique_summary
         };
       } catch {
@@ -425,7 +439,12 @@ function uniqueStrings(items: string[]): string[] {
 }
 
 function escapeQuote(text: string): string {
-  return text.replace(/"/g, "'");
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/\t/g, "\\t")
+    .replace(/"/g, '\\"');
 }
 
 function renderYamlStringList(items: string[], indentLevel: number): string[] {
@@ -528,6 +547,8 @@ function computeHypothesisDesignQuality(
   score += (hypothesis.reproducibility_specificity ?? 0) * (isReproducibilityObjective(objectiveProfile) ? 1.5 : 0.5);
   score += (hypothesis.reproducibility_signals?.length ?? 0) > 0 ? 1 : 0;
   score += hypothesis.measurement_hint ? 1 : 0;
+  score += hypothesis.limitation_reflection ?? 0;
+  score += hypothesis.measurement_readiness ?? 0;
   return score;
 }
 
@@ -549,6 +570,12 @@ function explainHypothesisDrop(
   }
   if ((hypothesis.experimentability ?? 3) < 3) {
     issues.push("weak experimentability");
+  }
+  if (typeof hypothesis.limitation_reflection === "number" && hypothesis.limitation_reflection < 3) {
+    issues.push("limitations or counterexamples are not reflected");
+  }
+  if (typeof hypothesis.measurement_readiness === "number" && hypothesis.measurement_readiness < 3) {
+    issues.push("measurement plan is not operationalized");
   }
 
   if (isReproducibilityObjective(objectiveProfile)) {
@@ -585,6 +612,8 @@ function hasStructuredHypothesisReview(hypothesis: DesignInputHypothesis): boole
     typeof hypothesis.falsifiability === "number" ||
     typeof hypothesis.experimentability === "number" ||
     typeof hypothesis.reproducibility_specificity === "number" ||
+    typeof hypothesis.limitation_reflection === "number" ||
+    typeof hypothesis.measurement_readiness === "number" ||
     Boolean(hypothesis.measurement_hint) ||
     Boolean(hypothesis.critique_summary) ||
     (hypothesis.reproducibility_signals?.length ?? 0) > 0

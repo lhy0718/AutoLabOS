@@ -18,7 +18,7 @@
     <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white" />
     <img alt="TypeScript" src="https://img.shields.io/badge/typescript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
     <img alt="Codex and OpenAI supported" src="https://img.shields.io/badge/Codex%20%2B%20OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="8-node workflow" src="https://img.shields.io/badge/workflow-8%20nodes-0F766E?style=flat-square" />
+    <img alt="9-node workflow" src="https://img.shields.io/badge/workflow-9%20nodes-0F766E?style=flat-square" />
     <img alt="Local Web Ops UI" src="https://img.shields.io/badge/web%20ops-local-0EA5E9?style=flat-square" />
     <img alt="Checkpointed runs" src="https://img.shields.io/badge/checkpoints-built%20in-CA8A04?style=flat-square" />
   </p>
@@ -35,7 +35,7 @@
 
 ## Why AutoLabOS?
 
-- Turn the research loop into a fixed 8-node state graph from `collect_papers` to `write_paper`.
+- Turn the research loop into a fixed 9-node state graph from `collect_papers` to `write_paper`, with an explicit `review` gate before drafting.
 - Run the main workflow with either `codex` or `OpenAI API`, then switch PDF analysis independently.
 - Keep work local and inspectable with checkpoints, budgets, retries, jumps, and run-scoped memory.
 
@@ -141,7 +141,7 @@ node dist/cli/main.js web
 `autolabos web` starts a local single-user browser UI on top of the same runtime used by the TUI.
 
 - Onboarding uses the same non-interactive setup helper, so web setup writes the same `.autolabos/config.yaml` and `.env` values as the TUI wizard.
-- The dashboard includes run search and selection, the 8-node workflow view, node actions, live logs, checkpoints, artifacts, metadata, and `/doctor` summaries.
+- The dashboard includes run search and selection, the 9-node workflow view, node actions, live logs, checkpoints, artifacts, metadata, and `/doctor` summaries.
 - The bottom composer accepts both slash commands and supported natural-language requests.
 - Multi-step natural-language plans use browser buttons instead of `y/a/n`: `Run next`, `Run all`, and `Cancel`.
 - Artifact browsing is restricted to `.autolabos/runs/<run_id>` and previews common text files, images, and PDFs inline.
@@ -175,9 +175,10 @@ flowchart TB
         N5["implement_experiments"]
         N6["run_experiments"]
         N7["analyze_results"]
-        N8["write_paper"]
+        N8["review"]
+        N9["write_paper"]
 
-        O --> N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7 --> N8
+        O --> N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7 --> N8 --> N9
     end
 
     subgraph Roles["Role layer (`agentRole`)"]
@@ -199,8 +200,8 @@ flowchart TB
     N5 -. primary role .-> R5
     N6 -. primary role .-> R6
     N7 -. primary role .-> R7
-    N8 -. drafting .-> R8
-    N8 -. review .-> R9
+    N8 -. primary role .-> R9
+    N9 -. primary role .-> R8
 ```
 
 ### Execution Graph
@@ -214,20 +215,19 @@ stateDiagram-v2
     design_experiments --> implement_experiments: approve
     implement_experiments --> run_experiments: auto_handoff or approve
     run_experiments --> analyze_results: approve
-    analyze_results --> write_paper: advance or approve
+    analyze_results --> review: advance or approve
     analyze_results --> implement_experiments: backtrack_to_implement
     analyze_results --> design_experiments: backtrack_to_design
     analyze_results --> generate_hypotheses: backtrack_to_hypotheses
-    analyze_results --> manual_review: pause_for_human
-    manual_review --> analyze_results: retry or jump
+    review --> write_paper: approve
     write_paper --> [*]: approve
 ```
 
-Default `agent_approval` mode pauses after every node. `implement_experiments` is the one forward step that can skip its pause through automatic handoff to `run_experiments`, and `analyze_results` is the node that can explicitly redirect the graph backward.
+Default `agent_approval` mode pauses after every node. `implement_experiments` is the one forward step that can skip its pause through automatic handoff to `run_experiments`, `analyze_results` is the node that can explicitly redirect the graph backward, and `review` is the manual gate before `write_paper`.
 
 ### Phase-by-Phase Connection Graphs
 
-The four focused graphs below cover the full 8-node pipeline and show which role or session manager is actually doing the work inside each phase.
+The four focused graphs below cover the full 9-node pipeline and show which role or session manager is actually doing the work inside each phase.
 
 #### Discovery and Reading
 
@@ -289,7 +289,7 @@ flowchart LR
     AR --> Analyst["analyst_statistician"]
     Analyst --> Synth["analysis synthesis + transition recommendation"]
 
-    Synth -->|advance| WP["write_paper"]
+    Synth -->|advance| RV["review"]
     Synth -->|backtrack_to_implement| IE
     Synth -->|backtrack_to_design| DE["design_experiments"]
     Synth -->|backtrack_to_hypotheses| GH["generate_hypotheses"]
@@ -318,7 +318,7 @@ flowchart LR
 | Graph node | Primary role(s) | Current implementation shape |
 | --- | --- | --- |
 | `collect_papers` | `collector_curator` | Semantic Scholar search, de-duplication, enrichment, and BibTeX generation |
-| `analyze_papers` | `reader_evidence_extractor` | ranked paper selection plus local or Responses API PDF analysis |
+| `analyze_papers` | `reader_evidence_extractor` | ranked paper selection plus resumable planner -> extractor -> reviewer analysis over local or Responses API PDF inputs |
 | `generate_hypotheses` | `hypothesis_agent` | staged evidence-axis -> draft -> review -> selection pipeline |
 | `design_experiments` | `experiment_designer` | candidate design generation and `experiment_plan.yaml` selection |
 | `implement_experiments` | `implementer` | `ImplementSessionManager`, localization, Codex patching, verification, and optional handoff |
@@ -344,11 +344,15 @@ flowchart TB
     F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_verify_report.json"]
     F1 --> G["analyze_results"]
     G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg"]
-    G1 --> H["write_paper"]
-    H --> H1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/main.pdf (optional)"]
+    G1 --> H["review"]
+    H --> H1["review/review_packet.json<br/>review/checklist.md"]
+    H1 --> I["write_paper"]
+    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/main.pdf (optional)"]
 ```
 
 All run artifacts live under `.autolabos/runs/<run_id>/`, which makes the pipeline inspectable from both the TUI and the local web UI.
+
+`analyze_papers` uses `analysis_manifest.json` to resume unfinished work. If the selected paper set changes, the analysis configuration changes, or `paper_summaries.jsonl` / `evidence_store.jsonl` drift out of sync with the manifest, AutoLabOS prunes stale rows and re-queues only the affected papers before downstream nodes continue.
 
 ### Control Surfaces
 
@@ -359,7 +363,7 @@ flowchart TB
     Natural["Natural-language routing<br/>deterministic first, LLM fallback second"] --> Session
 
     Session --> Runtime["Shared runtime<br/>run store + checkpoint store + event stream + orchestrator"]
-    Runtime --> Nodes["8-node workflow execution"]
+    Runtime --> Nodes["9-node workflow execution"]
     Runtime --> Artifacts["Run artifacts<br/>.autolabos/runs/<run_id>"]
     Runtime --> State["Run state and memory<br/>context + episodes + long-term store"]
 
@@ -384,6 +388,7 @@ flowchart LR
     Registry --> Impl["implement_experiments"]
     Registry --> Run["run_experiments"]
     Registry --> Results["analyze_results"]
+    Registry --> Review["review"]
     Registry --> Paper["write_paper"]
 
     Collect --> Scholar["Semantic Scholar + enrichment"]

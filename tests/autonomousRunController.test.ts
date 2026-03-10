@@ -152,4 +152,82 @@ describe("AutonomousRunController", () => {
     expect(latest?.currentNode).toBe("generate_hypotheses");
     expect(latest?.graph.transitionHistory.at(-1)?.toNode).toBe("generate_hypotheses");
   });
+
+  it("routes an advance recommendation into the review node", async () => {
+    const { store, controller } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.status = "paused";
+    run.graph.nodeStates.analyze_results.status = "needs_approval";
+    run.graph.pendingTransition = {
+      action: "advance",
+      sourceNode: "analyze_results",
+      targetNode: "review",
+      reason: "Ready for manual review before drafting the paper.",
+      confidence: 0.9,
+      autoExecutable: true,
+      evidence: ["Objective met."],
+      suggestedCommands: ["/approve"],
+      generatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    const policy = {
+      ...buildDefaultOvernightPolicy(),
+      autoApproveNodes: [] as GraphNodeId[]
+    };
+    const result = await controller.runOvernight(run.id, policy);
+
+    expect(result.status).toBe("stopped");
+    expect(result.transitionsApplied).toBe(1);
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).toBe("review");
+    expect(latest?.graph.transitionHistory.at(-1)?.toNode).toBe("review");
+  });
+
+  it("stops instead of auto-approving when a recommendation needs human judgment", async () => {
+    const { store, controller } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.status = "paused";
+    run.graph.nodeStates.analyze_results.status = "needs_approval";
+    run.graph.pendingTransition = {
+      action: "backtrack_to_hypotheses",
+      sourceNode: "analyze_results",
+      targetNode: "generate_hypotheses",
+      reason: "Evidence is mixed enough that a human should decide whether to reset the hypothesis set.",
+      confidence: 0.72,
+      autoExecutable: false,
+      evidence: ["The objective was missed but supporting evidence remains ambiguous."],
+      suggestedCommands: ["/agent transition"],
+      generatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    const result = await controller.runOvernight(run.id, buildDefaultOvernightPolicy());
+
+    expect(result.status).toBe("stopped");
+    expect(result.reason).toContain("Manual review required for recommendation");
+    expect(result.approvalsApplied).toBe(0);
+    expect(result.transitionsApplied).toBe(0);
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).toBe("analyze_results");
+    expect(latest?.graph.pendingTransition?.action).toBe("backtrack_to_hypotheses");
+  });
 });

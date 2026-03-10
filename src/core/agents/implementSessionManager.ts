@@ -67,6 +67,11 @@ interface StructuredImplementResponse {
   assumptions?: string[];
 }
 
+interface ParsedStructuredImplementResponse {
+  value: StructuredImplementResponse;
+  isStructured: boolean;
+}
+
 interface CachedConstraintProfile {
   profile?: {
     source?: string;
@@ -833,7 +838,8 @@ export class ImplementSessionManager {
     publicArtifacts: Set<string>;
     experimentLlmProfile: ReturnType<typeof resolveExperimentLlmProfile>;
   }): Promise<PreparedImplementAttempt> {
-    const parsed = parseStructuredResponse(params.result.finalText);
+    const parsedResponse = parseStructuredResponse(params.result.finalText);
+    const parsed = parsedResponse.value;
     const normalizedPublicDir =
       normalizeStoredPath(parsed.public_dir, this.deps.workspaceRoot) || params.defaultPublicDir;
     const normalizedMetricsPath =
@@ -875,8 +881,10 @@ export class ImplementSessionManager {
       parsed.summary?.trim() ||
       `Codex implementation session updated ${Math.max(1, params.changedFiles.size)} file(s).`;
     let runCommand =
-      parsed.run_command?.trim() || inferRunCommand(normalizedScriptPath, this.deps.workspaceRoot, params.run.id);
+      parsed.run_command?.trim() ||
+      (normalizedScriptPath ? inferRunCommand(normalizedScriptPath, this.deps.workspaceRoot, params.run.id) : "");
     let testCommand = parsed.test_command?.trim() || deriveFallbackTestCommand(normalizedScriptPath);
+    const hasRunnableArtifact = Boolean(runCommand || normalizedScriptPath);
     const bundleSupported = supportsRealExecutionBundle({
       topic: params.run.topic,
       objectiveMetric: params.run.objectiveMetric,
@@ -920,6 +928,13 @@ export class ImplementSessionManager {
     const localization =
       normalizeLocalizationResult(parsed.localization, this.deps.workspaceRoot) ||
       emptyLocalizationResult();
+    const verifyReport = !hasRunnableArtifact
+      ? buildMissingArtifactVerifyReport(parsedResponse.isStructured)
+      : {
+          status: "not_run" as const,
+          next_action: "handoff_to_run_experiments" as const,
+          summary: "Local verification has not run yet."
+        };
 
     return {
       threadId: params.result.threadId,
@@ -939,11 +954,7 @@ export class ImplementSessionManager {
       publicArtifacts: [...params.publicArtifacts],
       localization,
       assumptions: parsed.assumptions || [],
-      verifyReport: {
-        status: "not_run",
-        next_action: "handoff_to_run_experiments",
-        summary: "Local verification has not run yet."
-      }
+      verifyReport
     };
   }
 
@@ -1000,6 +1011,19 @@ export class ImplementSessionManager {
     runId: string,
     attemptNumber: number
   ): Promise<VerifyReport> {
+    if (attempt.verifyReport.status === "fail") {
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text: attempt.verifyReport.summary
+        }
+      });
+      return attempt.verifyReport;
+    }
+
     const command = attempt.testCommand?.trim() || deriveFallbackTestCommand(attempt.scriptPath);
     if (!command) {
       return {
@@ -1151,26 +1175,32 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 220);
 }
 
-function parseStructuredResponse(text: string): StructuredImplementResponse {
+function parseStructuredResponse(text: string): ParsedStructuredImplementResponse {
   const parsed = parseJsonObject(text);
   if (!parsed || typeof parsed !== "object") {
-    return {};
+    return {
+      value: {},
+      isStructured: false
+    };
   }
   const record = parsed as Record<string, unknown>;
   return {
-    summary: asString(record.summary),
-    run_command: asString(record.run_command),
-    test_command: asString(record.test_command),
-    working_dir: asString(record.working_dir),
-    experiment_mode: asString(record.experiment_mode),
-    changed_files: asStringArray(record.changed_files),
-    artifacts: asStringArray(record.artifacts),
-    public_dir: asString(record.public_dir),
-    public_artifacts: asStringArray(record.public_artifacts),
-    script_path: asString(record.script_path),
-    metrics_path: asString(record.metrics_path),
-    localization: record.localization,
-    assumptions: asStringArray(record.assumptions)
+    value: {
+      summary: asString(record.summary),
+      run_command: asString(record.run_command),
+      test_command: asString(record.test_command),
+      working_dir: asString(record.working_dir),
+      experiment_mode: asString(record.experiment_mode),
+      changed_files: asStringArray(record.changed_files),
+      artifacts: asStringArray(record.artifacts),
+      public_dir: asString(record.public_dir),
+      public_artifacts: asStringArray(record.public_artifacts),
+      script_path: asString(record.script_path),
+      metrics_path: asString(record.metrics_path),
+      localization: record.localization,
+      assumptions: asStringArray(record.assumptions)
+    },
+    isStructured: true
   };
 }
 
@@ -1210,10 +1240,11 @@ function normalizeStoredPath(filePath: string | undefined, workspaceRoot: string
   if (!filePath) {
     return undefined;
   }
-  if (path.isAbsolute(filePath)) {
-    return filePath;
+  const resolved = path.resolve(workspaceRoot, filePath);
+  if (!isPathInsideOrEqual(resolved, workspaceRoot)) {
+    return undefined;
   }
-  return path.join(workspaceRoot, filePath);
+  return resolved;
 }
 
 function trimBlock(text: string, limit: number): string {
@@ -1418,6 +1449,11 @@ function isReusablePublicArtifact(filePath: string): boolean {
 function isSubpath(filePath: string, parentDir: string): boolean {
   const relative = path.relative(parentDir, filePath);
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function isPathInsideOrEqual(filePath: string, parentDir: string): boolean {
+  const relative = path.relative(parentDir, filePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function asString(value: unknown): string | undefined {
@@ -1757,7 +1793,7 @@ function buildSuccessfulImplementationLesson(params: {
 }
 
 function shouldAutoHandoffToRunExperiments(verifyReport: VerifyReport): boolean {
-  if (verifyReport.status === "fail") {
+  if (verifyReport.status !== "pass") {
     return false;
   }
   return verifyReport.next_action === "accept" || verifyReport.next_action === "handoff_to_run_experiments";
@@ -1931,6 +1967,17 @@ function deriveFallbackTestCommand(scriptPath: string | undefined): string | und
     return `bash -n ${quoted}`;
   }
   return undefined;
+}
+
+function buildMissingArtifactVerifyReport(isStructured: boolean): VerifyReport {
+  return {
+    status: "fail",
+    failure_type: "spec",
+    next_action: "retry_patch",
+    summary: isStructured
+      ? "Implementer did not return a runnable artifact or run_command."
+      : "Implementer did not return the required JSON result or any runnable artifact."
+  };
 }
 
 function summarizeVerification(

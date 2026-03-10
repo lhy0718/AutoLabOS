@@ -11,6 +11,8 @@
   --accent: #174d41;
   --accent-soft: #e4efe9;
   --accent-ink: #0f372f;
+  --warning: #8b5f1a;
+  --warning-soft: #fbf1dc;
   --danger: #a23b30;
   --danger-soft: #f8e8e4;
   --success: #246a41;
@@ -191,6 +193,12 @@ p {
   color: var(--danger);
   background: var(--danger-soft);
   border-color: rgba(162, 59, 48, 0.14);
+}
+
+.status-pill.is-warning {
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-color: rgba(139, 95, 26, 0.18);
 }
 
 .status-pill.is-neutral {
@@ -907,6 +915,72 @@ button:disabled,
   align-content: start;
 }
 
+.review-preview,
+.review-preview-copy,
+.review-check-card {
+  display: grid;
+  gap: 12px;
+}
+
+.review-preview-header,
+.review-check-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.review-summary-grid,
+.review-check-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.review-summary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.review-objective-card {
+  display: grid;
+  gap: 8px;
+}
+
+.review-check-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.review-check-card {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.review-check-card p {
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.review-check-card.status-ready {
+  border-color: rgba(36, 106, 65, 0.16);
+  background: linear-gradient(180deg, rgba(233, 244, 236, 0.92), rgba(255, 255, 255, 0.96));
+}
+
+.review-check-card.status-warning {
+  border-color: rgba(139, 95, 26, 0.16);
+  background: linear-gradient(180deg, rgba(251, 241, 220, 0.92), rgba(255, 255, 255, 0.96));
+}
+
+.review-check-card.status-blocking {
+  border-color: rgba(162, 59, 48, 0.16);
+  background: linear-gradient(180deg, rgba(248, 232, 228, 0.92), rgba(255, 255, 255, 0.96));
+}
+
+.review-check-card.status-manual {
+  border-color: rgba(23, 77, 65, 0.12);
+  background: linear-gradient(180deg, rgba(228, 239, 233, 0.78), rgba(255, 255, 255, 0.96));
+}
+
 .artifact-preview img,
 .artifact-preview iframe {
   width: 100%;
@@ -989,7 +1063,8 @@ button:disabled,
 
   .sidebar-toolbar,
   .artifact-layout,
-  .inline-fields {
+  .inline-fields,
+  .review-summary-grid {
     grid-template-columns: 1fr;
   }
 
@@ -998,7 +1073,9 @@ button:disabled,
   .node-footer,
   .run-list-top,
   .run-list-bottom,
-  .checkpoint-row {
+  .checkpoint-row,
+  .review-preview-header,
+  .review-check-top {
     flex-direction: column;
     align-items: flex-start;
   }

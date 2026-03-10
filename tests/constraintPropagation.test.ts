@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import { createDesignExperimentsNode } from "../src/core/nodes/designExperiments.js";
 import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
@@ -57,6 +58,88 @@ function makeRun(root: string, runId: string): RunRecord {
   };
 }
 
+async function seedWritePaperInputs(runDir: string): Promise<void> {
+  await mkdir(path.join(runDir, "memory"), { recursive: true });
+  await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+  await writeFile(
+    path.join(runDir, "paper_summaries.jsonl"),
+    `${JSON.stringify({
+      paper_id: "paper_1",
+      title: "Coordination Benchmark",
+      source_type: "full_text",
+      summary: "Structured coordination improves reproducibility.",
+      key_findings: ["Structured coordination improves reproducibility."],
+      limitations: ["Benchmark coverage is limited."],
+      datasets: ["AgentBench-mini"],
+      metrics: ["reproducibility_score"],
+      novelty: "Constraint-aware coordination",
+      reproducibility_notes: ["Repeated runs are included."]
+    })}\n`,
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "evidence_store.jsonl"),
+    `${JSON.stringify({
+      evidence_id: "ev_1",
+      paper_id: "paper_1",
+      claim: "Structured coordination improves reproducibility.",
+      method_slot: "shared state schema",
+      result_slot: "higher reproducibility_score",
+      limitation_slot: "limited benchmark coverage",
+      dataset_slot: "AgentBench-mini",
+      metric_slot: "reproducibility_score",
+      evidence_span: "Repeated runs improved reproducibility_score.",
+      source_type: "full_text",
+      confidence: 0.9
+    })}\n`,
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "hypotheses.jsonl"),
+    `${JSON.stringify({
+      hypothesis_id: "h_1",
+      text: "Structured coordination improves reproducibility.",
+      evidence_links: ["ev_1"]
+    })}\n`,
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "corpus.jsonl"),
+    `${JSON.stringify({
+      paper_id: "paper_1",
+      title: "Coordination Benchmark",
+      abstract: "Structured coordination improves reproducibility.",
+      authors: ["Alice Doe"],
+      year: 2025,
+      venue: "ACL"
+    })}\n`,
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "experiment_plan.yaml"),
+    [
+      "selected_design:",
+      '  title: "Constraint propagation benchmark"',
+      '  summary: "Evaluate structured coordination with the configured writing constraints."'
+    ].join("\n"),
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "result_analysis.json"),
+    JSON.stringify(
+      {
+        overview: {
+          objective_status: "observed",
+          selected_design_title: "Constraint propagation benchmark"
+        }
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+}
+
 describe("constraint propagation", () => {
   it("writes run constraints into experiment_plan.yaml", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-constraints-"));
@@ -98,6 +181,95 @@ describe("constraint propagation", () => {
     expect(plan).toContain('    length_hint: "short paper"');
   });
 
+  it("fails fast when no hypotheses artifact is available for design", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-missing-hypotheses-"));
+    process.chdir(root);
+
+    const runId = "run-design-missing-hypotheses";
+    const run = makeRun(root, runId);
+    run.constraints = [];
+    run.objectiveMetric = "";
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+
+    const node = createDesignExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("No valid hypotheses were found");
+    await expect(readFile(path.join(runDir, "experiment_plan.yaml"), "utf8")).rejects.toThrow();
+  });
+
+  it("writes YAML-safe experiment plans when llm text spans multiple lines", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-yaml-safe-"));
+    process.chdir(root);
+
+    const runId = "run-design-yaml-safe";
+    const run = makeRun(root, runId);
+    run.constraints = [];
+    run.objectiveMetric = "";
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "hypotheses.jsonl"),
+      `${JSON.stringify({ hypothesis_id: "h_1", text: "A hypothesis with multiline plan output." })}\n`,
+      "utf8"
+    );
+
+    const node = createDesignExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new CountingJsonLLMClient([
+        JSON.stringify({
+          summary: "Generated a multiline design.",
+          candidates: [
+            {
+              id: "plan_1",
+              title: "Plan line 1\nPlan line 2",
+              hypothesis_ids: ["h_1"],
+              plan_summary: "Summary line 1\nSummary line 2",
+              datasets: ["Benchmark-A"],
+              metrics: ["accuracy"],
+              baselines: ["baseline"],
+              implementation_notes: ["Step 1\nStep 2"],
+              evaluation_steps: ["Measure line 1\nMeasure line 2"],
+              risks: ["Risk line 1\nRisk line 2"],
+              budget_notes: ["Budget line 1\nBudget line 2"]
+            }
+          ],
+          selected_id: "plan_1"
+        })
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
+    const parsed = YAML.parse(plan) as {
+      selected_design?: { title?: string; summary?: string; implementation_notes?: string[]; evaluation_steps?: string[] };
+    };
+    expect(parsed.selected_design?.title).toBe("Plan line 1\nPlan line 2");
+    expect(parsed.selected_design?.summary).toBe("Summary line 1\nSummary line 2");
+    expect(parsed.selected_design?.implementation_notes?.[0]).toBe("Step 1\nStep 2");
+    expect(parsed.selected_design?.evaluation_steps?.[0]).toBe("Measure line 1\nMeasure line 2");
+  });
+
   it("writes writing constraints into paper/main.tex", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-constraints-"));
     process.chdir(root);
@@ -105,7 +277,7 @@ describe("constraint propagation", () => {
     const runId = "run-paper-constraints";
     const run = makeRun(root, runId);
     const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(runDir, { recursive: true });
+    await seedWritePaperInputs(runDir);
 
     const node = createWritePaperNode({
       config: {} as any,
@@ -126,6 +298,38 @@ describe("constraint propagation", () => {
     expect(tex).toContain("Tone: formal academic.");
     expect(tex).toContain("Length target: short paper.");
     expect(tex).toContain("- last 5 years");
+  });
+
+  it("fails when required write_paper inputs are missing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-missing-inputs-"));
+    process.chdir(root);
+
+    const runId = "run-paper-missing-inputs";
+    const run = makeRun(root, runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(runDir, { recursive: true });
+
+    const node = createWritePaperNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("write_paper requires valid upstream artifacts before drafting");
+    expect(result.error).toContain("paper_summaries.jsonl");
+    expect(result.error).toContain("result_analysis.json");
+
+    const inputValidation = await readFile(path.join(runDir, "paper", "input_validation.json"), "utf8");
+    expect(inputValidation).toContain('"ok": false');
+    expect(inputValidation).toContain('"artifact": "paper_summaries.jsonl"');
+    expect(inputValidation).toContain('"artifact": "result_analysis.json"');
   });
 
   it("drops weak reproducibility hypotheses before experiment design", async () => {
@@ -206,9 +410,12 @@ describe("constraint propagation", () => {
       "Focus evaluation on robustness and failure recovery."
     ];
     const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(path.join(runDir, "hypotheses.jsonl"), `${JSON.stringify({ text: "Hypothesis A" })}\n`, "utf8");
+    await seedWritePaperInputs(runDir);
+    await writeFile(
+      path.join(runDir, "hypotheses.jsonl"),
+      `${JSON.stringify({ hypothesis_id: "h_1", text: "Hypothesis A" })}\n`,
+      "utf8"
+    );
 
     const llm = new CountingJsonLLMClient([
       JSON.stringify({

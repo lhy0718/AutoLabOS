@@ -21,6 +21,7 @@ const NODE_ORDER = [
   "implement_experiments",
   "run_experiments",
   "analyze_results",
+  "review",
   "write_paper"
 ] as const;
 
@@ -43,6 +44,35 @@ type SetupFormState = WebConfigFormData & {
 interface UiActivityState {
   id: number;
   label: string;
+}
+
+type ReviewPreviewStatus = "ready" | "warning" | "blocking" | "manual";
+
+interface ReviewPacketPreview {
+  generated_at: string;
+  readiness: {
+    status: Exclude<ReviewPreviewStatus, "manual">;
+    ready_checks: number;
+    warning_checks: number;
+    blocking_checks: number;
+    manual_checks: number;
+  };
+  objective_status: string;
+  objective_summary: string;
+  recommendation?: {
+    action: string;
+    target?: string;
+    confidence_pct: number;
+    reason: string;
+    evidence: string[];
+  };
+  checks: Array<{
+    id: string;
+    label: string;
+    status: ReviewPreviewStatus;
+    detail: string;
+  }>;
+  suggested_actions: string[];
 }
 
 export function App() {
@@ -156,6 +186,10 @@ export function App() {
   const activeBusyLabel = session?.busy
     ? session.busyLabel || uiActivity?.label || "Working..."
     : uiActivity?.label;
+  const selectedReviewPacket =
+    selectedArtifact?.path === "review/review_packet.json" && artifactPreview
+      ? parseReviewPacketPreview(artifactPreview)
+      : null;
   const activityRun =
     selectedRun ||
     (bootstrap?.runs || []).find((run) => run.id === (session?.activeRunId || selectedRunId));
@@ -739,7 +773,7 @@ export function App() {
               <div className="section-heading">
                 <div>
                   <p className="section-kicker">Workflow</p>
-                  <h3>Eight-node state graph</h3>
+                  <h3>Workflow state graph</h3>
                 </div>
                 <span className="count-badge">{completedNodeCount}/{NODE_ORDER.length} complete</span>
               </div>
@@ -887,8 +921,105 @@ export function App() {
               <div className="artifact-preview">
                 {selectedArtifact?.kind === "image" && artifactPreview ? <img src={artifactPreview} alt={selectedArtifact.path} /> : null}
                 {selectedArtifact?.kind === "pdf" && artifactPreview ? <iframe src={artifactPreview} title={selectedArtifact.path} /> : null}
+                {selectedArtifact?.path === "review/review_packet.json" && selectedReviewPacket ? (
+                  <div className="review-preview">
+                    <div className="review-preview-header">
+                      <div className="review-preview-copy">
+                        <p className="section-kicker">Manual review</p>
+                        <h3>Review readiness</h3>
+                        <p className="summary-copy">{selectedReviewPacket.objective_summary}</p>
+                      </div>
+                      <span className={`status-pill ${reviewStatusToneClass(selectedReviewPacket.readiness.status)}`}>
+                        {toHeadline(selectedReviewPacket.readiness.status)}
+                      </span>
+                    </div>
+
+                    <div className="review-summary-grid">
+                      <article className="stat-card">
+                        <span className="stat-label">Ready</span>
+                        <strong>{selectedReviewPacket.readiness.ready_checks}</strong>
+                      </article>
+                      <article className="stat-card">
+                        <span className="stat-label">Warning</span>
+                        <strong>{selectedReviewPacket.readiness.warning_checks}</strong>
+                      </article>
+                      <article className="stat-card">
+                        <span className="stat-label">Blocking</span>
+                        <strong>{selectedReviewPacket.readiness.blocking_checks}</strong>
+                      </article>
+                      <article className="stat-card">
+                        <span className="stat-label">Manual</span>
+                        <strong>{selectedReviewPacket.readiness.manual_checks}</strong>
+                      </article>
+                    </div>
+
+                    <article className="subtle-card review-objective-card">
+                      <span className="stat-label">Objective</span>
+                      <strong>{toHeadline(selectedReviewPacket.objective_status)}</strong>
+                      <p className="summary-copy">{selectedReviewPacket.objective_summary}</p>
+                      <small>{selectedReviewPacket.generated_at ? formatTimestamp(selectedReviewPacket.generated_at) : "No timestamp"}</small>
+                    </article>
+
+                    {selectedReviewPacket.recommendation ? (
+                      <article className="subtle-card review-objective-card">
+                        <span className="stat-label">Recommendation</span>
+                        <strong>
+                          {selectedReviewPacket.recommendation.action}
+                          {selectedReviewPacket.recommendation.target
+                            ? ` -> ${formatNodeLabel(selectedReviewPacket.recommendation.target)}`
+                            : ""}
+                        </strong>
+                        <p className="summary-copy">{selectedReviewPacket.recommendation.reason}</p>
+                        <div className="chip-list">
+                          <span className="chip">{selectedReviewPacket.recommendation.confidence_pct}% confidence</span>
+                          {selectedReviewPacket.recommendation.evidence.map((item) => (
+                            <span key={item} className="chip">{item}</span>
+                          ))}
+                        </div>
+                      </article>
+                    ) : null}
+
+                    <div className="insight-actions">
+                      <button
+                        className="button button-secondary button-small insight-action"
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void runSessionCommand("/agent review", "Refreshing review packet")}
+                      >
+                        <span>Refresh review</span>
+                        <code>/agent review</code>
+                      </button>
+                      {selectedReviewPacket.suggested_actions.map((command) => (
+                        <button
+                          key={command}
+                          className="button button-secondary button-small insight-action"
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void runSessionCommand(command, `Running ${summarizeCommand(command)}`)}
+                        >
+                          <span>{labelReviewAction(command)}</span>
+                          <code>{command}</code>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="review-check-grid">
+                      {selectedReviewPacket.checks.map((check) => (
+                        <article key={check.id} className={`review-check-card status-${check.status}`}>
+                          <div className="review-check-top">
+                            <strong>{check.label}</strong>
+                            <span className={`status-pill ${reviewStatusToneClass(check.status)}`}>
+                              {toHeadline(check.status)}
+                            </span>
+                          </div>
+                          <p>{check.detail}</p>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 {selectedArtifact && (selectedArtifact.kind === "text" || selectedArtifact.kind === "json") ? (
-                  <pre>{artifactPreview}</pre>
+                  selectedArtifact.path === "review/review_packet.json" && selectedReviewPacket ? null : <pre>{artifactPreview}</pre>
                 ) : null}
                 {selectedArtifact && selectedArtifact.kind === "download" ? (
                   <a
@@ -1392,6 +1523,171 @@ function labelPendingPlanAction(action: "next" | "all" | "cancel"): string {
       return "Running the full pending plan";
     case "cancel":
       return "Canceling the pending plan";
+  }
+}
+
+function parseReviewPacketPreview(raw: string): ReviewPacketPreview | null {
+  if (!raw.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const checks = Array.isArray(parsed.checks)
+      ? parsed.checks
+          .map((item, index) => normalizeReviewCheckPreview(item, index))
+          .filter((item): item is ReviewPacketPreview["checks"][number] => Boolean(item))
+      : [];
+    const readiness = summarizeReviewPreviewReadiness(checks);
+    const recommendation = normalizeReviewRecommendationPreview(parsed.recommendation);
+
+    return {
+      generated_at: typeof parsed.generated_at === "string" ? parsed.generated_at : "",
+      readiness: normalizeReviewReadinessPreview(parsed.readiness, readiness),
+      objective_status: typeof parsed.objective_status === "string" ? parsed.objective_status : "unknown",
+      objective_summary:
+        typeof parsed.objective_summary === "string"
+          ? parsed.objective_summary
+          : "No structured objective summary was available.",
+      recommendation,
+      checks,
+      suggested_actions: Array.isArray(parsed.suggested_actions)
+        ? parsed.suggested_actions.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        : []
+    };
+  } catch {
+    return null;
+  }
+}
+
+function summarizeReviewPreviewReadiness(
+  checks: Array<{ status: ReviewPreviewStatus }>
+): ReviewPacketPreview["readiness"] {
+  let readyChecks = 0;
+  let warningChecks = 0;
+  let blockingChecks = 0;
+  let manualChecks = 0;
+
+  for (const check of checks) {
+    switch (check.status) {
+      case "ready":
+        readyChecks += 1;
+        break;
+      case "warning":
+        warningChecks += 1;
+        break;
+      case "blocking":
+        blockingChecks += 1;
+        break;
+      case "manual":
+        manualChecks += 1;
+        break;
+    }
+  }
+
+  return {
+    status: blockingChecks > 0 ? "blocking" : warningChecks > 0 ? "warning" : "ready",
+    ready_checks: readyChecks,
+    warning_checks: warningChecks,
+    blocking_checks: blockingChecks,
+    manual_checks: manualChecks
+  };
+}
+
+function normalizeReviewCheckPreview(
+  value: unknown,
+  index: number
+): ReviewPacketPreview["checks"][number] | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    id: typeof record.id === "string" ? record.id : `check_${index + 1}`,
+    label: typeof record.label === "string" ? record.label : `Check ${index + 1}`,
+    status: normalizeReviewStatusPreview(record.status),
+    detail: typeof record.detail === "string" ? record.detail : ""
+  };
+}
+
+function normalizeReviewRecommendationPreview(
+  value: unknown
+): ReviewPacketPreview["recommendation"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.action !== "string" || typeof record.reason !== "string") {
+    return undefined;
+  }
+  return {
+    action: record.action,
+    target: typeof record.target === "string" ? record.target : undefined,
+    confidence_pct: typeof record.confidence_pct === "number" ? record.confidence_pct : 0,
+    reason: record.reason,
+    evidence: Array.isArray(record.evidence)
+      ? record.evidence.filter((item): item is string => typeof item === "string").slice(0, 3)
+      : []
+  };
+}
+
+function normalizeReviewReadinessPreview(
+  value: unknown,
+  fallback: ReviewPacketPreview["readiness"]
+): ReviewPacketPreview["readiness"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return fallback;
+  }
+  const record = value as Record<string, unknown>;
+  const status = record.status;
+  return {
+    status: status === "ready" || status === "warning" || status === "blocking" ? status : fallback.status,
+    ready_checks: typeof record.ready_checks === "number" ? record.ready_checks : fallback.ready_checks,
+    warning_checks: typeof record.warning_checks === "number" ? record.warning_checks : fallback.warning_checks,
+    blocking_checks: typeof record.blocking_checks === "number" ? record.blocking_checks : fallback.blocking_checks,
+    manual_checks: typeof record.manual_checks === "number" ? record.manual_checks : fallback.manual_checks
+  };
+}
+
+function normalizeReviewStatusPreview(value: unknown): ReviewPreviewStatus {
+  switch (value) {
+    case "ready":
+    case "warning":
+    case "blocking":
+    case "manual":
+      return value;
+    default:
+      return "manual";
+  }
+}
+
+function reviewStatusToneClass(status: ReviewPreviewStatus | Exclude<ReviewPreviewStatus, "manual">): string {
+  switch (status) {
+    case "ready":
+      return "is-success";
+    case "blocking":
+      return "is-danger";
+    case "warning":
+      return "is-warning";
+    default:
+      return "is-neutral";
+  }
+}
+
+function labelReviewAction(command: string): string {
+  switch (command) {
+    case "/approve":
+      return "Approve review";
+    case "/agent run write_paper":
+      return "Run write_paper";
+    case "/agent apply":
+      return "Apply transition";
+    case "/agent transition":
+      return "Show transition";
+    case "/agent jump analyze_results":
+      return "Jump analyze_results";
+    default:
+      return command.replace(/^\//, "");
   }
 }
 
