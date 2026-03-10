@@ -26,6 +26,7 @@ import {
   parsePaperAnalysisComparisonJudgeJson,
   selectPapersForComparison
 } from "../core/analysis/paperAnalysisComparison.js";
+import { EvalHarnessRunReport, generateEvalHarnessReport } from "../core/evaluation/evalHarness.js";
 import { writeRunArtifact, safeRead } from "../core/nodes/helpers.js";
 import { RunRecord } from "../types.js";
 
@@ -60,6 +61,36 @@ interface ComparisonArtifactPaper {
   };
 }
 
+export interface ComparisonEvaluationContext {
+  present: boolean;
+  overall_score?: number;
+  implementation_status?: EvalHarnessRunReport["statuses"]["implement"];
+  run_verifier_status?: EvalHarnessRunReport["statuses"]["run_verifier"];
+  objective_status?: string;
+  implementation_policy_blocked?: boolean;
+  run_verifier_policy_blocked?: boolean;
+  policy_blocked?: boolean;
+  implement_policy_rule_id?: string;
+  run_verifier_policy_rule_id?: string;
+  findings: string[];
+}
+
+export interface ComparisonArtifactPayload {
+  version: number;
+  createdAt: string;
+  runId: string;
+  selection: {
+    source: string;
+    requestedLimit: number;
+    comparedPaperIds: string[];
+    skipped: Array<{ paper_id: string; title: string; reason: string }>;
+  };
+  judge: { enabled: boolean; model?: string };
+  aggregate: ReturnType<typeof buildAggregate>;
+  evaluation_context: ComparisonEvaluationContext;
+  papers: ComparisonArtifactPaper[];
+}
+
 export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions): Promise<void> {
   const bootstrap = await bootstrapAutoresearchRuntime({
     cwd: options.cwd,
@@ -73,6 +104,7 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
   if (!run) {
     throw new Error(`Run not found: ${options.runId}`);
   }
+  const evaluationContext = await buildComparisonEvaluationContext(options.cwd, run.id);
 
   const cliCheck = await bootstrap.runtime.codex.checkCliAvailable();
   if (!cliCheck.ok) {
@@ -227,7 +259,7 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
   }
 
   const aggregate = buildAggregate(results, judgeWins);
-  const payload = {
+  const payload: ComparisonArtifactPayload = {
     version: 1,
     createdAt: new Date().toISOString(),
     runId: run.id,
@@ -242,6 +274,7 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
       model: options.judge ? bootstrap.config.analysis.responses_model : undefined
     },
     aggregate,
+    evaluation_context: evaluationContext,
     papers: results
   };
 
@@ -254,6 +287,9 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
       `Compared papers: ${aggregate.comparedCount}`,
       `Successful Codex analyses: ${aggregate.codexSuccessCount}`,
       `Successful API analyses: ${aggregate.apiSuccessCount}`,
+      evaluationContext.present
+        ? `Run policy context: blocked=${evaluationContext.policy_blocked ? "yes" : "no"}, implement=${evaluationContext.implementation_status}, run_verifier=${evaluationContext.run_verifier_status}`
+        : "Run policy context: unavailable",
       options.judge
         ? `Judge wins -> codex: ${aggregate.judgeWins.codex}, api: ${aggregate.judgeWins.api}, tie: ${aggregate.judgeWins.tie}`
         : "Judge skipped",
@@ -293,19 +329,9 @@ function buildAggregate(
   };
 }
 
-function buildMarkdownReport(
+export function buildMarkdownReport(
   run: RunRecord,
-  payload: {
-    selection: {
-      source: string;
-      requestedLimit: number;
-      comparedPaperIds: string[];
-      skipped: Array<{ paper_id: string; title: string; reason: string }>;
-    };
-    judge: { enabled: boolean; model?: string };
-    aggregate: ReturnType<typeof buildAggregate>;
-    papers: ComparisonArtifactPaper[];
-  }
+  payload: ComparisonArtifactPayload
 ): string {
   const lines = [
     `# Analysis Mode Comparison`,
@@ -325,6 +351,30 @@ function buildMarkdownReport(
     `- Avg judge overall: codex=${payload.aggregate.averageOverallJudgeScore.codex}, api=${payload.aggregate.averageOverallJudgeScore.api}`,
     ``
   ];
+
+  lines.push(`## Evaluation Context`, ``);
+  if (payload.evaluation_context.present) {
+    lines.push(`- Overall run score: ${payload.evaluation_context.overall_score ?? 0}`);
+    lines.push(`- Implementation verifier: ${payload.evaluation_context.implementation_status || "unknown"}`);
+    lines.push(`- Run verifier: ${payload.evaluation_context.run_verifier_status || "unknown"}`);
+    lines.push(`- Objective status: ${payload.evaluation_context.objective_status || "unknown"}`);
+    lines.push(`- Policy blocked: ${payload.evaluation_context.policy_blocked ? "yes" : "no"}`);
+    if (payload.evaluation_context.implement_policy_rule_id) {
+      lines.push(`- Implement policy rule: ${payload.evaluation_context.implement_policy_rule_id}`);
+    }
+    if (payload.evaluation_context.run_verifier_policy_rule_id) {
+      lines.push(`- Run verifier policy rule: ${payload.evaluation_context.run_verifier_policy_rule_id}`);
+    }
+    if (payload.evaluation_context.findings.length > 0) {
+      lines.push(`- Key findings:`);
+      for (const finding of payload.evaluation_context.findings.slice(0, 3)) {
+        lines.push(`  - ${finding}`);
+      }
+    }
+  } else {
+    lines.push(`- Eval harness context was unavailable for this run.`);
+  }
+  lines.push(``);
 
   if (payload.selection.skipped.length > 0) {
     lines.push(`## Skipped`, ``);
@@ -356,6 +406,43 @@ function buildMarkdownReport(
   }
 
   return `${lines.join("\n").trim()}\n`;
+}
+
+export function normalizeComparisonEvaluationContext(
+  runReport: EvalHarnessRunReport | undefined
+): ComparisonEvaluationContext {
+  if (!runReport) {
+    return {
+      present: false,
+      findings: []
+    };
+  }
+
+  return {
+    present: true,
+    overall_score: runReport.scores.overall,
+    implementation_status: runReport.statuses.implement,
+    run_verifier_status: runReport.statuses.run_verifier,
+    objective_status: runReport.statuses.objective,
+    implementation_policy_blocked: runReport.metrics.implement_failure_type === "policy",
+    run_verifier_policy_blocked: runReport.metrics.run_verifier_stage === "policy",
+    policy_blocked: runReport.metrics.policy_blocked,
+    implement_policy_rule_id: runReport.metrics.implement_policy_rule_id,
+    run_verifier_policy_rule_id: runReport.metrics.run_verifier_policy_rule_id,
+    findings: runReport.findings
+  };
+}
+
+async function buildComparisonEvaluationContext(
+  cwd: string,
+  runId: string
+): Promise<ComparisonEvaluationContext> {
+  const report = await generateEvalHarnessReport({
+    cwd,
+    runIds: [runId],
+    limit: 1
+  });
+  return normalizeComparisonEvaluationContext(report.runs[0]);
 }
 
 async function readCorpusRows(runId: string): Promise<AnalysisCorpusRow[]> {

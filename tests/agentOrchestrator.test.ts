@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { AgentOrchestrator } from "../src/core/agents/agentOrchestrator.js";
 import { InMemoryEventStream } from "../src/core/events.js";
+import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 import { CheckpointStore } from "../src/core/stateGraph/checkpointStore.js";
 import { StateGraphRuntime } from "../src/core/stateGraph/runtime.js";
@@ -134,6 +135,100 @@ describe("AgentOrchestrator (state graph)", () => {
 
     const approved = await orchestrator.approveCurrent(run.id);
     expect(approved.currentNode).toBe("analyze_papers");
+  });
+
+  it("auto advances from implement_experiments to run_experiments when approval is not required", async () => {
+    const registry = new DeterministicRegistry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async () => ({
+          status: "success",
+          summary: "Implementation verified locally and handed off to run_experiments.",
+          needsApproval: false,
+          toolCallsUsed: 2
+        })
+      }
+    });
+    const { store, orchestrator } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const result = await orchestrator.runAgent(run.id, "implement_experiments");
+    expect(result.result.status).toBe("success");
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).toBe("run_experiments");
+    expect(latest?.graph.nodeStates.implement_experiments.status).toBe("completed");
+    expect(latest?.graph.nodeStates.run_experiments.status).toBe("needs_approval");
+  });
+
+  it("feeds run_experiments failure context back into implement_experiments after rollback", async () => {
+    let implementCalls = 0;
+    const seenFeedback: string[] = [];
+    const registry = new DeterministicRegistry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async ({ run }) => {
+          implementCalls += 1;
+          const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+          const feedback = await memory.get<{ summary?: string }>("implement_experiments.runner_feedback");
+          seenFeedback.push(feedback?.summary || "");
+          return {
+            status: "success",
+            summary:
+              implementCalls === 1
+                ? "Initial implementation handed off to the runner."
+                : "Repair implementation informed by runner feedback.",
+            needsApproval: implementCalls >= 2,
+            toolCallsUsed: 1
+          };
+        }
+      },
+      run_experiments: {
+        id: "run_experiments",
+        execute: async ({ run }) => {
+          const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+          await memory.put("implement_experiments.runner_feedback", {
+            source: "run_experiments",
+            status: "fail",
+            trigger: "auto_handoff",
+            stage: "metrics",
+            summary: "Experiment finished without metrics output at metrics_runner.py",
+            suggested_next_action: "Ensure the experiment writes JSON metrics to the required metrics path before finishing.",
+            recorded_at: new Date().toISOString()
+          });
+          return {
+            status: "failure",
+            error: "Experiment finished without metrics output",
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const { store, orchestrator } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const result = await orchestrator.runAgent(run.id, "implement_experiments");
+    expect(result.result.status).toBe("success");
+
+    const latest = await store.getRun(run.id);
+    expect(implementCalls).toBe(2);
+    expect(seenFeedback[0]).toBe("");
+    expect(seenFeedback[1]).toContain("metrics output");
+    expect(latest?.currentNode).toBe("implement_experiments");
+    expect(latest?.graph.nodeStates.implement_experiments.status).toBe("needs_approval");
+    expect((latest?.graph.retryCounters.run_experiments ?? 0)).toBeGreaterThanOrEqual(3);
   });
 
   it("auto retries then rolls back when failure persists", async () => {

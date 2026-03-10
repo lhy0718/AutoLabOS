@@ -6,6 +6,7 @@ export function createImplementExperimentsNode(deps: NodeExecutionDeps): GraphNo
   const sessions = new ImplementSessionManager({
     config: deps.config,
     codex: deps.codex,
+    aci: deps.aci,
     eventStream: deps.eventStream,
     runStore: deps.runStore,
     workspaceRoot: process.cwd()
@@ -17,8 +18,8 @@ export function createImplementExperimentsNode(deps: NodeExecutionDeps): GraphNo
       const result = await sessions.run(run, abortSignal);
       return {
         status: "success",
-        summary: result.summary,
-        needsApproval: true,
+        summary: result.handoffReason ? `${result.summary} ${result.handoffReason}` : result.summary,
+        needsApproval: !result.autoHandoffToRunExperiments,
         toolCallsUsed: Math.max(1, result.changedFiles.length)
       };
     }

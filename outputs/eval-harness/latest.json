@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "generated_at": "2026-03-10T13:16:41.055Z",
+  "workspace_root": "/Users/home/AutoResearchV2",
+  "selection": {
+    "mode": "latest",
+    "requested_run_ids": [],
+    "evaluated_run_ids": [],
+    "limit": 1
+  },
+  "aggregate": {
+    "run_count": 0,
+    "implementation_pass_rate": 0,
+    "run_verifier_pass_rate": 0,
+    "objective_met_rate": 0,
+    "auto_handoff_rate": 0,
+    "artifact_completeness_rate": 0,
+    "avg_implement_attempts": 0,
+    "avg_branch_count": 0,
+    "avg_overall_score": 0
+  },
+  "runs": []
+}

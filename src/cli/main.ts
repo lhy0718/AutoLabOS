@@ -3,6 +3,7 @@ import { runAutoresearchApp } from "../app.js";
 import { resolveCliAction } from "./args.js";
 import { runAutoresearchWebServer } from "../web/server.js";
 import { runCompareAnalysisCli } from "./compareAnalysis.js";
+import { runEvalHarnessCli } from "./evalHarness.js";
 
 function printHelp(): void {
   process.stdout.write([
@@ -15,6 +16,7 @@ function printHelp(): void {
     "  autoresearch",
     "  autoresearch web [--host 127.0.0.1] [--port 4317]",
     "  autoresearch compare-analysis --run <run-id> [--limit 3] [--no-judge]",
+    "  autoresearch eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json]",
     "  autoresearch --help",
     "  autoresearch --version"
   ].join("\n") + "\n");
@@ -54,6 +56,16 @@ async function main(): Promise<void> {
       runId: action.runId,
       limit: action.limit,
       judge: action.judge
+    });
+    return;
+  }
+
+  if (action.kind === "eval-harness") {
+    await runEvalHarnessCli({
+      cwd: process.cwd(),
+      runIds: action.runIds,
+      limit: action.limit,
+      outputPath: action.outputPath
     });
     return;
   }

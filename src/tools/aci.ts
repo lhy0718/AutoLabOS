@@ -1,10 +1,15 @@
+import type { CommandPolicyDecision } from "./commandPolicy.js";
+
 export type AciActionType =
   | "read_file"
   | "write_file"
   | "apply_patch"
   | "run_command"
   | "run_tests"
-  | "tail_logs";
+  | "tail_logs"
+  | "search_code"
+  | "find_symbol"
+  | "list_files";
 
 export interface AciAction {
   type: AciActionType;
@@ -17,6 +22,7 @@ export interface AciObservation {
   stderr?: string;
   exit_code?: number;
   artifacts?: string[];
+  policy?: CommandPolicyDecision;
   duration_ms: number;
 }
 
@@ -29,4 +35,21 @@ export interface AgentComputerInterface {
   runCommand(command: string, cwd?: string, signal?: AbortSignal): Promise<AciObservation>;
   runTests(command: string, cwd?: string, signal?: AbortSignal): Promise<AciObservation>;
   tailLogs(filePath: string, lines?: number): Promise<AciObservation>;
+  searchCode(
+    query: string,
+    cwd?: string,
+    limit?: number,
+    globs?: string[]
+  ): Promise<AciObservation>;
+  findSymbol(
+    symbol: string,
+    cwd?: string,
+    limit?: number,
+    globs?: string[]
+  ): Promise<AciObservation>;
+  listFiles(
+    cwd?: string,
+    limit?: number,
+    globs?: string[]
+  ): Promise<AciObservation>;
 }

@@ -48,6 +48,7 @@
     "pretest:web": "npm run web:install",
     "test:web": "npm --prefix web run test",
     "test:watch": "vitest",
+    "eval:harness": "tsx src/cli/main.ts eval-harness",
     "test:smoke:natural-collect": "bash tests/smoke/run_natural_collect_pending_command.sh",
     "test:smoke:natural-collect-execute": "bash tests/smoke/run_natural_collect_execute_and_verify_artifacts.sh",
     "test:smoke:all": "AUTORESEARCH_SMOKE_MODE=all bash tests/smoke/run_ci_smoke.sh",

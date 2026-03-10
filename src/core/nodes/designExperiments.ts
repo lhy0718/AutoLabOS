@@ -13,12 +13,74 @@ import {
   DesignInputHypothesis,
   ExperimentDesignCandidate
 } from "../analysis/researchPlanning.js";
+import { supportsRealExecutionBundle } from "../experiments/realExecutionBundle.js";
 
 interface FilteredHypothesis {
   hypothesis_id: string;
   text: string;
   reason: string;
 }
+
+const MANAGED_EXECUTABLE_DESIGN = {
+  runner_id: "managed_real_execution_bundle",
+  conditions: [
+    "free_form_chat: planner, solver, and verifier hand off natural-language notes.",
+    "shared_state_schema: planner, solver, and verifier hand off structured JSON shared state."
+  ],
+  standard_profile: {
+    repeats: 2,
+    prompt_variants: 2,
+    tasks_per_dataset: 2,
+    dataset_count: 3,
+    total_trials: 48
+  },
+  quick_check_profile: {
+    repeats: 1,
+    prompt_variants: 1,
+    tasks_per_dataset: 1,
+    dataset_count: 3,
+    total_trials: 6
+  },
+  confirmatory_profile: {
+    repeats: 3,
+    prompt_variants: 2,
+    tasks_per_dataset: 2,
+    dataset_count: 3,
+    total_trials: 72
+  },
+  supported_benchmarks: [
+    "hotpotqa_mini (2 tasks in standard, 1 task in quick_check)",
+    "gsm8k_mini (2 tasks in standard, 1 task in quick_check)",
+    "humaneval_mini (2 tasks in standard, 1 task in quick_check)"
+  ],
+  execution_settings: {
+    max_workers: 2,
+    planner_reasoning_effort: "low",
+    planner_fast_mode: true,
+    solver_reasoning_effort: "medium",
+    verifier_reasoning_effort: "medium"
+  },
+  implemented_perturbations: [
+    "Prompt phrasing / coordination-style variation via neutral vs compressed collaboration instructions."
+  ],
+  supported_metrics: [
+    "reproducibility_score",
+    "replication_success_rate",
+    "cross_run_variance",
+    "run_to_run_variance",
+    "seed_stability",
+    "prompt_paraphrase_sensitivity",
+    "slot_consistency",
+    "artifact_availability",
+    "artifact_consistency_rate",
+    "environment_rebuild_success"
+  ],
+  supported_baselines: [
+    "free_form_chat baseline",
+    "shared_state_schema treatment arm",
+    "recent-paper reproducibility comparison derived from the collected 2022-2026 corpus"
+  ]
+} as const;
 
 export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -157,6 +219,11 @@ function buildPlanYaml(args: {
 }): string {
   const collectDefaults = args.constraintProfile.collect;
   const paperProfile = args.constraintProfile.writing;
+  const useManagedExecutableSections = supportsRealExecutionBundle({
+    topic: args.run.topic,
+    objectiveMetric: args.run.objectiveMetric,
+    constraints: args.run.constraints
+  });
 
   return [
     `run_id: ${args.run.id}`,
@@ -218,20 +285,9 @@ function buildPlanYaml(args: {
     `  id: "${escapeQuote(args.selected.id)}"`,
     `  title: "${escapeQuote(args.selected.title)}"`,
     `  summary: "${escapeQuote(args.selected.plan_summary)}"`,
-    "  datasets:",
-    ...renderYamlStringList(args.selected.datasets, 2),
-    "  metrics:",
-    ...renderYamlStringList(args.selected.metrics, 2),
-    "  baselines:",
-    ...renderYamlStringList(args.selected.baselines, 2),
-    "  implementation_notes:",
-    ...renderYamlStringList(args.selected.implementation_notes, 2),
-    "  evaluation_steps:",
-    ...renderYamlStringList(args.selected.evaluation_steps, 2),
-    "  risks:",
-    ...renderYamlStringList(args.selected.risks, 2),
-    "  budget_notes:",
-    ...renderYamlStringList(args.selected.budget_notes, 2),
+    ...(useManagedExecutableSections
+      ? renderManagedExecutableDesignSection(args.selected)
+      : renderLegacySelectedDesignSection(args.selected)),
     "shortlisted_designs:",
     ...renderShortlistedDesigns(args.candidates),
     "execution:",
@@ -240,6 +296,102 @@ function buildPlanYaml(args: {
     "  budget:",
     "    max_tool_calls: 150"
   ].join("\n");
+}
+
+function renderManagedExecutableDesignSection(selected: ExperimentDesignCandidate): string[] {
+  return [
+    "  executable_design:",
+    `    runner: "${MANAGED_EXECUTABLE_DESIGN.runner_id}"`,
+    "    conditions:",
+    ...renderYamlStringList([...MANAGED_EXECUTABLE_DESIGN.conditions], 3),
+    "    standard_profile:",
+    ...renderYamlKeyValueObject(
+      {
+        repeats: MANAGED_EXECUTABLE_DESIGN.standard_profile.repeats,
+        prompt_variants: MANAGED_EXECUTABLE_DESIGN.standard_profile.prompt_variants,
+        tasks_per_dataset: MANAGED_EXECUTABLE_DESIGN.standard_profile.tasks_per_dataset,
+        dataset_count: MANAGED_EXECUTABLE_DESIGN.standard_profile.dataset_count,
+        total_trials: MANAGED_EXECUTABLE_DESIGN.standard_profile.total_trials
+      },
+      3
+    ),
+    "    quick_check_profile:",
+    ...renderYamlKeyValueObject(
+      {
+        repeats: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.repeats,
+        prompt_variants: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.prompt_variants,
+        tasks_per_dataset: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.tasks_per_dataset,
+        dataset_count: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.dataset_count,
+        total_trials: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.total_trials
+      },
+      3
+    ),
+    "    benchmarks:",
+    ...renderYamlStringList([...MANAGED_EXECUTABLE_DESIGN.supported_benchmarks], 3),
+    "    execution_settings:",
+    ...renderYamlKeyValueObject(
+      {
+        max_workers: MANAGED_EXECUTABLE_DESIGN.execution_settings.max_workers,
+        planner_reasoning_effort: MANAGED_EXECUTABLE_DESIGN.execution_settings.planner_reasoning_effort,
+        planner_fast_mode: MANAGED_EXECUTABLE_DESIGN.execution_settings.planner_fast_mode,
+        solver_reasoning_effort: MANAGED_EXECUTABLE_DESIGN.execution_settings.solver_reasoning_effort,
+        verifier_reasoning_effort: MANAGED_EXECUTABLE_DESIGN.execution_settings.verifier_reasoning_effort
+      },
+      3
+    ),
+    "    implemented_metrics:",
+    ...renderYamlStringList([...MANAGED_EXECUTABLE_DESIGN.supported_metrics], 3),
+    "    implemented_perturbations:",
+    ...renderYamlStringList([...MANAGED_EXECUTABLE_DESIGN.implemented_perturbations], 3),
+    "    supported_baselines:",
+    ...renderYamlStringList([...MANAGED_EXECUTABLE_DESIGN.supported_baselines], 3),
+    "  confirmatory_extension:",
+    "    available_runner_profile:",
+    "      confirmatory:",
+    ...renderYamlKeyValueObject(
+      {
+        repeats: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.repeats,
+        prompt_variants: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.prompt_variants,
+        tasks_per_dataset: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.tasks_per_dataset,
+        dataset_count: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.dataset_count,
+        total_trials: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.total_trials
+      },
+      4
+    ),
+    "    research_scale_datasets:",
+    ...renderYamlStringList(uniqueStrings(selected.datasets), 3),
+    "    additional_metrics_and_protocol:",
+    ...renderYamlStringList(uniqueStrings(selected.metrics), 3),
+    "    additional_baselines:",
+    ...renderYamlStringList(uniqueStrings(selected.baselines), 3),
+    "    implementation_notes:",
+    ...renderYamlStringList(uniqueStrings(selected.implementation_notes), 3),
+    "    evaluation_steps:",
+    ...renderYamlStringList(uniqueStrings(selected.evaluation_steps), 3),
+    "    risks:",
+    ...renderYamlStringList(uniqueStrings(selected.risks), 3),
+    "    budget_notes:",
+    ...renderYamlStringList(uniqueStrings(selected.budget_notes), 3)
+  ];
+}
+
+function renderLegacySelectedDesignSection(selected: ExperimentDesignCandidate): string[] {
+  return [
+    "  datasets:",
+    ...renderYamlStringList(selected.datasets, 2),
+    "  metrics:",
+    ...renderYamlStringList(selected.metrics, 2),
+    "  baselines:",
+    ...renderYamlStringList(selected.baselines, 2),
+    "  implementation_notes:",
+    ...renderYamlStringList(selected.implementation_notes, 2),
+    "  evaluation_steps:",
+    ...renderYamlStringList(selected.evaluation_steps, 2),
+    "  risks:",
+    ...renderYamlStringList(selected.risks, 2),
+    "  budget_notes:",
+    ...renderYamlStringList(selected.budget_notes, 2)
+  ];
 }
 
 function renderShortlistedDesigns(candidates: ExperimentDesignCandidate[]): string[] {
@@ -266,6 +418,10 @@ function renderDroppedHypotheses(items: FilteredHypothesis[]): string[] {
     lines.push(`    text: "${escapeQuote(item.text)}"`);
   }
   return lines;
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return [...new Set(items.map((item) => item.trim()).filter(Boolean))];
 }
 
 function escapeQuote(text: string): string {

@@ -28,6 +28,15 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports eval-harness mode", () => {
+    expect(resolveCliAction(["eval-harness", "--run", "run-123", "--run", "run-456", "--limit", "5", "--output", "outputs/eval.json"])).toEqual({
+      kind: "eval-harness",
+      runIds: ["run-123", "run-456"],
+      limit: 5,
+      outputPath: "outputs/eval.json"
+    });
+  });
+
   it("requires a run id for compare-analysis", () => {
     const action = resolveCliAction(["compare-analysis"]);
     expect(action.kind).toBe("error");

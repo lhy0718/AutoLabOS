@@ -151,7 +151,9 @@ export async function createAutoresearchRuntime(
   const pdfTextLlm = new RoutedLLMClient(() =>
     config.providers.llm_mode === "openai_api" ? openAiPdfLlm : codexPdfLlm
   );
-  const aci = new LocalAciAdapter();
+  const aci = new LocalAciAdapter({
+    allowNetwork: config.experiments.allow_network === true
+  });
   const semanticScholarApiKey = await resolveSemanticScholarApiKey(paths.cwd);
   const semanticScholar = new SemanticScholarClient({
     apiKey: semanticScholarApiKey,
