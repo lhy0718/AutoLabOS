@@ -456,6 +456,15 @@ flowchart TB
 
 All run artifacts live under `.autolabos/runs/<run_id>/`, which makes the pipeline inspectable from both the TUI and the local web UI.
 
+User-facing deliverables are mirrored to `outputs/<sanitized-run-title>-<run_id_prefix>/` while `.autolabos` remains the internal source of truth for runtime state, memory, checkpoints, and panel internals. The public output root always includes `manifest.json`, which records the run id, title, output root, generated files per section, and any workspace files that were edited outside `.autolabos`.
+
+| Public section | Typical mirrored files |
+| --- | --- |
+| `experiment/` | `experiment_plan.yaml`, reusable experiment bundle files, `metrics.json`, `objective_evaluation.json`, `run_experiments_verify_report.json`, optional supplemental metrics, `workspace_changed_files.json` |
+| `analysis/` | `result_analysis.json`, `result_analysis_synthesis.json`, `transition_recommendation.json`, optional `figures/performance.svg` |
+| `review/` | `review_packet.json`, `checklist.md`, `decision.json`, `findings.jsonl` |
+| `paper/` | `main.tex`, `references.bib`, `evidence_links.json`, optional `main.pdf`, optional `build.log` |
+
 `analyze_papers` uses `analysis_manifest.json` to resume unfinished work. If the selected paper set changes, the analysis configuration changes, or `paper_summaries.jsonl` / `evidence_store.jsonl` drift out of sync with the manifest, AutoLabOS prunes stale rows and re-queues only the affected papers before downstream nodes continue.
 
 The new mid-pipeline reinforcements are internal-only in v1: `design_experiments` writes `design_experiments_panel/*`, `run_experiments` writes `run_experiments_panel/*`, and `analyze_results` writes `analyze_results_panel/*`. The corresponding run-context memory keys are `design_experiments.panel_selection`, `run_experiments.triage`, and `analyze_results.panel_decision`.

@@ -5,6 +5,7 @@ import { AnalysisReport } from "../resultAnalysis.js";
 import { buildReviewPacket } from "../reviewPacket.js";
 import { ReviewArtifactPresence, runReviewPanel } from "../reviewSystem.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
+import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
 import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { TransitionRecommendation } from "../../types.js";
@@ -39,7 +40,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       const transitionRecommendation = buildReviewTransitionRecommendation(panel, packet);
       const markdown = renderReviewChecklist(run, packet, panel);
 
-      await writeRunArtifact(run, "review/findings.jsonl", renderJsonl(panel.findings));
+      const findingsPath = await writeRunArtifact(run, "review/findings.jsonl", renderJsonl(panel.findings));
       await writeRunArtifact(run, "review/scorecard.json", `${JSON.stringify(panel.scorecard, null, 2)}\n`);
       await writeRunArtifact(
         run,
@@ -52,9 +53,33 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         "review/revision_plan.json",
         `${JSON.stringify(panel.revision_plan, null, 2)}\n`
       );
-      await writeRunArtifact(run, "review/decision.json", `${JSON.stringify(panel.decision, null, 2)}\n`);
-      await writeRunArtifact(run, "review/review_packet.json", `${JSON.stringify(packet, null, 2)}\n`);
-      await writeRunArtifact(run, "review/checklist.md", markdown);
+      const decisionPath = await writeRunArtifact(run, "review/decision.json", `${JSON.stringify(panel.decision, null, 2)}\n`);
+      const reviewPacketPath = await writeRunArtifact(run, "review/review_packet.json", `${JSON.stringify(packet, null, 2)}\n`);
+      const checklistPath = await writeRunArtifact(run, "review/checklist.md", markdown);
+      const publicOutputs = await publishPublicRunOutputs({
+        workspaceRoot: process.cwd(),
+        run,
+        runContext: runContextMemory,
+        section: "review",
+        files: [
+          {
+            sourcePath: reviewPacketPath,
+            targetRelativePath: "review_packet.json"
+          },
+          {
+            sourcePath: checklistPath,
+            targetRelativePath: "checklist.md"
+          },
+          {
+            sourcePath: decisionPath,
+            targetRelativePath: "decision.json"
+          },
+          {
+            sourcePath: findingsPath,
+            targetRelativePath: "findings.jsonl"
+          }
+        ]
+      });
       await runContextMemory.put("review.packet", packet);
       await runContextMemory.put("review.last_summary", packet.objective_summary);
       await runContextMemory.put("review.last_recommendation", packet.recommendation || null);
@@ -70,6 +95,14 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           text: `Review panel completed with ${panel.reviewers.length} specialist reviewer(s), ${panel.findings.length} finding(s), and outcome ${panel.decision.outcome}.`
         }
       });
+      deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "review",
+        payload: {
+          text: `Public review outputs are available at ${publicOutputs.sectionDirRelative}.`
+        }
+      });
 
       const blockers = packet.readiness.blocking_checks;
       const warnings = packet.readiness.warning_checks;
@@ -78,10 +111,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         status: "success",
         summary:
           blockers > 0
-            ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual review item(s). The runtime will take the conservative backtrack recommended by review before paper drafting.`
+            ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual review item(s). The runtime will take the conservative backtrack recommended by review before paper drafting. Public outputs: ${publicOutputs.outputRootRelative}.`
             : warnings > 0 || manual > 0
-              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). The next stage will carry the attached revision checklist or follow the recommended backtrack automatically.`
-              : `Review panel completed with outcome ${panel.decision.outcome}. The runtime can continue automatically from the review recommendation.`,
+              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). The next stage will carry the attached revision checklist or follow the recommended backtrack automatically. Public outputs: ${publicOutputs.outputRootRelative}.`
+              : `Review panel completed with outcome ${panel.decision.outcome}. The runtime can continue automatically from the review recommendation. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         toolCallsUsed: Math.max(1, panel.llm_calls_used),
         costUsd: panel.llm_cost_usd,

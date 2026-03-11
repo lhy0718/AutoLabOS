@@ -455,6 +455,15 @@ flowchart TB
 
 모든 run 아티팩트는 `.autolabos/runs/<run_id>/` 아래에 저장되므로, TUI와 로컬 웹 UI 양쪽에서 같은 실행 결과를 추적하고 점검할 수 있습니다.
 
+사용자가 바로 열어보는 deliverable은 `outputs/<sanitized-run-title>-<run_id_prefix>/` 아래로 미러링되고, `.autolabos`는 런타임 상태, 메모리, 체크포인트, 패널 내부 상태를 보관하는 내부 source of truth로 유지됩니다. public output root에는 항상 `manifest.json`이 있으며, run id, title, output root, 섹션별 generated file, 그리고 `.autolabos` 밖에서 수정된 workspace 파일 목록을 기록합니다.
+
+| Public section | 보통 여기에 미러링되는 파일 |
+| --- | --- |
+| `experiment/` | `experiment_plan.yaml`, 재사용 가능한 experiment bundle 파일, `metrics.json`, `objective_evaluation.json`, `run_experiments_verify_report.json`, optional supplemental metrics, `workspace_changed_files.json` |
+| `analysis/` | `result_analysis.json`, `result_analysis_synthesis.json`, `transition_recommendation.json`, optional `figures/performance.svg` |
+| `review/` | `review_packet.json`, `checklist.md`, `decision.json`, `findings.jsonl` |
+| `paper/` | `main.tex`, `references.bib`, `evidence_links.json`, optional `main.pdf`, optional `build.log` |
+
 `analyze_papers`는 `analysis_manifest.json`을 이용해 미완료 작업만 재개합니다. 선택된 논문 집합이 바뀌거나, 분석 설정이 바뀌거나, `paper_summaries.jsonl` / `evidence_store.jsonl`가 manifest와 어긋나면 AutoLabOS는 오래된 행을 정리하고 영향받은 논문만 다시 큐에 넣은 뒤 downstream 노드를 계속 진행합니다.
 
 새로운 중간 파이프라인 강화는 v1에서 내부 전용으로만 노출됩니다. `design_experiments`는 `design_experiments_panel/*`, `run_experiments`는 `run_experiments_panel/*`, `analyze_results`는 `analyze_results_panel/*`를 쓰고, 대응되는 run-context memory key는 `design_experiments.panel_selection`, `run_experiments.triage`, `analyze_results.panel_decision`입니다.

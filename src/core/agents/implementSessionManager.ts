@@ -12,6 +12,7 @@ import { LongTermEntry, LongTermStore } from "../memory/longTermStore.js";
 import { ensureDir, fileExists, writeJsonFile } from "../../utils/fs.js";
 import { safeRead } from "../nodes/helpers.js";
 import { buildPublicExperimentDir } from "../publicArtifacts.js";
+import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
 import { resolveExperimentLlmProfile } from "../experimentLlmProfile.js";
 import { supportsRealExecutionBundle, writeRealExecutionBundle } from "../experiments/realExecutionBundle.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
@@ -464,6 +465,19 @@ export class ImplementSessionManager {
       finalAttempt.originalScriptPath,
       publishedScriptPath
     ) || undefined;
+    const workspaceChangedFiles = collectWorkspaceChangedFiles({
+      changedFiles: [...changedFiles],
+      workspaceRoot: this.deps.workspaceRoot,
+      publicDir: finalAttempt.publicDir
+    });
+    const workspaceChangedManifestPath = path.join(finalAttempt.publicDir, "workspace_changed_files.json");
+    await writeJsonFile(workspaceChangedManifestPath, {
+      workspace_root: this.deps.workspaceRoot,
+      files: workspaceChangedFiles,
+      updated_at: new Date().toISOString()
+    });
+    publicArtifacts.add(workspaceChangedManifestPath);
+    artifacts.add(workspaceChangedManifestPath);
     const summary = formatImplementSummary(finalAttempt.summary, finalAttempt.experimentMode, finalAttempt.verifyReport);
 
     const latestRun = (await this.deps.runStore.getRun(run.id)) || run;
@@ -541,6 +555,7 @@ export class ImplementSessionManager {
     await runContext.put("implement_experiments.artifacts", [...artifacts]);
     await runContext.put("implement_experiments.public_dir", finalAttempt.publicDir);
     await runContext.put("implement_experiments.public_artifacts", [...publicArtifacts]);
+    await runContext.put("implement_experiments.workspace_changed_files", workspaceChangedFiles);
     await runContext.put("implement_experiments.mode", finalAttempt.experimentMode);
     await runContext.put("implement_experiments.llm_profile", experimentLlmProfile);
     await runContext.put("implement_experiments.metrics_path", finalAttempt.metricsPath);
@@ -592,6 +607,26 @@ export class ImplementSessionManager {
       raw_response: finalAttempt.rawResponse,
       raw_event_count: rawEvents.length,
       updated_at: new Date().toISOString()
+    });
+
+    const publicOutputs = await publishPublicRunOutputs({
+      workspaceRoot: this.deps.workspaceRoot,
+      run,
+      runContext,
+      section: "experiment",
+      files: [...publicArtifacts].map((filePath) => ({
+        sourcePath: filePath
+      })),
+      workspaceChangedFiles
+    });
+    this.deps.eventStream.emit({
+      type: "OBS_RECEIVED",
+      runId: run.id,
+      node: "implement_experiments",
+      agentRole: "implementer",
+      payload: {
+        text: `Public experiment outputs are available at ${publicOutputs.sectionDirRelative}.`
+      }
     });
 
     if (finalVerifyReport.status === "fail") {
@@ -1444,6 +1479,21 @@ function isReusablePublicArtifact(filePath: string): boolean {
     ".cfg",
     ".ini"
   ].includes(ext);
+}
+
+function collectWorkspaceChangedFiles(params: {
+  changedFiles: string[];
+  workspaceRoot: string;
+  publicDir: string;
+}): string[] {
+  const privateDir = path.join(params.workspaceRoot, ".autolabos");
+  return [...new Set(params.changedFiles.map((filePath) => normalizeStoredPath(filePath, params.workspaceRoot)))]
+    .filter((filePath): filePath is string => Boolean(filePath))
+    .filter((filePath) => isPathInsideOrEqual(filePath, params.workspaceRoot))
+    .filter((filePath) => !isPathInsideOrEqual(filePath, privateDir))
+    .filter((filePath) => !isPathInsideOrEqual(filePath, params.publicDir))
+    .map((filePath) => path.relative(params.workspaceRoot, filePath).replace(/\\/g, "/"))
+    .sort();
 }
 
 function isSubpath(filePath: string, parentDir: string): boolean {

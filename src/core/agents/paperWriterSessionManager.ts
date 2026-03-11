@@ -13,6 +13,13 @@ import {
   parsePaperDraftJson,
   normalizePaperDraft
 } from "../analysis/paperWriting.js";
+import {
+  buildFallbackPaperManuscript,
+  buildPaperPolishPrompt,
+  PaperManuscript,
+  parsePaperManuscriptJson,
+  normalizePaperManuscript
+} from "../analysis/paperManuscript.js";
 import { ConstraintProfile } from "../runConstraints.js";
 import { ObjectiveMetricEvaluation, ObjectiveMetricProfile } from "../objectiveMetric.js";
 import { mapCodexEventToAutoLabOSEvents } from "../../integrations/codex/codexEventMapper.js";
@@ -37,7 +44,7 @@ interface PaperWriterReview {
 }
 
 interface SessionTraceEntry {
-  stage: "outline" | "draft" | "review" | "finalize" | "validation_repair";
+  stage: "outline" | "draft" | "review" | "finalize" | "polish" | "validation_repair";
   mode: "codex_session" | "staged_llm";
   threadId?: string;
   fallbackUsed: boolean;
@@ -49,6 +56,7 @@ interface SessionTraceEntry {
 
 export interface PaperWriterSessionResult {
   draft: PaperDraft;
+  manuscript: PaperManuscript;
   source: "codex_session" | "staged_llm" | "fallback";
   threadId?: string;
   outline: PaperWriterOutline;
@@ -252,10 +260,58 @@ export class PaperWriterSessionManager {
     }
     await this.persistStageArtifacts(input.run, "finalize", finalDraft, finalStage.text);
 
+    let manuscript = buildFallbackPaperManuscript({
+      draft: finalDraft,
+      resultAnalysis: input.bundle.resultAnalysis,
+      objectiveEvaluation: input.objectiveEvaluation,
+      objectiveMetricProfile: input.objectiveMetricProfile,
+      experimentPlan: input.bundle.experimentPlan
+    });
+    const polishStage = await this.runStage({
+      run: input.run,
+      runContext,
+      stage: "polish",
+      mode,
+      threadId: activeThreadId,
+      systemPrompt: buildRoleSystemPrompt("paper_writer", this.writerRole.sop),
+      prompt: buildPaperPolishPrompt({
+        bundle: input.bundle,
+        draft: finalDraft,
+        constraintProfile: input.constraintProfile,
+        objectiveMetricProfile: input.objectiveMetricProfile,
+        objectiveEvaluation: input.objectiveEvaluation
+      }),
+      agentRole: "paper_writer",
+      abortSignal: input.abortSignal,
+      trace
+    });
+    activeThreadId = polishStage.threadId || activeThreadId;
+    if (polishStage.text) {
+      try {
+        manuscript = normalizePaperManuscript({
+          raw: parsePaperManuscriptJson(polishStage.text),
+          draft: finalDraft,
+          resultAnalysis: input.bundle.resultAnalysis,
+          objectiveEvaluation: input.objectiveEvaluation,
+          objectiveMetricProfile: input.objectiveMetricProfile,
+          experimentPlan: input.bundle.experimentPlan
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`polish: ${message}`);
+        stageFallbacks += 1;
+        this.attachTraceError(trace, "polish", message);
+      }
+    } else {
+      stageFallbacks += 1;
+    }
+    await this.persistPolishArtifacts(input.run, manuscript, polishStage.text);
+
     await writeRunArtifact(input.run, "paper/session_trace.json", `${JSON.stringify(trace, null, 2)}\n`);
     await runContext.put("write_paper.thread_id", activeThreadId || null);
     await runContext.put("write_paper.session_outline", outline);
     await runContext.put("write_paper.session_review", review);
+    await runContext.put("write_paper.session_manuscript", manuscript);
     await runContext.put("write_paper.session_trace", trace);
     await runContext.put("write_paper.session_errors", errors);
     await runContext.put("write_paper.stage_fallbacks", stageFallbacks);
@@ -268,10 +324,11 @@ export class PaperWriterSessionManager {
 
     return {
       draft: finalDraft,
+      manuscript,
       source:
         mode === "codex_session"
           ? "codex_session"
-          : stageFallbacks < 4
+          : stageFallbacks < 5
             ? "staged_llm"
             : "fallback",
       threadId: activeThreadId,
@@ -467,7 +524,7 @@ export class PaperWriterSessionManager {
   private async runStage(input: {
     run: RunRecord;
     runContext: RunContextMemory;
-    stage: "outline" | "draft" | "review" | "finalize" | "validation_repair";
+    stage: "outline" | "draft" | "review" | "finalize" | "polish" | "validation_repair";
     mode: "codex_session" | "staged_llm";
     threadId?: string;
     systemPrompt: string;
@@ -557,6 +614,15 @@ export class PaperWriterSessionManager {
     await writeRunArtifact(run, `paper/${stage}.raw.txt`, `${rawText || ""}\n`);
   }
 
+  private async persistPolishArtifacts(
+    run: RunRecord,
+    manuscript: PaperManuscript,
+    rawText: string
+  ): Promise<void> {
+    await writeRunArtifact(run, "paper/manuscript.session.json", `${JSON.stringify(manuscript, null, 2)}\n`);
+    await writeRunArtifact(run, "paper/polish.raw.txt", `${rawText || ""}\n`);
+  }
+
   private async persistThreadToRunStore(run: RunRecord, threadId: string | undefined): Promise<void> {
     if (!threadId) {
       return;
@@ -613,7 +679,7 @@ function buildLatexRepairSystemPrompt(sop: string[]): string {
   return [
     "Role: paper_writer",
     "Task: repair a LaTeX document so that it compiles.",
-    "Preserve the paper's claims, evidence anchors, and bibliography structure.",
+    "Preserve the paper's claims, human-facing prose, and bibliography structure.",
     "Do not add new experimental results.",
     "Return the full corrected LaTeX source only.",
     "Relevant SOP:",
@@ -684,7 +750,7 @@ function buildReviewPrompt(input: {
   draft: PaperDraft;
 }): string {
   return [
-    "Review the structured paper draft for unsupported claims, missing sections, and weak evidence links.",
+    "Review the structured paper draft for unsupported claims, missing sections, weak evidence links, and text that would read like a system log instead of a paper.",
     "Return one JSON object with this shape:",
     "{",
     '  "summary": "string",',
@@ -693,6 +759,9 @@ function buildReviewPrompt(input: {
     '  "missing_sections": ["string"],',
     '  "missing_citations": ["string"]',
     "}",
+    "",
+    "Flag any section that relies on log-speak, repeated template phrasing, inline evidence IDs, internal paths, or debug-style headings.",
+    "The final manuscript should not use the headings Research Context, Writing Constraints, Results Overview, or Claim Trace.",
     "",
     `Topic: ${input.bundle.topic}`,
     `Objective metric: ${input.bundle.objectiveMetric}`,
@@ -745,6 +814,8 @@ function buildRevisionPrompt(input: {
           ""
         ]
       : []),
+    "Revise toward human-readable academic prose.",
+    "Do not introduce log-speak, repeated template language, inline evidence IDs, internal paths, or the headings Research Context, Writing Constraints, Results Overview, or Claim Trace.",
     "Return the revised final structured paper draft JSON."
   ].join("\n");
 }

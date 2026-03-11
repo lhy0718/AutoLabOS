@@ -6,6 +6,7 @@ import { GraphNodeHandler } from "../stateGraph/types.js";
 import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
+import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 import { ObjectiveMetricProfile, resolveObjectiveMetricProfile } from "../objectiveMetric.js";
 import {
@@ -189,6 +190,18 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       await runContextMemory.put("design_experiments.hypothesis_count", filtered.kept.length);
       await runContextMemory.put("design_experiments.filtered_out_count", filtered.dropped.length);
       await runContextMemory.put("design_experiments.panel_selection", panelResult.selection);
+      const publicOutputs = await publishPublicRunOutputs({
+        workspaceRoot: process.cwd(),
+        run,
+        runContext: runContextMemory,
+        section: "experiment",
+        files: [
+          {
+            sourcePath: outputPath,
+            targetRelativePath: "experiment_plan.yaml"
+          }
+        ]
+      });
 
       deps.eventStream.emit({
         type: "PLAN_CREATED",
@@ -205,12 +218,13 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       emitLog(
         `Selected design "${panelResult.selected.title}" from ${design.candidates.length} candidate(s) using ${design.source} with ${panelResult.selection.mode}.`
       );
+      emitLog(`Public experiment outputs are available at ${publicOutputs.sectionDirRelative}.`);
 
       return {
         status: "success",
         summary: design.fallbackReason
-          ? `${design.summary} Selected "${panelResult.selected.title}" via ${panelResult.selection.mode}. Falling back after: ${design.fallbackReason}`
-          : `${design.summary} Selected "${panelResult.selected.title}" via ${panelResult.selection.mode}.`,
+          ? `${design.summary} Selected "${panelResult.selected.title}" via ${panelResult.selection.mode}. Falling back after: ${design.fallbackReason}. Public outputs: ${publicOutputs.outputRootRelative}.`
+          : `${design.summary} Selected "${panelResult.selected.title}" via ${panelResult.selection.mode}. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         toolCallsUsed: 1
       };

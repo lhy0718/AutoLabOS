@@ -14,6 +14,19 @@ describe("command policy", () => {
     expect(decision.rule_id).toBeUndefined();
   });
 
+  it("allows pdflatex flags that mention halt-on-error", () => {
+    const decision = evaluateCommandPolicy(
+      "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
+      {
+        scope: "command",
+        allowNetwork: false
+      }
+    );
+
+    expect(decision.allowed).toBe(true);
+    expect(decision.rule_id).toBeUndefined();
+  });
+
   it("blocks destructive commands before execution", async () => {
     const aci = new LocalAciAdapter();
     const obs = await aci.runCommand("rm -rf ./tmp-artifacts");

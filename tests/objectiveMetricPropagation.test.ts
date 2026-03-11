@@ -11,7 +11,13 @@ import { createAnalyzeResultsNode } from "../src/core/nodes/analyzeResults.js";
 import { createReviewNode } from "../src/core/nodes/review.js";
 import { createRunExperimentsNode } from "../src/core/nodes/runExperiments.js";
 import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
-import { buildPublicPaperDir } from "../src/core/publicArtifacts.js";
+import {
+  buildPublicAnalysisDir,
+  buildPublicExperimentDir,
+  buildPublicPaperDir,
+  buildPublicReviewDir,
+  buildPublicRunManifestPath
+} from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
 import { RunRecord } from "../src/types.js";
@@ -386,6 +392,12 @@ describe("objective metric propagation", () => {
     expect(evaluationRaw).toContain('"matchedMetricKey": "accuracy"');
     const backupRaw = await readFile(path.join(root, previousMetricsBackup as string), "utf8");
     expect(backupRaw).toContain('"stale": true');
+    const publicExperimentDir = buildPublicExperimentDir(root, run);
+    expect(await readFile(path.join(publicExperimentDir, "metrics.json"), "utf8")).toContain('"accuracy": 0.91');
+    expect(await readFile(path.join(publicExperimentDir, "objective_evaluation.json"), "utf8")).toContain('"status": "met"');
+    expect(await readFile(path.join(publicExperimentDir, "run_experiments_verify_report.json"), "utf8")).toContain(
+      '"status": "pass"'
+    );
 
     const analyzeResult = await analyzeNode.execute({ run, graph: run.graph });
     expect(analyzeResult.status).toBe("success");
@@ -486,6 +498,16 @@ describe("objective metric propagation", () => {
     expect(synthesisRaw).toContain('"source": "llm"');
     const transitionRaw = await readFile(path.join(runDir, "transition_recommendation.json"), "utf8");
     expect(transitionRaw).toContain('"action": "advance"');
+    const publicAnalysisDir = buildPublicAnalysisDir(root, run);
+    expect(await readFile(path.join(publicAnalysisDir, "result_analysis.json"), "utf8")).toContain(
+      '"objective_status": "met"'
+    );
+    expect(await readFile(path.join(publicAnalysisDir, "result_analysis_synthesis.json"), "utf8")).toContain(
+      '"source": "llm"'
+    );
+    expect(await readFile(path.join(publicAnalysisDir, "transition_recommendation.json"), "utf8")).toContain(
+      '"action": "advance"'
+    );
 
     const reviewResult = await reviewNode.execute({ run, graph: run.graph });
     expect(reviewResult.status).toBe("success");
@@ -498,34 +520,88 @@ describe("objective metric propagation", () => {
     expect(reviewChecklistRaw).toContain("Decision: advance -> advance");
     expect(reviewChecklistRaw).toContain("Consensus:");
     expect(reviewChecklistRaw).toContain("/agent run write_paper");
+    const publicReviewDir = buildPublicReviewDir(root, run);
+    expect(await readFile(path.join(publicReviewDir, "review_packet.json"), "utf8")).toContain(
+      '"objective_status": "met"'
+    );
+    expect(await readFile(path.join(publicReviewDir, "checklist.md"), "utf8")).toContain("Decision: advance -> advance");
+    expect(await readFile(path.join(publicReviewDir, "decision.json"), "utf8")).toContain('"outcome": "advance"');
+    expect(typeof (await readFile(path.join(publicReviewDir, "findings.jsonl"), "utf8"))).toBe("string");
 
     expect(await memory.get("review.last_summary")).toContain("Objective metric met");
 
     const figureRaw = await readFile(path.join(runDir, "figures", "performance.svg"), "utf8");
     expect(figureRaw).toContain("<svg");
     expect(figureRaw).toContain("Experiment Metric Overview");
+    expect(await readFile(path.join(publicAnalysisDir, "figures", "performance.svg"), "utf8")).toContain("<svg");
 
     const writeResult = await writeNode.execute({ run, graph: run.graph });
     expect(writeResult.status).toBe("success");
 
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("Primary objective: accuracy at least 0.9.");
-    expect(tex).toContain("Objective evaluation: Objective metric met: accuracy=0.91 >= 0.9.");
+    expect(tex).toContain("Objective metric met: accuracy=0.91 >= 0.9.");
     expect(tex).toContain("The selected experimental design is Accuracy benchmark");
     expect(tex).toContain("\\begin{table}[t]");
-    expect(tex).toContain("Top reported metrics from the structured result analysis.");
+    expect(tex).toContain("Selected reported metrics from the structured results analysis.");
     expect(tex).toContain("\\begin{figure}[t]");
-    expect(tex).toContain("Artifact: Performance overview figures/performance.svg.");
-    expect(tex).toContain("Statistical summary:");
-    expect(tex).toContain("Failure taxonomy:");
-    expect(tex).toContain("Discussion cues:");
-    expect(tex).toContain("Confidence statement:");
-    expect(tex).toContain("95\\% CI");
-    expect(tex).toContain("Result emphasis:");
-    expect(tex).toContain("Recent paper comparison");
+    expect(tex).not.toContain("Artifact: Performance overview figures/performance.svg.");
+    expect(tex).not.toContain("Statistical summary:");
+    expect(tex).not.toContain("Failure taxonomy:");
+    expect(tex).toContain("\\section{Discussion}");
     const publicTex = await readFile(path.join(buildPublicPaperDir(root, run), "main.tex"), "utf8");
     expect(publicTex).toContain("Primary objective: accuracy at least 0.9.");
     expect(publicTex).toContain("The selected experimental design is Accuracy benchmark");
+    const manuscriptRaw = await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8");
+    expect(manuscriptRaw).not.toContain("Results Overview");
+    const traceabilityRaw = await readFile(path.join(runDir, "paper", "traceability.json"), "utf8");
+    expect(traceabilityRaw).toContain('"citation_paper_ids"');
+    const publicManifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
+      generated_files: string[];
+      sections?: {
+        experiment?: { generated_files: string[] };
+        analysis?: { generated_files: string[] };
+        review?: { generated_files: string[] };
+        paper?: { generated_files: string[] };
+      };
+    };
+    expect(publicManifest.generated_files).toEqual(
+      expect.arrayContaining([
+        "experiment/metrics.json",
+        "experiment/objective_evaluation.json",
+        "experiment/run_experiments_verify_report.json",
+        "analysis/result_analysis.json",
+        "analysis/transition_recommendation.json",
+        "review/review_packet.json",
+        "paper/main.tex"
+      ])
+    );
+    expect(publicManifest.sections?.experiment?.generated_files).toEqual(
+      expect.arrayContaining([
+        "experiment/metrics.json",
+        "experiment/objective_evaluation.json",
+        "experiment/run_experiments_verify_report.json"
+      ])
+    );
+    expect(publicManifest.sections?.analysis?.generated_files).toEqual(
+      expect.arrayContaining([
+        "analysis/result_analysis.json",
+        "analysis/result_analysis_synthesis.json",
+        "analysis/transition_recommendation.json",
+        "analysis/figures/performance.svg"
+      ])
+    );
+    expect(publicManifest.sections?.review?.generated_files).toEqual(
+      expect.arrayContaining([
+        "review/review_packet.json",
+        "review/checklist.md",
+        "review/decision.json",
+        "review/findings.jsonl"
+      ])
+    );
+    expect(publicManifest.sections?.paper?.generated_files).toEqual(
+      expect.arrayContaining(["paper/main.tex", "paper/references.bib", "paper/evidence_links.json"])
+    );
   });
 
   it("fails structured result analysis when metrics.json is missing", async () => {
@@ -715,6 +791,9 @@ describe("objective metric propagation", () => {
     const decisionRaw = await readFile(path.join(runDir, "analyze_results_panel", "decision.json"), "utf8");
     expect(decisionRaw).toContain('"panel_calibrated": true');
     expect(decisionRaw).toContain('"action": "advance"');
+    expect(await readFile(path.join(buildPublicAnalysisDir(root, run), "result_analysis.json"), "utf8")).toContain(
+      '"matched_metric_key": "accuracy"'
+    );
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("analyze_results.panel_decision")).toMatchObject({
       action: "advance",
@@ -1428,6 +1507,13 @@ describe("objective metric propagation", () => {
     const confirmatoryRaw = await readFile(path.join(publicDir, "confirmatory_metrics.json"), "utf8");
     expect(quickCheckRaw).toContain('"name": "quick_check"');
     expect(confirmatoryRaw).toContain('"name": "confirmatory"');
+    const mirroredExperimentDir = buildPublicExperimentDir(root, run);
+    expect(await readFile(path.join(mirroredExperimentDir, "quick_check_metrics.json"), "utf8")).toContain(
+      '"name": "quick_check"'
+    );
+    expect(await readFile(path.join(mirroredExperimentDir, "confirmatory_metrics.json"), "utf8")).toContain(
+      '"name": "confirmatory"'
+    );
     const executionPlanRaw = await readFile(
       path.join(runDir, "run_experiments_panel", "execution_plan.json"),
       "utf8"
@@ -1437,6 +1523,22 @@ describe("objective metric propagation", () => {
     expect(triageRaw).toContain('"metrics_state": "valid"');
     expect(triageRaw).toContain('"profile": "quick_check"');
     expect(triageRaw).toContain('"profile": "confirmatory"');
+    const manifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
+      sections?: {
+        experiment?: {
+          generated_files: string[];
+        };
+      };
+    };
+    expect(manifest.sections?.experiment?.generated_files).toEqual(
+      expect.arrayContaining([
+        "experiment/metrics.json",
+        "experiment/objective_evaluation.json",
+        "experiment/run_experiments_verify_report.json",
+        "experiment/quick_check_metrics.json",
+        "experiment/confirmatory_metrics.json"
+      ])
+    );
     expect(await memory.get("run_experiments.triage")).toMatchObject({
       watchdog: {
         metrics_state: "valid"
@@ -1709,5 +1811,189 @@ describe("objective metric propagation", () => {
     expect(await memory.get("run_experiments.triage")).toMatchObject({
       final_category: "policy_block"
     });
+  });
+
+  it("forces a fresh rerun for managed real_execution bundles when previous metrics exist", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-managed-fresh-rerun-"));
+    process.chdir(root);
+
+    const runId = "run-managed-fresh";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "managed-bundle");
+    const metricsPath = path.join(runDir, "metrics.json");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: `python3 -B ${JSON.stringify(path.join(publicDir, "run_experiment.py"))} --profile standard --metrics-out ${JSON.stringify(metricsPath)}`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.mode",
+            value: "real_execution",
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(metricsPath, JSON.stringify({ stale: true }, null, 2), "utf8");
+
+    const commands: string[] = [];
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new StructuredResultAnalysisLLM(),
+      codex: {} as any,
+      aci: {
+        runCommand: async (command: string) => {
+          commands.push(command);
+          await writeFile(
+            metricsPath,
+            JSON.stringify(
+              {
+                accuracy: 0.91,
+                sampling_profile: {
+                  total_trials: 4,
+                  executed_trials: 4,
+                  cached_trials: 0
+                }
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "done",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 1
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      },
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(commands[0]).toContain("--fresh");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("run_experiments.previous_metrics_backup")).toContain("preexisting_metrics_");
+  });
+
+  it("backs out before review when the objective is supported only by cached trials", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-cached-only-analysis-"));
+    process.chdir(root);
+
+    const runId = "run-cached-only-analysis";
+    const run = makeRun(runId);
+    run.currentNode = "analyze_results";
+    run.objectiveMetric = "replication success rate at least 0.9";
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(path.join(runDir, "exec_logs"), { recursive: true });
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          replication_success_rate: 1,
+          reproducibility_score: 0.97,
+          sampling_profile: {
+            total_trials: 48,
+            executed_trials: 0,
+            cached_trials: 48
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_plan.yaml"),
+      ['selected_design:', '  title: "Cached-only rerun"', '  summary: "Rebuild metrics from cached trials only."'].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "exec_logs", "observations.jsonl"),
+      `${JSON.stringify({
+        command: "python3 -B run_experiment.py --profile standard --metrics-out metrics.json",
+        cwd: root,
+        source: "run_context.run_command",
+        status: "ok",
+        stdout: "{\"status\":\"ok\"}",
+        stderr: "",
+        metrics_path: path.join(runDir, "metrics.json"),
+        log_file: path.join(runDir, "exec_logs", "run_experiments.txt")
+      })}\n`,
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new StructuredResultAnalysisLLM(),
+      codex: {} as any,
+      aci: new LocalAciAdapter(),
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_implement",
+      targetNode: "implement_experiments"
+    });
+
+    const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
+      overview: { execution_runs: number };
+      primary_findings: string[];
+    };
+    expect(analysis.overview.execution_runs).toBe(0);
+    expect(analysis.primary_findings[1]).toContain("0 executed trial(s)");
   });
 });

@@ -514,29 +514,78 @@ describe("TerminalApp pending natural plan execution", () => {
   it("stores top-k and branch-count request for /agent run generate_hypotheses", async () => {
     const app = makeApp();
     const run = makeRun("run-generate-options");
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
     await rm(path.join(".autolabos", "runs", run.id), { recursive: true, force: true });
     await mkdir(path.dirname(run.memoryRefs.runContextPath), { recursive: true });
 
     app.resolveTargetRun = vi.fn().mockResolvedValue(run);
     app.setActiveRunId = vi.fn();
     app.refreshRunIndex = vi.fn();
+    app.continueSupervisedRun = vi.fn().mockResolvedValue({
+      ...run,
+      graph: {
+        ...run.graph,
+        nodeStates: {
+          ...run.graph.nodeStates,
+          generate_hypotheses: {
+            ...run.graph.nodeStates.generate_hypotheses,
+            status: "completed",
+            note: "hypotheses generated"
+          }
+        }
+      }
+    });
     app.orchestrator = {
-      runAgentWithOptions: vi.fn().mockResolvedValue({
-        run,
-        result: { status: "success", summary: "hypotheses generated" }
-      })
+      jumpToNode: vi.fn()
     };
 
     const result = await app.handleAgent(["run", "generate_hypotheses", "--top-k", "3", "--branch-count", "8"]);
 
     expect(result.ok).toBe(true);
-    expect(app.orchestrator.runAgentWithOptions).toHaveBeenCalledWith(run.id, "generate_hypotheses", {
-      abortSignal: undefined
-    });
+    expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id, undefined);
+    expect(app.orchestrator.jumpToNode).not.toHaveBeenCalled();
 
     const stored = JSON.parse(await readFile(run.memoryRefs.runContextPath, "utf8"));
     const requestItem = stored.items.find((item: { key: string }) => item.key === "generate_hypotheses.request");
     expect(requestItem?.value).toEqual({ topK: 3, branchCount: 8 });
+  });
+
+  it("force-jumps to the requested node before continuing the supervised run", async () => {
+    const app = makeApp();
+    const run = makeRun("run-force-jump");
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.setActiveRunId = vi.fn();
+    app.refreshRunIndex = vi.fn();
+    app.continueSupervisedRun = vi.fn().mockResolvedValue({
+      ...run,
+      currentNode: "write_paper",
+      graph: {
+        ...run.graph,
+        currentNode: "write_paper",
+        nodeStates: {
+          ...run.graph.nodeStates,
+          write_paper: {
+            ...run.graph.nodeStates.write_paper,
+            status: "completed",
+            note: "paper generated"
+          }
+        }
+      }
+    });
+    app.orchestrator = {
+      jumpToNode: vi.fn().mockResolvedValue(run)
+    };
+
+    const result = await app.handleAgent(["run", "write_paper", run.id]);
+
+    expect(result.ok).toBe(true);
+    expect(app.orchestrator.jumpToNode).toHaveBeenCalledWith(run.id, "write_paper", "force", "manual node run");
+    expect(app.refreshRunIndex).toHaveBeenCalled();
+    expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id, undefined);
   });
 
   it("summarizes an existing review packet through /agent review", async () => {
@@ -722,13 +771,8 @@ describe("TerminalApp pending natural plan execution", () => {
     run.graph.nodeStates.analyze_papers.note = "Canceled by user";
     app.resolveTargetRun = vi.fn().mockResolvedValue(run);
     app.setActiveRunId = vi.fn();
-    app.refreshRunIndex = vi.fn();
-    app.orchestrator = {
-      runAgentWithOptions: vi.fn().mockResolvedValue({
-        run,
-        result: { status: "success", summary: "Canceled by user" }
-      })
-    };
+    app.continueSupervisedRun = vi.fn().mockResolvedValue(run);
+    app.orchestrator = { jumpToNode: vi.fn() };
 
     await expect(app.handleAgent(["run", "analyze_papers"], new AbortController().signal)).rejects.toThrow(
       "Operation aborted by user"
@@ -743,12 +787,21 @@ describe("TerminalApp pending natural plan execution", () => {
     app.resolveTargetRun = vi.fn().mockResolvedValue(run);
     app.setActiveRunId = vi.fn();
     app.refreshRunIndex = vi.fn();
-    app.orchestrator = {
-      runAgentWithOptions: vi.fn().mockResolvedValue({
-        run,
-        result: { status: "success", summary: longSummary }
-      })
-    };
+    app.continueSupervisedRun = vi.fn().mockResolvedValue({
+      ...run,
+      graph: {
+        ...run.graph,
+        nodeStates: {
+          ...run.graph.nodeStates,
+          analyze_papers: {
+            ...run.graph.nodeStates.analyze_papers,
+            status: "completed",
+            note: longSummary
+          }
+        }
+      }
+    });
+    app.orchestrator = { jumpToNode: vi.fn() };
 
     const result = await app.handleAgent(["run", "analyze_papers"], new AbortController().signal);
     const completionLog = app.logs.find((line: string) => line.startsWith("Node analyze_papers finished:"));

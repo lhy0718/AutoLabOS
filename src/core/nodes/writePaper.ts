@@ -5,6 +5,7 @@ import { GraphNodeHandler } from "../stateGraph/types.js";
 import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
+import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
 import { buildPublicPaperDir } from "../publicArtifacts.js";
@@ -23,9 +24,14 @@ import {
   parseHypotheses,
   parsePaperSummaries,
   parseResultAnalysis,
-  renderPaperTex,
   validatePaperDraft
 } from "../analysis/paperWriting.js";
+import {
+  buildFallbackPaperManuscript,
+  buildPaperSubmissionValidation,
+  buildPaperTraceability,
+  renderSubmissionPaperTex
+} from "../analysis/paperManuscript.js";
 import { PaperWriterSessionManager } from "../agents/paperWriterSessionManager.js";
 import { maybeRunRelatedWorkScout } from "../writePaperRelatedWorkScout.js";
 
@@ -251,25 +257,48 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
 
       const citedPaperIds = collectPaperCitationIds(paperDraft, bundle);
       const bibtex = buildPaperBibtex(bundle.corpus, citedPaperIds);
-      const tex = renderPaperTex({
-        runTitle: run.title,
-        topic: run.topic,
-        objectiveMetric: run.objectiveMetric,
+      const manuscript = validationRepair.applied
+        ? buildFallbackPaperManuscript({
+            draft: paperDraft,
+            resultAnalysis: bundle.resultAnalysis,
+            objectiveEvaluation,
+            objectiveMetricProfile,
+            experimentPlan: bundle.experimentPlan
+          })
+        : sessionResult.manuscript;
+      const traceability = buildPaperTraceability({
         draft: paperDraft,
-        constraintProfile,
-        objectiveMetricProfile,
-        objectiveEvaluation,
-        resultAnalysis: bundle.resultAnalysis,
-        constraints: run.constraints,
-        citationKeysByPaperId: bibtex.citationKeysByPaperId
+        manuscript
+      });
+      const tex = renderSubmissionPaperTex({
+        manuscript,
+        traceability,
+        citationKeysByPaperId: bibtex.citationKeysByPaperId,
+        template: deps.config?.paper?.template
       });
       const evidenceMap = JSON.stringify(buildPaperEvidenceMap(paperDraft), null, 2);
+      const traceabilityJson = `${JSON.stringify(traceability, null, 2)}\n`;
+      const manuscriptJson = `${JSON.stringify(manuscript, null, 2)}\n`;
+      const submissionValidation = buildPaperSubmissionValidation({
+        manuscript,
+        tex,
+        traceability,
+        citationKeysByPaperId: bibtex.citationKeysByPaperId,
+        unresolvedCitationPaperIds: bibtex.unresolvedPaperIds
+      });
 
       await writeRunArtifact(run, "paper/main.tex", tex);
       await writeRunArtifact(run, "paper/references.bib", bibtex.references);
       await writeRunArtifact(run, "paper/evidence_links.json", evidenceMap);
       await writeRunArtifact(run, "paper/draft.json", `${JSON.stringify(paperDraft, null, 2)}\n`);
+      await writeRunArtifact(run, "paper/manuscript.json", manuscriptJson);
+      await writeRunArtifact(run, "paper/traceability.json", traceabilityJson);
       await writeRunArtifact(run, "paper/validation.json", `${JSON.stringify(validation, null, 2)}\n`);
+      await writeRunArtifact(
+        run,
+        "paper/submission_validation.json",
+        `${JSON.stringify(submissionValidation, null, 2)}\n`
+      );
       await writeRunArtifact(
         run,
         "paper/validation_repair_report.json",
@@ -280,7 +309,35 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await ensureDir(publicPaperDir);
       await fs.writeFile(path.join(publicPaperDir, "main.tex"), tex, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "references.bib"), bibtex.references, "utf8");
+      await fs.writeFile(path.join(publicPaperDir, "manuscript.json"), manuscriptJson, "utf8");
+      await fs.writeFile(path.join(publicPaperDir, "traceability.json"), traceabilityJson, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "evidence_links.json"), evidenceMap, "utf8");
+
+      const preCompileToolCallsUsed = Math.max(1, 4 - sessionResult.stageFallbacks) + (validationRepair.attempted ? 1 : 0);
+      await runContextMemory.put("write_paper.public_dir", publicPaperDir);
+      await runContextMemory.put("write_paper.source", sessionResult.source);
+      await runContextMemory.put("write_paper.section_count", paperDraft.sections.length);
+      await runContextMemory.put("write_paper.cited_paper_ids", bibtex.usedPaperIds);
+      await runContextMemory.put("write_paper.last_draft", paperDraft);
+      await runContextMemory.put("write_paper.last_manuscript", manuscript);
+      await runContextMemory.put("write_paper.traceability", traceability);
+      await runContextMemory.put("write_paper.validation", validation);
+      await runContextMemory.put("write_paper.submission_validation", submissionValidation);
+      await runContextMemory.put("write_paper.validation_repair", validationRepair);
+      if (!submissionValidation.ok) {
+        const submissionError = buildSubmissionValidationError(submissionValidation);
+        emitLog(submissionError);
+        await runContextMemory.put("write_paper.last_error", submissionError);
+        await runContextMemory.put("write_paper.compile_status", null);
+        await runContextMemory.put("write_paper.compile_report", null);
+        await runContextMemory.put("write_paper.pdf_path", null);
+        return {
+          status: "failure",
+          error: submissionError,
+          summary: submissionError,
+          toolCallsUsed: preCompileToolCallsUsed
+        };
+      }
 
       const compileResult = await maybeBuildPaperPdf({
         deps,
@@ -290,18 +347,47 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         emitLog,
         publicPaperDir
       });
-      const toolCallsUsed =
-        Math.max(1, 4 - sessionResult.stageFallbacks) +
-        compileResult.toolCallsUsed +
-        (validationRepair.attempted ? 1 : 0);
-
-      await runContextMemory.put("write_paper.public_dir", publicPaperDir);
-      await runContextMemory.put("write_paper.source", sessionResult.source);
-      await runContextMemory.put("write_paper.section_count", paperDraft.sections.length);
-      await runContextMemory.put("write_paper.cited_paper_ids", bibtex.usedPaperIds);
-      await runContextMemory.put("write_paper.last_draft", paperDraft);
-      await runContextMemory.put("write_paper.validation", validation);
-      await runContextMemory.put("write_paper.validation_repair", validationRepair);
+      const runPaperDir = path.join(process.cwd(), ".autolabos", "runs", run.id, "paper");
+      const publicOutputs = await publishPublicRunOutputs({
+        workspaceRoot: process.cwd(),
+        run,
+        runContext: runContextMemory,
+        section: "paper",
+        files: [
+          {
+            sourcePath: path.join(runPaperDir, "main.tex"),
+            targetRelativePath: "main.tex"
+          },
+          {
+            sourcePath: path.join(runPaperDir, "references.bib"),
+            targetRelativePath: "references.bib"
+          },
+          {
+            sourcePath: path.join(runPaperDir, "manuscript.json"),
+            targetRelativePath: "manuscript.json"
+          },
+          {
+            sourcePath: path.join(runPaperDir, "traceability.json"),
+            targetRelativePath: "traceability.json"
+          },
+          {
+            sourcePath: path.join(runPaperDir, "evidence_links.json"),
+            targetRelativePath: "evidence_links.json"
+          },
+          {
+            sourcePath: path.join(runPaperDir, "main.pdf"),
+            targetRelativePath: "main.pdf",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "build.log"),
+            targetRelativePath: "build.log",
+            optional: true
+          }
+        ]
+      });
+      emitLog(`Public paper outputs are available at ${publicOutputs.sectionDirRelative}.`);
+      const toolCallsUsed = preCompileToolCallsUsed + compileResult.toolCallsUsed;
       await runContextMemory.put("write_paper.compile_status", compileResult.status);
       await runContextMemory.put("write_paper.compile_report", compileResult);
       await runContextMemory.put("write_paper.pdf_path", compileResult.pdf_path || null);
@@ -326,6 +412,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           artifacts: [
             "paper/main.tex",
             "paper/references.bib",
+            "paper/manuscript.json",
+            "paper/traceability.json",
             ...(compileResult.pdf_path ? ["paper/main.pdf"] : []),
             publicPaperDir
           ]
@@ -336,8 +424,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         status: "success",
         summary:
           sessionResult.source === "fallback"
-            ? `Paper draft generated in LaTeX using staged fallbacks. Validation warnings: ${validation.issues.length}${describeValidationRepair(validationRepair)}. PDF: ${describeCompileStatus(compileResult)}.`
-            : `Paper draft generated in LaTeX from ${paperDraft.sections.length} structured section(s) via ${sessionResult.source} with ${validation.issues.length} validation warning(s)${describeValidationRepair(validationRepair)}. PDF: ${describeCompileStatus(compileResult)}.`,
+            ? `Paper draft generated in LaTeX using staged fallbacks. Validation warnings: ${validation.issues.length}${describeValidationRepair(validationRepair)}. PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`
+            : `Paper draft generated in LaTeX from ${paperDraft.sections.length} structured section(s) via ${sessionResult.source} with ${validation.issues.length} validation warning(s)${describeValidationRepair(validationRepair)}. PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         toolCallsUsed
       };
@@ -891,6 +979,23 @@ function describeCompileStatus(result: PaperCompileResult): string {
     default:
       return "build skipped";
   }
+}
+
+function buildSubmissionValidationError(
+  report: {
+    issues: Array<{ message: string; value?: string }>;
+    unresolvedCitationPaperIds: string[];
+  }
+): string {
+  const leadIssue = report.issues[0];
+  const leadDetail = leadIssue
+    ? `${leadIssue.message}${leadIssue.value ? ` (${leadIssue.value})` : ""}`
+    : "submission validation failed";
+  const unresolved =
+    report.unresolvedCitationPaperIds.length > 0
+      ? ` Unresolved citations: ${report.unresolvedCitationPaperIds.join(", ")}.`
+      : "";
+  return `write_paper generated manuscript artifacts but stopped before PDF build because submission-quality validation failed: ${leadDetail}.${unresolved}`;
 }
 
 function buildCompileFailureError(result: PaperCompileResult): string {

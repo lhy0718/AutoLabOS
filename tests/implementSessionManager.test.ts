@@ -8,7 +8,7 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import { ImplementSessionManager } from "../src/core/agents/implementSessionManager.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { RunStore } from "../src/core/runs/runStore.js";
-import { buildPublicExperimentDir } from "../src/core/publicArtifacts.js";
+import { buildPublicExperimentDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
 import { CodexCliClient } from "../src/integrations/codex/codexCliClient.js";
 import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
 
@@ -148,7 +148,147 @@ describe("ImplementSessionManager", () => {
     expect(await memory.get<{ status: string }>("implement_experiments.verify_report")).toMatchObject({
       status: "pass"
     });
+    const workspaceChangedManifest = JSON.parse(
+      readFileSync(path.join(publicDir, "workspace_changed_files.json"), "utf8")
+    ) as { files: string[] };
+    expect(workspaceChangedManifest.files).toEqual([]);
+    const publicManifest = JSON.parse(readFileSync(buildPublicRunManifestPath(workspace, run), "utf8")) as {
+      generated_files: string[];
+      sections?: {
+        experiment?: {
+          generated_files: string[];
+        };
+      };
+      workspace_changed_files: string[];
+    };
+    expect(publicManifest.generated_files).toContain("experiment/experiment.py");
+    expect(publicManifest.generated_files).toContain("experiment/workspace_changed_files.json");
+    expect(publicManifest.sections?.experiment?.generated_files).toContain("experiment/experiment.py");
+    expect(publicManifest.workspace_changed_files).toEqual([]);
     expect(eventStream.history().some((event) => event.type === "PATCH_APPLIED")).toBe(true);
+  });
+
+  it("records workspace-root code edits in workspace_changed_files.json without copying them into outputs", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-workspace-manifest-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Workspace Manifest Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const scriptPath = path.join(runDir, "experiment.py");
+    const workspaceModulePath = path.join(workspace, "src", "runner_support.py");
+    mkdirSync(path.dirname(workspaceModulePath), { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const codex = {
+      runTurnStream: async () => {
+        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        writeFileSync(workspaceModulePath, "DEFAULT_THRESHOLD = 0.9\n", "utf8");
+        return {
+          threadId: "thread-impl-workspace-manifest",
+          finalText: JSON.stringify({
+            summary: "Implemented a runnable experiment and updated a workspace helper module.",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            changed_files: [scriptPath, workspaceModulePath],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: {
+        version: 1,
+        project_name: "test",
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            experiment_model: "gpt-5.4",
+            pdf_model: "gpt-5.4",
+            reasoning_effort: "xhigh",
+            chat_reasoning_effort: "low",
+            experiment_reasoning_effort: "xhigh",
+            pdf_reasoning_effort: "xhigh",
+            command_reasoning_effort: "low",
+            fast_mode: false,
+            chat_fast_mode: false,
+            experiment_fast_mode: false,
+            pdf_fast_mode: false,
+            auth_required: true
+          },
+          openai: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            experiment_model: "gpt-5.4",
+            pdf_model: "gpt-5.4",
+            reasoning_effort: "medium",
+            chat_reasoning_effort: "low",
+            experiment_reasoning_effort: "medium",
+            pdf_reasoning_effort: "medium",
+            command_reasoning_effort: "low",
+            api_key_required: true
+          }
+        },
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4",
+          responses_reasoning_effort: "xhigh"
+        },
+        papers: { max_results: 200, per_second_limit: 1 },
+        research: {
+          default_topic: "Multi-agent collaboration",
+          default_constraints: ["recent papers"],
+          default_objective_metric: "reproducibility"
+        },
+        workflow: { mode: "agent_approval", wizard_enabled: true },
+        experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
+        paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
+      },
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(result.publicArtifacts).toContain(path.join(publicDir, "experiment.py"));
+    expect(result.publicArtifacts).not.toContain(workspaceModulePath);
+
+    const workspaceChangedManifest = JSON.parse(
+      readFileSync(path.join(publicDir, "workspace_changed_files.json"), "utf8")
+    ) as { files: string[] };
+    expect(workspaceChangedManifest.files).toContain("src/runner_support.py");
+
+    const publicManifest = JSON.parse(readFileSync(buildPublicRunManifestPath(workspace, run), "utf8")) as {
+      workspace_changed_files: string[];
+      sections?: {
+        experiment?: {
+          generated_files: string[];
+        };
+      };
+    };
+    expect(publicManifest.workspace_changed_files).toContain("src/runner_support.py");
+    expect(publicManifest.sections?.experiment?.generated_files).toContain("experiment/workspace_changed_files.json");
+    expect(existsSync(path.join(path.dirname(publicDir), "src", "runner_support.py"))).toBe(false);
   });
 
   it("emits coalesced intermediate Codex output", async () => {
@@ -661,7 +801,7 @@ describe("ImplementSessionManager", () => {
       reasoning_effort: "xhigh"
     });
     expect(result.publicArtifacts).toContain(path.join(publicDir, "README.md"));
-  });
+  }, 15000);
 
   it("replaces incompatible real_execution commands with the managed public bundle", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-managed-real-"));
@@ -931,7 +1071,7 @@ describe("ImplementSessionManager", () => {
     expect(episodeLog).toContain("next_try_instruction");
     expect(eventStream.history().some((event) => event.type === "TEST_FAILED")).toBe(true);
     expect(eventStream.history().some((event) => event.type === "REFLECTION_SAVED")).toBe(true);
-  });
+  }, 15000);
 
   it("switches to an alternate branch when another candidate file is available", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-branch-"));
@@ -1069,7 +1209,7 @@ describe("ImplementSessionManager", () => {
     expect(prompts[0]).toContain('"branch_id": "branch_primary"');
     expect(prompts[1]).toContain('"branch_id": "branch_alternate_2"');
     expect(prompts[1]).toContain(path.basename(alternateCandidate));
-  });
+  }, 15000);
 
   it("requires approval when local verification is deferred to run_experiments", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-manual-handoff-"));

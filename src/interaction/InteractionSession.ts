@@ -2039,7 +2039,13 @@ export class InteractionSession {
           : [`Count(${node}): ${count}/${reviewFiles.length} review artifacts`];
       }
       case "write_paper": {
-        const paperFiles = ["paper/main.tex", "paper/references.bib", "paper/evidence_links.json"];
+        const paperFiles = [
+          "paper/main.tex",
+          "paper/references.bib",
+          "paper/manuscript.json",
+          "paper/traceability.json",
+          "paper/evidence_links.json"
+        ];
         let count = 0;
         for (const relative of paperFiles) {
           if (await pathExists(path.join(runDir, relative))) {
@@ -2347,7 +2353,13 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
         "review/decision.json"
       ];
     case "write_paper":
-      return ["paper/main.tex", "paper/references.bib", "paper/evidence_links.json"];
+      return [
+        "paper/main.tex",
+        "paper/references.bib",
+        "paper/manuscript.json",
+        "paper/traceability.json",
+        "paper/evidence_links.json"
+      ];
   }
 }
 

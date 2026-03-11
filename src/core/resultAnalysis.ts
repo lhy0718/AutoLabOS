@@ -271,6 +271,10 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     conditionComparisons,
     supplementalMetrics: args.supplementalMetrics || []
   });
+  const executionRuns =
+    typeof statisticalSummary.executed_trials === "number"
+      ? statisticalSummary.executed_trials
+      : executionSummary.observation_count;
   const failureTaxonomy = buildFailureTaxonomy({
     objectiveEvaluation: args.objectiveEvaluation,
     metricTable,
@@ -325,7 +329,7 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
       observed_value: args.objectiveEvaluation.observedValue,
       target_description: args.objectiveProfile.targetDescription,
       selected_design_title: planContext.selected_design?.title,
-      execution_runs: executionSummary.observation_count,
+      execution_runs: executionRuns,
       top_metric: topMetric
     },
     plan_context: planContext,
@@ -640,13 +644,20 @@ function buildPrimaryFindings(args: {
   failureTaxonomy: AnalysisFailureCategory[];
 }): string[] {
   const findings: string[] = [args.objectiveEvaluation.summary];
+  const executedTrials = args.statisticalSummary.executed_trials;
 
   if (args.planContext.selected_design?.title) {
     findings.push(
       `Selected design "${args.planContext.selected_design.title}" was analyzed${
-        args.executionSummary.observation_count > 0
-          ? ` with ${args.executionSummary.observation_count} recorded execution observation(s).`
-          : "."
+        typeof executedTrials === "number"
+          ? executedTrials > 0
+            ? ` with ${executedTrials} executed trial(s).`
+            : args.executionSummary.observation_count > 0
+              ? ` with ${args.executionSummary.observation_count} recorded runner observation(s) and 0 executed trial(s).`
+              : "."
+          : args.executionSummary.observation_count > 0
+            ? ` with ${args.executionSummary.observation_count} recorded runner observation(s).`
+            : "."
       }`
     );
   }

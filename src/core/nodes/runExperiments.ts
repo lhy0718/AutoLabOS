@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { GraphNodeHandler } from "../stateGraph/types.js";
 import { appendJsonl, writeRunArtifact } from "./helpers.js";
+import { publishPublicRunOutputs, PublishPublicRunOutputsResult } from "../publicOutputPublisher.js";
 import { resolveRunCommand } from "./runCommandResolver.js";
 import { NodeExecutionDeps } from "./types.js";
 import { fileExists } from "../../utils/fs.js";
@@ -60,6 +61,8 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         (await runContext.get<boolean>("implement_experiments.pending_handoff_to_run_experiments")) === true;
       const handoffReason = await runContext.get<string>("implement_experiments.handoff_reason");
       const trigger: RunVerifierTrigger = pendingHandoff ? "auto_handoff" : "manual";
+      const experimentMode =
+        (await runContext.get<string>("implement_experiments.mode")) || "real_execution";
       const managedSupplementalPlan = await resolveManagedSupplementalPlan(runContext, process.cwd());
       await runContext.put("run_experiments.trigger", trigger);
       await runContext.put("run_experiments.handoff_reason", handoffReason || null);
@@ -287,6 +290,20 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         previousMetricsBackup,
         clearedSupplementalOutputs
       });
+      const primaryCommand = shouldForceFreshManagedStandardRun({
+        command: resolved.command,
+        experimentMode,
+        previousMetricsBackup
+      })
+        ? appendFreshFlag(resolved.command)
+        : resolved.command;
+      if (executionPlan && executionPlan.command !== primaryCommand) {
+        executionPlan = {
+          ...executionPlan,
+          command: primaryCommand
+        };
+        await persistPanelState();
+      }
 
       let parsedMetrics: Record<string, unknown> = {};
       let objectiveEvaluationSummary = "";
@@ -304,20 +321,20 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           node: "run_experiments",
           agentRole: "runner",
           payload: {
-            command: resolved.command,
+            command: primaryCommand,
             cwd: resolved.cwd,
             source: primaryAttemptsUsed > 1 ? `${resolved.source}:retry_${attemptNumber}` : resolved.source
           }
         });
 
-        obs = await deps.aci.runCommand(resolved.command, resolved.cwd, abortSignal);
+        obs = await deps.aci.runCommand(primaryCommand, resolved.cwd, abortSignal);
         logFile = await writeRunArtifact(
           run,
           primaryAttemptsUsed === 1
             ? "exec_logs/run_experiments.txt"
             : `exec_logs/run_experiments_retry_${attemptNumber}.txt`,
           [
-            `command: ${resolved.command}`,
+            `command: ${primaryCommand}`,
             `cwd: ${resolved.cwd}`,
             `source: ${resolved.source}`,
             `attempt: ${attemptNumber}`,
@@ -333,7 +350,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             attempt: attemptNumber,
             stage: "command",
             summary: obs.stderr || "Experiment command failed",
-            command: resolved.command,
+            command: primaryCommand,
             cwd: resolved.cwd,
             exitCode: obs.exit_code ?? 1,
             logFile,
@@ -368,7 +385,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             summary: obs.stderr || "Experiment command failed",
             policyRuleId: policyBlock.ruleId,
             policyReason: policyBlock.reason,
-            command: resolved.command,
+            command: primaryCommand,
             cwd: resolved.cwd,
             metricsPath: resolved.metricsPath,
             exitCode: obs.exit_code ?? 1,
@@ -385,13 +402,13 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             node: "run_experiments",
             agentRole: "runner",
             payload: {
-              command: resolved.command,
+              command: primaryCommand,
               stderr: obs.stderr || "unknown"
             }
           });
           await persistRunVerifierReport(run, runContext, report);
           await persistRunFailureState(runContext, {
-            command: resolved.command,
+            command: primaryCommand,
             cwd: resolved.cwd,
             logFile,
             exitCode: obs.exit_code ?? 1,
@@ -411,7 +428,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             attempt: attemptNumber,
             stage: "metrics",
             summary: missingMessage,
-            command: resolved.command,
+            command: primaryCommand,
             cwd: resolved.cwd,
             exitCode: obs.exit_code ?? 0,
             logFile,
@@ -429,7 +446,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             trigger,
             stage: "metrics",
             summary: missingMessage,
-            command: resolved.command,
+            command: primaryCommand,
             cwd: resolved.cwd,
             metricsPath: resolved.metricsPath,
             exitCode: obs.exit_code ?? 0,
@@ -445,14 +462,14 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             node: "run_experiments",
             agentRole: "runner",
             payload: {
-              command: resolved.command,
+              command: primaryCommand,
               metrics_path: resolved.metricsPath,
               stderr: missingMessage
             }
           });
           await persistRunVerifierReport(run, runContext, report);
           await persistRunFailureState(runContext, {
-            command: resolved.command,
+            command: primaryCommand,
             cwd: resolved.cwd,
             logFile,
             exitCode: obs.exit_code ?? 0,
@@ -467,7 +484,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
 
         await appendJsonl(run, "exec_logs/observations.jsonl", [
           {
-            command: resolved.command,
+            command: primaryCommand,
             cwd: resolved.cwd,
             source: primaryAttemptsUsed > 1 ? `${resolved.source}:retry_${attemptNumber}` : resolved.source,
             status: obs.status,
@@ -503,7 +520,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             attempt: attemptNumber,
             stage: "metrics",
             summary: metricsError,
-            command: resolved.command,
+            command: primaryCommand,
             cwd: resolved.cwd,
             exitCode: obs.exit_code ?? 0,
             logFile,
@@ -521,7 +538,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             trigger,
             stage: "metrics",
             summary: metricsError,
-            command: resolved.command,
+            command: primaryCommand,
             cwd: resolved.cwd,
             metricsPath: resolved.metricsPath,
             exitCode: obs.exit_code ?? 0,
@@ -537,14 +554,14 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             node: "run_experiments",
             agentRole: "runner",
             payload: {
-              command: resolved.command,
+              command: primaryCommand,
               metrics_path: resolved.metricsPath,
               stderr: metricsError
             }
           });
           await persistRunVerifierReport(run, runContext, report);
           await persistRunFailureState(runContext, {
-            command: resolved.command,
+            command: primaryCommand,
             cwd: resolved.cwd,
             logFile,
             exitCode: obs.exit_code ?? 0,
@@ -565,8 +582,6 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         eventStream: deps.eventStream,
         node: "run_experiments"
       });
-      const experimentMode =
-        (await runContext.get<string>("implement_experiments.mode")) || "real_execution";
       const objectiveEvaluation = evaluateObjectiveMetric(
         parsedMetrics,
         objectiveProfile,
@@ -582,7 +597,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           trigger,
           stage: "success",
           summary: objectiveEvaluation.summary,
-          command: resolved.command,
+          command: primaryCommand,
           cwd: resolved.cwd,
           metricsPath: resolved.metricsPath,
           exitCode: obs?.exit_code ?? 0,
@@ -597,7 +612,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         runContext,
         objectiveProfile,
         objectiveEvaluation,
-        primaryCommand: resolved.command,
+        primaryCommand,
         plan: managedSupplementalPlan,
         abortSignal
       });
@@ -625,7 +640,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       );
       await persistPanelState();
 
-      await runContext.put("run_experiments.command", resolved.command);
+      await runContext.put("run_experiments.command", primaryCommand);
       await runContext.put("run_experiments.cwd", resolved.cwd);
       await runContext.put("run_experiments.last_log_file", logFile);
       await runContext.put("run_experiments.exit_code", obs?.exit_code ?? 0);
@@ -638,6 +653,13 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         "run_experiments_supplemental_runs.json",
         JSON.stringify(supplementalRuns.records, null, 2)
       );
+      const publicOutputs = await publishRunExperimentOutputs({
+        workspaceRoot: process.cwd(),
+        run,
+        runContext,
+        metricsPath: resolved.metricsPath,
+        supplementalPlan: managedSupplementalPlan
+      });
 
       deps.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -657,12 +679,21 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           text: objectiveEvaluation.summary
         }
       });
+      deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "run_experiments",
+        agentRole: "runner",
+        payload: {
+          text: `Public experiment outputs are available at ${publicOutputs.sectionDirRelative}.`
+        }
+      });
 
       return {
         status: "success",
-        summary: `${formatRunLabel(experimentMode, trigger)} completed via ${resolved.command}. ${objectiveEvaluationSummary}${
+        summary: `${formatRunLabel(experimentMode, trigger)} completed via ${primaryCommand}. ${objectiveEvaluationSummary}${
           supplementalRuns.summary ? ` ${supplementalRuns.summary}` : ""
-        }`,
+        } Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed + supplementalRuns.toolCallsUsed
       };
@@ -976,6 +1007,24 @@ function isManagedStandardRunCommand(command: string): boolean {
   return /--profile\s+standard/u.test(command);
 }
 
+function shouldForceFreshManagedStandardRun(input: {
+  command: string;
+  experimentMode: string;
+  previousMetricsBackup?: string;
+}): boolean {
+  if (!input.previousMetricsBackup || input.experimentMode !== "real_execution") {
+    return false;
+  }
+  if (!/run_experiment\.py/u.test(input.command)) {
+    return false;
+  }
+  return isManagedStandardRunCommand(input.command) && !/\s--fresh(?:\s|$)/u.test(input.command);
+}
+
+function appendFreshFlag(command: string): string {
+  return /\s--fresh(?:\s|$)/u.test(command) ? command : `${command} --fresh`;
+}
+
 function resolveMaybeRelative(value: string | undefined, workspaceRoot: string): string | undefined {
   if (!value) {
     return undefined;
@@ -1037,16 +1086,29 @@ async function persistRunVerifierReport(
   run: Parameters<typeof writeRunArtifact>[0],
   runContext: RunContextMemory,
   report: RunVerifierReport
-): Promise<void> {
-  await writeRunArtifact(run, "run_experiments_verify_report.json", JSON.stringify(report, null, 2));
+): Promise<PublishPublicRunOutputsResult> {
+  const reportPath = await writeRunArtifact(run, "run_experiments_verify_report.json", JSON.stringify(report, null, 2));
+  const publicOutputs = await publishPublicRunOutputs({
+    workspaceRoot: process.cwd(),
+    run,
+    runContext,
+    section: "experiment",
+    files: [
+      {
+        sourcePath: reportPath,
+        targetRelativePath: "run_experiments_verify_report.json"
+      }
+    ]
+  });
   await runContext.put("run_experiments.last_report", report);
   if (report.status === "fail") {
     await runContext.put("run_experiments.feedback_for_implementer", report);
     await runContext.put("implement_experiments.runner_feedback", report);
-    return;
+    return publicOutputs;
   }
   await runContext.put("run_experiments.feedback_for_implementer", null);
   await runContext.put("implement_experiments.runner_feedback", null);
+  return publicOutputs;
 }
 
 async function persistRunPanelArtifacts(input: {
@@ -1092,6 +1154,59 @@ async function persistRunFailureState(
   await runContext.put("run_experiments.last_log_file", input.logFile);
   await runContext.put("run_experiments.exit_code", input.exitCode);
   await runContext.put("run_experiments.last_error", input.error);
+}
+
+async function publishRunExperimentOutputs(input: {
+  workspaceRoot: string;
+  run: Parameters<typeof writeRunArtifact>[0];
+  runContext: RunContextMemory;
+  metricsPath: string;
+  supplementalPlan?: ManagedSupplementalPlan;
+}): Promise<PublishPublicRunOutputsResult> {
+  const runDir = path.join(input.workspaceRoot, ".autolabos", "runs", input.run.id);
+  const files: Array<{
+    sourcePath: string;
+    targetRelativePath?: string;
+    optional?: boolean;
+  }> = [
+    {
+      sourcePath: input.metricsPath,
+      targetRelativePath: "metrics.json",
+      optional: true
+    },
+    {
+      sourcePath: path.join(runDir, "objective_evaluation.json"),
+      targetRelativePath: "objective_evaluation.json",
+      optional: true
+    },
+    {
+      sourcePath: path.join(runDir, "run_experiments_verify_report.json"),
+      targetRelativePath: "run_experiments_verify_report.json",
+      optional: true
+    }
+  ];
+  if (input.supplementalPlan) {
+    for (const profile of input.supplementalPlan.profiles) {
+      files.push({
+        sourcePath: profile.metricsPath,
+        targetRelativePath: path.basename(profile.metricsPath),
+        optional: true
+      });
+    }
+    files.push({
+      sourcePath: path.join(input.supplementalPlan.publicDir, "recent_paper_reproducibility.json"),
+      targetRelativePath: "recent_paper_reproducibility.json",
+      optional: true
+    });
+  }
+
+  return publishPublicRunOutputs({
+    workspaceRoot: input.workspaceRoot,
+    run: input.run,
+    runContext: input.runContext,
+    section: "experiment",
+    files
+  });
 }
 
 function trimExcerpt(value: string | undefined): string | undefined {

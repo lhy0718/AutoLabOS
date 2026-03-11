@@ -7,6 +7,7 @@ import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { LongTermStore } from "../memory/longTermStore.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
+import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
 import {
   evaluateObjectiveMetric,
   normalizeObjectiveMetricProfile,
@@ -201,19 +202,59 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         "analyze_results_panel/decision.json",
         JSON.stringify(panelResult.decision, null, 2)
       );
-      await writeRunArtifact(run, "result_analysis.json", JSON.stringify(summary, null, 2));
+      const resultAnalysisPath = await writeRunArtifact(run, "result_analysis.json", JSON.stringify(summary, null, 2));
+      let synthesisPath: string | undefined;
       if (summary.synthesis) {
-        await writeRunArtifact(run, "result_analysis_synthesis.json", JSON.stringify(summary.synthesis, null, 2));
+        synthesisPath = await writeRunArtifact(
+          run,
+          "result_analysis_synthesis.json",
+          JSON.stringify(summary.synthesis, null, 2)
+        );
       }
-      await writeRunArtifact(
+      const transitionPath = await writeRunArtifact(
         run,
         "transition_recommendation.json",
         JSON.stringify(transitionRecommendation, null, 2)
       );
       const figureSvg = renderPerformanceFigureSvg(summary);
+      let performanceFigurePath: string | undefined;
       if (figureSvg) {
-        await writeRunArtifact(run, "figures/performance.svg", figureSvg);
+        performanceFigurePath = await writeRunArtifact(run, "figures/performance.svg", figureSvg);
       }
+      const publicOutputs = await publishPublicRunOutputs({
+        workspaceRoot: process.cwd(),
+        run,
+        runContext: runContextMemory,
+        section: "analysis",
+        files: [
+          {
+            sourcePath: resultAnalysisPath,
+            targetRelativePath: "result_analysis.json"
+          },
+          {
+            sourcePath: synthesisPath || path.join(process.cwd(), ".autolabos", "runs", run.id, "result_analysis_synthesis.json"),
+            targetRelativePath: "result_analysis_synthesis.json",
+            optional: true
+          },
+          {
+            sourcePath: transitionPath,
+            targetRelativePath: "transition_recommendation.json"
+          },
+          {
+            sourcePath: performanceFigurePath || path.join(process.cwd(), ".autolabos", "runs", run.id, "figures", "performance.svg"),
+            targetRelativePath: "figures/performance.svg",
+            optional: true
+          }
+        ]
+      });
+      deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "analyze_results",
+        payload: {
+          text: `Public analysis outputs are available at ${publicOutputs.sectionDirRelative}.`
+        }
+      });
       await runContextMemory.put("analyze_results.last_summary", summary);
       await runContextMemory.put("analyze_results.last_error", metricsLoadError || null);
       await runContextMemory.put("analyze_results.last_synthesis", summary.synthesis || null);
@@ -262,7 +303,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
 
       return {
         status: "success",
-        summary: `${buildAnalyzeResultsCompletionSummary(summary)} Panel-calibrated transition confidence: ${transitionRecommendation.confidence}.`,
+        summary: `${buildAnalyzeResultsCompletionSummary(summary)} Panel-calibrated transition confidence: ${transitionRecommendation.confidence}. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         toolCallsUsed: 1,
         transitionRecommendation
@@ -458,6 +499,29 @@ function buildTransitionRecommendation(summary: AnalysisReport): TransitionRecom
         summary,
         summary.overview.objective_summary,
         summary.synthesis?.confidence_statement,
+        summary.synthesis?.follow_up_actions?.[0]
+      )
+    });
+  }
+
+  const executedTrials = summary.statistical_summary.executed_trials;
+  const cachedTrials = summary.statistical_summary.cached_trials ?? 0;
+  if (
+    (summary.overview.objective_status === "met" || summary.overview.objective_status === "observed") &&
+    executedTrials === 0 &&
+    cachedTrials > 0
+  ) {
+    return createRecommendation({
+      action: "backtrack_to_implement",
+      targetNode: "implement_experiments",
+      reason:
+        "The metric snapshot was rebuilt entirely from cached trials, so the run should rerun implementation/execution and persist fresh trial records before review.",
+      confidence: 0.94,
+      autoExecutable: true,
+      evidence: collectEvidence(
+        summary,
+        summary.overview.objective_summary,
+        `Sampling profile recorded executed_trials=0 and cached_trials=${cachedTrials}.`,
         summary.synthesis?.follow_up_actions?.[0]
       )
     });

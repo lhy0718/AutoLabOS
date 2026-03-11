@@ -8,6 +8,7 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createReviewNode } from "../src/core/nodes/review.js";
+import { buildPublicReviewDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
 import { RunRecord } from "../src/types.js";
@@ -274,6 +275,38 @@ describe("review node", () => {
     const decision = JSON.parse(decisionRaw) as { outcome: string; recommended_transition?: string };
     expect(decision.outcome).toBe("advance");
     expect(decision.recommended_transition).toBe("advance");
+    const publicReviewDir = buildPublicReviewDir(root, run);
+    expect(await readFile(path.join(publicReviewDir, "review_packet.json"), "utf8")).toContain(
+      '"objective_status": "met"'
+    );
+    expect(await readFile(path.join(publicReviewDir, "checklist.md"), "utf8")).toContain("Consensus: high");
+    expect(await readFile(path.join(publicReviewDir, "decision.json"), "utf8")).toContain('"outcome": "advance"');
+    expect(typeof (await readFile(path.join(publicReviewDir, "findings.jsonl"), "utf8"))).toBe("string");
+
+    const manifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
+      generated_files: string[];
+      sections?: {
+        review?: {
+          generated_files: string[];
+        };
+      };
+    };
+    expect(manifest.generated_files).toEqual(
+      expect.arrayContaining([
+        "review/review_packet.json",
+        "review/checklist.md",
+        "review/decision.json",
+        "review/findings.jsonl"
+      ])
+    );
+    expect(manifest.sections?.review?.generated_files).toEqual(
+      expect.arrayContaining([
+        "review/review_packet.json",
+        "review/checklist.md",
+        "review/decision.json",
+        "review/findings.jsonl"
+      ])
+    );
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("review.last_summary")).toContain("accuracy=0.91");

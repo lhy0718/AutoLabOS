@@ -10,6 +10,7 @@ import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
+import { buildPublicExperimentDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
@@ -180,6 +181,25 @@ describe("constraint propagation", () => {
     expect(plan).toContain('    target_venue: "ACL"');
     expect(plan).toContain('    tone_hint: "formal academic"');
     expect(plan).toContain('    length_hint: "short paper"');
+
+    const publicPlanPath = path.join(buildPublicExperimentDir(root, run), "experiment_plan.yaml");
+    expect(await readFile(publicPlanPath, "utf8")).toBe(plan);
+
+    await writeFile(publicPlanPath, "stale plan\n", "utf8");
+    const rerunResult = await node.execute({ run, graph: run.graph });
+    expect(rerunResult.status).toBe("success");
+    expect(await readFile(publicPlanPath, "utf8")).toBe(plan);
+
+    const manifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
+      generated_files: string[];
+      sections?: {
+        experiment?: {
+          generated_files: string[];
+        };
+      };
+    };
+    expect(manifest.generated_files).toContain("experiment/experiment_plan.yaml");
+    expect(manifest.sections?.experiment?.generated_files).toContain("experiment/experiment_plan.yaml");
   });
 
   it("fails fast when no hypotheses artifact is available for design", async () => {
@@ -433,7 +453,7 @@ describe("constraint propagation", () => {
     });
   });
 
-  it("writes writing constraints into paper/main.tex", async () => {
+  it("renders a submission-style manuscript and traceability sidecar", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-constraints-"));
     process.chdir(root);
 
@@ -457,10 +477,19 @@ describe("constraint propagation", () => {
     expect(result.status).toBe("success");
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\title{Multi-Agent Collaboration}");
-    expect(tex).toContain("Target venue: ACL.");
-    expect(tex).toContain("Tone: formal academic.");
-    expect(tex).toContain("Length target: short paper.");
-    expect(tex).toContain("- last 5 years");
+    expect(tex).not.toContain("\\section{Writing Constraints}");
+    expect(tex).not.toContain("\\section{Results Overview}");
+    const manuscript = await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8");
+    expect(manuscript).toContain('"heading": "Introduction"');
+    expect(manuscript).toContain("configured writing constraints");
+    const traceability = await readFile(path.join(runDir, "paper", "traceability.json"), "utf8");
+    expect(traceability).toContain('"manuscript_section": "Introduction"');
+    expect(traceability).toContain('"citation_paper_ids"');
+    const submissionValidation = await readFile(
+      path.join(runDir, "paper", "submission_validation.json"),
+      "utf8"
+    );
+    expect(submissionValidation).toContain('"ok": true');
   });
 
   it("fails when required write_paper inputs are missing", async () => {
@@ -738,7 +767,7 @@ describe("constraint propagation", () => {
 
     expect(designResult.status).toBe("success");
     expect(writeResult.status).toBe("success");
-    expect(llm.calls).toBe(7);
+    expect(llm.calls).toBe(8);
 
     const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
     expect(plan).toContain("last_years: 7");
@@ -752,12 +781,12 @@ describe("constraint propagation", () => {
     expect(plan).toContain("  confirmatory_extension:");
 
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
-    expect(tex).toContain("Target venue: EMNLP.");
-    expect(tex).toContain("Tone: tutorial.");
-    expect(tex).toContain("Length target: 10-12 pages.");
-    expect(tex).toContain("Design guidance:");
-    expect(tex).toContain("- Prefer robustness-oriented ablations.");
-    expect(tex).toContain("Constraint assumptions:");
+    expect(tex).toContain("\\section{Method}");
+    expect(tex).toContain("selected experiment design");
+    expect(tex).not.toContain("\\section{Writing Constraints}");
+    const manuscript = await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8");
+    expect(manuscript).toContain("robustness-oriented benchmark");
+    expect(manuscript).not.toContain("Results Overview");
   });
 
   it("renders llm-generated sections and corpus-backed references into paper artifacts", async () => {
@@ -1001,13 +1030,14 @@ describe("constraint propagation", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("success");
-    expect(llm.calls).toBe(6);
+    expect(llm.calls).toBe(7);
 
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\section{Introduction}");
     expect(tex).toContain("Structured coordination is a promising way to stabilize multi-agent workflows.");
     expect(tex).toContain("Structured coordination is a promising way to stabilize multi-agent workflows. \\cite{");
-    expect(tex).toContain("\\textit{(Evidence anchors: \\texttt{ev\\_paper\\_1\\_1}.)}");
+    expect(tex).not.toContain("Evidence anchors");
+    expect(tex).not.toContain("Claim Trace");
 
     const references = await readFile(path.join(runDir, "paper", "references.bib"), "utf8");
     expect(references).toContain("Deep Coordination Baseline");
@@ -1019,6 +1049,10 @@ describe("constraint propagation", () => {
     expect(evidenceLinks).toContain('"claim_id": "c1"');
     expect(evidenceLinks).toContain('"ev_paper_1_1"');
     expect(evidenceLinks).toContain('"claim_id": "c2"');
+    const traceability = await readFile(path.join(runDir, "paper", "traceability.json"), "utf8");
+    expect(traceability).toContain('"manuscript_section": "Introduction"');
+    expect(traceability).toContain('"ev_paper_1_1"');
+    expect(traceability).toContain('"claim_ids": [');
 
     const draft = await readFile(path.join(runDir, "paper", "draft.json"), "utf8");
     expect(draft).toContain("Schema-Grounded Coordination Draft");

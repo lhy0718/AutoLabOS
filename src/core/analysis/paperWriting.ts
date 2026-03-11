@@ -803,20 +803,26 @@ export function buildPaperBibtex(corpus: StoredCorpusRow[], citedPaperIds: strin
   references: string;
   citationKeysByPaperId: Map<string, string>;
   usedPaperIds: string[];
+  unresolvedPaperIds: string[];
 } {
   const corpusById = new Map(corpus.map((item) => [item.paper_id, item] as const));
   const usedPaperIds: string[] = [];
+  const unresolvedPaperIds: string[] = [];
   const citationKeysByPaperId = new Map<string, string>();
   const entries: string[] = [];
 
   for (const paperId of uniqueStrings(citedPaperIds).filter(Boolean)) {
     const paper = corpusById.get(paperId);
     if (!paper) {
+      unresolvedPaperIds.push(paperId);
       continue;
     }
     const entry = buildBibtexEntry(paper, "hybrid").trim();
     const key = extractBibtexKey(entry);
     if (!entry || !key || citationKeysByPaperId.has(paperId)) {
+      if (!citationKeysByPaperId.has(paperId)) {
+        unresolvedPaperIds.push(paperId);
+      }
       continue;
     }
     citationKeysByPaperId.set(paperId, key);
@@ -828,7 +834,8 @@ export function buildPaperBibtex(corpus: StoredCorpusRow[], citedPaperIds: strin
     return {
       references: entries.join("\n\n"),
       citationKeysByPaperId,
-      usedPaperIds
+      usedPaperIds,
+      unresolvedPaperIds: uniqueStrings(unresolvedPaperIds)
     };
   }
 
@@ -841,7 +848,8 @@ export function buildPaperBibtex(corpus: StoredCorpusRow[], citedPaperIds: strin
       "}"
     ].join("\n"),
     citationKeysByPaperId,
-    usedPaperIds
+    usedPaperIds,
+    unresolvedPaperIds: uniqueStrings(unresolvedPaperIds)
   };
 }
 

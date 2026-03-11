@@ -1,0 +1,209 @@
+import path from "node:path";
+import { promises as fs } from "node:fs";
+
+import { RunRecord } from "../types.js";
+import { ensureDir, fileExists, writeJsonFile } from "../utils/fs.js";
+import { RunContextMemory } from "./memory/runContextMemory.js";
+import {
+  buildPublicRunManifestPath,
+  buildPublicRunOutputDir,
+  buildPublicSectionDir,
+  PublicRunOutputSection
+} from "./publicArtifacts.js";
+
+export interface PublicRunManifestSection {
+  dir: string;
+  generated_files: string[];
+  updated_at: string;
+}
+
+export interface PublicRunManifest {
+  version: 1;
+  run_id: string;
+  title: string;
+  output_root: string;
+  sections: Partial<Record<PublicRunOutputSection, PublicRunManifestSection>>;
+  workspace_changed_files: string[];
+  generated_files: string[];
+  updated_at: string;
+}
+
+export interface PublishPublicRunOutputFile {
+  sourcePath: string;
+  targetRelativePath?: string;
+  optional?: boolean;
+}
+
+export interface PublishPublicRunOutputsInput {
+  workspaceRoot: string;
+  run: Pick<RunRecord, "id" | "title">;
+  section: PublicRunOutputSection;
+  files: PublishPublicRunOutputFile[];
+  workspaceChangedFiles?: string[];
+  runContext?: RunContextMemory;
+}
+
+export interface PublishPublicRunOutputsResult {
+  outputRoot: string;
+  outputRootRelative: string;
+  sectionDir: string;
+  sectionDirRelative: string;
+  manifestPath: string;
+  manifestPathRelative: string;
+  generatedFiles: string[];
+  workspaceChangedFiles: string[];
+  firstPublished: boolean;
+}
+
+export async function publishPublicRunOutputs(
+  input: PublishPublicRunOutputsInput
+): Promise<PublishPublicRunOutputsResult> {
+  const outputRoot = buildPublicRunOutputDir(input.workspaceRoot, input.run);
+  const sectionDir = buildPublicSectionDir(input.workspaceRoot, input.run, input.section);
+  const manifestPath = buildPublicRunManifestPath(input.workspaceRoot, input.run);
+  await ensureDir(sectionDir);
+
+  const now = new Date().toISOString();
+  const manifest = await loadPublicRunManifest(manifestPath, input.workspaceRoot, input.run);
+  const previousSection = manifest.sections[input.section];
+  const sectionFiles = new Set(previousSection?.generated_files || []);
+
+  for (const file of input.files) {
+    const sourcePath = resolveWorkspacePath(input.workspaceRoot, file.sourcePath);
+    const defaultTargetPath = isPathInsideOrEqual(sourcePath, sectionDir)
+      ? normalizeRelativePath(path.relative(sectionDir, sourcePath))
+      : path.basename(sourcePath);
+    const targetRelativePath = normalizeRelativePath(
+      path.join(input.section, file.targetRelativePath || defaultTargetPath)
+    );
+    const targetPath = path.join(outputRoot, targetRelativePath);
+    const sourceExists = await fileExists(sourcePath);
+
+    if (!sourceExists) {
+      sectionFiles.delete(targetRelativePath);
+      if (await fileExists(targetPath)) {
+        await fs.rm(targetPath, { force: true });
+      }
+      continue;
+    }
+
+    await ensureDir(path.dirname(targetPath));
+    if (path.resolve(sourcePath) !== path.resolve(targetPath)) {
+      await fs.copyFile(sourcePath, targetPath);
+    }
+    sectionFiles.add(targetRelativePath);
+  }
+
+  const normalizedWorkspaceChangedFiles = normalizeWorkspaceChangedFiles(
+    input.workspaceChangedFiles || [],
+    input.workspaceRoot,
+    outputRoot
+  );
+  const mergedWorkspaceChangedFiles = new Set<string>([
+    ...manifest.workspace_changed_files,
+    ...normalizedWorkspaceChangedFiles
+  ]);
+
+  manifest.sections[input.section] = {
+    dir: normalizeRelativePath(path.relative(input.workspaceRoot, sectionDir)),
+    generated_files: [...sectionFiles].sort(),
+    updated_at: now
+  };
+  manifest.workspace_changed_files = [...mergedWorkspaceChangedFiles].sort();
+  manifest.generated_files = collectGeneratedFiles(manifest.sections);
+  manifest.updated_at = now;
+  await writeJsonFile(manifestPath, manifest);
+
+  if (input.runContext) {
+    await input.runContext.put("public_outputs.root", normalizeRelativePath(path.relative(input.workspaceRoot, outputRoot)));
+    await input.runContext.put("public_outputs.manifest", normalizeRelativePath(path.relative(input.workspaceRoot, manifestPath)));
+    await input.runContext.put(
+      `public_outputs.${input.section}_dir`,
+      normalizeRelativePath(path.relative(input.workspaceRoot, sectionDir))
+    );
+  }
+
+  return {
+    outputRoot,
+    outputRootRelative: normalizeRelativePath(path.relative(input.workspaceRoot, outputRoot)),
+    sectionDir,
+    sectionDirRelative: normalizeRelativePath(path.relative(input.workspaceRoot, sectionDir)),
+    manifestPath,
+    manifestPathRelative: normalizeRelativePath(path.relative(input.workspaceRoot, manifestPath)),
+    generatedFiles: [...sectionFiles].sort(),
+    workspaceChangedFiles: [...mergedWorkspaceChangedFiles].sort(),
+    firstPublished: (previousSection?.generated_files.length || 0) === 0 && sectionFiles.size > 0
+  };
+}
+
+async function loadPublicRunManifest(
+  manifestPath: string,
+  workspaceRoot: string,
+  run: Pick<RunRecord, "id" | "title">
+): Promise<PublicRunManifest> {
+  try {
+    const raw = await fs.readFile(manifestPath, "utf8");
+    const parsed = JSON.parse(raw) as PublicRunManifest;
+    if (parsed && parsed.version === 1 && parsed.run_id === run.id) {
+      return {
+        ...parsed,
+        title: run.title,
+        output_root: normalizeRelativePath(path.relative(workspaceRoot, buildPublicRunOutputDir(workspaceRoot, run)))
+      };
+    }
+  } catch {
+    // ignore invalid or missing manifest
+  }
+
+  return {
+    version: 1,
+    run_id: run.id,
+    title: run.title,
+    output_root: normalizeRelativePath(path.relative(workspaceRoot, buildPublicRunOutputDir(workspaceRoot, run))),
+    sections: {},
+    workspace_changed_files: [],
+    generated_files: [],
+    updated_at: new Date(0).toISOString()
+  };
+}
+
+function collectGeneratedFiles(
+  sections: Partial<Record<PublicRunOutputSection, PublicRunManifestSection>>
+): string[] {
+  const generated = new Set<string>();
+  for (const section of Object.values(sections)) {
+    if (!section) {
+      continue;
+    }
+    for (const filePath of section.generated_files) {
+      generated.add(normalizeRelativePath(filePath));
+    }
+  }
+  return [...generated].sort();
+}
+
+function normalizeWorkspaceChangedFiles(
+  filePaths: string[],
+  workspaceRoot: string,
+  outputRoot: string
+): string[] {
+  return [...new Set(filePaths.map((filePath) => resolveWorkspacePath(workspaceRoot, filePath)))]
+    .filter((filePath) => isPathInsideOrEqual(filePath, workspaceRoot))
+    .filter((filePath) => !isPathInsideOrEqual(filePath, path.join(workspaceRoot, ".autolabos")))
+    .filter((filePath) => !isPathInsideOrEqual(filePath, outputRoot))
+    .map((filePath) => normalizeRelativePath(path.relative(workspaceRoot, filePath)))
+    .sort();
+}
+
+function resolveWorkspacePath(workspaceRoot: string, filePath: string): string {
+  return path.isAbsolute(filePath) ? filePath : path.resolve(workspaceRoot, filePath);
+}
+
+function normalizeRelativePath(filePath: string): string {
+  return filePath.replace(/\\/g, "/");
+}
+
+function isPathInsideOrEqual(filePath: string, parentDir: string): boolean {
+  const relative = path.relative(parentDir, filePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}

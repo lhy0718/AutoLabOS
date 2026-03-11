@@ -43,7 +43,7 @@ const HARD_BLOCK_RULES: CommandPolicyRule[] = [
   {
     id: "system_shutdown",
     reason: "system shutdown and reboot commands are blocked",
-    pattern: /\b(?:shutdown|reboot|poweroff|halt)\b/i
+    pattern: /(?:^|[;&|()]\s*|\s)(?:shutdown|reboot|poweroff|halt)(?=$|[\s;&|()])/i
   },
   {
     id: "disk_destructive_tooling",

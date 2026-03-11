@@ -8,7 +8,7 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import { LLMClient, LLMCompleteOptions, MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
-import { buildPublicPaperDir } from "../src/core/publicArtifacts.js";
+import { buildPublicPaperDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
@@ -389,6 +389,33 @@ function buildRelatedWorkScoutResponses(): string[] {
   return [outline, draft, review, draft];
 }
 
+function buildSubmissionValidationFailureResponses(): string[] {
+  const manuscript = JSON.stringify({
+    title: "PDF-backed Paper Writer",
+    abstract: "A submission draft that should fail validation before PDF build.",
+    keywords: ["agent collaboration", "paper writing"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: ["This paragraph incorrectly exposes ev_1 inside the submission manuscript."]
+      },
+      {
+        heading: "Method",
+        paragraphs: ["The workflow stages outline, drafting, review, and finalization before compiling LaTeX."]
+      },
+      {
+        heading: "Results",
+        paragraphs: ["Persistent drafting support improved revision stability in repeated runs."]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: ["Validation should stop PDF generation when the manuscript leaks raw trace tokens."]
+      }
+    ]
+  });
+  return [...buildSessionResponses(), manuscript];
+}
+
 function createPdfBuildAci(options?: { failFirstCompile?: boolean; failAllCompiles?: boolean }) {
   const commands: string[] = [];
   let firstCompileFailed = false;
@@ -654,8 +681,13 @@ describe("writePaper PDF build", () => {
 
     expect(await exists(path.join(runDir, "paper", "main.pdf"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "compile_report.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "manuscript.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "traceability.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "submission_validation.json"))).toBe(true);
     expect(await exists(path.join(buildPublicPaperDir(root, run), "main.pdf"))).toBe(true);
     expect(await exists(path.join(buildPublicPaperDir(root, run), "build.log"))).toBe(true);
+    expect(await exists(path.join(buildPublicPaperDir(root, run), "manuscript.json"))).toBe(true);
+    expect(await exists(path.join(buildPublicPaperDir(root, run), "traceability.json"))).toBe(true);
 
     const report = JSON.parse(await readFile(path.join(runDir, "paper", "compile_report.json"), "utf8")) as {
       status: string;
@@ -665,12 +697,111 @@ describe("writePaper PDF build", () => {
     expect(report.status).toBe("success");
     expect(report.repaired).toBe(false);
     expect(report.attempts).toHaveLength(1);
+    const submissionValidation = JSON.parse(
+      await readFile(path.join(runDir, "paper", "submission_validation.json"), "utf8")
+    ) as { ok: boolean; issues: unknown[] };
+    expect(submissionValidation.ok).toBe(true);
+    expect(submissionValidation.issues).toHaveLength(0);
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("write_paper.compile_status")).toBe("success");
     expect(await memory.get("write_paper.pdf_path")).toBe(
       path.join(".autolabos", "runs", run.id, "paper", "main.pdf")
     );
+  });
+
+  it("fails before PDF build when submission validation catches raw evidence ids", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-submission-validation-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-submission-validation");
+    const runDir = await seedRun(root, run);
+    const aci = createPdfBuildAci();
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: true
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildSubmissionValidationFailureResponses()),
+      codex: {} as any,
+      aci: aci.api as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("submission-quality validation failed");
+    expect(result.error).toContain("raw evidence identifier");
+    expect(aci.commands).toHaveLength(0);
+    expect(await exists(path.join(runDir, "paper", "main.pdf"))).toBe(false);
+
+    const submissionValidation = JSON.parse(
+      await readFile(path.join(runDir, "paper", "submission_validation.json"), "utf8")
+    ) as { ok: boolean; issues: Array<{ kind: string; value?: string }> };
+    expect(submissionValidation.ok).toBe(false);
+    expect(
+      submissionValidation.issues.some(
+        (issue) => issue.kind === "evidence_id" && issue.value?.includes("ev_1")
+      )
+    ).toBe(true);
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("write_paper.compile_status")).toBe(null);
+    expect(await memory.get("write_paper.pdf_path")).toBe(null);
+  });
+
+  it("omits auto-generated visuals when metrics are uninformative", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-visual-gate-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-visual-gate");
+    const runDir = await seedRun(root, run);
+    await writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify(
+        {
+          objective_metric: {
+            evaluation: {
+              summary: "Objective metric met: reproducibility_score=1.0."
+            }
+          },
+          metric_table: [
+            { key: "confirmatory_metrics.json", value: 1 },
+            { key: "quick_check_metrics.json", value: 1 },
+            { key: "metrics.json", value: 1 }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildSessionResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
+    expect(tex).not.toContain("\\begin{table}[t]");
+    expect(tex).not.toContain("\\begin{figure}[t]");
   });
 
   it("repairs LaTeX once after a failed compile and retries the PDF build", async () => {
@@ -717,6 +848,9 @@ describe("writePaper PDF build", () => {
     expect(repairedTex).toContain("Repaired paper draft.");
     expect(await exists(path.join(runDir, "paper", "main.pdf"))).toBe(true);
     expect(await exists(path.join(buildPublicPaperDir(root, run), "main.pdf"))).toBe(true);
+    expect(await readFile(path.join(buildPublicPaperDir(root, run), "main.tex"), "utf8")).toContain(
+      "\\documentclass{article}"
+    );
 
     const report = JSON.parse(await readFile(path.join(runDir, "paper", "compile_report.json"), "utf8")) as {
       status: string;
@@ -733,6 +867,20 @@ describe("writePaper PDF build", () => {
     expect(await memory.get("write_paper.compile_status")).toBe("repaired_success");
     expect(await memory.get("write_paper.pdf_path")).toBe(
       path.join(".autolabos", "runs", run.id, "paper", "main.pdf")
+    );
+    const manifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
+      generated_files: string[];
+      sections?: {
+        paper?: {
+          generated_files: string[];
+        };
+      };
+    };
+    expect(manifest.generated_files).toEqual(
+      expect.arrayContaining(["paper/main.tex", "paper/references.bib", "paper/evidence_links.json", "paper/main.pdf"])
+    );
+    expect(manifest.sections?.paper?.generated_files).toEqual(
+      expect.arrayContaining(["paper/main.tex", "paper/references.bib", "paper/evidence_links.json", "paper/main.pdf"])
     );
   });
 

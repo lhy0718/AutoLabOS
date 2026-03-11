@@ -281,8 +281,9 @@ describe("PaperWriterSessionManager", () => {
 
     expect(result.source).toBe("codex_session");
     expect(result.threadId).toBe("fake-thread");
-    expect(result.trace).toHaveLength(4);
+    expect(result.trace).toHaveLength(5);
     expect(result.draft.sections[0]?.heading).toBe("Introduction");
+    expect(result.manuscript.sections[0]?.heading).toBe("Introduction");
     expect(storedRun.nodeThreads.write_paper).toBe("fake-thread");
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
@@ -290,6 +291,7 @@ describe("PaperWriterSessionManager", () => {
 
     const traceRaw = await readFile(path.join(runDir, "paper", "session_trace.json"), "utf8");
     expect(traceRaw).toContain('"stage": "outline"');
+    expect(traceRaw).toContain('"stage": "polish"');
     expect(traceRaw).toContain('"threadId": "fake-thread"');
   });
 });

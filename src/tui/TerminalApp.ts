@@ -1936,18 +1936,30 @@ export class TerminalApp {
       }
 
       await this.setActiveRunId(run.id);
-      const response = await this.orchestrator.runAgentWithOptions(run.id, nodeRaw, { abortSignal });
-      await this.refreshRunIndex();
-      if (this.wasAgentRunCanceled(response.run, nodeRaw)) {
+      if (run.currentNode !== nodeRaw) {
+        await this.orchestrator.jumpToNode(run.id, nodeRaw, "force", "manual node run");
+        await this.refreshRunIndex();
+      }
+
+      const updatedRun = await this.continueSupervisedRun(run.id, abortSignal);
+      if (this.wasAgentRunCanceled(updatedRun, nodeRaw)) {
         throw new Error("Operation aborted by user");
       }
 
-      if (response.result.status === "failure") {
-        this.pushLog(`Node ${nodeRaw} failed: ${response.result.error || "unknown error"}`);
-        return { ok: false, reason: response.result.error || `${nodeRaw} failed` };
+      if (["failed", "failed_budget"].includes(updatedRun.status)) {
+        const failure =
+          updatedRun.graph.nodeStates[updatedRun.currentNode].lastError ||
+          updatedRun.latestSummary ||
+          `${updatedRun.currentNode} failed`;
+        this.pushLog(`Node ${nodeRaw} failed: ${failure}`);
+        return { ok: false, reason: failure };
       }
 
-      this.pushLog(`Node ${nodeRaw} finished: ${oneLine(response.result.summary, 480)}`);
+      const nodeSummary =
+        updatedRun.graph.nodeStates[nodeRaw].note ||
+        updatedRun.latestSummary ||
+        `${nodeRaw} executed`;
+      this.pushLog(`Node ${nodeRaw} finished: ${oneLine(nodeSummary, 480)}`);
       return { ok: true };
     }
 
@@ -4017,6 +4029,8 @@ export class TerminalApp {
         const paperFiles = [
           "paper/main.tex",
           "paper/references.bib",
+          "paper/manuscript.json",
+          "paper/traceability.json",
           "paper/evidence_links.json"
         ];
         let count = 0;
@@ -4745,7 +4759,13 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
         "review/decision.json"
       ];
     case "write_paper":
-      return ["paper/main.tex", "paper/references.bib", "paper/evidence_links.json"];
+      return [
+        "paper/main.tex",
+        "paper/references.bib",
+        "paper/manuscript.json",
+        "paper/traceability.json",
+        "paper/evidence_links.json"
+      ];
     default:
       return [];
   }
