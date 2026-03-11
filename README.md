@@ -35,7 +35,7 @@
 
 ## Why AutoLabOS?
 
-- Turn the research loop into a fixed 9-node state graph from `collect_papers` to `write_paper`, with an explicit `review` gate before drafting.
+- Turn the research loop into a fixed 9-node state graph from `collect_papers` to `write_paper`, with an explicit `review` stage before drafting.
 - Run the main workflow with either `codex` or `OpenAI API`, then switch PDF analysis independently.
 - Keep work local and inspectable with checkpoints, budgets, retries, jumps, and run-scoped memory.
 
@@ -109,9 +109,6 @@ The web server listens on `http://127.0.0.1:4317` by default. Use `autolabos` in
 - If you do not want `npm link`, you can still run `node dist/cli/main.js` or `node dist/cli/main.js web` from the AutoLabOS repository root.
 - If you need a different bind address or port, run `autolabos web --host 0.0.0.0 --port 8080`.
 - For local development, use `npm run dev` and `npm run dev:web`.
-
-> [!NOTE]
-> External entrypoints are `autolabos` and `autolabos web`. `autolabos init` is intentionally not supported.
 
 ## Web Ops UI
 
@@ -223,12 +220,25 @@ stateDiagram-v2
     write_paper --> [*]: auto_complete
 ```
 
-Terminology:
-- Workflow mode: `agent_approval` is the current execution structure for the 9-node graph.
-- Approval mode: `minimal` (default) auto-resolves ordinary approval gates, while `manual` pauses at every approval boundary.
-- Autonomy preset: `/agent overnight` runs a separate safe overnight policy. It is not a third workflow mode.
+### Execution Controls
 
-Within the `agent_approval` workflow mode, the default approval mode is `minimal`, so successful nodes auto-advance and review outcomes auto-apply into `write_paper` or one of the supported backtracks. The main human-only gates are in `analyze_results`: explicit clarification when the objective metric cannot be grounded to a concrete numeric signal, and low-confidence hypothesis-reset recommendations that are not marked auto-executable. Set `workflow.approval_mode: manual` if you want the legacy pause-after-each-node behavior, including explicit `/approve` on review backtracks.
+| Layer | Setting or command | Default | What it does | When a human steps in |
+| --- | --- | --- | --- | --- |
+| Workflow mode | `agent_approval` | Fixed | Runs the full 9-node research graph from collection to paper writing | Not a pause setting by itself |
+| Approval mode | `workflow.approval_mode: minimal` | Yes | Auto-approves ordinary completion gates and auto-applies safe transition recommendations, including review outcomes | Pauses when a recommendation is `pause_for_human` or `autoExecutable=false` |
+| Approval mode | `workflow.approval_mode: manual` | Optional | Pauses at every approval boundary instead of auto-resolving it | Use `/approve`, `/agent apply`, or `/agent jump` to continue |
+| Autonomy preset | `/agent overnight` | On demand | Runs the current run unattended with a conservative overnight policy layered on top of the workflow | Stops before `write_paper`, on low-confidence or disallowed backtracks, repeated recommendations, time limit, or manual-only recommendations |
+
+### Human Intervention Triggers
+
+| Where | Condition | What happens |
+| --- | --- | --- |
+| `analyze_results` | The objective metric cannot be grounded to a concrete numeric signal | The run pauses for clarification before moving on |
+| `analyze_results` | A hypothesis reset is recommended, but confidence is too low for `autoExecutable=true` | The run pauses for human review instead of auto-backtracking |
+| Any node in `manual` approval mode | The node reaches an approval boundary | The run waits for `/approve`, `/agent apply`, or another explicit operator choice |
+| `/agent overnight` | The run reaches `write_paper`, hits a low-confidence or disallowed recommendation, repeats the same recommendation too many times, or reaches the overnight time budget | Overnight stops and hands control back to the operator |
+
+In the default setup, review outcomes auto-apply into `write_paper` or one of the supported backtracks. Review is no longer a dedicated manual hold in `minimal` mode.
 
 ### Phase-by-Phase Connection Graphs
 
@@ -415,7 +425,7 @@ flowchart LR
     Parse --> Insight["buildReviewInsightCard<br/>formatReviewPacketLines"]
     Insight --> TUI["TUI active run insight<br/>/agent review output"]
     Insight --> Web["Web review preview<br/>suggested action buttons"]
-    TUI --> Approve["auto transition or /approve (manual approval mode)"]
+    TUI --> Approve["auto transition or /approve (if paused)"]
     Web --> Approve
     Approve --> Runtime["StateGraphRuntime.approveCurrent / auto gate resolver"]
     Runtime -->|advance| Paper["write_paper"]
@@ -556,7 +566,7 @@ Implementation references:
 | `/agent run <node> [run]` | Execute from node |
 | `/agent status [run]` | Show node statuses |
 | `/agent collect [query] [options]` | Collect papers with filters, sort, and options |
-| `/agent recollect <n> [run]` | Backward-compatible alias for additional collection |
+| `/agent recollect <n> [run]` | Collect additional papers for the current run |
 | `/agent focus <node>` | Move focus to node with a safe jump |
 | `/agent graph [run]` | Show graph state |
 | `/agent resume [run] [checkpoint]` | Resume from latest or specific checkpoint |
@@ -565,7 +575,7 @@ Implementation references:
 | `/agent budget [run]` | Show budget usage |
 | `/agent overnight [run]` | Run the overnight autonomy preset with the default safe policy |
 | `/model` | Open arrow-key selector for model and reasoning effort |
-| `/approve` | Approve the current paused node (mainly when approval mode is `manual`) |
+| `/approve` | Approve the current paused node |
 | `/retry` | Retry current node |
 | `/settings` | Edit defaults |
 | `/quit` | Exit |
@@ -614,7 +624,8 @@ Fixed graph nodes:
 5. `implement_experiments`
 6. `run_experiments`
 7. `analyze_results`
-8. `write_paper`
+8. `review`
+9. `write_paper`
 
 ### Runtime Policies
 
@@ -677,8 +688,6 @@ Standard actions:
 - `graph` (`RunGraphState`)
 - `nodeThreads` (`Partial<Record<GraphNodeId, string>>`)
 - `memoryRefs` (`runContextPath`, `longTermPath`, `episodePath`)
-
-Legacy runs are auto-migrated to v3 on load.
 
 ### Generated Paths
 
