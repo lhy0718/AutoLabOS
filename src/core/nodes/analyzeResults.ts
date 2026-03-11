@@ -68,8 +68,29 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       });
       const cachedEvaluation =
         await runContextMemory.get<ObjectiveMetricEvaluation>("objective_metric.last_evaluation");
-      const objectiveEvaluation =
-        cachedEvaluation || evaluateObjectiveMetric(metrics, objectiveProfile, run.objectiveMetric);
+      const shouldRefreshObjectiveEvaluation =
+        !cachedEvaluation || cachedEvaluation.status === "unknown" || cachedEvaluation.status === "missing";
+      const objectiveEvaluation = shouldRefreshObjectiveEvaluation
+        ? evaluateObjectiveMetric(metrics, objectiveProfile, run.objectiveMetric)
+        : cachedEvaluation;
+      if (
+        shouldRefreshObjectiveEvaluation &&
+        (!cachedEvaluation ||
+          cachedEvaluation.status !== objectiveEvaluation.status ||
+          cachedEvaluation.matchedMetricKey !== objectiveEvaluation.matchedMetricKey)
+      ) {
+        await runContextMemory.put("objective_metric.last_evaluation", objectiveEvaluation);
+        if (cachedEvaluation?.status === "unknown" || cachedEvaluation?.status === "missing") {
+          deps.eventStream.emit({
+            type: "OBS_RECEIVED",
+            runId: run.id,
+            node: "analyze_results",
+            payload: {
+              text: `Objective metric re-evaluated automatically: ${objectiveEvaluation.summary}`
+            }
+          });
+        }
+      }
 
       const experimentPlanRaw = await safeRead(path.join(".autolabos", "runs", run.id, "experiment_plan.yaml"));
       const observationsRaw = await safeRead(

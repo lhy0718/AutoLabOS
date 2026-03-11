@@ -73,6 +73,8 @@ interface AnalysisManifestEntry {
   completedAt?: string;
 }
 
+const MAX_AUTO_SELECTION_EXPANSIONS = 2;
+
 export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
     id: "analyze_papers",
@@ -95,8 +97,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const summaryPath = path.join(artifactsRoot, "paper_summaries.jsonl");
       const evidencePath = path.join(artifactsRoot, "evidence_store.jsonl");
 
-      const request = await loadAnalysisSelectionRequest(runContextMemory);
-      await runContextMemory.put("analyze_papers.request", request);
+      let request = await loadAnalysisSelectionRequest(runContextMemory);
       const includePageImages = deps.config.providers?.llm_mode === "codex_chatgpt_only";
       const analysisFingerprint = buildAnalysisFingerprint({
         analysisMode,
@@ -104,129 +105,148 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         responsesReasoningEffort: deps.config.analysis.responses_reasoning_effort,
         includePageImages
       });
+      let autoExpansionCount = 0;
+      let autoExpansionReason: string | undefined;
+      let startedWithExistingManifest: boolean | undefined;
 
-      emitLog(
-        request.selectionMode === "top_n" && request.topN
-          ? `Ranking ${corpusRows.length} papers and selecting the top ${request.topN} for analysis.`
-          : `Analyzing all ${corpusRows.length} collected papers.`
-      );
+      while (true) {
+        await runContextMemory.put("analyze_papers.request", request);
 
-      const selection = await selectPapersForAnalysis({
-        llm: deps.llm,
-        runTitle: run.title,
-        runTopic: run.topic,
-        corpusRows,
-        request,
-        onProgress: (text) => emitLog(text),
-        abortSignal
-      });
-
-      deps.eventStream.emit({
-        type: "PLAN_CREATED",
-        runId: run.id,
-        node: "analyze_papers",
-        payload: {
-          selectionMode: selection.request.selectionMode,
-          selectedCount: selection.selectedPaperIds.length,
-          totalCandidates: selection.totalCandidates,
-          candidatePoolSize: selection.candidatePoolSize,
-          rerankApplied: selection.rerankApplied
-        }
-      });
-
-      if (selection.rerankFallbackReason) {
-        emitLog(`LLM rerank unavailable, falling back to deterministic order (${selection.rerankFallbackReason}).`);
-      } else if (selection.rerankApplied) {
-        emitLog(`Hybrid rerank selected ${selection.selectedPaperIds.length} paper(s) from ${selection.totalCandidates} candidate(s).`);
-      }
-      if (selection.deterministicRankingPreview.length > 0) {
         emitLog(
-          `Ranking preview: ${selection.deterministicRankingPreview
-            .slice(0, 3)
-            .map((row) => `${row.paper_id}=${row.deterministic_score}`)
-            .join(", ")}`
+          request.selectionMode === "top_n" && request.topN
+            ? `Ranking ${corpusRows.length} papers and selecting the top ${request.topN} for analysis.`
+            : `Analyzing all ${corpusRows.length} collected papers.`
         );
-      }
 
-      const selectedRows = selection.selectedPaperIds
-        .map((paperId) => corpusRows.find((row) => row.paper_id === paperId))
-        .filter((row): row is AnalysisCorpusRow => Boolean(row));
+        const selection = await selectPapersForAnalysis({
+          llm: deps.llm,
+          runTitle: run.title,
+          runTopic: run.topic,
+          corpusRows,
+          request,
+          onProgress: (text) => emitLog(text),
+          abortSignal
+        });
 
-      if (
-        analysisMode === "responses_api_pdf" &&
-        selectedRows.some((row) => Boolean(resolvePaperPdfUrl(row))) &&
-        !(await deps.responsesPdfAnalysis.hasApiKey())
-      ) {
-        return {
-          status: "failure",
-          summary: "Responses API PDF analysis is selected, but OPENAI_API_KEY is not configured.",
-          error: "OPENAI_API_KEY is required when PDF analysis mode is set to Responses API.",
-          toolCallsUsed: 0
-        };
-      }
+        deps.eventStream.emit({
+          type: "PLAN_CREATED",
+          runId: run.id,
+          node: "analyze_papers",
+          payload: {
+            selectionMode: selection.request.selectionMode,
+            selectedCount: selection.selectedPaperIds.length,
+            totalCandidates: selection.totalCandidates,
+            candidatePoolSize: selection.candidatePoolSize,
+            rerankApplied: selection.rerankApplied
+          }
+        });
 
-      const existingManifest = await readExistingManifest(manifestPath);
-      const resetReason =
-        existingManifest && existingManifest.selectionFingerprint !== selection.selectionFingerprint
-          ? "selection_changed"
-          : existingManifest && !existingManifest.analysisFingerprint
-            ? "legacy_manifest"
-            : existingManifest && existingManifest.analysisFingerprint !== analysisFingerprint
-              ? "analysis_config_changed"
-              : undefined;
-      let manifest =
-        existingManifest &&
-        existingManifest.selectionFingerprint === selection.selectionFingerprint &&
-        existingManifest.analysisFingerprint === analysisFingerprint
-          ? existingManifest
-          : undefined;
-
-      if (!manifest && !existingManifest && selection.request.selectionMode === "all") {
-        manifest = await bootstrapManifestFromExistingOutputs(selection, summaryPath, evidencePath, analysisFingerprint);
-        await writeJsonFile(manifestPath, manifest);
-      }
-
-      if (!manifest) {
-        if (resetReason === "selection_changed") {
-          emitLog("Analysis selection changed since the previous run. Resetting summaries/evidence for the new paper set.");
-        } else if (resetReason === "legacy_manifest") {
-          emitLog("Existing analysis manifest lacks configuration fingerprint metadata. Resetting summaries/evidence to rebuild a consistent analysis state.");
-        } else if (resetReason === "analysis_config_changed") {
-          emitLog("Analysis settings changed since the previous run. Resetting summaries/evidence and re-analyzing the selected papers.");
+        if (selection.rerankFallbackReason) {
+          emitLog(`LLM rerank unavailable, falling back to deterministic order (${selection.rerankFallbackReason}).`);
+        } else if (selection.rerankApplied) {
+          emitLog(`Hybrid rerank selected ${selection.selectedPaperIds.length} paper(s) from ${selection.totalCandidates} candidate(s).`);
         }
-        await resetAnalysisOutputs(summaryPath, evidencePath);
-        manifest = createFreshManifest(selection, analysisFingerprint);
-        await writeJsonFile(manifestPath, manifest);
-      }
-
-      const existingSummaryRows = await readSummaryRows(summaryPath);
-      const existingEvidenceRows = await readEvidenceRows(evidencePath);
-      const reconciledState = reconcileManifestWithOutputs(manifest, existingSummaryRows, existingEvidenceRows);
-      manifest = reconciledState.manifest;
-      if (reconciledState.changed) {
-        if (reconciledState.requeuedPaperIds.length > 0 || reconciledState.droppedSummaryRows > 0 || reconciledState.droppedEvidenceRows > 0) {
+        if (selection.deterministicRankingPreview.length > 0) {
           emitLog(
-            `Detected inconsistent analysis artifacts. Re-queueing ${reconciledState.requeuedPaperIds.length} completed paper(s) and pruning ${reconciledState.droppedSummaryRows} summary row(s) / ${reconciledState.droppedEvidenceRows} evidence row(s).`
+            `Ranking preview: ${selection.deterministicRankingPreview
+              .slice(0, 3)
+              .map((row) => `${row.paper_id}=${row.deterministic_score}`)
+              .join(", ")}`
           );
-        } else {
-          emitLog("Reconciled analysis manifest metadata with the persisted summaries/evidence.");
         }
-        await appendJsonl(run, "paper_summaries.jsonl", reconciledState.summaryRows);
-        await appendJsonl(run, "evidence_store.jsonl", reconciledState.evidenceRows);
-        await writeJsonFile(manifestPath, manifest);
-      }
 
-      const pendingRows = selectedRows.filter((row) => manifest!.papers[row.paper_id]?.status !== "completed");
-      const analysisConcurrency = getAnalysisConcurrency(analysisMode);
-      if (pendingRows.length > 0) {
-        emitLog(`Analyzing ${pendingRows.length} paper(s) with concurrency ${analysisConcurrency}.`);
-      }
-      let failedCount = 0;
-      const persistQueue = createAsyncQueue();
+        const selectedRows = selection.selectedPaperIds
+          .map((paperId) => corpusRows.find((row) => row.paper_id === paperId))
+          .filter((row): row is AnalysisCorpusRow => Boolean(row));
 
-      await runWithConcurrency(pendingRows, analysisConcurrency, async (row, index) => {
-        emitLog(`Analyzing paper ${index + 1}/${pendingRows.length}: "${row.title}".`);
-        emitLog(`Resolving analysis source ${index + 1}/${pendingRows.length} for "${row.title}".`);
+        if (
+          analysisMode === "responses_api_pdf" &&
+          selectedRows.some((row) => Boolean(resolvePaperPdfUrl(row))) &&
+          !(await deps.responsesPdfAnalysis.hasApiKey())
+        ) {
+          return {
+            status: "failure",
+            summary: "Responses API PDF analysis is selected, but OPENAI_API_KEY is not configured.",
+            error: "OPENAI_API_KEY is required when PDF analysis mode is set to Responses API.",
+            toolCallsUsed: 0
+          };
+        }
+
+        const existingManifest = await readExistingManifest(manifestPath);
+        if (startedWithExistingManifest === undefined) {
+          startedWithExistingManifest = Boolean(existingManifest);
+        }
+        const canExtendExistingManifest = Boolean(
+          existingManifest && canExtendManifestForExpandedSelection(existingManifest, selection, analysisFingerprint)
+        );
+        const resetReason =
+          existingManifest && existingManifest.selectionFingerprint !== selection.selectionFingerprint
+            ? "selection_changed"
+            : existingManifest && !existingManifest.analysisFingerprint
+              ? "legacy_manifest"
+              : existingManifest && existingManifest.analysisFingerprint !== analysisFingerprint
+                ? "analysis_config_changed"
+                : undefined;
+        let manifest =
+          existingManifest &&
+          existingManifest.selectionFingerprint === selection.selectionFingerprint &&
+          existingManifest.analysisFingerprint === analysisFingerprint
+            ? existingManifest
+            : canExtendExistingManifest && existingManifest
+              ? extendManifestForExpandedSelection(existingManifest, selection, analysisFingerprint)
+              : undefined;
+
+        if (!manifest && !existingManifest && selection.request.selectionMode === "all") {
+          manifest = await bootstrapManifestFromExistingOutputs(selection, summaryPath, evidencePath, analysisFingerprint);
+          await writeJsonFile(manifestPath, manifest);
+        }
+
+        if (!manifest) {
+          if (resetReason === "selection_changed") {
+            emitLog("Analysis selection changed since the previous run. Resetting summaries/evidence for the new paper set.");
+          } else if (resetReason === "legacy_manifest") {
+            emitLog("Existing analysis manifest lacks configuration fingerprint metadata. Resetting summaries/evidence to rebuild a consistent analysis state.");
+          } else if (resetReason === "analysis_config_changed") {
+            emitLog("Analysis settings changed since the previous run. Resetting summaries/evidence and re-analyzing the selected papers.");
+          }
+          await resetAnalysisOutputs(summaryPath, evidencePath);
+          manifest = createFreshManifest(selection, analysisFingerprint);
+          await writeJsonFile(manifestPath, manifest);
+        } else if (canExtendExistingManifest && existingManifest) {
+          emitLog(
+            `Expanding analysis selection from top ${existingManifest.selectedPaperIds.length} to top ${selection.selectedPaperIds.length}; preserving completed analyses and queueing only the new papers.`
+          );
+          await writeJsonFile(manifestPath, manifest);
+        }
+
+        const existingSummaryRows = await readSummaryRows(summaryPath);
+        const existingEvidenceRows = await readEvidenceRows(evidencePath);
+        const reconciledState = reconcileManifestWithOutputs(manifest, existingSummaryRows, existingEvidenceRows);
+        manifest = reconciledState.manifest;
+        if (reconciledState.changed) {
+          if (reconciledState.requeuedPaperIds.length > 0 || reconciledState.droppedSummaryRows > 0 || reconciledState.droppedEvidenceRows > 0) {
+            emitLog(
+              `Detected inconsistent analysis artifacts. Re-queueing ${reconciledState.requeuedPaperIds.length} completed paper(s) and pruning ${reconciledState.droppedSummaryRows} summary row(s) / ${reconciledState.droppedEvidenceRows} evidence row(s).`
+            );
+          } else {
+            emitLog("Reconciled analysis manifest metadata with the persisted summaries/evidence.");
+          }
+          await appendJsonl(run, "paper_summaries.jsonl", reconciledState.summaryRows);
+          await appendJsonl(run, "evidence_store.jsonl", reconciledState.evidenceRows);
+          await writeJsonFile(manifestPath, manifest);
+        }
+
+        const pendingRows = selectedRows.filter((row) => manifest!.papers[row.paper_id]?.status !== "completed");
+        const analysisConcurrency = getAnalysisConcurrency(analysisMode);
+        if (pendingRows.length > 0) {
+          emitLog(`Analyzing ${pendingRows.length} paper(s) with concurrency ${analysisConcurrency}.`);
+        }
+        let failedCount = 0;
+        const persistQueue = createAsyncQueue();
+
+        await runWithConcurrency(pendingRows, analysisConcurrency, async (row, index) => {
+          emitLog(`Analyzing paper ${index + 1}/${pendingRows.length}: "${row.title}".`);
+          emitLog(`Resolving analysis source ${index + 1}/${pendingRows.length} for "${row.title}".`);
 
         deps.eventStream.emit({
           type: "TOOL_CALLED",
@@ -410,53 +430,125 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             });
           });
         }
-      });
+        });
 
-      await persistQueue.onIdle();
+        await persistQueue.onIdle();
 
-      const summaryRows = await readSummaryRows(summaryPath);
-      const evidenceRows = await readEvidenceRows(evidencePath);
-      const fullTextCount = summaryRows.filter((row) => row.source_type === "full_text").length;
-      const abstractFallbackCount = summaryRows.filter((row) => row.source_type === "abstract").length;
+        const summaryRows = await readSummaryRows(summaryPath);
+        const evidenceRows = await readEvidenceRows(evidencePath);
+        const fullTextCount = summaryRows.filter((row) => row.source_type === "full_text").length;
+        const abstractFallbackCount = summaryRows.filter((row) => row.source_type === "abstract").length;
 
-      await runContextMemory.put("analyze_papers.summary_count", summaryRows.length);
-      await runContextMemory.put("analyze_papers.evidence_count", evidenceRows.length);
-      await runContextMemory.put("analyze_papers.full_text_count", fullTextCount);
-      await runContextMemory.put("analyze_papers.abstract_fallback_count", abstractFallbackCount);
-      await runContextMemory.put("analyze_papers.selected_count", selection.selectedPaperIds.length);
-      await runContextMemory.put("analyze_papers.total_candidates", selection.totalCandidates);
-      await runContextMemory.put("analyze_papers.selection_fingerprint", selection.selectionFingerprint);
-      emitLog(
-        `Analysis totals: summaries=${summaryRows.length}, evidence=${evidenceRows.length}, full_text=${fullTextCount}, abstract_fallback=${abstractFallbackCount}.`
-      );
+        await runContextMemory.put("analyze_papers.summary_count", summaryRows.length);
+        await runContextMemory.put("analyze_papers.evidence_count", evidenceRows.length);
+        await runContextMemory.put("analyze_papers.full_text_count", fullTextCount);
+        await runContextMemory.put("analyze_papers.abstract_fallback_count", abstractFallbackCount);
+        await runContextMemory.put("analyze_papers.selected_count", selection.selectedPaperIds.length);
+        await runContextMemory.put("analyze_papers.total_candidates", selection.totalCandidates);
+        await runContextMemory.put("analyze_papers.selection_fingerprint", selection.selectionFingerprint);
+        emitLog(
+          `Analysis totals: summaries=${summaryRows.length}, evidence=${evidenceRows.length}, full_text=${fullTextCount}, abstract_fallback=${abstractFallbackCount}.`
+        );
 
-      if (failedCount > 0) {
+        if (failedCount > 0) {
+          return {
+            status: "failure",
+            summary:
+              request.selectionMode === "top_n" && request.topN
+                ? `Analyzed ${summaryRows.length}/${selection.selectedPaperIds.length} selected papers from ${selection.totalCandidates} candidates; ${failedCount} failed and can be retried.`
+                : `Analyzed ${summaryRows.length}/${corpusRows.length} papers, ${failedCount} failed and can be retried.`,
+            error: `Analysis incomplete: ${failedCount} paper(s) failed validation or LLM extraction.`,
+            toolCallsUsed: Math.max(1, pendingRows.length)
+          };
+        }
+
+        const expansionDecision = decideAutomaticSelectionExpansion({
+          request,
+          selection,
+          summaryRows,
+          evidenceRows,
+          fullTextCount,
+          autoExpansionCount,
+          startedWithExistingManifest: Boolean(startedWithExistingManifest)
+        });
+        if (expansionDecision) {
+          autoExpansionCount += 1;
+          autoExpansionReason = expansionDecision.reason;
+          request = expansionDecision.nextRequest;
+          await runContextMemory.put("analyze_papers.auto_expand_count", autoExpansionCount);
+          await runContextMemory.put("analyze_papers.auto_expand_reason", autoExpansionReason);
+          emitLog(expansionDecision.reason);
+          continue;
+        }
+
+        await runContextMemory.put("analyze_papers.auto_expand_count", autoExpansionCount);
+        await runContextMemory.put("analyze_papers.auto_expand_reason", autoExpansionReason || null);
+
+        const baseSummary =
+          request.selectionMode === "top_n" && request.topN
+            ? `Analyzed top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers into ${evidenceRows.length} evidence item(s); ${fullTextCount} full-text and ${abstractFallbackCount} abstract fallback (mode=${analysisMode}).`
+            : `Analyzed ${summaryRows.length} papers into ${evidenceRows.length} evidence item(s); ${fullTextCount} full-text and ${abstractFallbackCount} abstract fallback (mode=${analysisMode}).`;
+
         return {
-          status: "failure",
+          status: "success",
           summary:
-            request.selectionMode === "top_n" && request.topN
-              ? `Analyzed ${summaryRows.length}/${selection.selectedPaperIds.length} selected papers from ${selection.totalCandidates} candidates; ${failedCount} failed and can be retried.`
-              : `Analyzed ${summaryRows.length}/${corpusRows.length} papers, ${failedCount} failed and can be retried.`,
-          error: `Analysis incomplete: ${failedCount} paper(s) failed validation or LLM extraction.`,
+            autoExpansionCount > 0 && request.selectionMode === "top_n" && request.topN
+              ? `${baseSummary} Auto-expanded the analysis window ${autoExpansionCount} time(s) and finished at top ${request.topN}.`
+              : baseSummary,
+          needsApproval: true,
           toolCallsUsed: Math.max(1, pendingRows.length)
         };
       }
-
-      return {
-        status: "success",
-        summary:
-          request.selectionMode === "top_n" && request.topN
-            ? `Analyzed top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers into ${evidenceRows.length} evidence item(s); ${fullTextCount} full-text and ${abstractFallbackCount} abstract fallback (mode=${analysisMode}).`
-            : `Analyzed ${summaryRows.length} papers into ${evidenceRows.length} evidence item(s); ${fullTextCount} full-text and ${abstractFallbackCount} abstract fallback (mode=${analysisMode}).`,
-        needsApproval: true,
-        toolCallsUsed: Math.max(1, pendingRows.length)
-      };
     }
   };
 }
 
 function getAnalysisConcurrency(analysisMode: "codex_text_image_hybrid" | "responses_api_pdf"): number {
   return analysisMode === "responses_api_pdf" ? 2 : 3;
+}
+
+function decideAutomaticSelectionExpansion(input: {
+  request: AnalysisSelectionRequest;
+  selection: PaperSelectionResult;
+  summaryRows: PaperSummaryRow[];
+  evidenceRows: PaperEvidenceRow[];
+  fullTextCount: number;
+  autoExpansionCount: number;
+  startedWithExistingManifest: boolean;
+}): {
+  nextRequest: AnalysisSelectionRequest;
+  reason: string;
+} | undefined {
+  if (
+    input.request.selectionMode !== "top_n" ||
+    !input.request.topN ||
+    input.request.topN >= input.selection.totalCandidates ||
+    input.autoExpansionCount >= MAX_AUTO_SELECTION_EXPANSIONS ||
+    (input.startedWithExistingManifest && input.autoExpansionCount === 0) ||
+    input.summaryRows.length === 0
+  ) {
+    return undefined;
+  }
+
+  const evidenceTooThin = input.evidenceRows.length < Math.max(2, input.request.topN);
+  const lowRichnessCoverage = input.fullTextCount === 0 || input.evidenceRows.length < input.summaryRows.length;
+  if (!evidenceTooThin || !lowRichnessCoverage) {
+    return undefined;
+  }
+
+  const growth = input.request.topN <= 2 ? 1 : Math.min(2, Math.ceil(input.request.topN * 0.5));
+  const nextTopN = Math.min(input.selection.totalCandidates, input.request.topN + growth);
+  if (nextTopN <= input.request.topN) {
+    return undefined;
+  }
+
+  return {
+    nextRequest: normalizeAnalysisSelectionRequest(nextTopN),
+    reason:
+      `Evidence coverage is still thin after top ${input.request.topN} analysis ` +
+      `(${input.evidenceRows.length} evidence item(s), ${input.fullTextCount} full-text paper(s)). ` +
+      `Auto-expanding to top ${nextTopN} for one more bounded analysis pass.`
+  };
 }
 
 function createAsyncQueue() {
@@ -544,6 +636,62 @@ async function readExistingManifest(manifestPath: string): Promise<AnalysisManif
     // ignore
   }
   return undefined;
+}
+
+function canExtendManifestForExpandedSelection(
+  existingManifest: AnalysisManifest,
+  selection: PaperSelectionResult,
+  analysisFingerprint: string
+): boolean {
+  if (
+    existingManifest.analysisFingerprint !== analysisFingerprint ||
+    existingManifest.request.selectionMode !== "top_n" ||
+    selection.request.selectionMode !== "top_n"
+  ) {
+    return false;
+  }
+
+  if (selection.selectedPaperIds.length <= existingManifest.selectedPaperIds.length) {
+    return false;
+  }
+
+  const nextSelection = new Set(selection.selectedPaperIds);
+  return existingManifest.selectedPaperIds.every((paperId) => nextSelection.has(paperId));
+}
+
+function extendManifestForExpandedSelection(
+  existingManifest: AnalysisManifest,
+  selection: PaperSelectionResult,
+  analysisFingerprint: string
+): AnalysisManifest {
+  const fresh = createFreshManifest(selection, analysisFingerprint);
+  for (const [paperId, freshEntry] of Object.entries(fresh.papers)) {
+    const previousEntry = existingManifest.papers[paperId];
+    if (!previousEntry?.selected || !freshEntry.selected) {
+      continue;
+    }
+    fresh.papers[paperId] = {
+      ...freshEntry,
+      status: previousEntry.status,
+      source_type: previousEntry.source_type,
+      summary_count: previousEntry.summary_count,
+      evidence_count: previousEntry.evidence_count,
+      analysis_attempts: previousEntry.analysis_attempts,
+      analysis_mode: previousEntry.analysis_mode,
+      pdf_url: previousEntry.pdf_url,
+      pdf_cache_path: previousEntry.pdf_cache_path,
+      text_cache_path: previousEntry.text_cache_path,
+      fallback_reason: previousEntry.fallback_reason,
+      last_error: previousEntry.last_error,
+      has_table_references: previousEntry.has_table_references,
+      table_reference_count: previousEntry.table_reference_count,
+      has_figure_references: previousEntry.has_figure_references,
+      figure_reference_count: previousEntry.figure_reference_count,
+      updatedAt: previousEntry.updatedAt,
+      completedAt: previousEntry.completedAt
+    };
+  }
+  return fresh;
 }
 
 function createFreshManifest(selection: PaperSelectionResult, analysisFingerprint: string): AnalysisManifest {

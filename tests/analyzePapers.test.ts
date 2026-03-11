@@ -570,6 +570,97 @@ describe("analyzePapers node", () => {
     expect(manifestRaw).toContain('"selectionFingerprint"');
   });
 
+  it("auto-expands a sparse top-N selection and preserves completed analyses", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-topn-expand-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-topn-expand";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Multi-agent collaboration benchmark",
+        abstract: "A",
+        authors: ["Alice"],
+        citation_count: 80,
+        year: 2025
+      },
+      {
+        paper_id: "p2",
+        title: "Multi-agent planning systems",
+        abstract: "B",
+        authors: ["Bob"],
+        citation_count: 60,
+        year: 2024
+      },
+      {
+        paper_id: "p3",
+        title: "Legacy retrieval",
+        abstract: "C",
+        authors: ["Carol"],
+        citation_count: 5,
+        year: 2018
+      }
+    ]);
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("analyze_papers.request", {
+      topN: 1,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new SequenceJsonLLM([
+        JSON.stringify({ ordered_paper_ids: ["p1", "p2", "p3"] }),
+        jsonOutput("summary 1", "claim 1"),
+        JSON.stringify({ ordered_paper_ids: ["p1", "p2", "p3"] }),
+        jsonOutput("summary 2", "claim 2")
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.summary).toContain("Auto-expanded the analysis window 1 time(s)");
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw.trim().split("\n")).toHaveLength(2);
+    expect(summariesRaw.match(/"paper_id":"p1"/g)?.length).toBe(1);
+    expect(summariesRaw.match(/"paper_id":"p2"/g)?.length).toBe(1);
+
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
+    expect(manifestRaw).toContain('"selectedPaperIds": [');
+    expect(manifestRaw).toContain('"p1"');
+    expect(manifestRaw).toContain('"p2"');
+
+    expect(await runContext.get("analyze_papers.request")).toMatchObject({
+      topN: 2,
+      selectionMode: "top_n"
+    });
+    expect(await runContext.get("analyze_papers.auto_expand_count")).toBe(1);
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Auto-expanding to top 2"))).toBe(true);
+    expect(
+      loggedTexts.some((text) =>
+        text.includes("Expanding analysis selection from top 1 to top 2; preserving completed analyses")
+      )
+    ).toBe(true);
+  });
+
   it("replaces prior selection outputs when top-N changes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-topn-replace-"));
     tempDirs.push(root);

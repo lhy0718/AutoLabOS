@@ -46,4 +46,19 @@ describe("objectiveMetric", () => {
     expect(evaluation.status).toBe("missing");
     expect(evaluation.summary).toContain("was not found");
   });
+
+  it("infers the sole numeric metric when the objective is otherwise generic", () => {
+    const profile = buildHeuristicObjectiveMetricProfile("overall improvement");
+    const evaluation = evaluateObjectiveMetric(
+      {
+        accuracy: 0.91
+      },
+      profile,
+      "overall improvement"
+    );
+
+    expect(evaluation.status).toBe("observed");
+    expect(evaluation.matchedMetricKey).toBe("accuracy");
+    expect(evaluation.summary).toContain('sole numeric metric "accuracy"');
+  });
 });

@@ -760,7 +760,58 @@ describe("objective metric propagation", () => {
     expect(transitionRaw).toContain('"action": "backtrack_to_implement"');
   });
 
-  it("pauses for human review and writes fallback synthesis when the objective metric is unknown", async () => {
+  it("infers a sole numeric metric for generic objectives before deciding the next step", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-generic-objective-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-generic-objective";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "overall improvement"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.91
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "advance",
+      targetNode: "review"
+    });
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("objective_metric.last_evaluation")).toMatchObject({
+      matchedMetricKey: "accuracy",
+      status: "observed"
+    });
+  });
+
+  it("pauses for human review and writes fallback synthesis when a generic objective remains ambiguous", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-unknown-objective-"));
     process.chdir(root);
 
@@ -779,7 +830,8 @@ describe("objective metric propagation", () => {
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.91
+          accuracy: 0.91,
+          f1: 0.88
         },
         null,
         2
@@ -1132,6 +1184,125 @@ describe("objective metric propagation", () => {
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("run_experiments.trigger")).toBe("auto_handoff");
     expect(await memory.get("run_experiments.last_error")).toBeUndefined();
+  });
+
+  it("auto-runs managed quick_check and confirmatory profiles after a successful standard run", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-managed-supplemental-"));
+    process.chdir(root);
+
+    const runId = "run-managed-supplemental";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-bundle");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(path.join(publicDir, "artifact_manifest.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+    await writeFile(scriptPath, "print('managed bundle')\n", "utf8");
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: `python3 -B ${JSON.stringify(scriptPath)} --profile standard --metrics-out ${JSON.stringify(
+              path.join(runDir, "metrics.json")
+            )}`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.script",
+            value: scriptPath,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.mode",
+            value: "real_execution",
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const commands: string[] = [];
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async (command: string) => {
+          commands.push(command);
+          const targetPath = command.includes("--quick-check")
+            ? path.join(publicDir, "quick_check_metrics.json")
+            : command.includes("--profile confirmatory")
+              ? path.join(publicDir, "confirmatory_metrics.json")
+              : path.join(runDir, "metrics.json");
+          const metrics =
+            targetPath === path.join(runDir, "metrics.json")
+              ? { accuracy: 0.91, f1: 0.88 }
+              : targetPath.includes("quick_check")
+                ? { accuracy: 0.9, f1: 0.86, sampling_profile: { name: "quick_check", total_trials: 4 } }
+                : { accuracy: 0.92, f1: 0.89, sampling_profile: { name: "confirmatory", total_trials: 12 } };
+          await writeFile(targetPath, JSON.stringify(metrics, null, 2), "utf8");
+          return {
+            status: "ok" as const,
+            stdout: "done",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.toolCallsUsed).toBe(3);
+    expect(commands).toHaveLength(3);
+    expect(commands[0]).toContain("--profile standard");
+    expect(commands[1]).toContain("--quick-check");
+    expect(commands[2]).toContain("--profile confirmatory");
+    expect(result.summary).toContain("Supplemental runs: quick_check pass, confirmatory pass.");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("run_experiments.supplemental_summary")).toContain("quick_check pass");
+    expect(await memory.get("run_experiments.supplemental_runs")).toMatchObject([
+      { profile: "quick_check", status: "pass" },
+      { profile: "confirmatory", status: "pass" }
+    ]);
+
+    const quickCheckRaw = await readFile(path.join(publicDir, "quick_check_metrics.json"), "utf8");
+    const confirmatoryRaw = await readFile(path.join(publicDir, "confirmatory_metrics.json"), "utf8");
+    expect(quickCheckRaw).toContain('"name": "quick_check"');
+    expect(confirmatoryRaw).toContain('"name": "confirmatory"');
   });
 
   it("fails second-stage verification when metrics.json is not a JSON object", async () => {

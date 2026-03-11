@@ -208,6 +208,16 @@ export function evaluateObjectiveMetric(
   const matched = findMatchingMetric(flattened, preferredKeys);
 
   if (!matched) {
+    const inferred = inferBestEffortMetricMatch(flattened, preferredKeys, rawObjectiveMetric);
+    if (inferred) {
+      return buildObjectiveEvaluation({
+        rawObjectiveMetric,
+        profile,
+        preferredKeys,
+        matched: inferred.metric,
+        summaryPrefix: inferred.summaryPrefix
+      });
+    }
     return {
       rawObjectiveMetric,
       profileSource: profile.source,
@@ -224,38 +234,12 @@ export function evaluateObjectiveMetric(
     };
   }
 
-  if (profile.comparator && typeof profile.targetValue === "number") {
-    const met = compareObjectiveValue(matched.value, profile.comparator, profile.targetValue);
-    return {
-      rawObjectiveMetric,
-      profileSource: profile.source,
-      primaryMetric: profile.primaryMetric,
-      preferredMetricKeys: preferredKeys,
-      matchedMetricKey: matched.key,
-      direction: profile.direction,
-      comparator: profile.comparator,
-      targetValue: profile.targetValue,
-      observedValue: matched.value,
-      status: met ? "met" : "not_met",
-      summary: met
-        ? `Objective metric met: ${matched.key}=${matched.value} ${profile.comparator} ${profile.targetValue}.`
-        : `Objective metric not met: ${matched.key}=${matched.value} does not satisfy ${profile.comparator} ${profile.targetValue}.`
-    };
-  }
-
-  return {
+  return buildObjectiveEvaluation({
     rawObjectiveMetric,
-    profileSource: profile.source,
-    primaryMetric: profile.primaryMetric,
-    preferredMetricKeys: preferredKeys,
-    matchedMetricKey: matched.key,
-    direction: profile.direction,
-    comparator: profile.comparator,
-    targetValue: profile.targetValue,
-    observedValue: matched.value,
-    status: "observed",
-    summary: `Observed objective metric ${matched.key}=${matched.value}.`
-  };
+    profile,
+    preferredKeys,
+    matched
+  });
 }
 
 function buildObjectiveMetricSystemPrompt(): string {
@@ -379,8 +363,122 @@ function findMatchingMetric(
   return undefined;
 }
 
+function buildObjectiveEvaluation(input: {
+  rawObjectiveMetric: string;
+  profile: ObjectiveMetricProfile;
+  preferredKeys: string[];
+  matched: { key: string; value: number };
+  summaryPrefix?: string;
+}): ObjectiveMetricEvaluation {
+  if (input.profile.comparator && typeof input.profile.targetValue === "number") {
+    const met = compareObjectiveValue(input.matched.value, input.profile.comparator, input.profile.targetValue);
+    const baseSummary = met
+      ? `Objective metric met: ${input.matched.key}=${input.matched.value} ${input.profile.comparator} ${input.profile.targetValue}.`
+      : `Objective metric not met: ${input.matched.key}=${input.matched.value} does not satisfy ${input.profile.comparator} ${input.profile.targetValue}.`;
+    return {
+      rawObjectiveMetric: input.rawObjectiveMetric,
+      profileSource: input.profile.source,
+      primaryMetric: input.profile.primaryMetric,
+      preferredMetricKeys: input.preferredKeys,
+      matchedMetricKey: input.matched.key,
+      direction: input.profile.direction,
+      comparator: input.profile.comparator,
+      targetValue: input.profile.targetValue,
+      observedValue: input.matched.value,
+      status: met ? "met" : "not_met",
+      summary: input.summaryPrefix ? `${input.summaryPrefix} ${baseSummary}` : baseSummary
+    };
+  }
+
+  const baseSummary = `Observed objective metric ${input.matched.key}=${input.matched.value}.`;
+  return {
+    rawObjectiveMetric: input.rawObjectiveMetric,
+    profileSource: input.profile.source,
+    primaryMetric: input.profile.primaryMetric,
+    preferredMetricKeys: input.preferredKeys,
+    matchedMetricKey: input.matched.key,
+    direction: input.profile.direction,
+    comparator: input.profile.comparator,
+    targetValue: input.profile.targetValue,
+    observedValue: input.matched.value,
+    status: "observed",
+    summary: input.summaryPrefix ? `${input.summaryPrefix} ${baseSummary}` : baseSummary
+  };
+}
+
+function inferBestEffortMetricMatch(
+  metrics: Array<{ key: string; value: number }>,
+  preferredKeys: string[],
+  rawObjectiveMetric: string
+): {
+  metric: { key: string; value: number };
+  summaryPrefix: string;
+} | undefined {
+  if (metrics.length === 0) {
+    return undefined;
+  }
+
+  const objectiveTokens = tokenizeMetricText(rawObjectiveMetric).filter((token) => !GENERIC_OBJECTIVE_TOKENS.has(token));
+  const scored = metrics
+    .map((metric) => {
+      const metricTokens = tokenizeMetricText(metric.key);
+      const sharedTokens = metricTokens.filter((token) => objectiveTokens.includes(token));
+      return {
+        metric,
+        sharedTokens,
+        score: sharedTokens.length
+      };
+    })
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || left.metric.key.localeCompare(right.metric.key));
+
+  const top = scored[0];
+  const runnerUp = scored[1];
+  if (top && top.score > (runnerUp?.score ?? 0)) {
+    return {
+      metric: top.metric,
+      summaryPrefix: `Best-effort objective match inferred from overlapping metric terms (${top.sharedTokens.join(", ")}).`
+    };
+  }
+
+  if (preferredKeys.length === 0 && metrics.length === 1) {
+    return {
+      metric: metrics[0],
+      summaryPrefix: `Best-effort objective match inferred from the sole numeric metric "${metrics[0].key}".`
+    };
+  }
+
+  return undefined;
+}
+
 function normalizeMetricKey(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+const GENERIC_OBJECTIVE_TOKENS = new Set([
+  "overall",
+  "improvement",
+  "metric",
+  "metrics",
+  "objective",
+  "target",
+  "result",
+  "results",
+  "performance",
+  "primary",
+  "main",
+  "score",
+  "scores",
+  "success"
+]);
+
+function tokenizeMetricText(value: string): string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1);
 }
 
 function compareObjectiveValue(
