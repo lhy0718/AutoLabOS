@@ -27,6 +27,7 @@ export interface PaperEvidenceRow {
   evidence_span: string;
   source_type: "full_text" | "abstract";
   confidence: number;
+  confidence_reason?: string;
 }
 
 interface RawEvidenceItem {
@@ -38,6 +39,7 @@ interface RawEvidenceItem {
   metric_slot?: unknown;
   evidence_span?: unknown;
   confidence?: unknown;
+  confidence_reason?: unknown;
 }
 
 interface RawPaperAnalysis {
@@ -79,7 +81,8 @@ export const ANALYSIS_SYSTEM_PROMPT = [
   "Return one JSON object only.",
   "No markdown, no prose before or after the JSON.",
   "Be faithful to the provided source. Do not invent claims.",
-  "If the source is weak, keep fields concise and conservative."
+  "If the source is weak, keep fields concise and conservative.",
+  "When an evidence item is tentative, use a lower confidence and explain it briefly in confidence_reason."
 ].join(" ");
 
 const ANALYSIS_PLANNER_SYSTEM_PROMPT = [
@@ -95,7 +98,8 @@ const ANALYSIS_REVIEWER_SYSTEM_PROMPT = [
   "Audit a draft structured analysis against the supplied paper source.",
   "Return one corrected JSON object only.",
   "No markdown, no prose outside JSON.",
-  "Remove unsupported claims, tighten evidence spans, and lower confidence when provenance is weak."
+  "Remove unsupported claims, tighten evidence spans, and lower confidence when provenance is weak.",
+  "Whenever you lower confidence or keep a caveat, fill confidence_reason with a short source-grounded explanation."
 ].join(" ");
 
 export async function analyzePaperWithLlm(args: {
@@ -310,6 +314,7 @@ async function reviewPaperAnalysisWithLlm(args: {
     args.onProgress?.("Received reviewer output. Parsing corrected structured JSON.");
     const parsed = parsePaperAnalysisJson(completion.text);
     args.onProgress?.("Reviewer JSON parsed successfully.");
+    emitReviewerAudit(args.onProgress, args.draft, parsed);
     return parsed;
   } catch (error) {
     if (isAbortError(error)) {
@@ -422,6 +427,7 @@ async function reviewPaperAnalysisWithResponsesPdf(args: {
     args.onProgress?.("Received Responses API reviewer output. Parsing corrected structured JSON.");
     const parsed = parsePaperAnalysisJson(completion.text);
     args.onProgress?.("Responses API reviewer JSON parsed successfully.");
+    emitReviewerAudit(args.onProgress, args.draft, parsed);
     return parsed;
   } catch (error) {
     if (isAbortError(error)) {
@@ -519,6 +525,7 @@ export function buildPaperAnalysisPrompt(
 
   return [
     "Analyze the following paper and extract structured evidence.",
+    "If an evidence item is tentative or indirect, lower confidence and explain why in confidence_reason.",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -564,6 +571,7 @@ export function buildPaperAnalysisFilePrompt(paper: AnalysisCorpusRow, plan?: Pa
   return [
     "Analyze the attached PDF paper and extract structured evidence.",
     "The attached PDF is the primary source. Use the metadata and abstract below only as supplemental context.",
+    "If an evidence item is tentative or indirect, lower confidence and explain why in confidence_reason.",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -643,6 +651,7 @@ export function buildPaperAnalysisReviewPrompt(
   return [
     "Audit the draft paper analysis against the supplied source and correct it.",
     "Prefer dropping unsupported items over guessing.",
+    "Whenever you keep a caveat or lower confidence, explain it in confidence_reason for that evidence item.",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -664,6 +673,7 @@ export function buildPaperAnalysisFileReviewPrompt(
   return [
     "Audit the draft PDF-paper analysis against the attached PDF and correct it.",
     "The attached PDF is the primary source. Prefer dropping unsupported items over guessing.",
+    "Whenever you keep a caveat or lower confidence, explain it in confidence_reason for that evidence item.",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -696,7 +706,8 @@ function buildPaperAnalysisSchemaLines(): string[] {
     '      "dataset_slot": "string",',
     '      "metric_slot": "string",',
     '      "evidence_span": "string",',
-    '      "confidence": 0.0',
+    '      "confidence": 0.0,',
+    '      "confidence_reason": "string"',
     "    }",
     "  ]",
     "}"
@@ -822,7 +833,8 @@ export function normalizePaperAnalysis(
       metric_slot: fallbackString(item.metric_slot, metrics[0] || "Not specified."),
       evidence_span: fallbackString(item.evidence_span, summary),
       source_type: source.sourceType,
-      confidence: normalizeConfidence(item.confidence)
+      confidence: normalizeConfidence(item.confidence),
+      confidence_reason: cleanConfidenceReason(item.confidence_reason)
     })),
     source.text,
     source.sourceType
@@ -861,7 +873,8 @@ function normalizeEvidenceItems(
         dataset_slot: "Not specified.",
         metric_slot: "Not specified.",
         evidence_span: source.text.slice(0, 240) || paper.abstract || paper.title,
-        confidence: 0.5
+        confidence: 0.5,
+        confidence_reason: "Fallback evidence was synthesized because the model returned no structured evidence items."
       }
     ];
   }
@@ -886,7 +899,10 @@ function calibrateEvidenceRows(
     }
     return {
       ...row,
-      confidence: Math.min(row.confidence, sourceType === "full_text" ? 0.35 : 0.45)
+      confidence: Math.min(row.confidence, sourceType === "full_text" ? 0.35 : 0.45),
+      confidence_reason:
+        row.confidence_reason
+        || "Confidence reduced because the cited evidence span could not be grounded in the available source text."
     };
   });
 }
@@ -926,9 +942,89 @@ function normalizeConfidence(value: unknown): number {
   return 0.5;
 }
 
+function cleanConfidenceReason(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
 function buildEvidenceId(paperId: string, index: number): string {
   const stem = paperId.replace(/[^a-zA-Z0-9._-]/g, "_");
   return `ev_${stem}_${index + 1}`;
+}
+
+function emitReviewerAudit(
+  onProgress: ((message: string) => void) | undefined,
+  draft: RawPaperAnalysis,
+  reviewed: RawPaperAnalysis
+): void {
+  if (!onProgress) {
+    return;
+  }
+
+  const draftItems = collectReviewEvidenceItems(draft.evidence_items);
+  const reviewedItems = collectReviewEvidenceItems(reviewed.evidence_items);
+  if (draftItems.length === 0 && reviewedItems.length === 0) {
+    return;
+  }
+
+  const draftByClaim = new Map(
+    draftItems
+      .map((item) => [normalizeForMatch(item.claim), item] as const)
+      .filter(([claim]) => Boolean(claim))
+  );
+  const reviewedClaims = new Set(
+    reviewedItems.map((item) => normalizeForMatch(item.claim)).filter(Boolean)
+  );
+
+  const removedClaims = draftItems
+    .filter((item) => !reviewedClaims.has(normalizeForMatch(item.claim)))
+    .map((item) => truncateReviewerText(item.claim));
+  if (removedClaims.length > 0) {
+    onProgress(
+      `Reviewer removed ${removedClaims.length} unsupported claim(s): ${removedClaims.slice(0, 2).join(" | ")}`
+    );
+  }
+
+  for (const item of reviewedItems) {
+    const draftItem = draftByClaim.get(normalizeForMatch(item.claim));
+    if (!draftItem) {
+      continue;
+    }
+    if (item.confidence + 0.001 >= draftItem.confidence) {
+      continue;
+    }
+    const reason = item.confidenceReason || "confidence reduced after source verification.";
+    onProgress(
+      `Reviewer lowered confidence for "${truncateReviewerText(item.claim)}" from ${formatConfidence(draftItem.confidence)} to ${formatConfidence(item.confidence)}: ${reason}`
+    );
+  }
+}
+
+function collectReviewEvidenceItems(
+  raw: unknown
+): Array<{ claim: string; confidence: number; confidenceReason?: string }> {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .filter((item): item is RawEvidenceItem => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+    .map((item) => ({
+      claim: fallbackString(item.claim, ""),
+      confidence: normalizeConfidence(item.confidence),
+      confidenceReason: cleanConfidenceReason(item.confidence_reason)
+    }))
+    .filter((item) => Boolean(item.claim));
+}
+
+function formatConfidence(value: number): string {
+  return value.toFixed(2);
+}
+
+function truncateReviewerText(value: string): string {
+  return value.length > 96 ? `${value.slice(0, 93)}...` : value;
 }
 
 function extractFirstJsonObject(text: string): string {

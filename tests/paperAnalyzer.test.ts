@@ -75,6 +75,7 @@ describe("paperAnalyzer", () => {
     expect(normalized.evidenceRows[0].claim).toBe("Agents improve performance.");
     expect(normalized.evidenceRows[0].source_type).toBe("abstract");
     expect(normalized.evidenceRows[0].confidence).toBe(0.8);
+    expect(normalized.evidenceRows[0].confidence_reason).toBeUndefined();
   });
 
   it("retries once when the staged pipeline produces unusable JSON", async () => {
@@ -132,7 +133,14 @@ describe("paperAnalyzer", () => {
         metrics: ["Reviewed metric"],
         novelty: "Reviewed novelty",
         reproducibility_notes: ["Reviewed repro"],
-        evidence_items: [{ claim: "Reviewed claim", evidence_span: "Reviewed summary", confidence: 0.6 }]
+        evidence_items: [
+          {
+            claim: "Reviewed claim",
+            evidence_span: "Reviewed summary",
+            confidence: 0.6,
+            confidence_reason: "Only the abstract supports this claim."
+          }
+        ]
       })
     ]);
 
@@ -146,6 +154,71 @@ describe("paperAnalyzer", () => {
     expect(result.attempts).toBe(1);
     expect(result.summaryRow.summary).toBe("Reviewed summary");
     expect(result.evidenceRows[0].claim).toBe("Reviewed claim");
+    expect(result.evidenceRows[0].confidence_reason).toBe("Only the abstract supports this claim.");
+  });
+
+  it("logs reviewer confidence reductions with claim-level reasons", async () => {
+    const progress: string[] = [];
+    const llm = new SequenceLLM([
+      JSON.stringify({
+        focus_sections: ["results"],
+        target_claims: ["main result"],
+        extraction_priorities: ["prefer direct spans"],
+        verification_checks: ["lower confidence when support is indirect"],
+        risk_flags: []
+      }),
+      JSON.stringify({
+        summary: "Draft summary",
+        key_findings: ["Draft finding"],
+        limitations: [],
+        datasets: ["Draft dataset"],
+        metrics: ["Draft metric"],
+        novelty: "Draft novelty",
+        reproducibility_notes: [],
+        evidence_items: [
+          {
+            claim: "Claim A",
+            evidence_span: "This paper studies agentic workflows and reports strong results.",
+            confidence: 0.92
+          }
+        ]
+      }),
+      JSON.stringify({
+        summary: "Reviewed summary",
+        key_findings: ["Reviewed finding"],
+        limitations: [],
+        datasets: ["Draft dataset"],
+        metrics: ["Draft metric"],
+        novelty: "Reviewed novelty",
+        reproducibility_notes: [],
+        evidence_items: [
+          {
+            claim: "Claim A",
+            evidence_span: "This paper studies agentic workflows and reports strong results.",
+            confidence: 0.58,
+            confidence_reason: "The available source only provides an abstract-level description."
+          }
+        ]
+      })
+    ]);
+
+    const result = await analyzePaperWithLlm({
+      llm,
+      paper,
+      source,
+      maxAttempts: 1,
+      onProgress: (message) => progress.push(message)
+    });
+
+    expect(result.evidenceRows[0].confidence_reason).toBe(
+      "The available source only provides an abstract-level description."
+    );
+    expect(
+      progress.some((message) =>
+        message.includes('Reviewer lowered confidence for "Claim A"')
+        && message.includes("abstract-level description")
+      )
+    ).toBe(true);
   });
 
   it("passes rendered PDF page images into hybrid LLM analysis", async () => {
@@ -237,6 +310,7 @@ describe("paperAnalyzer", () => {
     });
 
     expect(normalized.evidenceRows[0].confidence).toBe(0.45);
+    expect(normalized.evidenceRows[0].confidence_reason).toContain("could not be grounded");
   });
 
   it("propagates abort during text LLM analysis", async () => {

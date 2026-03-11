@@ -1929,7 +1929,16 @@ export class InteractionSession {
         });
       }
       case "review": {
-        const reviewFiles = ["review/review_packet.json", "review/checklist.md"];
+        const reviewFiles = [
+          "review/review_packet.json",
+          "review/checklist.md",
+          "review/findings.jsonl",
+          "review/scorecard.json",
+          "review/consistency_report.json",
+          "review/bias_report.json",
+          "review/revision_plan.json",
+          "review/decision.json"
+        ];
         let count = 0;
         for (const relative of reviewFiles) {
           if (await pathExists(path.join(runDir, relative))) {
@@ -2239,7 +2248,16 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
     case "analyze_results":
       return ["figures", "metrics.json", "result_analysis.json", "result_analysis_synthesis.json"];
     case "review":
-      return ["review/review_packet.json", "review/checklist.md"];
+      return [
+        "review/review_packet.json",
+        "review/checklist.md",
+        "review/findings.jsonl",
+        "review/scorecard.json",
+        "review/consistency_report.json",
+        "review/bias_report.json",
+        "review/revision_plan.json",
+        "review/decision.json"
+      ];
     case "write_paper":
       return ["paper/main.tex", "paper/references.bib", "paper/evidence_links.json"];
   }
@@ -2267,7 +2285,14 @@ function nodeContextKeys(node: GraphNodeId): string[] {
     case "analyze_results":
       return ["analyze_results.last_summary", "analyze_results.last_error", "analyze_results.last_synthesis"];
     case "review":
-      return ["review.packet", "review.last_summary", "review.last_recommendation"];
+      return [
+        "review.packet",
+        "review.last_summary",
+        "review.last_recommendation",
+        "review.last_decision",
+        "review.last_findings_count",
+        "review.last_panel_agreement"
+      ];
     default:
       return [];
   }

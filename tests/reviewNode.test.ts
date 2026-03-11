@@ -124,6 +124,17 @@ describe("review node", () => {
             execution_runs: 1
           },
           plan_context: {
+            selected_design: {
+              id: "design_1",
+              title: "Reviewable plan",
+              summary: "Validate the manual review packet flow.",
+              selected_hypothesis_ids: ["h_1"],
+              metrics: ["accuracy"],
+              baselines: ["baseline_model"],
+              evaluation_steps: ["run three confirmatory trials", "compare against the baseline"],
+              risks: ["limited scope"],
+              budget_notes: ["single-machine execution"]
+            },
             shortlisted_designs: [],
             design_notes: [],
             implementation_notes: [],
@@ -131,9 +142,20 @@ describe("review node", () => {
             assumptions: []
           },
           metric_table: [],
-          condition_comparisons: [],
+          condition_comparisons: [
+            {
+              id: "treatment_vs_baseline",
+              label: "Treatment vs baseline",
+              metric_key: "accuracy",
+              baseline_value: 0.87,
+              candidate_value: 0.91,
+              delta: 0.04,
+              direction: "higher_is_better",
+              summary: "The treatment outperformed the baseline."
+            }
+          ],
           execution_summary: {
-            observation_count: 1,
+            observation_count: 3,
             commands: [],
             sources: [],
             stderr_excerpts: []
@@ -159,9 +181,31 @@ describe("review node", () => {
           supplemental_runs: [],
           external_comparisons: [],
           statistical_summary: {
-            confidence_intervals: [],
+            total_trials: 3,
+            executed_trials: 3,
+            cached_trials: 0,
+            confidence_intervals: [
+              {
+                metric_key: "accuracy",
+                label: "Accuracy 95% CI",
+                lower: 0.89,
+                upper: 0.93,
+                level: 0.95,
+                sample_size: 3,
+                source: "metrics",
+                summary: "Accuracy stayed above target across the observed trials."
+              }
+            ],
             stability_metrics: [],
-            effect_estimates: [],
+            effect_estimates: [
+              {
+                comparison_id: "treatment_vs_baseline",
+                metric_key: "accuracy",
+                delta: 0.04,
+                direction: "positive",
+                summary: "The treatment outperformed the baseline by +0.04 accuracy."
+              }
+            ],
             notes: []
           },
           failure_taxonomy: [],
@@ -219,10 +263,17 @@ describe("review node", () => {
 
     const checklist = await readFile(path.join(runDir, "review", "checklist.md"), "utf8");
     expect(checklist).toContain("# Review checklist");
-    expect(checklist).toContain("Recommendation: advance -> review (88%)");
+    expect(checklist).toContain("Decision: advance -> advance");
+    expect(checklist).toContain("Consensus: high");
+
+    const decisionRaw = await readFile(path.join(runDir, "review", "decision.json"), "utf8");
+    const decision = JSON.parse(decisionRaw) as { outcome: string; recommended_transition?: string };
+    expect(decision.outcome).toBe("advance");
+    expect(decision.recommended_transition).toBe("advance");
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("review.last_summary")).toContain("accuracy=0.91");
+    expect(await memory.get("review.last_decision")).toMatchObject({ outcome: "advance" });
   });
 
   it("marks missing evidence inputs as blocking", async () => {
@@ -343,6 +394,6 @@ describe("review node", () => {
         })
       ])
     );
-    expect(packet.suggested_actions).toContain("/agent apply");
+    expect(packet.suggested_actions).toContain("/agent review");
   });
 });

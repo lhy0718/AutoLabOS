@@ -19,6 +19,31 @@ export interface ReviewPacketRecommendation {
   evidence: string[];
 }
 
+export interface ReviewPacketReviewerSummary {
+  reviewer_id: string;
+  reviewer_label: string;
+  score_1_to_5: number;
+  recommendation: string;
+  summary: string;
+  high_findings: number;
+}
+
+export interface ReviewPacketDecision {
+  outcome: string;
+  recommended_transition?: string;
+  confidence_pct: number;
+  summary: string;
+  rationale: string;
+  required_actions: string[];
+}
+
+export interface ReviewPacketConsistency {
+  panel_agreement: string;
+  conflict_count: number;
+  bias_flag_count: number;
+  summary: string;
+}
+
 export interface ReviewPacket {
   generated_at: string;
   readiness: {
@@ -33,6 +58,13 @@ export interface ReviewPacket {
   recommendation?: ReviewPacketRecommendation;
   checks: ReviewPacketCheck[];
   suggested_actions: string[];
+  panel?: {
+    reviewer_count: number;
+    findings_count: number;
+    reviewers: ReviewPacketReviewerSummary[];
+  };
+  consistency?: ReviewPacketConsistency;
+  decision?: ReviewPacketDecision;
 }
 
 export interface ReviewPacketBuildInput {
@@ -46,9 +78,39 @@ export interface ReviewPacketBuildInput {
   synthesisPresent: boolean;
 }
 
+export interface ReviewPacketPanelInput {
+  reviewers: Array<{
+    reviewer_id: string;
+    reviewer_label: string;
+    score_1_to_5: number;
+    recommendation: string;
+    summary: string;
+    findings: Array<{ severity: "low" | "medium" | "high" }>;
+  }>;
+  findings: Array<{ title: string; severity: "low" | "medium" | "high" }>;
+  consistency: {
+    panel_agreement: string;
+    conflicts: string[];
+    summary: string;
+  };
+  bias: {
+    flags: Array<{ severity: "low" | "medium" | "high"; detail: string }>;
+    summary: string;
+  };
+  decision: {
+    outcome: string;
+    recommended_transition?: string;
+    confidence: number;
+    summary: string;
+    rationale: string;
+    required_actions: string[];
+  };
+}
+
 export function buildReviewPacket(
   report: AnalysisReport,
-  input: ReviewPacketBuildInput
+  input: ReviewPacketBuildInput,
+  panel?: ReviewPacketPanelInput
 ): ReviewPacket {
   const objectiveStatus = report.overview?.objective_status || "unknown";
   const objectiveSummary =
@@ -56,16 +118,8 @@ export function buildReviewPacket(
     report.primary_findings?.[0] ||
     "No structured objective summary was available.";
   const transition = report.transition_recommendation;
-  const recommendation =
-    transition && transition.reason
-      ? {
-          action: transition.action,
-          target: transition.targetNode,
-          confidence_pct: Math.round(transition.confidence * 100),
-          reason: transition.reason,
-          evidence: transition.evidence.slice(0, 3)
-        }
-      : undefined;
+  const recommendation = buildRecommendation(transition, panel);
+
   const checks: ReviewPacketCheck[] = [
     {
       id: "objective_outcome",
@@ -73,7 +127,7 @@ export function buildReviewPacket(
       status: objectiveStatus === "met" ? "ready" : "warning",
       detail: objectiveSummary
     },
-    buildTransitionCheck(transition),
+    buildTransitionCheck(transition, panel),
     buildEvidenceBundleCheck(input),
     buildLiteratureTraceCheck(input),
     buildExecutionRecordCheck(report, input),
@@ -86,14 +140,22 @@ export function buildReviewPacket(
       detail: input.figurePresent
         ? "A primary performance figure is available for human review."
         : "No primary performance figure was generated; inspect result_analysis.json directly."
-    },
-    {
-      id: "human_signoff",
-      label: "Human sign-off",
-      status: "manual",
-      detail: "Confirm the claims, evidence quality, and next action before approving write_paper."
     }
   ];
+
+  if (panel) {
+    checks.push(buildPanelCoverageCheck(panel));
+    checks.push(buildPanelConsistencyCheck(panel));
+    checks.push(buildBiasGuardCheck(panel));
+    checks.push(buildRevisionPlanCheck(panel));
+  }
+
+  checks.push({
+    id: "human_signoff",
+    label: "Human sign-off",
+    status: "manual",
+    detail: "Confirm the claims, evidence quality, and next action before approving write_paper."
+  });
 
   return {
     generated_at: new Date().toISOString(),
@@ -102,7 +164,39 @@ export function buildReviewPacket(
     objective_summary: objectiveSummary,
     recommendation,
     checks,
-    suggested_actions: buildSuggestedActions(transition?.action, checks)
+    suggested_actions: buildSuggestedActions(recommendation, panel, checks),
+    panel: panel
+      ? {
+          reviewer_count: panel.reviewers.length,
+          findings_count: panel.findings.length,
+          reviewers: panel.reviewers.map((reviewer) => ({
+            reviewer_id: reviewer.reviewer_id,
+            reviewer_label: reviewer.reviewer_label,
+            score_1_to_5: reviewer.score_1_to_5,
+            recommendation: reviewer.recommendation,
+            summary: reviewer.summary,
+            high_findings: reviewer.findings.filter((item) => item.severity === "high").length
+          }))
+        }
+      : undefined,
+    consistency: panel
+      ? {
+          panel_agreement: panel.consistency.panel_agreement,
+          conflict_count: panel.consistency.conflicts.length,
+          bias_flag_count: panel.bias.flags.length,
+          summary: panel.consistency.summary
+        }
+      : undefined,
+    decision: panel
+      ? {
+          outcome: panel.decision.outcome,
+          recommended_transition: panel.decision.recommended_transition,
+          confidence_pct: Math.round(panel.decision.confidence * 100),
+          summary: panel.decision.summary,
+          rationale: panel.decision.rationale,
+          required_actions: panel.decision.required_actions.slice(0, 4)
+        }
+      : undefined
   };
 }
 
@@ -136,7 +230,7 @@ export function normalizeReviewPacket(value: unknown): ReviewPacket | undefined 
   const recommendation = normalizeRecommendation(record.recommendation);
   const suggestedActions = Array.isArray(record.suggested_actions)
     ? record.suggested_actions.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-    : buildSuggestedActions(recommendation?.action, checks);
+    : buildSuggestedActions(recommendation, undefined, checks);
 
   return {
     generated_at: asString(record.generated_at) || "",
@@ -146,7 +240,10 @@ export function normalizeReviewPacket(value: unknown): ReviewPacket | undefined 
       asString(record.objective_summary) || "No structured objective summary was available.",
     recommendation,
     checks,
-    suggested_actions: suggestedActions
+    suggested_actions: suggestedActions,
+    panel: normalizePanel(record.panel),
+    consistency: normalizeConsistency(record.consistency),
+    decision: normalizeDecision(record.decision)
   };
 }
 
@@ -190,10 +287,22 @@ export function formatReviewPacketLines(packet: ReviewPacket): string[] {
     `Objective: ${packet.objective_status} - ${packet.objective_summary}`
   ];
 
-  if (packet.recommendation) {
+  if (packet.decision) {
+    lines.push(
+      `Decision: ${packet.decision.outcome}${packet.decision.recommended_transition ? ` -> ${packet.decision.recommended_transition}` : ""} (${packet.decision.confidence_pct}%)`
+    );
+    lines.push(`Decision summary: ${packet.decision.summary}`);
+  } else if (packet.recommendation) {
     lines.push(
       `Recommendation: ${packet.recommendation.action}${packet.recommendation.target ? ` -> ${packet.recommendation.target}` : ""} (${packet.recommendation.confidence_pct}%)`
     );
+  }
+
+  if (packet.panel) {
+    lines.push(`Panel: ${packet.panel.reviewer_count} reviewers, ${packet.panel.findings_count} findings`);
+  }
+  if (packet.consistency) {
+    lines.push(`Consensus: ${packet.consistency.panel_agreement} (${packet.consistency.conflict_count} conflicts, ${packet.consistency.bias_flag_count} bias flags)`);
   }
 
   const blocking = packet.checks.find((item) => item.status === "blocking");
@@ -229,9 +338,49 @@ export function buildReviewInsightCard(packet: ReviewPacket): RunInsightCard {
   };
 }
 
+function buildRecommendation(
+  transition: AnalysisReport["transition_recommendation"],
+  panel?: ReviewPacketPanelInput
+): ReviewPacketRecommendation | undefined {
+  if (panel?.decision) {
+    return {
+      action: panel.decision.outcome,
+      target: mapDecisionTransitionToNode(panel.decision.recommended_transition),
+      confidence_pct: Math.round(panel.decision.confidence * 100),
+      reason: panel.decision.summary,
+      evidence: panel.findings.slice(0, 3).map((item) => item.title)
+    };
+  }
+
+  return transition && transition.reason
+    ? {
+        action: transition.action,
+        target: transition.targetNode,
+        confidence_pct: Math.round(transition.confidence * 100),
+        reason: transition.reason,
+        evidence: transition.evidence.slice(0, 3)
+      }
+    : undefined;
+}
+
 function buildTransitionCheck(
-  transition: AnalysisReport["transition_recommendation"]
+  transition: AnalysisReport["transition_recommendation"],
+  panel?: ReviewPacketPanelInput
 ): ReviewPacketCheck {
+  if (panel?.decision) {
+    return {
+      id: "review_decision",
+      label: "Review decision",
+      status:
+        panel.decision.outcome === "advance"
+          ? "ready"
+          : panel.decision.outcome === "revise_in_place"
+            ? "warning"
+            : "blocking",
+      detail: `${panel.decision.outcome}${panel.decision.recommended_transition ? ` -> ${panel.decision.recommended_transition}` : ""}: ${panel.decision.summary}`
+    };
+  }
+
   if (!transition) {
     return {
       id: "transition_recommendation",
@@ -382,21 +531,103 @@ function buildNarrativeCheck(
   };
 }
 
+function buildPanelCoverageCheck(panel: ReviewPacketPanelInput): ReviewPacketCheck {
+  const blockingFindings = panel.findings.filter((item) => item.severity === "high").length;
+  return {
+    id: "specialist_panel",
+    label: "Specialist panel coverage",
+    status: blockingFindings > 0 ? "blocking" : panel.findings.length > 0 ? "warning" : "ready",
+    detail:
+      blockingFindings > 0
+        ? `${panel.reviewers.length} specialist reviewers found ${blockingFindings} blocking issue(s).`
+        : panel.findings.length > 0
+          ? `${panel.reviewers.length} specialist reviewers found ${panel.findings.length} actionable issue(s).`
+          : `${panel.reviewers.length} specialist reviewers found no actionable issue.`
+  };
+}
+
+function buildPanelConsistencyCheck(panel: ReviewPacketPanelInput): ReviewPacketCheck {
+  return {
+    id: "panel_consistency",
+    label: "Panel consistency",
+    status:
+      panel.consistency.panel_agreement === "low"
+        ? "warning"
+        : panel.consistency.panel_agreement === "medium"
+          ? "warning"
+          : "ready",
+    detail: panel.consistency.summary
+  };
+}
+
+function buildBiasGuardCheck(panel: ReviewPacketPanelInput): ReviewPacketCheck {
+  const highBias = panel.bias.flags.find((item) => item.severity === "high");
+  if (highBias) {
+    return {
+      id: "bias_guard",
+      label: "Bias guard",
+      status: "blocking",
+      detail: highBias.detail
+    };
+  }
+  if (panel.bias.flags[0]) {
+    return {
+      id: "bias_guard",
+      label: "Bias guard",
+      status: "warning",
+      detail: panel.bias.summary
+    };
+  }
+  return {
+    id: "bias_guard",
+    label: "Bias guard",
+    status: "ready",
+    detail: "No major panel-level bias flag was detected."
+  };
+}
+
+function buildRevisionPlanCheck(panel: ReviewPacketPanelInput): ReviewPacketCheck {
+  return {
+    id: "revision_plan",
+    label: "Revision plan",
+    status: panel.decision.outcome === "advance" ? "ready" : "warning",
+    detail:
+      panel.decision.required_actions.length > 0
+        ? panel.decision.required_actions.slice(0, 2).join(" ")
+        : "No additional revision action was attached to the final review decision."
+  };
+}
+
 function buildSuggestedActions(
-  action: string | undefined,
+  recommendation: ReviewPacketRecommendation | undefined,
+  panel: ReviewPacketPanelInput | undefined,
   checks: Pick<ReviewPacketCheck, "status">[]
 ): string[] {
   const readiness = summarizeReviewReadiness(checks);
+  const decisionOutcome = panel?.decision.outcome;
+  const transition = panel?.decision.recommended_transition;
+
+  if (decisionOutcome === "backtrack_to_implement") {
+    return ["/agent jump implement_experiments --force", "/agent transition", "/agent review"];
+  }
+  if (decisionOutcome === "backtrack_to_design") {
+    return ["/agent jump design_experiments --force", "/agent transition", "/agent review"];
+  }
+  if (decisionOutcome === "manual_block") {
+    return ["/agent review", "/agent transition", "/agent jump analyze_results --force"];
+  }
+  if (decisionOutcome === "revise_in_place") {
+    return ["/agent review", "/agent jump analyze_results --force", "/agent transition"];
+  }
+
+  if (transition === "advance" || recommendation?.action === "advance") {
+    return ["/approve", "/agent run write_paper", "/agent review"];
+  }
+
   if (readiness.blocking_checks > 0) {
-    return ["/agent transition", "/agent apply", "/agent jump analyze_results"];
+    return ["/agent review", "/agent transition", "/agent jump analyze_results --force"];
   }
-  if (action === "advance") {
-    return ["/approve", "/agent run write_paper"];
-  }
-  if (action?.startsWith("backtrack_")) {
-    return ["/agent apply", "/agent transition", "/agent jump analyze_results"];
-  }
-  return ["/agent transition", "/approve"];
+  return ["/agent transition", "/approve", "/agent review"];
 }
 
 function normalizeReviewCheck(value: unknown, index: number): ReviewPacketCheck | undefined {
@@ -456,18 +687,97 @@ function normalizeReadiness(
   };
 }
 
+function normalizePanel(value: unknown): ReviewPacket["panel"] | undefined {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const reviewers = Array.isArray(record.reviewers)
+    ? record.reviewers
+        .map((item) => {
+          const reviewer = asRecord(item);
+          if (!reviewer) {
+            return undefined;
+          }
+          const reviewerId = asString(reviewer.reviewer_id);
+          const reviewerLabel = asString(reviewer.reviewer_label);
+          if (!reviewerId || !reviewerLabel) {
+            return undefined;
+          }
+          return {
+            reviewer_id: reviewerId,
+            reviewer_label: reviewerLabel,
+            score_1_to_5: asNumber(reviewer.score_1_to_5) ?? 0,
+            recommendation: asString(reviewer.recommendation) || "advance",
+            summary: asString(reviewer.summary) || "",
+            high_findings: asNumber(reviewer.high_findings) ?? 0
+          };
+        })
+        .filter((item): item is ReviewPacketReviewerSummary => Boolean(item))
+    : [];
+
+  return {
+    reviewer_count: asNumber(record.reviewer_count) ?? reviewers.length,
+    findings_count: asNumber(record.findings_count) ?? 0,
+    reviewers
+  };
+}
+
+function normalizeConsistency(value: unknown): ReviewPacket["consistency"] | undefined {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  return {
+    panel_agreement: asString(record.panel_agreement) || "unknown",
+    conflict_count: asNumber(record.conflict_count) ?? 0,
+    bias_flag_count: asNumber(record.bias_flag_count) ?? 0,
+    summary: asString(record.summary) || ""
+  };
+}
+
+function normalizeDecision(value: unknown): ReviewPacket["decision"] | undefined {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const outcome = asString(record.outcome);
+  const summary = asString(record.summary);
+  const rationale = asString(record.rationale);
+  if (!outcome || !summary || !rationale) {
+    return undefined;
+  }
+  return {
+    outcome,
+    recommended_transition: asString(record.recommended_transition),
+    confidence_pct: asNumber(record.confidence_pct) ?? 0,
+    summary,
+    rationale,
+    required_actions: Array.isArray(record.required_actions)
+      ? record.required_actions.filter((item): item is string => typeof item === "string").slice(0, 4)
+      : []
+  };
+}
+
 function labelReviewAction(command: string): string {
   switch (command) {
     case "/approve":
       return "Approve review";
     case "/agent run write_paper":
       return "Run write_paper";
+    case "/agent review":
+      return "Refresh review";
     case "/agent apply":
       return "Apply transition";
     case "/agent transition":
       return "Show transition";
     case "/agent jump analyze_results":
+    case "/agent jump analyze_results --force":
       return "Jump analyze_results";
+    case "/agent jump design_experiments --force":
+      return "Jump design_experiments";
+    case "/agent jump implement_experiments --force":
+      return "Jump implement_experiments";
     default:
       return command.replace(/^\//, "");
   }
@@ -482,6 +792,19 @@ function summarizeFailureDetail(
   }
   const action = issue.recommended_action ? ` Next: ${issue.recommended_action}` : "";
   return `${issue.summary}${action}`;
+}
+
+function mapDecisionTransitionToNode(value: string | undefined): string | undefined {
+  switch (value) {
+    case "advance":
+      return "write_paper";
+    case "backtrack_to_design":
+      return "design_experiments";
+    case "backtrack_to_implement":
+      return "implement_experiments";
+    default:
+      return undefined;
+  }
 }
 
 function normalizeCheckStatus(value: unknown): ReviewCheckStatus {

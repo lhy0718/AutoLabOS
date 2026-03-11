@@ -495,7 +495,8 @@ describe("objective metric propagation", () => {
     expect(reviewPacketRaw).toContain('"objective_status": "met"');
     expect(reviewPacketRaw).toContain('"action": "advance"');
     const reviewChecklistRaw = await readFile(path.join(runDir, "review", "checklist.md"), "utf8");
-    expect(reviewChecklistRaw).toContain("Recommendation: advance -> review");
+    expect(reviewChecklistRaw).toContain("Decision: advance -> advance");
+    expect(reviewChecklistRaw).toContain("Consensus:");
     expect(reviewChecklistRaw).toContain("/agent run write_paper");
 
     expect(await memory.get("review.last_summary")).toContain("Objective metric met");

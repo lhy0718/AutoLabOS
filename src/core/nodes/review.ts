@@ -3,6 +3,7 @@ import path from "node:path";
 import { GraphNodeHandler } from "../stateGraph/types.js";
 import { AnalysisReport } from "../resultAnalysis.js";
 import { buildReviewPacket } from "../reviewPacket.js";
+import { ReviewArtifactPresence, runReviewPanel } from "../reviewSystem.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
@@ -10,7 +11,7 @@ import { NodeExecutionDeps } from "./types.js";
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
     id: "review",
-    async execute({ run }) {
+    async execute({ run, abortSignal }) {
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
       const report = await loadAnalysisReport(run.id, runContextMemory);
       if (!report) {
@@ -23,32 +24,48 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       }
 
       const runDir = path.join(".autolabos", "runs", run.id);
-      const packet = buildReviewPacket(report, {
-        corpusPresent: Boolean(await safeRead(path.join(runDir, "corpus.jsonl"))),
-        paperSummariesPresent: Boolean(await safeRead(path.join(runDir, "paper_summaries.jsonl"))),
-        evidenceStorePresent: Boolean(await safeRead(path.join(runDir, "evidence_store.jsonl"))),
-        hypothesesPresent: Boolean(await safeRead(path.join(runDir, "hypotheses.jsonl"))),
-        experimentPlanPresent: Boolean(await safeRead(path.join(runDir, "experiment_plan.yaml"))),
-        metricsPresent: Boolean(await safeRead(path.join(runDir, "metrics.json"))),
-        figurePresent: Boolean(await safeRead(path.join(runDir, "figures", "performance.svg"))),
-        synthesisPresent:
-          Boolean(report.synthesis?.discussion_points?.length) ||
-          Boolean(await safeRead(path.join(runDir, "result_analysis_synthesis.json")))
+      const presence = await resolveReviewArtifactPresence(runDir, report);
+      const panel = await runReviewPanel({
+        run,
+        node: "review",
+        report,
+        presence,
+        llm: deps.llm,
+        eventStream: deps.eventStream,
+        abortSignal
       });
-      const markdown = renderReviewChecklist(run, packet);
+      const packet = buildReviewPacket(report, presence, panel);
+      const markdown = renderReviewChecklist(run, packet, panel);
 
+      await writeRunArtifact(run, "review/findings.jsonl", renderJsonl(panel.findings));
+      await writeRunArtifact(run, "review/scorecard.json", `${JSON.stringify(panel.scorecard, null, 2)}\n`);
+      await writeRunArtifact(
+        run,
+        "review/consistency_report.json",
+        `${JSON.stringify(panel.consistency, null, 2)}\n`
+      );
+      await writeRunArtifact(run, "review/bias_report.json", `${JSON.stringify(panel.bias, null, 2)}\n`);
+      await writeRunArtifact(
+        run,
+        "review/revision_plan.json",
+        `${JSON.stringify(panel.revision_plan, null, 2)}\n`
+      );
+      await writeRunArtifact(run, "review/decision.json", `${JSON.stringify(panel.decision, null, 2)}\n`);
       await writeRunArtifact(run, "review/review_packet.json", `${JSON.stringify(packet, null, 2)}\n`);
       await writeRunArtifact(run, "review/checklist.md", markdown);
       await runContextMemory.put("review.packet", packet);
       await runContextMemory.put("review.last_summary", packet.objective_summary);
       await runContextMemory.put("review.last_recommendation", packet.recommendation || null);
+      await runContextMemory.put("review.last_decision", panel.decision);
+      await runContextMemory.put("review.last_findings_count", panel.findings.length);
+      await runContextMemory.put("review.last_panel_agreement", panel.consistency.panel_agreement);
 
       deps.eventStream.emit({
         type: "OBS_RECEIVED",
         runId: run.id,
         node: "review",
         payload: {
-          text: `Review packet prepared with ${packet.checks.length} checklist item(s). Human approval is required before write_paper.`
+          text: `Review panel completed with ${panel.reviewers.length} specialist reviewer(s), ${panel.findings.length} finding(s), and outcome ${panel.decision.outcome}.`
         }
       });
 
@@ -59,14 +76,33 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         status: "success",
         summary:
           blockers > 0
-            ? `Review packet prepared with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual sign-off item(s). Resolve the blockers before approving write_paper.`
+            ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual sign-off item(s). Resolve the blockers before approving write_paper.`
             : warnings > 0 || manual > 0
-              ? `Review packet prepared with ${warnings} warning(s) and ${manual} manual sign-off item(s). Approve review to continue to write_paper or jump back from the recommendation.`
-              : "Review packet prepared. Approve review to continue to write_paper.",
+              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual sign-off item(s). Approve review to continue to write_paper or follow the revision plan.`
+              : `Review panel completed with outcome ${panel.decision.outcome}. Approve review to continue to write_paper.`,
         needsApproval: true,
-        toolCallsUsed: 1
+        toolCallsUsed: Math.max(1, panel.llm_calls_used),
+        costUsd: panel.llm_cost_usd
       };
     }
+  };
+}
+
+async function resolveReviewArtifactPresence(
+  runDir: string,
+  report: AnalysisReport
+): Promise<ReviewArtifactPresence> {
+  return {
+        corpusPresent: Boolean(await safeRead(path.join(runDir, "corpus.jsonl"))),
+        paperSummariesPresent: Boolean(await safeRead(path.join(runDir, "paper_summaries.jsonl"))),
+        evidenceStorePresent: Boolean(await safeRead(path.join(runDir, "evidence_store.jsonl"))),
+        hypothesesPresent: Boolean(await safeRead(path.join(runDir, "hypotheses.jsonl"))),
+        experimentPlanPresent: Boolean(await safeRead(path.join(runDir, "experiment_plan.yaml"))),
+        metricsPresent: Boolean(await safeRead(path.join(runDir, "metrics.json"))),
+        figurePresent: Boolean(await safeRead(path.join(runDir, "figures", "performance.svg"))),
+        synthesisPresent:
+          Boolean(report.synthesis?.discussion_points?.length) ||
+          Boolean(await safeRead(path.join(runDir, "result_analysis_synthesis.json")))
   };
 }
 
@@ -93,7 +129,8 @@ async function loadAnalysisReport(
 
 function renderReviewChecklist(
   run: Parameters<GraphNodeHandler["execute"]>[0]["run"],
-  packet: ReturnType<typeof buildReviewPacket>
+  packet: ReturnType<typeof buildReviewPacket>,
+  panel: Awaited<ReturnType<typeof runReviewPanel>>
 ): string {
   const lines = [
     "# Review checklist",
@@ -103,6 +140,12 @@ function renderReviewChecklist(
     `Generated: ${packet.generated_at}`,
     "",
     `Readiness: ${packet.readiness.status} (${packet.readiness.ready_checks} ready, ${packet.readiness.warning_checks} warning, ${packet.readiness.blocking_checks} blocking, ${packet.readiness.manual_checks} manual)`,
+    "",
+    `Decision: ${panel.decision.outcome}${panel.decision.recommended_transition ? ` -> ${panel.decision.recommended_transition}` : ""} (${Math.round(panel.decision.confidence * 100)}%)`,
+    panel.decision.summary,
+    "",
+    `Consensus: ${panel.consistency.panel_agreement}`,
+    panel.consistency.summary,
     "",
     `Objective: ${packet.objective_status}`,
     packet.objective_summary,
@@ -129,6 +172,32 @@ function renderReviewChecklist(
     lines.push(`- [ ] ${item.label} (${item.status}): ${item.detail}`);
   }
 
+  if (panel.reviewers.length > 0) {
+    lines.push("");
+    lines.push("Specialist panel:");
+    for (const reviewer of panel.reviewers) {
+      lines.push(
+        `- ${reviewer.reviewer_label}: score ${reviewer.score_1_to_5}/5, ${reviewer.recommendation}, ${reviewer.summary}`
+      );
+    }
+  }
+
+  if (panel.findings.length > 0) {
+    lines.push("");
+    lines.push("Top findings:");
+    for (const finding of panel.findings.slice(0, 6)) {
+      lines.push(`- [${finding.severity}] ${finding.reviewer_label}: ${finding.title} - ${finding.detail}`);
+    }
+  }
+
+  if (panel.revision_plan.items.length > 0) {
+    lines.push("");
+    lines.push("Revision plan:");
+    for (const item of panel.revision_plan.items.slice(0, 6)) {
+      lines.push(`- (${item.priority}) ${item.owner}: ${item.action}`);
+    }
+  }
+
   lines.push("");
   lines.push("Suggested actions:");
   for (const action of packet.suggested_actions) {
@@ -137,4 +206,11 @@ function renderReviewChecklist(
   lines.push("");
 
   return `${lines.join("\n")}\n`;
+}
+
+function renderJsonl(items: unknown[]): string {
+  if (items.length === 0) {
+    return "";
+  }
+  return `${items.map((item) => JSON.stringify(item)).join("\n")}\n`;
 }

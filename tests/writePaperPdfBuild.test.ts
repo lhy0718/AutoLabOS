@@ -93,7 +93,8 @@ async function seedRun(root: string, run: RunRecord): Promise<string> {
       metric_slot: "reproducibility_score",
       evidence_span: "Repeated drafting runs remained stable across revisions.",
       source_type: "full_text",
-      confidence: 0.92
+      confidence: 0.92,
+      confidence_reason: "The evidence comes from one benchmark, so external validity remains limited."
     })}\n`,
     "utf8"
   );

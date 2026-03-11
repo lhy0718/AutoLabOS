@@ -34,6 +34,7 @@ export interface PaperEvidenceArtifact {
   evidence_span: string;
   source_type: "full_text" | "abstract";
   confidence: number;
+  confidence_reason?: string;
 }
 
 export interface HypothesisArtifact {
@@ -234,7 +235,8 @@ export function buildPaperWriterPrompt(input: {
         result_slot: truncateText(item.result_slot, 180),
         metric_slot: truncateText(item.metric_slot, 120),
         evidence_span: truncateText(item.evidence_span, 220),
-        confidence: item.confidence
+        confidence: item.confidence,
+        confidence_reason: truncateText(item.confidence_reason || "", 160)
       })),
     allowed_ids: {
       paper_ids: allowedPaperIds,
@@ -1473,7 +1475,8 @@ function normalizeEvidenceRow(input: unknown): PaperEvidenceArtifact | undefined
     metric_slot: cleanString(item.metric_slot) || "Not specified.",
     evidence_span: cleanString(item.evidence_span) || claim,
     source_type: item.source_type === "abstract" ? "abstract" : "full_text",
-    confidence: normalizeNumber(item.confidence, 0.5)
+    confidence: normalizeNumber(item.confidence, 0.5),
+    confidence_reason: cleanString(item.confidence_reason)
   };
 }
 
