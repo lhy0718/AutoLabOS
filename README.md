@@ -135,7 +135,7 @@ AutoLabOS has two layers that are easy to conflate:
 
 - Orchestration layer: `/agent ...` targets the 9 graph nodes. In code, `AgentId` is currently an alias of `GraphNodeId`.
 - Role layer: nodes emit or run exported `agentRole` identities such as `implementer`, `runner`, `paper_writer`, and `reviewer`.
-- Some nodes also fan out into node-internal prompt personas. Today the clearest examples are the evidence synthesizer plus skeptical reviewer inside `generate_hypotheses`, and the 5-specialist review panel inside `review`.
+- Some nodes also fan out into node-internal personas or deterministic controllers. Prompt-heavy examples are the evidence synthesizer plus skeptical reviewer inside `generate_hypotheses` and the 5-specialist panel inside `review`; deterministic panel/controller examples now include `design_experiments`, `run_experiments`, and `analyze_results`.
 
 ### Node-to-Role Map
 
@@ -168,14 +168,25 @@ flowchart TB
         R9["reviewer"]
     end
 
-    subgraph Internal["Node-internal prompt personas"]
+    subgraph Internal["Node-internal personas and controllers"]
         P1["evidence synthesizer"]
         P2["skeptical reviewer"]
-        P3["claim verifier"]
-        P4["methodology reviewer"]
-        P5["statistics reviewer"]
-        P6["writing readiness reviewer"]
-        P7["integrity reviewer"]
+        P3["feasibility reviewer"]
+        P4["statistical reviewer"]
+        P5["ops-budget planner"]
+        P6["trial manager"]
+        P7["failure triager"]
+        P8["resource/log watchdog"]
+        P9["rerun planner"]
+        P10["metric auditor"]
+        P11["robustness reviewer"]
+        P12["confounder detector"]
+        P13["decision calibrator"]
+        P14["claim verifier"]
+        P15["methodology reviewer"]
+        P16["statistics reviewer"]
+        P17["writing readiness reviewer"]
+        P18["integrity reviewer"]
     end
 
     N1 -. primary role .-> R1
@@ -184,15 +195,26 @@ flowchart TB
     N3 -. synthesis .-> P1
     N3 -. critique .-> P2
     N4 -. primary role .-> R4
+    N4 -. selection panel .-> P3
+    N4 -. selection panel .-> P4
+    N4 -. selection panel .-> P5
     N5 -. primary role .-> R5
     N6 -. primary role .-> R6
+    N6 -. execution controller .-> P6
+    N6 -. execution controller .-> P7
+    N6 -. execution controller .-> P8
+    N6 -. execution controller .-> P9
     N7 -. primary role .-> R7
+    N7 -. result panel .-> P10
+    N7 -. result panel .-> P11
+    N7 -. result panel .-> P12
+    N7 -. result panel .-> P13
     N8 -. panel role .-> R9
-    N8 -. specialist .-> P3
-    N8 -. specialist .-> P4
-    N8 -. specialist .-> P5
-    N8 -. specialist .-> P6
-    N8 -. specialist .-> P7
+    N8 -. specialist .-> P14
+    N8 -. specialist .-> P15
+    N8 -. specialist .-> P16
+    N8 -. specialist .-> P17
+    N8 -. specialist .-> P18
     N9 -. drafting .-> R8
     N9 -. critique .-> R9
 ```
@@ -242,13 +264,15 @@ The top-level workflow remains a fixed 9-node graph. Recent automation work live
 
 In the default setup, review outcomes auto-apply into `write_paper` or one of the supported backtracks. Review is no longer a dedicated manual hold in `minimal` mode.
 
-### Bounded Automation Loops
+### Bounded Automation and Internal Panels
 
-| Node | Automatic loop | Trigger | Bound |
+| Node | Internal automation | Trigger | Bound or output |
 | --- | --- | --- | --- |
 | `analyze_papers` | Expands a fresh `top_n` selection and reuses manifest-backed completed analyses | The initial selected window is too sparse to ground hypotheses well | At most 2 auto-expansions |
+| `design_experiments` | Scores generated candidates with a deterministic `designer / feasibility / statistical / ops-budget` panel | Candidate designs are available from `designExperimentsFromHypotheses(...)` | Always runs once per design execution and emits internal `design_experiments_panel/*` artifacts |
+| `run_experiments` | Builds an execution plan, classifies failures, and applies a one-shot transient rerun policy | The primary run command has been resolved | Never retries policy blocks, missing metrics, or invalid metrics; retries only one transient command failure |
 | `run_experiments` | Chains managed `standard -> quick_check -> confirmatory` profiles | A managed `real_execution` bundle completes the standard run with an observed/met objective | Supplemental runs are best effort and do not overturn a successful primary run |
-| `analyze_results` | Re-tries objective grounding with best-effort metric rematching | Cached or fresh objective evaluation comes back `missing` or `unknown` | One bounded retry before any human clarification pause |
+| `analyze_results` | Re-tries objective grounding with best-effort metric rematching, then calibrates confidence with a deterministic result panel | Cached or fresh objective evaluation comes back `missing` or `unknown`, or a transition recommendation must be finalized | One bounded rematch before any human clarification pause, plus internal `analyze_results_panel/*` artifacts |
 | `write_paper` | Runs a validation-aware repair pass, then re-validates | Draft validation reports repairable borrowed grounding warnings | One extra repair pass, adopted only when warning count does not increase |
 
 ### Phase-by-Phase Connection Graphs
@@ -291,7 +315,9 @@ flowchart LR
     DE --> ED["experiment_designer"]
     ED --> Profiles["constraint profile + objective metric profile"]
     Profiles --> Plans["design candidates"]
-    Plans --> Bundle{"supports managed real_execution bundle?"}
+    Plans --> Panel["designer + feasibility + statistical + ops-budget panel"]
+    Panel --> Choice["panel selection"]
+    Choice --> Bundle{"supports managed real_execution bundle?"}
     Bundle -->|yes| Managed["bundle sections + runnable profiles"]
     Bundle -->|no| Plain["plain experiment plan"]
     Managed --> PlanYaml["experiment_plan.yaml"]
@@ -316,14 +342,19 @@ flowchart LR
     Gate --> RX
 
     RX --> Runner["runner"]
-    Runner --> ACI["Local ACI preflight/tests/command execution"]
-    ACI --> Profiles["managed standard -> quick_check -> confirmatory"]
+    Runner --> Trial["trial manager"]
+    Trial --> ACI["Local ACI preflight/tests/command execution"]
+    ACI --> Triage["failure triager + rerun planner"]
+    Triage -->|retry once if transient| ACI
+    ACI --> Watchdog["resource/log watchdog"]
+    Watchdog --> Profiles["managed standard -> quick_check -> confirmatory"]
     Profiles --> Metrics["metrics.json + supplemental runs + run_verifier_feedback"]
     Metrics -. runner feedback .-> IM
     Metrics --> AR["analyze_results"]
     AR --> Analyst["analyst_statistician"]
     Analyst --> Ground["best-effort metric rematch"]
-    Ground --> Synth["objective evaluation + synthesis + transition recommendation"]
+    Ground --> ResultPanel["metric auditor + robustness reviewer + confounder detector + decision calibrator"]
+    ResultPanel --> Synth["objective evaluation + synthesis + transition recommendation"]
 
     Synth -->|advance| RV["review"]
     Synth -->|backtrack_to_implement| IE
@@ -379,14 +410,14 @@ flowchart LR
 | `collect_papers` | `collector_curator` | Semantic Scholar search, de-duplication, enrichment, and BibTeX generation |
 | `analyze_papers` | `reader_evidence_extractor` | ranked paper selection plus resumable planner -> extractor -> reviewer analysis over local or Responses API PDF inputs, with bounded top-N auto-expansion when evidence is too thin |
 | `generate_hypotheses` | `hypothesis_agent` | evidence-axis synthesis, ToT branching, skeptical review, and diversity-aware top-k selection |
-| `design_experiments` | `experiment_designer` | candidate design generation and `experiment_plan.yaml` selection |
+| `design_experiments` | `experiment_designer` | candidate design generation plus deterministic `designer / feasibility / statistical / ops-budget` panel selection before writing `experiment_plan.yaml` |
 | `implement_experiments` | `implementer` | `ImplementSessionManager`, localization, Codex patching, verification, and optional handoff |
-| `run_experiments` | `runner` | ACI preflight/tests/command execution, metrics capture, managed supplemental profile chaining, and verifier feedback |
-| `analyze_results` | `analyst_statistician` | objective evaluation with best-effort metric rematching, result synthesis, and transition recommendation |
+| `run_experiments` | `runner` | ACI preflight/tests/command execution, execution-plan + triage + watchdog control, one-shot transient rerun, managed supplemental profile chaining, and verifier feedback |
+| `analyze_results` | `analyst_statistician` | objective evaluation with best-effort metric rematching, deterministic result-panel calibration, result synthesis, and transition recommendation |
 | `review` | `reviewer` | `runReviewPanel`, 5 specialist reviewers, heuristic+LLM refinement, review packet generation, and transition recommendation |
 | `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, outline/draft/review/finalize stages, validation-aware repair, and optional LaTeX repair |
 
-The role catalog is broader than the concrete runtime wiring. Today the deepest multi-turn session managers are `implement_experiments` and `write_paper`, `review` runs a specialist review panel behind the shared `reviewer` role and then turns that panel into a reusable review packet plus suggested commands, and `generate_hypotheses` fans out into internal evidence-synthesis and skeptical-review prompts before returning to the main graph.
+The role catalog is broader than the concrete runtime wiring. The deepest multi-turn session managers are still `implement_experiments` and `write_paper`, `review` remains the most LLM-panelized node, and `generate_hypotheses` still fans out into evidence-synthesis and skeptical-review prompts. The newer mid-pipeline reinforcements in `design_experiments`, `run_experiments`, and `analyze_results` are intentionally node-local deterministic panels/controllers that write internal artifacts without changing top-level graph roles or operator surfaces.
 
 ### Artifact Flow
 
@@ -398,12 +429,12 @@ flowchart TB
     B1 --> C["generate_hypotheses"]
     C --> C1["hypotheses.jsonl<br/>hypothesis_generation/evidence_axes.json<br/>hypothesis_generation/selection.json<br/>hypothesis_generation/drafts.jsonl<br/>hypothesis_generation/reviews.jsonl"]
     C1 --> D["design_experiments"]
-    D --> D1["experiment_plan.yaml"]
+    D --> D1["experiment_plan.yaml<br/>design_experiments_panel/candidates.json<br/>design_experiments_panel/reviews.json<br/>design_experiments_panel/selection.json"]
     D1 --> E["implement_experiments"]
     E --> F["run_experiments"]
-    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_supplemental_runs.json (optional)<br/>run_experiments_verify_report.json"]
+    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_supplemental_runs.json (optional)<br/>run_experiments_verify_report.json<br/>run_experiments_panel/execution_plan.json<br/>run_experiments_panel/triage.json<br/>run_experiments_panel/rerun_decision.json"]
     F1 --> G["analyze_results"]
-    G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg"]
+    G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg<br/>analyze_results_panel/inputs.json<br/>analyze_results_panel/reviews.json<br/>analyze_results_panel/scorecard.json<br/>analyze_results_panel/decision.json"]
     G1 --> H["review"]
     H --> H1["review/findings.jsonl<br/>review/scorecard.json<br/>review/consistency_report.json<br/>review/bias_report.json<br/>review/revision_plan.json<br/>review/decision.json<br/>review/review_packet.json<br/>review/checklist.md"]
     H1 --> I["write_paper"]
@@ -413,6 +444,8 @@ flowchart TB
 All run artifacts live under `.autolabos/runs/<run_id>/`, which makes the pipeline inspectable from both the TUI and the local web UI.
 
 `analyze_papers` uses `analysis_manifest.json` to resume unfinished work. If the selected paper set changes, the analysis configuration changes, or `paper_summaries.jsonl` / `evidence_store.jsonl` drift out of sync with the manifest, AutoLabOS prunes stale rows and re-queues only the affected papers before downstream nodes continue.
+
+The new mid-pipeline reinforcements are internal-only in v1: `design_experiments` writes `design_experiments_panel/*`, `run_experiments` writes `run_experiments_panel/*`, and `analyze_results` writes `analyze_results_panel/*`. The corresponding run-context memory keys are `design_experiments.panel_selection`, `run_experiments.triage`, and `analyze_results.panel_decision`.
 
 Managed `run_experiments` runs may also emit `run_experiments_supplemental_runs.json` when the runtime automatically follows a successful standard run with `quick_check` and `confirmatory` profiles. `write_paper` emits `validation_repair_report.json`, plus `validation_repair.*` artifacts when the bounded repair loop actually runs.
 
@@ -481,10 +514,10 @@ flowchart LR
     Collect --> Scholar["Semantic Scholar + enrichment"]
     Analyze --> AnalyzeStack["paperSelection + paperAnalyzer + analysis manifest"]
     Hyp --> HypStack["researchPlanning.generateHypothesesFromEvidence + ToT"]
-    Design --> DesignStack["researchPlanning.designExperimentsFromHypotheses"]
+    Design --> DesignStack["researchPlanning.designExperimentsFromHypotheses + designExperimentsPanel"]
     Impl --> ImplStack["ImplementSessionManager + ImplementationLocalizer"]
-    Run --> RunStack["LocalAciAdapter + runVerifierFeedback"]
-    Results --> ResultStack["resultAnalysis + synthesis + transition recommendation"]
+    Run --> RunStack["LocalAciAdapter + runExperimentsPanel + runVerifierFeedback"]
+    Results --> ResultStack["resultAnalysis + analyzeResultsPanel + synthesis + transition recommendation"]
     Review --> ReviewStack["runReviewPanel + reviewPacket + transition recommendation"]
     Paper --> PaperStack["PaperWriterSessionManager + paperWriting + LaTeX build"]
 ```
@@ -495,7 +528,7 @@ Key source areas:
 - `src/interaction/*`: shared command/session layer used by the TUI and the web composer
 - `src/core/stateGraph/*`: node execution, retries, approvals, budgets, jumps, and checkpoints
 - `src/core/nodes/*`: the 9 workflow handlers and their artifact-writing logic
-- `src/core/analysis/researchPlanning.ts`, `src/core/reviewSystem.ts`, and `src/core/reviewPacket.ts`: multi-stage hypothesis generation/design plus the specialist review panel, packet building, and review surfacing
+- `src/core/analysis/researchPlanning.ts`, `src/core/designExperimentsPanel.ts`, `src/core/runExperimentsPanel.ts`, `src/core/analyzeResultsPanel.ts`, `src/core/reviewSystem.ts`, and `src/core/reviewPacket.ts`: multi-stage hypothesis generation/design, deterministic mid-pipeline panels/controllers, the specialist review panel, packet building, and review surfacing
 - `src/core/agents/*`: session managers, exported roles, and search-backed implementation localization
 - `src/integrations/*` and `src/tools/*`: provider clients, Semantic Scholar access, Responses PDF analysis, and local execution adapters
 - `src/web/*`, `web/src/*`, `src/interaction/*`, and `src/tui/*`: local HTTP server, browser UI, and terminal surfaces that expose analysis/review insight cards

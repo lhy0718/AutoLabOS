@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -51,6 +51,146 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByText("Initial setup")).toBeInTheDocument();
       expect(screen.getByText("Initialize workspace")).toBeInTheDocument();
+    });
+  });
+
+  it("shows per-slot model and reasoning selectors in workspace settings and submits them", async () => {
+    const bootstrapPayload = {
+      configured: true,
+      setupDefaults: {
+        projectName: "AutoLabOS",
+        defaultTopic: "Multi-agent collaboration",
+        defaultConstraints: ["recent papers", "last 5 years"],
+        defaultObjectiveMetric: "state-of-the-art reproducibility"
+      },
+      session: {
+        busy: false,
+        logs: [],
+        canCancel: false
+      },
+      runs: [],
+      configSummary: {
+        projectName: "AutoLabOS",
+        workflowMode: "agent_approval",
+        approvalMode: "minimal",
+        llmMode: "codex_chatgpt_only",
+        pdfMode: "codex_text_image_hybrid",
+        taskModel: "gpt-5.4",
+        chatModel: "gpt-5.3-codex",
+        experimentModel: "gpt-5.4",
+        pdfModel: "gpt-5.4",
+        taskReasoning: "xhigh",
+        chatReasoning: "low",
+        experimentReasoning: "xhigh",
+        pdfReasoning: "xhigh"
+      },
+      configForm: {
+        projectName: "AutoLabOS",
+        defaultTopic: "Multi-agent collaboration",
+        defaultConstraints: "recent papers, last 5 years",
+        defaultObjectiveMetric: "state-of-the-art reproducibility",
+        llmMode: "codex_chatgpt_only",
+        pdfAnalysisMode: "codex_text_image_hybrid",
+        codexChatModelChoice: "gpt-5.3-codex",
+        codexChatReasoningEffort: "low",
+        codexTaskModelChoice: "gpt-5.4",
+        codexTaskReasoningEffort: "xhigh",
+        codexExperimentModelChoice: "gpt-5.4",
+        codexExperimentReasoningEffort: "xhigh",
+        codexPdfModelChoice: "gpt-5.4",
+        codexPdfReasoningEffort: "xhigh",
+        openAiChatModel: "gpt-5.4",
+        openAiChatReasoningEffort: "low",
+        openAiTaskModel: "gpt-5.4",
+        openAiReasoningEffort: "medium",
+        openAiExperimentModel: "gpt-5.4",
+        openAiExperimentReasoningEffort: "medium",
+        openAiPdfModel: "gpt-5.4",
+        openAiPdfReasoningEffort: "medium",
+        responsesPdfModel: "gpt-5.4",
+        responsesPdfReasoningEffort: "xhigh"
+      }
+    };
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/bootstrap")) {
+        return new Response(JSON.stringify(bootstrapPayload), { status: 200 });
+      }
+      if (url.includes("/api/doctor")) {
+        return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+      }
+      if (url.includes("/api/setup")) {
+        const body = JSON.parse(String(init?.body));
+        expect(body.codexChatModelChoice).toBe("gpt-5.4");
+        expect(body.codexChatReasoningEffort).toBe("high");
+        expect(body.responsesPdfModel).toBe("gpt-4o");
+        expect(body.responsesPdfReasoningEffort).toBe("medium");
+        expect(body.codexTaskModelChoice).toBeDefined();
+        expect(body.codexExperimentModelChoice).toBeDefined();
+        expect(body.codexPdfModelChoice).toBeDefined();
+        expect(body.openAiChatModel).toBeDefined();
+        expect(body.openAiTaskModel).toBeDefined();
+        expect(body.openAiExperimentModel).toBeDefined();
+        expect(body.openAiPdfModel).toBeDefined();
+        return new Response(JSON.stringify({ bootstrap: bootstrapPayload }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener() {}
+        close() {}
+      } as unknown as typeof EventSource
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Workspace" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Workspace" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Workspace settings")).toBeInTheDocument();
+      expect(screen.getByText("Model and reasoning by slot")).toBeInTheDocument();
+      expect(screen.getByText("Codex chat")).toBeInTheDocument();
+      expect(screen.getByText("Codex task")).toBeInTheDocument();
+      expect(screen.getByText("OpenAI experiment")).toBeInTheDocument();
+      expect(screen.getByText("Responses PDF")).toBeInTheDocument();
+    });
+
+    const codexChatSection = screen.getByText("Codex chat").closest("section");
+    const responsesPdfSection = screen.getByText("Responses PDF").closest("section");
+    expect(codexChatSection).not.toBeNull();
+    expect(responsesPdfSection).not.toBeNull();
+
+    fireEvent.change(within(codexChatSection as HTMLElement).getAllByRole("combobox")[0], {
+      target: { value: "gpt-5.4" }
+    });
+    fireEvent.change(within(codexChatSection as HTMLElement).getAllByRole("combobox")[1], {
+      target: { value: "high" }
+    });
+    fireEvent.change(within(responsesPdfSection as HTMLElement).getAllByRole("combobox")[0], {
+      target: { value: "gpt-4o" }
+    });
+    fireEvent.change(within(responsesPdfSection as HTMLElement).getAllByRole("combobox")[1], {
+      target: { value: "medium" }
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/setup",
+        expect.objectContaining({
+          method: "POST"
+        })
+      );
     });
   });
 

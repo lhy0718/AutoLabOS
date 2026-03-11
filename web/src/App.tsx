@@ -1221,6 +1221,16 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
         </label>
       </div>
 
+      <div className="section-heading">
+        <div>
+          <p className="section-kicker">Models</p>
+          <h3>Model and reasoning by slot</h3>
+        </div>
+      </div>
+      <p className="form-help">
+        Pick the model and reasoning effort independently for chat, research, experiment, and PDF flows.
+      </p>
+
       <ConfigModelSection
         title="Codex chat"
         description="General chat, titles, and lightweight interactive turns."

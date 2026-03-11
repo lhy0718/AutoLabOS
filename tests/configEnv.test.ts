@@ -250,7 +250,7 @@ describe("config .env overrides", () => {
     await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="openai-key"');
   });
 
-  it("defaults first-run Codex model prompts to gpt-5.4", async () => {
+  it("defaults first-run Codex chat prompts to gpt-5.3-codex and research backend prompts to gpt-5.4", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-codex-defaults-"));
     const paths = resolveAppPaths(cwd);
 
@@ -272,7 +272,7 @@ describe("config .env overrides", () => {
     );
 
     expect(config.providers.llm_mode).toBe("codex_chatgpt_only");
-    expect(config.providers.codex.chat_model).toBe("gpt-5.4");
+    expect(config.providers.codex.chat_model).toBe("gpt-5.3-codex");
     expect(config.providers.codex.model).toBe("gpt-5.4");
     expect(config.providers.codex.pdf_model).toBe("gpt-5.4");
   });

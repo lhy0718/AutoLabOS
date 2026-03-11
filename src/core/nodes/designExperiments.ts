@@ -14,6 +14,7 @@ import {
   ExperimentDesignCandidate
 } from "../analysis/researchPlanning.js";
 import { supportsRealExecutionBundle } from "../experiments/realExecutionBundle.js";
+import { runDesignExperimentsPanel } from "../designExperimentsPanel.js";
 
 interface FilteredHypothesis {
   hypothesis_id: string;
@@ -143,12 +144,22 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         candidateCount: 3,
         onProgress: emitLog
       });
+      const managedBundleSupported = supportsRealExecutionBundle({
+        topic: run.topic,
+        objectiveMetric: run.objectiveMetric,
+        constraints: run.constraints
+      });
+      const panelResult = runDesignExperimentsPanel({
+        candidates: design.candidates,
+        objectiveProfile: objectiveMetricProfile,
+        managedBundleSupported
+      });
 
       const planYaml = buildPlanYaml({
         run,
         hypotheses: filtered.kept,
         droppedHypotheses: filtered.dropped,
-        selected: design.selected,
+        selected: panelResult.selected,
         candidates: design.candidates,
         constraintProfile,
         objectiveProfile: objectiveMetricProfile,
@@ -157,11 +168,27 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
 
       const outputPath = await writeRunArtifact(run, "experiment_plan.yaml", planYaml);
       await fs.access(outputPath);
-      await runContextMemory.put("design_experiments.primary", design.selected.title);
+      await writeRunArtifact(
+        run,
+        "design_experiments_panel/candidates.json",
+        `${JSON.stringify(design.candidates, null, 2)}\n`
+      );
+      await writeRunArtifact(
+        run,
+        "design_experiments_panel/reviews.json",
+        `${JSON.stringify(panelResult.reviews, null, 2)}\n`
+      );
+      await writeRunArtifact(
+        run,
+        "design_experiments_panel/selection.json",
+        `${JSON.stringify(panelResult.selection, null, 2)}\n`
+      );
+      await runContextMemory.put("design_experiments.primary", panelResult.selected.title);
       await runContextMemory.put("design_experiments.source", design.source);
       await runContextMemory.put("design_experiments.summary", design.summary);
       await runContextMemory.put("design_experiments.hypothesis_count", filtered.kept.length);
       await runContextMemory.put("design_experiments.filtered_out_count", filtered.dropped.length);
+      await runContextMemory.put("design_experiments.panel_selection", panelResult.selection);
 
       deps.eventStream.emit({
         type: "PLAN_CREATED",
@@ -169,19 +196,21 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         node: "design_experiments",
         payload: {
           candidateCount: design.candidates.length,
-          selectedId: design.selected.id,
+          selectedId: panelResult.selected.id,
           source: design.source,
           fallbackReason: design.fallbackReason
         }
       });
 
-      emitLog(`Selected design "${design.selected.title}" from ${design.candidates.length} candidate(s) using ${design.source}.`);
+      emitLog(
+        `Selected design "${panelResult.selected.title}" from ${design.candidates.length} candidate(s) using ${design.source} with ${panelResult.selection.mode}.`
+      );
 
       return {
         status: "success",
         summary: design.fallbackReason
-          ? `${design.summary} Falling back after: ${design.fallbackReason}`
-          : design.summary,
+          ? `${design.summary} Selected "${panelResult.selected.title}" via ${panelResult.selection.mode}. Falling back after: ${design.fallbackReason}`
+          : `${design.summary} Selected "${panelResult.selected.title}" via ${panelResult.selection.mode}.`,
         needsApproval: true,
         toolCallsUsed: 1
       };

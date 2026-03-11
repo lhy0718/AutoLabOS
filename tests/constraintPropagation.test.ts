@@ -9,6 +9,7 @@ import { createDesignExperimentsNode } from "../src/core/nodes/designExperiments
 import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
+import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
@@ -268,6 +269,168 @@ describe("constraint propagation", () => {
     expect(parsed.selected_design?.summary).toBe("Summary line 1\nSummary line 2");
     expect(parsed.selected_design?.implementation_notes?.[0]).toBe("Step 1\nStep 2");
     expect(parsed.selected_design?.evaluation_steps?.[0]).toBe("Measure line 1\nMeasure line 2");
+  });
+
+  it("prefers the best non-blocked design candidate and records panel selection artifacts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-panel-selection-"));
+    process.chdir(root);
+
+    const runId = "run-design-panel-selection";
+    const run = makeRun(root, runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "hypotheses.jsonl"),
+      `${JSON.stringify({ hypothesis_id: "h_1", text: "Structured schemas improve reproducibility." })}\n`,
+      "utf8"
+    );
+
+    const node = createDesignExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new CountingJsonLLMClient([
+        JSON.stringify({
+          summary: "Generated two candidate plans.",
+          candidates: [
+            {
+              id: "plan_blocked",
+              title: "Blocked plan",
+              hypothesis_ids: ["h_1"],
+              plan_summary: "Missing datasets makes this plan weak.",
+              datasets: [],
+              metrics: ["reproducibility_score"],
+              baselines: [],
+              implementation_notes: ["Implement the structured schema arm."],
+              evaluation_steps: ["Measure reproducibility_score."],
+              risks: ["Needs a concrete dataset."],
+              budget_notes: ["Small budget."]
+            },
+            {
+              id: "plan_selected",
+              title: "Balanced plan",
+              hypothesis_ids: ["h_1"],
+              plan_summary: "Compare structured schemas against a free-form baseline.",
+              datasets: ["AgentBench-mini"],
+              metrics: ["reproducibility_score"],
+              baselines: ["free_form_chat"],
+              implementation_notes: ["Implement both schema and free-form coordination."],
+              evaluation_steps: ["Measure reproducibility_score across repeated runs."],
+              risks: ["Small benchmark coverage."],
+              budget_notes: ["Fits the managed execution budget."]
+            }
+          ],
+          selected_id: "plan_blocked"
+        })
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+
+    const plan = YAML.parse(await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8")) as {
+      selected_design?: { title?: string };
+    };
+    expect(plan.selected_design?.title).toBe("Balanced plan");
+
+    const selection = JSON.parse(
+      await readFile(path.join(runDir, "design_experiments_panel", "selection.json"), "utf8")
+    ) as {
+      mode: string;
+      selected_candidate_id: string;
+    };
+    expect(selection).toMatchObject({
+      mode: "best_non_blocked",
+      selected_candidate_id: "plan_selected"
+    });
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("design_experiments.panel_selection")).toMatchObject({
+      mode: "best_non_blocked",
+      selected_candidate_id: "plan_selected"
+    });
+  });
+
+  it("falls back deterministically when every design candidate is hard-blocked", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-panel-fallback-"));
+    process.chdir(root);
+
+    const runId = "run-design-panel-fallback";
+    const run = makeRun(root, runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "hypotheses.jsonl"),
+      `${JSON.stringify({ hypothesis_id: "h_1", text: "Structured schemas improve reproducibility." })}\n`,
+      "utf8"
+    );
+
+    const node = createDesignExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new CountingJsonLLMClient([
+        JSON.stringify({
+          summary: "Generated blocked candidates only.",
+          candidates: [
+            {
+              id: "plan_less_bad",
+              title: "Least-bad blocked plan",
+              hypothesis_ids: ["h_1"],
+              plan_summary: "Usable except for the missing dataset.",
+              datasets: [],
+              metrics: ["reproducibility_score"],
+              baselines: [],
+              implementation_notes: ["Implement the schema arm."],
+              evaluation_steps: ["Measure reproducibility_score."],
+              risks: ["No dataset is wired yet."],
+              budget_notes: ["Small budget."]
+            },
+            {
+              id: "plan_bad",
+              title: "Severely underspecified plan",
+              hypothesis_ids: ["h_1"],
+              plan_summary: "Too incomplete to execute cleanly.",
+              datasets: [],
+              metrics: [],
+              baselines: [],
+              implementation_notes: [],
+              evaluation_steps: [],
+              risks: ["Most execution details are missing."],
+              budget_notes: []
+            }
+          ],
+          selected_id: "plan_bad"
+        })
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+
+    const plan = YAML.parse(await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8")) as {
+      selected_design?: { title?: string };
+    };
+    expect(plan.selected_design?.title).toBe("Least-bad blocked plan");
+
+    const selection = JSON.parse(
+      await readFile(path.join(runDir, "design_experiments_panel", "selection.json"), "utf8")
+    ) as {
+      mode: string;
+      selected_candidate_id: string;
+    };
+    expect(selection).toMatchObject({
+      mode: "all_blocked_fallback",
+      selected_candidate_id: "plan_less_bad"
+    });
   });
 
   it("writes writing constraints into paper/main.tex", async () => {

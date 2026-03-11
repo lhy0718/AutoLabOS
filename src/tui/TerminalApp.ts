@@ -3011,7 +3011,7 @@ export class TerminalApp {
   }
 
   private getRecommendedCodexSelection(slot: "chat" | "task" | "pdf"): string {
-    return RECOMMENDED_CODEX_MODEL;
+    return slot === "chat" ? DEFAULT_CODEX_MODEL : RECOMMENDED_CODEX_MODEL;
   }
 
   private getRecommendedOpenAiModel(slot: "chat" | "task" | "pdf"): string {

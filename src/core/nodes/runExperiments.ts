@@ -13,6 +13,18 @@ import {
   resolveObjectiveMetricProfile
 } from "../objectiveMetric.js";
 import { RunVerifierReport, RunVerifierTrigger } from "../experiments/runVerifierFeedback.js";
+import {
+  buildRunExperimentsExecutionPlan,
+  classifyRunExperimentsFailure,
+  createRunExperimentsWatchdogState,
+  decideRunExperimentsRerun,
+  finalizeRunExperimentsTriage,
+  recordSupplementalOutputs,
+  RunExperimentsExecutionPlan,
+  RunExperimentsRerunDecision,
+  RunExperimentsTriageAttempt,
+  setMetricsState
+} from "../runExperimentsPanel.js";
 
 type SupplementalProfileName = "quick_check" | "confirmatory";
 
@@ -53,6 +65,29 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContext.put("run_experiments.handoff_reason", handoffReason || null);
       await runContext.put("run_experiments.supplemental_runs", []);
       await runContext.put("run_experiments.supplemental_summary", null);
+      await runContext.put("run_experiments.triage", null);
+
+      const defaultMetricsPath = path.join(process.cwd(), ".autolabos", "runs", run.id, "metrics.json");
+      const triageAttempts: RunExperimentsTriageAttempt[] = [];
+      let executionPlan: RunExperimentsExecutionPlan | undefined;
+      let rerunDecision: RunExperimentsRerunDecision = {
+        decision: "not_needed",
+        reason: "No automatic rerun was required."
+      };
+      let watchdog = createRunExperimentsWatchdogState({
+        metricsPath: defaultMetricsPath
+      });
+      const persistPanelState = async () => {
+        await persistRunPanelArtifacts({
+          run,
+          runContext,
+          executionPlan,
+          triageAttempts,
+          watchdog,
+          rerunDecision
+        });
+      };
+
       if (pendingHandoff) {
         deps.eventStream.emit({
           type: "OBS_RECEIVED",
@@ -67,25 +102,44 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         });
         await runContext.put("implement_experiments.pending_handoff_to_run_experiments", false);
       }
+      let clearedSupplementalOutputs: string[] = [];
       if (managedSupplementalPlan) {
-        const staleBackups = await clearManagedSupplementalOutputs(run, managedSupplementalPlan.profiles);
-        if (staleBackups.length > 0) {
+        clearedSupplementalOutputs = await clearManagedSupplementalOutputs(run, managedSupplementalPlan.profiles);
+        if (clearedSupplementalOutputs.length > 0) {
           deps.eventStream.emit({
             type: "OBS_RECEIVED",
             runId: run.id,
             node: "run_experiments",
             agentRole: "runner",
             payload: {
-              text: `Cleared stale supplemental metrics before the standard run (${staleBackups.join(", ")}).`
+              text: `Cleared stale supplemental metrics before the standard run (${clearedSupplementalOutputs.join(", ")}).`
             }
           });
         }
       }
+      watchdog = createRunExperimentsWatchdogState({
+        metricsPath: defaultMetricsPath,
+        clearedSupplementalOutputs
+      });
+
       let resolved: Awaited<ReturnType<typeof resolveRunCommand>>;
       try {
         resolved = await resolveRunCommand(run, process.cwd());
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        triageAttempts.push(
+          classifyRunExperimentsFailure({
+            attempt: 1,
+            stage: "resolve",
+            summary: message,
+            metricsPath: defaultMetricsPath
+          })
+        );
+        rerunDecision = decideRunExperimentsRerun({
+          triage: triageAttempts[triageAttempts.length - 1],
+          automaticRerunsUsed: 0
+        });
+        await persistPanelState();
         const report = buildRunVerifierReport({
           status: "fail",
           trigger,
@@ -113,7 +167,28 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           toolCallsUsed: 0
         };
       }
-      const commandToolCallsUsed = resolved.testCommand ? 2 : 1;
+
+      executionPlan = buildRunExperimentsExecutionPlan({
+        trigger,
+        command: resolved.command,
+        cwd: resolved.cwd,
+        metricsPath: resolved.metricsPath,
+        source: resolved.source,
+        testCommand: resolved.testCommand,
+        testCwd: resolved.testCwd,
+        supplementalProfiles: managedSupplementalPlan?.profiles.map((profile) => ({
+          profile: profile.profile,
+          command: profile.command,
+          metricsPath: profile.metricsPath
+        }))
+      });
+      watchdog = createRunExperimentsWatchdogState({
+        metricsPath: resolved.metricsPath,
+        clearedSupplementalOutputs
+      });
+      await persistPanelState();
+
+      const preflightToolCallsUsed = resolved.testCommand ? 1 : 0;
 
       if (resolved.testCommand) {
         deps.eventStream.emit({
@@ -135,6 +210,22 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         );
         if (testObs.status !== "ok") {
           const policyBlock = extractPolicyBlock(testObs);
+          triageAttempts.push(
+            classifyRunExperimentsFailure({
+              attempt: 1,
+              stage: "preflight",
+              summary: testObs.stderr || "Preflight tests failed",
+              command: resolved.testCommand,
+              cwd: resolved.testCwd || resolved.cwd,
+              exitCode: testObs.exit_code ?? 1,
+              policyBlocked: policyBlock.blocked
+            })
+          );
+          rerunDecision = decideRunExperimentsRerun({
+            triage: triageAttempts[triageAttempts.length - 1],
+            automaticRerunsUsed: 0
+          });
+          await persistPanelState();
           const report = buildRunVerifierReport({
             status: "fail",
             trigger,
@@ -191,187 +282,280 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       } else {
         await runContext.put("run_experiments.previous_metrics_backup", null);
       }
-
-      deps.eventStream.emit({
-        type: "TOOL_CALLED",
-        runId: run.id,
-        node: "run_experiments",
-        agentRole: "runner",
-        payload: {
-          command: resolved.command,
-          cwd: resolved.cwd,
-          source: resolved.source
-        }
+      watchdog = createRunExperimentsWatchdogState({
+        metricsPath: resolved.metricsPath,
+        previousMetricsBackup,
+        clearedSupplementalOutputs
       });
 
-      const obs = await deps.aci.runCommand(resolved.command, resolved.cwd, abortSignal);
-
-      const logFile = await writeRunArtifact(
-        run,
-        "exec_logs/run_experiments.txt",
-        [
-          `command: ${resolved.command}`,
-          `cwd: ${resolved.cwd}`,
-          `source: ${resolved.source}`,
-          "",
-          obs.stdout || "",
-          obs.stderr || ""
-        ].join("\n")
-      );
-
-      if (obs.status !== "ok") {
-        const policyBlock = extractPolicyBlock(obs);
-        const report = buildRunVerifierReport({
-          status: "fail",
-          trigger,
-          stage: policyBlock.blocked ? "policy" : "command",
-          summary: obs.stderr || "Experiment command failed",
-          policyRuleId: policyBlock.ruleId,
-          policyReason: policyBlock.reason,
-          command: resolved.command,
-          cwd: resolved.cwd,
-          metricsPath: resolved.metricsPath,
-          exitCode: obs.exit_code ?? 1,
-          stdout: obs.stdout,
-          stderr: obs.stderr,
-          logFile,
-          suggestedNextAction: policyBlock.blocked
-            ? "Replace the blocked run command with a policy-compliant command before retrying."
-            : "Repair the experiment command or runtime dependencies before handing back to the runner."
-        });
-        deps.eventStream.emit({
-          type: "TEST_FAILED",
-          runId: run.id,
-          node: "run_experiments",
-          agentRole: "runner",
-          payload: {
-            command: resolved.command,
-            stderr: obs.stderr || "unknown"
-          }
-        });
-        await persistRunVerifierReport(run, runContext, report);
-        await persistRunFailureState(runContext, {
-          command: resolved.command,
-          cwd: resolved.cwd,
-          logFile,
-          exitCode: obs.exit_code ?? 1,
-          error: obs.stderr || "Experiment command failed"
-        });
-        return {
-          status: "failure",
-          error: obs.stderr || "Experiment command failed",
-          toolCallsUsed: commandToolCallsUsed
-        };
-      }
-
-      const metricsExists = await fileExists(resolved.metricsPath);
-      if (!metricsExists) {
-        const missingMessage = `Experiment finished without metrics output at ${resolved.metricsPath}`;
-        const report = buildRunVerifierReport({
-          status: "fail",
-          trigger,
-          stage: "metrics",
-          summary: missingMessage,
-          command: resolved.command,
-          cwd: resolved.cwd,
-          metricsPath: resolved.metricsPath,
-          exitCode: obs.exit_code ?? 0,
-          stdout: obs.stdout,
-          stderr: obs.stderr,
-          logFile,
-          suggestedNextAction: "Ensure the experiment writes JSON metrics to the required metrics path before finishing."
-        });
-        deps.eventStream.emit({
-          type: "TEST_FAILED",
-          runId: run.id,
-          node: "run_experiments",
-          agentRole: "runner",
-          payload: {
-            command: resolved.command,
-            metrics_path: resolved.metricsPath,
-            stderr: missingMessage
-          }
-        });
-        await persistRunVerifierReport(run, runContext, report);
-        await persistRunFailureState(runContext, {
-          command: resolved.command,
-          cwd: resolved.cwd,
-          logFile,
-          exitCode: obs.exit_code ?? 0,
-          error: missingMessage
-        });
-        return {
-          status: "failure",
-          error: missingMessage,
-          toolCallsUsed: commandToolCallsUsed
-        };
-      }
-
-      let objectiveEvaluationSummary = "";
-      await appendJsonl(run, "exec_logs/observations.jsonl", [
-        {
-          command: resolved.command,
-          cwd: resolved.cwd,
-          source: resolved.source,
-          status: obs.status,
-          stdout: (obs.stdout || "").trim(),
-          stderr: (obs.stderr || "").trim(),
-          metrics_path: resolved.metricsPath,
-          log_file: logFile
-        }
-      ]);
-
       let parsedMetrics: Record<string, unknown> = {};
-      try {
-        const rawMetrics = await fs.readFile(resolved.metricsPath, "utf8");
-        const parsed = JSON.parse(rawMetrics) as unknown;
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-          throw new Error("metrics.json must decode to an object");
-        }
-        parsedMetrics = parsed as Record<string, unknown>;
-      } catch (error) {
-        const metricsError = `Experiment produced invalid metrics JSON at ${resolved.metricsPath}: ${
-          error instanceof Error ? error.message : String(error)
-        }`;
-        const report = buildRunVerifierReport({
-          status: "fail",
-          trigger,
-          stage: "metrics",
-          summary: metricsError,
-          command: resolved.command,
-          cwd: resolved.cwd,
-          metricsPath: resolved.metricsPath,
-          exitCode: obs.exit_code ?? 0,
-          stdout: obs.stdout,
-          stderr: metricsError,
-          logFile,
-          suggestedNextAction:
-            "Ensure the experiment writes valid JSON metrics objects to the required metrics path before finishing."
-        });
+      let objectiveEvaluationSummary = "";
+      let obs: Awaited<ReturnType<NodeExecutionDeps["aci"]["runCommand"]>> | undefined;
+      let logFile = "";
+      let primaryAttemptsUsed = 0;
+      let automaticRerunsUsed = 0;
+
+      while (true) {
+        const attemptNumber = primaryAttemptsUsed + 1;
+        primaryAttemptsUsed += 1;
         deps.eventStream.emit({
-          type: "TEST_FAILED",
+          type: "TOOL_CALLED",
           runId: run.id,
           node: "run_experiments",
           agentRole: "runner",
           payload: {
             command: resolved.command,
-            metrics_path: resolved.metricsPath,
-            stderr: metricsError
+            cwd: resolved.cwd,
+            source: primaryAttemptsUsed > 1 ? `${resolved.source}:retry_${attemptNumber}` : resolved.source
           }
         });
-        await persistRunVerifierReport(run, runContext, report);
-        await persistRunFailureState(runContext, {
-          command: resolved.command,
-          cwd: resolved.cwd,
-          logFile,
-          exitCode: obs.exit_code ?? 0,
-          error: metricsError
-        });
-        return {
-          status: "failure",
-          error: metricsError,
-          toolCallsUsed: commandToolCallsUsed
-        };
+
+        obs = await deps.aci.runCommand(resolved.command, resolved.cwd, abortSignal);
+        logFile = await writeRunArtifact(
+          run,
+          primaryAttemptsUsed === 1
+            ? "exec_logs/run_experiments.txt"
+            : `exec_logs/run_experiments_retry_${attemptNumber}.txt`,
+          [
+            `command: ${resolved.command}`,
+            `cwd: ${resolved.cwd}`,
+            `source: ${resolved.source}`,
+            `attempt: ${attemptNumber}`,
+            "",
+            obs.stdout || "",
+            obs.stderr || ""
+          ].join("\n")
+        );
+
+        if (obs.status !== "ok") {
+          const policyBlock = extractPolicyBlock(obs);
+          const triage = classifyRunExperimentsFailure({
+            attempt: attemptNumber,
+            stage: "command",
+            summary: obs.stderr || "Experiment command failed",
+            command: resolved.command,
+            cwd: resolved.cwd,
+            exitCode: obs.exit_code ?? 1,
+            logFile,
+            metricsPath: resolved.metricsPath,
+            policyBlocked: policyBlock.blocked
+          });
+          triageAttempts.push(triage);
+          watchdog = setMetricsState(watchdog, "not_checked", logFile);
+          rerunDecision = decideRunExperimentsRerun({
+            triage,
+            automaticRerunsUsed
+          });
+          await persistPanelState();
+          if (rerunDecision.decision === "retry_once") {
+            automaticRerunsUsed += 1;
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "run_experiments",
+              agentRole: "runner",
+              payload: {
+                text: `Retrying the primary command once because the failure looked transient (${rerunDecision.reason})`
+              }
+            });
+            continue;
+          }
+
+          const report = buildRunVerifierReport({
+            status: "fail",
+            trigger,
+            stage: policyBlock.blocked ? "policy" : "command",
+            summary: obs.stderr || "Experiment command failed",
+            policyRuleId: policyBlock.ruleId,
+            policyReason: policyBlock.reason,
+            command: resolved.command,
+            cwd: resolved.cwd,
+            metricsPath: resolved.metricsPath,
+            exitCode: obs.exit_code ?? 1,
+            stdout: obs.stdout,
+            stderr: obs.stderr,
+            logFile,
+            suggestedNextAction: policyBlock.blocked
+              ? "Replace the blocked run command with a policy-compliant command before retrying."
+              : "Repair the experiment command or runtime dependencies before handing back to the runner."
+          });
+          deps.eventStream.emit({
+            type: "TEST_FAILED",
+            runId: run.id,
+            node: "run_experiments",
+            agentRole: "runner",
+            payload: {
+              command: resolved.command,
+              stderr: obs.stderr || "unknown"
+            }
+          });
+          await persistRunVerifierReport(run, runContext, report);
+          await persistRunFailureState(runContext, {
+            command: resolved.command,
+            cwd: resolved.cwd,
+            logFile,
+            exitCode: obs.exit_code ?? 1,
+            error: obs.stderr || "Experiment command failed"
+          });
+          return {
+            status: "failure",
+            error: obs.stderr || "Experiment command failed",
+            toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed
+          };
+        }
+
+        const metricsExists = await fileExists(resolved.metricsPath);
+        if (!metricsExists) {
+          const missingMessage = `Experiment finished without metrics output at ${resolved.metricsPath}`;
+          const triage = classifyRunExperimentsFailure({
+            attempt: attemptNumber,
+            stage: "metrics",
+            summary: missingMessage,
+            command: resolved.command,
+            cwd: resolved.cwd,
+            exitCode: obs.exit_code ?? 0,
+            logFile,
+            metricsPath: resolved.metricsPath
+          });
+          triageAttempts.push(triage);
+          watchdog = setMetricsState(watchdog, "missing", logFile);
+          rerunDecision = decideRunExperimentsRerun({
+            triage,
+            automaticRerunsUsed
+          });
+          await persistPanelState();
+          const report = buildRunVerifierReport({
+            status: "fail",
+            trigger,
+            stage: "metrics",
+            summary: missingMessage,
+            command: resolved.command,
+            cwd: resolved.cwd,
+            metricsPath: resolved.metricsPath,
+            exitCode: obs.exit_code ?? 0,
+            stdout: obs.stdout,
+            stderr: obs.stderr,
+            logFile,
+            suggestedNextAction:
+              "Ensure the experiment writes JSON metrics to the required metrics path before finishing."
+          });
+          deps.eventStream.emit({
+            type: "TEST_FAILED",
+            runId: run.id,
+            node: "run_experiments",
+            agentRole: "runner",
+            payload: {
+              command: resolved.command,
+              metrics_path: resolved.metricsPath,
+              stderr: missingMessage
+            }
+          });
+          await persistRunVerifierReport(run, runContext, report);
+          await persistRunFailureState(runContext, {
+            command: resolved.command,
+            cwd: resolved.cwd,
+            logFile,
+            exitCode: obs.exit_code ?? 0,
+            error: missingMessage
+          });
+          return {
+            status: "failure",
+            error: missingMessage,
+            toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed
+          };
+        }
+
+        await appendJsonl(run, "exec_logs/observations.jsonl", [
+          {
+            command: resolved.command,
+            cwd: resolved.cwd,
+            source: primaryAttemptsUsed > 1 ? `${resolved.source}:retry_${attemptNumber}` : resolved.source,
+            status: obs.status,
+            stdout: (obs.stdout || "").trim(),
+            stderr: (obs.stderr || "").trim(),
+            metrics_path: resolved.metricsPath,
+            log_file: logFile
+          }
+        ]);
+
+        try {
+          const rawMetrics = await fs.readFile(resolved.metricsPath, "utf8");
+          const parsed = JSON.parse(rawMetrics) as unknown;
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("metrics.json must decode to an object");
+          }
+          parsedMetrics = parsed as Record<string, unknown>;
+          watchdog = setMetricsState(watchdog, "valid", logFile);
+          rerunDecision = {
+            decision: "not_needed",
+            reason:
+              primaryAttemptsUsed > 1
+                ? `The primary command succeeded on retry attempt ${attemptNumber}.`
+                : "The primary command succeeded without requiring an automatic rerun."
+          };
+          await persistPanelState();
+          break;
+        } catch (error) {
+          const metricsError = `Experiment produced invalid metrics JSON at ${resolved.metricsPath}: ${
+            error instanceof Error ? error.message : String(error)
+          }`;
+          const triage = classifyRunExperimentsFailure({
+            attempt: attemptNumber,
+            stage: "metrics",
+            summary: metricsError,
+            command: resolved.command,
+            cwd: resolved.cwd,
+            exitCode: obs.exit_code ?? 0,
+            logFile,
+            metricsPath: resolved.metricsPath
+          });
+          triageAttempts.push(triage);
+          watchdog = setMetricsState(watchdog, "invalid", logFile);
+          rerunDecision = decideRunExperimentsRerun({
+            triage,
+            automaticRerunsUsed
+          });
+          await persistPanelState();
+          const report = buildRunVerifierReport({
+            status: "fail",
+            trigger,
+            stage: "metrics",
+            summary: metricsError,
+            command: resolved.command,
+            cwd: resolved.cwd,
+            metricsPath: resolved.metricsPath,
+            exitCode: obs.exit_code ?? 0,
+            stdout: obs.stdout,
+            stderr: metricsError,
+            logFile,
+            suggestedNextAction:
+              "Ensure the experiment writes valid JSON metrics objects to the required metrics path before finishing."
+          });
+          deps.eventStream.emit({
+            type: "TEST_FAILED",
+            runId: run.id,
+            node: "run_experiments",
+            agentRole: "runner",
+            payload: {
+              command: resolved.command,
+              metrics_path: resolved.metricsPath,
+              stderr: metricsError
+            }
+          });
+          await persistRunVerifierReport(run, runContext, report);
+          await persistRunFailureState(runContext, {
+            command: resolved.command,
+            cwd: resolved.cwd,
+            logFile,
+            exitCode: obs.exit_code ?? 0,
+            error: metricsError
+          });
+          return {
+            status: "failure",
+            error: metricsError,
+            toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed
+          };
+        }
       }
 
       const objectiveProfile = await resolveObjectiveMetricProfile({
@@ -401,9 +585,9 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           command: resolved.command,
           cwd: resolved.cwd,
           metricsPath: resolved.metricsPath,
-          exitCode: obs.exit_code ?? 0,
-          stdout: obs.stdout,
-          stderr: obs.stderr,
+          exitCode: obs?.exit_code ?? 0,
+          stdout: obs?.stdout,
+          stderr: obs?.stderr,
           logFile
         })
       );
@@ -417,11 +601,34 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         plan: managedSupplementalPlan,
         abortSignal
       });
+      for (const record of supplementalRuns.records.filter((item) => item.status === "fail")) {
+        triageAttempts.push(
+          classifyRunExperimentsFailure({
+            attempt: primaryAttemptsUsed + triageAttempts.length + 1,
+            stage: "supplemental",
+            summary: record.summary,
+            command: record.command,
+            cwd: record.cwd,
+            exitCode: record.exit_code,
+            logFile: record.log_file,
+            metricsPath: record.metrics_path
+          })
+        );
+      }
+      watchdog = recordSupplementalOutputs(
+        watchdog,
+        supplementalRuns.records.map((record) => ({
+          profile: record.profile,
+          status: record.status,
+          metrics_path: record.metrics_path
+        }))
+      );
+      await persistPanelState();
 
       await runContext.put("run_experiments.command", resolved.command);
       await runContext.put("run_experiments.cwd", resolved.cwd);
       await runContext.put("run_experiments.last_log_file", logFile);
-      await runContext.put("run_experiments.exit_code", obs.exit_code ?? 0);
+      await runContext.put("run_experiments.exit_code", obs?.exit_code ?? 0);
       await runContext.put("run_experiments.last_error", undefined);
       await runContext.put("objective_metric.last_evaluation", objectiveEvaluation);
       await runContext.put("run_experiments.supplemental_runs", supplementalRuns.records);
@@ -457,7 +664,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           supplementalRuns.summary ? ` ${supplementalRuns.summary}` : ""
         }`,
         needsApproval: true,
-        toolCallsUsed: commandToolCallsUsed + supplementalRuns.toolCallsUsed
+        toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed + supplementalRuns.toolCallsUsed
       };
     }
   };
@@ -840,6 +1047,34 @@ async function persistRunVerifierReport(
   }
   await runContext.put("run_experiments.feedback_for_implementer", null);
   await runContext.put("implement_experiments.runner_feedback", null);
+}
+
+async function persistRunPanelArtifacts(input: {
+  run: Parameters<typeof writeRunArtifact>[0];
+  runContext: RunContextMemory;
+  executionPlan?: RunExperimentsExecutionPlan;
+  triageAttempts: RunExperimentsTriageAttempt[];
+  watchdog: ReturnType<typeof createRunExperimentsWatchdogState>;
+  rerunDecision: RunExperimentsRerunDecision;
+}): Promise<void> {
+  if (input.executionPlan) {
+    await writeRunArtifact(
+      input.run,
+      "run_experiments_panel/execution_plan.json",
+      JSON.stringify(input.executionPlan, null, 2)
+    );
+  }
+  const triage = finalizeRunExperimentsTriage({
+    attempts: input.triageAttempts,
+    watchdog: input.watchdog
+  });
+  await writeRunArtifact(input.run, "run_experiments_panel/triage.json", JSON.stringify(triage, null, 2));
+  await writeRunArtifact(
+    input.run,
+    "run_experiments_panel/rerun_decision.json",
+    JSON.stringify(input.rerunDecision, null, 2)
+  );
+  await input.runContext.put("run_experiments.triage", triage);
 }
 
 async function persistRunFailureState(

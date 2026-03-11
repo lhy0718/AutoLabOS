@@ -10,7 +10,6 @@ import {
   getCodexModelSelectionDescription,
   getCurrentCodexModelSelectionValue,
   getReasoningEffortChoicesForModel,
-  isRecommendedCodexModelSelection,
   normalizeReasoningEffortForModel,
   RECOMMENDED_CODEX_MODEL,
   resolveCodexModelSelection
@@ -230,10 +229,11 @@ export async function runSetupWizard(
   );
   const llmMode = await askPrimaryLlmMode(promptReader);
   await maybeNotifyCodexLoginStatus(paths, llmMode, promptReader, opts);
-  const defaultCodexSetupModel = RECOMMENDED_CODEX_MODEL;
+  const defaultCodexChatSetupModel = DEFAULT_CODEX_MODEL;
+  const defaultCodexBackendSetupModel = RECOMMENDED_CODEX_MODEL;
   const codexChatModelChoice =
     llmMode === "codex_chatgpt_only"
-      ? await askCodexModel("General chat model", defaultCodexSetupModel, promptReader)
+      ? await askCodexModel("General chat model", defaultCodexChatSetupModel, promptReader, DEFAULT_CODEX_MODEL)
       : DEFAULT_CODEX_MODEL;
   const codexChatReasoningEffort = await askCodexReasoningEffort(
     "General chat reasoning effort",
@@ -244,7 +244,12 @@ export async function runSetupWizard(
   );
   const codexTaskModelChoice =
     llmMode === "codex_chatgpt_only"
-      ? await askCodexModel("Research backend model", defaultCodexSetupModel, promptReader)
+      ? await askCodexModel(
+          "Research backend model",
+          defaultCodexBackendSetupModel,
+          promptReader,
+          RECOMMENDED_CODEX_MODEL
+        )
       : DEFAULT_CODEX_MODEL;
   const codexTaskReasoningEffort = await askCodexReasoningEffort(
     "Research backend reasoning effort",
@@ -828,7 +833,8 @@ async function askOpenAiResponsesModel(
 async function askCodexModel(
   label: string,
   defaultValue: string,
-  promptReader: PromptReader = askLine
+  promptReader: PromptReader = askLine,
+  recommendedSelection = RECOMMENDED_CODEX_MODEL
 ): Promise<string> {
   if (promptReader === askLine) {
     return askChoice(
@@ -836,7 +842,7 @@ async function askCodexModel(
       buildCodexModelSelectionChoices(defaultValue).map((choice) => ({
         label: choice,
         value: choice,
-        description: buildCodexModelPromptDescription(choice)
+        description: buildCodexModelPromptDescription(choice, recommendedSelection)
       })),
       getCurrentCodexModelSelectionValue(resolveCodexModelSelection(defaultValue).model, false)
     );
@@ -953,9 +959,9 @@ function buildReasoningDescription(
   return base;
 }
 
-function buildCodexModelPromptDescription(choice: string): string | undefined {
+function buildCodexModelPromptDescription(choice: string, recommendedSelection: string): string | undefined {
   const base = getCodexModelSelectionDescription(choice);
-  if (isRecommendedCodexModelSelection(choice)) {
+  if (choice === recommendedSelection) {
     return base ? `(${base} [recommended])` : "([recommended])";
   }
   return base ? `(${base})` : undefined;

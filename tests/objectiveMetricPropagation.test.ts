@@ -712,6 +712,14 @@ describe("objective metric propagation", () => {
     const analysisRaw = await readFile(path.join(runDir, "result_analysis.json"), "utf8");
     expect(analysisRaw).toContain('"objective_status": "met"');
     expect(analysisRaw).toContain('"matched_metric_key": "accuracy"');
+    const decisionRaw = await readFile(path.join(runDir, "analyze_results_panel", "decision.json"), "utf8");
+    expect(decisionRaw).toContain('"panel_calibrated": true');
+    expect(decisionRaw).toContain('"action": "advance"');
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("analyze_results.panel_decision")).toMatchObject({
+      action: "advance",
+      panel_calibrated: true
+    });
   });
 
   it("recommends an implementation backtrack when the objective metric is missing from metrics", async () => {
@@ -857,6 +865,13 @@ describe("objective metric propagation", () => {
 
     const synthesisRaw = await readFile(path.join(runDir, "result_analysis_synthesis.json"), "utf8");
     expect(synthesisRaw).toContain('"source": "fallback"');
+    const decisionRaw = await readFile(path.join(runDir, "analyze_results_panel", "decision.json"), "utf8");
+    expect(decisionRaw).toContain('"action": "pause_for_human"');
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("analyze_results.panel_decision")).toMatchObject({
+      action: "pause_for_human",
+      autoExecutable: false
+    });
   });
 
   it("downgrades unsupported-hypothesis backtracks when only risk-level evidence is available", async () => {
@@ -904,7 +919,7 @@ describe("objective metric propagation", () => {
     expect(result.transitionRecommendation).toMatchObject({
       action: "backtrack_to_hypotheses",
       targetNode: "generate_hypotheses",
-      confidence: 0.72,
+      confidence: 0.56,
       autoExecutable: false
     });
   });
@@ -996,7 +1011,7 @@ describe("objective metric propagation", () => {
     expect(result.transitionRecommendation).toMatchObject({
       action: "backtrack_to_design",
       targetNode: "design_experiments",
-      confidence: 0.8,
+      confidence: 0.72,
       autoExecutable: true
     });
     expect(result.transitionRecommendation?.evidence).toContain(
@@ -1186,6 +1201,116 @@ describe("objective metric propagation", () => {
     expect(await memory.get("run_experiments.last_error")).toBeUndefined();
   });
 
+  it("retries a transient primary-command failure once and records triage artifacts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-transient-retry-"));
+    process.chdir(root);
+
+    const runId = "run-transient-retry";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: "python3 experiment.py",
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: root,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    let attempts = 0;
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          attempts += 1;
+          if (attempts === 1) {
+            return {
+              status: "error" as const,
+              stdout: "",
+              stderr: "temporary failure: evaluator timed out",
+              exit_code: 1,
+              duration_ms: 10
+            };
+          }
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                accuracy: 0.9,
+                f1: 0.87
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "done",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.toolCallsUsed).toBe(2);
+    expect(attempts).toBe(2);
+
+    const executionPlanRaw = await readFile(
+      path.join(runDir, "run_experiments_panel", "execution_plan.json"),
+      "utf8"
+    );
+    expect(executionPlanRaw).toContain('"max_automatic_reruns": 1');
+    const triageRaw = await readFile(path.join(runDir, "run_experiments_panel", "triage.json"), "utf8");
+    expect(triageRaw).toContain('"final_category": "transient_command_failure"');
+    expect(triageRaw).toContain('"attempt": 1');
+    const rerunRaw = await readFile(path.join(runDir, "run_experiments_panel", "rerun_decision.json"), "utf8");
+    expect(rerunRaw).toContain('"decision": "not_needed"');
+    expect(rerunRaw).toContain("retry attempt 2");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("run_experiments.triage")).toMatchObject({
+      final_category: "transient_command_failure",
+      watchdog: {
+        metrics_state: "valid"
+      }
+    });
+  });
+
   it("auto-runs managed quick_check and confirmatory profiles after a successful standard run", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-managed-supplemental-"));
     process.chdir(root);
@@ -1303,6 +1428,20 @@ describe("objective metric propagation", () => {
     const confirmatoryRaw = await readFile(path.join(publicDir, "confirmatory_metrics.json"), "utf8");
     expect(quickCheckRaw).toContain('"name": "quick_check"');
     expect(confirmatoryRaw).toContain('"name": "confirmatory"');
+    const executionPlanRaw = await readFile(
+      path.join(runDir, "run_experiments_panel", "execution_plan.json"),
+      "utf8"
+    );
+    expect(executionPlanRaw).toContain('"managed_supplemental_profiles"');
+    const triageRaw = await readFile(path.join(runDir, "run_experiments_panel", "triage.json"), "utf8");
+    expect(triageRaw).toContain('"metrics_state": "valid"');
+    expect(triageRaw).toContain('"profile": "quick_check"');
+    expect(triageRaw).toContain('"profile": "confirmatory"');
+    expect(await memory.get("run_experiments.triage")).toMatchObject({
+      watchdog: {
+        metrics_state: "valid"
+      }
+    });
   });
 
   it("fails second-stage verification when metrics.json is not a JSON object", async () => {
@@ -1382,6 +1521,14 @@ describe("objective metric propagation", () => {
       stage: "metrics"
     });
     expect(await memory.get("run_experiments.last_error")).toMatch(/invalid metrics JSON/u);
+    expect(await memory.get("run_experiments.triage")).toMatchObject({
+      final_category: "invalid_metrics",
+      watchdog: {
+        metrics_state: "invalid"
+      }
+    });
+    const triageRaw = await readFile(path.join(runDir, "run_experiments_panel", "triage.json"), "utf8");
+    expect(triageRaw).toContain('"final_category": "invalid_metrics"');
   });
 
   it("counts both preflight and run commands when command execution fails after preflight", async () => {
@@ -1546,6 +1693,7 @@ describe("objective metric propagation", () => {
     const result = await runNode.execute({ run, graph: run.graph });
     expect(result.status).toBe("failure");
     expect(result.error).toContain("Policy blocked command");
+    expect(result.toolCallsUsed).toBe(1);
 
     const reportRaw = await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8");
     expect(reportRaw).toContain('"stage": "policy"');
@@ -1557,6 +1705,9 @@ describe("objective metric propagation", () => {
       stage: "policy",
       status: "fail",
       policy_rule_id: "remote_script_pipe"
+    });
+    expect(await memory.get("run_experiments.triage")).toMatchObject({
+      final_category: "policy_block"
     });
   });
 });

@@ -23,6 +23,7 @@ import { buildAnalyzeResultsCompletionSummary } from "../resultAnalysisPresentat
 import { synthesizeAnalysisReport } from "../resultAnalysisSynthesis.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
 import { TransitionRecommendation } from "../../types.js";
+import { runAnalyzeResultsPanel } from "../analyzeResultsPanel.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -141,9 +142,34 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           node: "analyze_results"
         });
       }
-      const transitionRecommendation = buildTransitionRecommendation(summary);
+      const baselineTransitionRecommendation = buildTransitionRecommendation(summary);
+      const panelResult = runAnalyzeResultsPanel({
+        report: summary,
+        baselineRecommendation: baselineTransitionRecommendation
+      });
+      const transitionRecommendation = panelResult.recommendation;
       summary.transition_recommendation = transitionRecommendation;
 
+      await writeRunArtifact(
+        run,
+        "analyze_results_panel/inputs.json",
+        JSON.stringify(panelResult.inputs, null, 2)
+      );
+      await writeRunArtifact(
+        run,
+        "analyze_results_panel/reviews.json",
+        JSON.stringify(panelResult.reviews, null, 2)
+      );
+      await writeRunArtifact(
+        run,
+        "analyze_results_panel/scorecard.json",
+        JSON.stringify(panelResult.scorecard, null, 2)
+      );
+      await writeRunArtifact(
+        run,
+        "analyze_results_panel/decision.json",
+        JSON.stringify(panelResult.decision, null, 2)
+      );
       await writeRunArtifact(run, "result_analysis.json", JSON.stringify(summary, null, 2));
       if (summary.synthesis) {
         await writeRunArtifact(run, "result_analysis_synthesis.json", JSON.stringify(summary.synthesis, null, 2));
@@ -161,6 +187,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContextMemory.put("analyze_results.last_error", metricsLoadError || null);
       await runContextMemory.put("analyze_results.last_synthesis", summary.synthesis || null);
       await runContextMemory.put("analyze_results.last_transition", transitionRecommendation);
+      await runContextMemory.put("analyze_results.panel_decision", panelResult.decision);
       await longTermStore.append({
         runId: run.id,
         category: "results",
@@ -191,7 +218,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
 
       return {
         status: "success",
-        summary: buildAnalyzeResultsCompletionSummary(summary),
+        summary: `${buildAnalyzeResultsCompletionSummary(summary)} Panel-calibrated transition confidence: ${transitionRecommendation.confidence}.`,
         needsApproval: true,
         toolCallsUsed: 1,
         transitionRecommendation
