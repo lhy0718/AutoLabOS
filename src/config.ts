@@ -3,16 +3,19 @@ import { promises as fs } from "node:fs";
 import { stdout as output } from "node:process";
 import YAML from "yaml";
 
-import { AppConfig, RunsFile } from "./types.js";
+import { AppConfig, RunsFile, WorkflowApprovalMode } from "./types.js";
 import {
   buildCodexModelSelectionChoices,
   DEFAULT_CODEX_MODEL,
   getCodexModelSelectionDescription,
   getCurrentCodexModelSelectionValue,
   getReasoningEffortChoicesForModel,
+  isRecommendedCodexModelSelection,
   normalizeReasoningEffortForModel,
+  RECOMMENDED_CODEX_MODEL,
   resolveCodexModelSelection
 } from "./integrations/codex/modelCatalog.js";
+import { CodexCliClient } from "./integrations/codex/codexCliClient.js";
 import {
   DEFAULT_RESPONSES_PDF_MODEL,
   RESPONSES_PDF_MODEL_OPTIONS,
@@ -73,6 +76,11 @@ export interface NonInteractiveSetupInput {
   openAiPdfReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
   responsesPdfModel?: string;
   responsesPdfReasoningEffort?: AppConfig["analysis"]["responses_reasoning_effort"];
+}
+
+export interface SetupWizardOptions {
+  codexCli?: Pick<CodexCliClient, "checkCliAvailable" | "checkLoginStatus">;
+  outputWriter?: Pick<typeof output, "write">;
 }
 
 export function resolveAppPaths(cwd = process.cwd()): AppPaths {
@@ -184,7 +192,8 @@ function buildConfigFromWizardAnswers(answers: {
     },
     workflow: {
       mode: "agent_approval",
-      wizard_enabled: true
+      wizard_enabled: true,
+      approval_mode: "minimal"
     },
     experiments: {
       runner: "local_python",
@@ -205,7 +214,8 @@ function buildConfigFromWizardAnswers(answers: {
 
 export async function runSetupWizard(
   paths: AppPaths,
-  promptReader: PromptReader = askLine
+  promptReader: PromptReader = askLine,
+  opts: SetupWizardOptions = {}
 ): Promise<AppConfig> {
   const defaultProjectName = path.basename(paths.cwd);
   const projectName = await promptReader("Project name", defaultProjectName);
@@ -219,9 +229,11 @@ export async function runSetupWizard(
     "state-of-the-art reproducibility"
   );
   const llmMode = await askPrimaryLlmMode(promptReader);
+  await maybeNotifyCodexLoginStatus(paths, llmMode, promptReader, opts);
+  const defaultCodexSetupModel = RECOMMENDED_CODEX_MODEL;
   const codexChatModelChoice =
     llmMode === "codex_chatgpt_only"
-      ? await askCodexModel("General chat model", DEFAULT_CODEX_MODEL, promptReader)
+      ? await askCodexModel("General chat model", defaultCodexSetupModel, promptReader)
       : DEFAULT_CODEX_MODEL;
   const codexChatReasoningEffort = await askCodexReasoningEffort(
     "General chat reasoning effort",
@@ -232,10 +244,10 @@ export async function runSetupWizard(
   );
   const codexTaskModelChoice =
     llmMode === "codex_chatgpt_only"
-      ? await askCodexModel("Analysis/hypothesis model", DEFAULT_CODEX_MODEL, promptReader)
+      ? await askCodexModel("Research backend model", defaultCodexSetupModel, promptReader)
       : DEFAULT_CODEX_MODEL;
   const codexTaskReasoningEffort = await askCodexReasoningEffort(
-    "Analysis/hypothesis reasoning effort",
+    "Research backend reasoning effort",
     resolveCodexModelSelection(codexTaskModelChoice).model,
     "xhigh",
     "xhigh",
@@ -264,7 +276,7 @@ export async function runSetupWizard(
   const openAiTaskModel =
     llmMode === "openai_api"
       ? await askOpenAiResponsesModel(
-          "OpenAI API analysis/hypothesis model",
+          "OpenAI API research backend model",
           DEFAULT_OPENAI_RESPONSES_MODEL,
           promptReader
         )
@@ -272,7 +284,7 @@ export async function runSetupWizard(
   const openAiReasoningEffort =
     llmMode === "openai_api"
       ? await askOpenAiResponsesReasoningEffort(
-          "Analysis/hypothesis reasoning effort",
+          "Research backend reasoning effort",
           openAiTaskModel,
           "xhigh",
           "xhigh",
@@ -281,47 +293,19 @@ export async function runSetupWizard(
       : (DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]);
   const openAiExperimentModel = openAiTaskModel;
   const openAiExperimentReasoningEffort = openAiReasoningEffort;
-  const pdfAnalysisMode = await askPdfAnalysisMode(promptReader);
-  const codexPdfModelChoice =
-    llmMode === "codex_chatgpt_only" && pdfAnalysisMode === "codex_text_image_hybrid"
-      ? await askCodexModel("PDF analysis model", codexTaskModelChoice, promptReader)
-      : codexTaskModelChoice;
-  const codexPdfReasoningEffort =
-    llmMode === "codex_chatgpt_only" && pdfAnalysisMode === "codex_text_image_hybrid"
-      ? await askCodexReasoningEffort(
-          "PDF analysis reasoning effort",
-          resolveCodexModelSelection(codexPdfModelChoice).model,
-          codexTaskReasoningEffort,
-          "xhigh",
-          promptReader
-        )
-      : codexTaskReasoningEffort;
-  const openAiPdfModel =
-    llmMode === "openai_api" && pdfAnalysisMode === "codex_text_image_hybrid"
-      ? await askOpenAiResponsesModel(
-          "OpenAI API PDF text-analysis model",
-          openAiTaskModel,
-          promptReader
-        )
-      : openAiTaskModel;
-  const openAiPdfReasoningEffort =
-    llmMode === "openai_api" && pdfAnalysisMode === "codex_text_image_hybrid"
-      ? await askOpenAiResponsesReasoningEffort(
-          "PDF analysis reasoning effort",
-          openAiPdfModel,
-          openAiReasoningEffort,
-          "xhigh",
-          promptReader
-        )
-      : openAiReasoningEffort;
+  const pdfAnalysisMode = await askPdfAnalysisMode(promptReader, "Research backend PDF mode");
+  const codexPdfModelChoice = codexTaskModelChoice;
+  const codexPdfReasoningEffort = codexTaskReasoningEffort;
+  const openAiPdfModel = openAiTaskModel;
+  const openAiPdfReasoningEffort = openAiReasoningEffort;
   const responsesPdfModel =
     pdfAnalysisMode === "responses_api_pdf"
-      ? await askResponsesPdfModel(promptReader)
+      ? await askResponsesPdfModel(promptReader, "Research backend Responses API PDF model")
       : DEFAULT_RESPONSES_PDF_MODEL;
   const responsesPdfReasoningEffort =
     pdfAnalysisMode === "responses_api_pdf"
       ? await askOpenAiResponsesReasoningEffort(
-          "PDF analysis reasoning effort",
+          "Research backend PDF reasoning effort",
           responsesPdfModel,
           "xhigh",
           "xhigh",
@@ -495,6 +479,13 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
       responses_reasoning_effort: "xhigh"
     };
   }
+  if (!config.workflow) {
+    config.workflow = {
+      mode: "agent_approval",
+      wizard_enabled: true,
+      approval_mode: "minimal"
+    };
+  }
 
   const codex = config.providers.codex;
   const openai = config.providers.openai;
@@ -595,6 +586,11 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
       analysis.responses_model,
       analysis.responses_reasoning_effort || "xhigh"
     ) as AppConfig["analysis"]["responses_reasoning_effort"]
+  };
+  config.workflow = {
+    mode: "agent_approval",
+    wizard_enabled: true,
+    approval_mode: normalizeWorkflowApprovalMode(config.workflow.approval_mode)
   };
   return config;
 }
@@ -707,6 +703,10 @@ function normalizePrimaryLlmMode(value: unknown): "codex_chatgpt_only" | "openai
   return value === "openai_api" ? value : DEFAULT_PRIMARY_LLM_MODE;
 }
 
+function normalizeWorkflowApprovalMode(value: unknown): WorkflowApprovalMode {
+  return value === "manual" ? "manual" : "minimal";
+}
+
 async function askPrimaryLlmMode(
   promptReader: PromptReader = askLine
 ): Promise<"codex_chatgpt_only" | "openai_api"> {
@@ -743,11 +743,12 @@ async function askPrimaryLlmMode(
 }
 
 async function askPdfAnalysisMode(
-  promptReader: PromptReader = askLine
+  promptReader: PromptReader = askLine,
+  label = "PDF analysis mode"
 ): Promise<"codex_text_image_hybrid" | "responses_api_pdf"> {
   if (promptReader === askLine) {
     const answer = await askChoice(
-      "PDF analysis mode",
+      label,
       [
         {
           label: "codex",
@@ -766,7 +767,7 @@ async function askPdfAnalysisMode(
   }
 
   while (true) {
-    const answer = (await promptReader("PDF analysis mode (codex/api)", "codex")).trim().toLowerCase();
+    const answer = (await promptReader(`${label} (codex/api)`, "codex")).trim().toLowerCase();
     if (
       !answer ||
       answer === "codex" ||
@@ -778,7 +779,7 @@ async function askPdfAnalysisMode(
     if (answer === "api" || answer === "responses" || answer === "responses_api_pdf") {
       return "responses_api_pdf";
     }
-    output.write("PDF analysis mode must be 'codex' or 'api'.\n");
+    output.write(`${label} must be 'codex' or 'api'.\n`);
   }
 }
 
@@ -835,9 +836,7 @@ async function askCodexModel(
       buildCodexModelSelectionChoices(defaultValue).map((choice) => ({
         label: choice,
         value: choice,
-        description: getCodexModelSelectionDescription(choice)
-          ? `(${getCodexModelSelectionDescription(choice)})`
-          : undefined
+        description: buildCodexModelPromptDescription(choice)
       })),
       getCurrentCodexModelSelectionValue(resolveCodexModelSelection(defaultValue).model, false)
     );
@@ -954,12 +953,59 @@ function buildReasoningDescription(
   return base;
 }
 
+function buildCodexModelPromptDescription(choice: string): string | undefined {
+  const base = getCodexModelSelectionDescription(choice);
+  if (isRecommendedCodexModelSelection(choice)) {
+    return base ? `(${base} [recommended])` : "([recommended])";
+  }
+  return base ? `(${base})` : undefined;
+}
+
+async function maybeNotifyCodexLoginStatus(
+  paths: AppPaths,
+  llmMode: "codex_chatgpt_only" | "openai_api",
+  promptReader: PromptReader,
+  opts: SetupWizardOptions
+): Promise<void> {
+  if (llmMode !== "codex_chatgpt_only") {
+    return;
+  }
+
+  const writer = opts.outputWriter || output;
+  const codexCli = opts.codexCli || (promptReader === askLine ? new CodexCliClient(paths.cwd) : undefined);
+  if (!codexCli) {
+    return;
+  }
+
+  try {
+    const cliCheck = await codexCli.checkCliAvailable();
+    if (!cliCheck.ok) {
+      writer.write(
+        "Codex CLI was not detected right now. You can finish setup now and sign in later with `codex login`, then verify with `/doctor`.\n"
+      );
+      return;
+    }
+
+    const loginCheck = await codexCli.checkLoginStatus();
+    if (!loginCheck.ok) {
+      writer.write(
+        "Codex CLI login was not detected. You can finish setup now and sign in later with `codex login`, then verify with `/doctor`.\n"
+      );
+    }
+  } catch {
+    writer.write(
+      "Codex CLI login could not be verified right now. You can finish setup now and sign in later with `codex login`, then verify with `/doctor`.\n"
+    );
+  }
+}
+
 async function askResponsesPdfModel(
-  promptReader: PromptReader = askLine
+  promptReader: PromptReader = askLine,
+  label = "Responses API PDF model"
 ): Promise<string> {
   if (promptReader === askLine) {
     return askChoice(
-      "Responses API PDF model",
+      label,
       RESPONSES_PDF_MODEL_OPTIONS.map((option) => ({
         label: option.label,
         value: option.value,
@@ -983,14 +1029,14 @@ async function askResponsesPdfModel(
   const choices = buildResponsesPdfModelChoices();
   const display = choices.join(", ");
   while (true) {
-    const answer = (await promptReader("Responses API PDF model", DEFAULT_RESPONSES_PDF_MODEL)).trim();
+    const answer = (await promptReader(label, DEFAULT_RESPONSES_PDF_MODEL)).trim();
     if (!answer) {
       return DEFAULT_RESPONSES_PDF_MODEL;
     }
     if (choices.includes(answer)) {
       return answer;
     }
-    output.write(`Responses API PDF model must be one of: ${display}.\n`);
+    output.write(`${label} must be one of: ${display}.\n`);
   }
 }
 

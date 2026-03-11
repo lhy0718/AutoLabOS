@@ -1,12 +1,13 @@
 import type { CodexReasoningEffort } from "./codexCliClient.js";
 
 export const GPT_5_4_FAST_MODEL_LABEL = "gpt-5.4 (fast)";
+export const RECOMMENDED_CODEX_MODEL = "gpt-5.4";
 export const DEFAULT_CODEX_MODEL = "gpt-5.3-codex";
 
 // Official Codex model list from developers.openai.com/codex/models
 // (recommended + alternative models), verified 2026-03-06.
 export const OFFICIAL_CODEX_MODELS = [
-  "gpt-5.4",
+  RECOMMENDED_CODEX_MODEL,
   "gpt-5.3-codex",
   "gpt-5.3-codex-spark",
   "gpt-5.2-codex",
@@ -17,6 +18,12 @@ export const OFFICIAL_CODEX_MODELS = [
   "gpt-5-codex",
   "gpt-5-codex-mini",
   "gpt-5"
+] as const;
+
+const KNOWN_CODEX_MODEL_SELECTION_ORDER = [
+  RECOMMENDED_CODEX_MODEL,
+  GPT_5_4_FAST_MODEL_LABEL,
+  ...OFFICIAL_CODEX_MODELS.filter((model) => model !== RECOMMENDED_CODEX_MODEL)
 ] as const;
 
 const DEFAULT_REASONING_EFFORT_CHOICES: readonly CodexReasoningEffort[] = ["low", "medium", "high"];
@@ -47,12 +54,17 @@ export function buildCodexModelSelectionChoices(currentModel?: string, rawEnvCho
   const deduped = new Set<string>([
     ...(current ? [current] : []),
     DEFAULT_CODEX_MODEL,
-    "gpt-5.4",
+    RECOMMENDED_CODEX_MODEL,
     GPT_5_4_FAST_MODEL_LABEL,
-    ...OFFICIAL_CODEX_MODELS.filter((model) => model !== "gpt-5.4"),
+    ...OFFICIAL_CODEX_MODELS.filter((model) => model !== RECOMMENDED_CODEX_MODEL),
     ...fromEnv
   ]);
-  return [...deduped];
+
+  const knownChoices = KNOWN_CODEX_MODEL_SELECTION_ORDER.filter((choice) => deduped.has(choice));
+  const unknownChoices = [...deduped]
+    .filter((choice) => !KNOWN_CODEX_MODEL_SELECTION_ORDER.includes(choice as (typeof KNOWN_CODEX_MODEL_SELECTION_ORDER)[number]))
+    .sort(compareUnknownCodexModelChoices);
+  return [...knownChoices, ...unknownChoices];
 }
 
 export function getReasoningEffortChoicesForModel(model?: string): readonly CodexReasoningEffort[] {
@@ -108,7 +120,7 @@ export function getCurrentCodexModelSelectionValue(model: string | undefined, fa
 
 export function getCodexModelSelectionDescription(choice: string): string | undefined {
   switch (choice) {
-    case "gpt-5.4":
+    case RECOMMENDED_CODEX_MODEL:
       return "Standard GPT-5.4 mode.";
     case GPT_5_4_FAST_MODEL_LABEL:
       return "Fast mode: 1.5x speed, 2x credits.";
@@ -117,4 +129,40 @@ export function getCodexModelSelectionDescription(choice: string): string | unde
     default:
       return undefined;
   }
+}
+
+export function isRecommendedCodexModelSelection(choice: string): boolean {
+  return choice === RECOMMENDED_CODEX_MODEL;
+}
+
+function compareUnknownCodexModelChoices(left: string, right: string): number {
+  const leftVersion = extractChoiceVersion(left);
+  const rightVersion = extractChoiceVersion(right);
+  if (leftVersion && rightVersion) {
+    for (let index = 0; index < Math.max(leftVersion.length, rightVersion.length); index += 1) {
+      const delta = (rightVersion[index] ?? -1) - (leftVersion[index] ?? -1);
+      if (delta !== 0) {
+        return delta;
+      }
+    }
+  } else if (leftVersion) {
+    return -1;
+  } else if (rightVersion) {
+    return 1;
+  }
+
+  return left.localeCompare(right);
+}
+
+function extractChoiceVersion(choice: string): number[] | undefined {
+  const normalized = choice === GPT_5_4_FAST_MODEL_LABEL ? RECOMMENDED_CODEX_MODEL : choice;
+  const match = normalized.match(/^gpt-(\d+)(?:\.(\d+))?(?:\.(\d+))?/u);
+  if (!match) {
+    return undefined;
+  }
+
+  return match
+    .slice(1)
+    .filter((segment) => segment !== undefined)
+    .map((segment) => Number(segment));
 }

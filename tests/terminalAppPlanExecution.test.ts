@@ -115,11 +115,14 @@ describe("TerminalApp pending natural plan execution", () => {
     );
     expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
       2,
-      "Select PDF analysis mode",
+      "Select research backend PDF mode",
       expect.any(Array),
       "codex_text_image_hybrid"
     );
-    expect(app.selectCodexSlot).toHaveBeenCalledTimes(3);
+    expect(app.config.providers.codex.pdf_model).toBe("gpt-5.3-codex");
+    expect(app.config.providers.codex.pdf_reasoning_effort).toBe("xhigh");
+    expect(app.config.analysis.pdf_mode).toBe("codex_text_image_hybrid");
+    expect(app.selectCodexSlot).toHaveBeenCalledTimes(2);
     expect(saveConfig).toHaveBeenCalledTimes(1);
   });
 
@@ -225,6 +228,10 @@ describe("TerminalApp pending natural plan execution", () => {
           description: expect.stringContaining("Recommended: gpt-5.4 + low")
         }),
         expect.objectContaining({
+          value: "backend",
+          description: expect.stringContaining("Codex text + image hybrid")
+        }),
+        expect.objectContaining({
           value: "task",
           description: expect.stringContaining("Recommended: gpt-5.4 + xhigh")
         }),
@@ -233,7 +240,7 @@ describe("TerminalApp pending natural plan execution", () => {
           description: expect.stringContaining("Recommended: gpt-5.4 + xhigh")
         })
       ]),
-      "task"
+      "backend"
     );
   });
 
@@ -276,9 +283,10 @@ describe("TerminalApp pending natural plan execution", () => {
     app.openSelectionMenu = vi
       .fn()
       .mockResolvedValueOnce("openai_api")
-      .mockResolvedValueOnce("task")
+      .mockResolvedValueOnce("backend")
       .mockResolvedValueOnce("gpt-5-mini")
-      .mockResolvedValueOnce("high");
+      .mockResolvedValueOnce("high")
+      .mockResolvedValueOnce("codex_text_image_hybrid");
 
     await app.handleModel([]);
 
@@ -293,13 +301,22 @@ describe("TerminalApp pending natural plan execution", () => {
       2,
       "Select model slot",
       expect.any(Array),
-      "task"
+      "backend"
+    );
+    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
+      5,
+      "Select research backend PDF mode",
+      expect.any(Array),
+      "codex_text_image_hybrid"
     );
     expect(saveConfig).toHaveBeenCalledTimes(2);
     expect(openAiTextClient.updateDefaults).toHaveBeenCalledWith({
       model: "gpt-5-mini",
       reasoningEffort: "high"
     });
+    expect(app.config.providers.openai.pdf_model).toBe("gpt-5-mini");
+    expect(app.config.providers.openai.pdf_reasoning_effort).toBe("high");
+    expect(app.config.analysis.pdf_mode).toBe("codex_text_image_hybrid");
     expect(app.logs).toContain("Model backend updated to OpenAI API.");
     delete process.env.OPENAI_API_KEY;
   });

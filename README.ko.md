@@ -50,12 +50,23 @@
 | 연구 실행 패턴 | ReAct, ReWOO, ToT, Reflexion 패턴을 노드 성격에 맞게 사용 |
 | 로컬 ACI 실행 | `implement_experiments`, `run_experiments`를 파일/명령/테스트 액션으로 수행 |
 
+## 여기서 시작하세요
+
+- 처음 써본다면 `autolabos web`부터 추천합니다. 온보딩, 대시보드, 로그, 체크포인트, 아티팩트 브라우징을 한 화면에서 볼 수 있습니다.
+- 터미널 중심으로 쓰고 싶다면 `autolabos`로 시작하면 됩니다.
+- 두 명령 모두 AutoLabOS가 관리할 연구 프로젝트 폴더에서 실행하세요. 워크스페이스 상태는 `.autolabos/` 아래에 저장됩니다.
+
+## 준비물
+
+| 항목 | 필요한 경우 | 메모 |
+| --- | --- | --- |
+| `SEMANTIC_SCHOLAR_API_KEY` | 항상 필요 | 논문 탐색과 메타데이터 조회에 사용 |
+| `OPENAI_API_KEY` | 메인 provider 또는 PDF 모드가 `api`일 때만 필요 | OpenAI API 모델 실행에 사용 |
+| Codex CLI 로그인 | 메인 provider 또는 PDF 모드가 `codex`일 때만 필요 | 로컬 Codex 세션을 사용 |
+
 ## 빠른 시작
 
-> [!IMPORTANT]
-> `SEMANTIC_SCHOLAR_API_KEY`는 필수입니다. `OPENAI_API_KEY`는 메인 provider 또는 PDF 분석 모드가 `api`일 때만 필요합니다.
-
-1. 설치 및 빌드
+1. AutoLabOS를 설치하고 빌드합니다.
 
 ```bash
 npm install
@@ -63,84 +74,50 @@ npm run build
 npm link
 ```
 
-2. 환경 변수 설정
+2. 워크스페이스로 사용할 연구 프로젝트 폴더로 이동합니다.
 
 ```bash
-cp .env.example .env
-echo 'SEMANTIC_SCHOLAR_API_KEY=your_key_here' >> .env
-echo 'OPENAI_API_KEY=your_openai_key_here' >> .env
+cd /path/to/your-research-project
 ```
 
-3. TUI 실행
-
-```bash
-autolabos
-```
-
-4. 웹 UI 실행
+3. 추천 경로인 브라우저 UI를 실행합니다.
 
 ```bash
 autolabos web
 ```
 
-기본 주소는 `http://127.0.0.1:4317`입니다.
-AutoLabOS가 워크스페이스로 사용할 연구 프로젝트 폴더에서 이 명령을 실행하면 됩니다.
+기본 주소는 `http://127.0.0.1:4317`입니다. TUI부터 시작하고 싶다면 `autolabos`를 실행하면 됩니다.
 
-저장소 체크아웃으로 사용 중이고 웹 자산이 없다는 메시지가 뜨면, AutoLabOS 패키지 루트에서 웹 번들을 한 번 빌드한 뒤 다시 실행하면 됩니다.
+4. 온보딩을 완료합니다. 아직 `.autolabos/config.yaml`이 없다면 웹에서는 onboarding이, TUI에서는 setup wizard가 열리며 같은 워크스페이스 스캐폴드와 설정을 작성합니다.
 
-```bash
-cd /path/to/AutoLabOS
-npm --prefix web run build
-autolabos web
-```
+5. 첫 실행이 성공했는지 확인합니다. 프로젝트 안에 `.autolabos/config.yaml`이 생기고, 대시보드 또는 TUI 홈 화면에서 run을 시작할 수 있으면 준비가 끝난 것입니다.
 
-호스트나 포트를 바꾸려면:
+6. run을 만들거나 선택한 뒤 `/new`, `/agent collect "your topic"`, 또는 웹 워크플로 카드로 첫 실행을 시작합니다.
 
-```bash
-autolabos web --host 0.0.0.0 --port 8080
-```
+## 첫 실행에서 일어나는 일
 
-개발 모드:
+- AutoLabOS는 워크스페이스 설정을 `.autolabos/config.yaml`에 저장하고, 실행 시 `process.env` 또는 `.env`의 `SEMANTIC_SCHOLAR_API_KEY`, `OPENAI_API_KEY`를 읽습니다.
+- 기본 LLM provider를 고릅니다. `codex`는 로컬 Codex 세션을 사용하고, `api`는 OpenAI API 모델을 사용합니다.
+- PDF 분석 모드는 별도로 고릅니다. `codex`는 로컬에서 텍스트를 추출한 뒤 분석하고, `api`는 PDF를 Responses API로 직접 보냅니다.
+- 메인 provider 또는 PDF 모드가 `api`이면 onboarding과 `/settings`에서 OpenAI 모델을 선택할 수 있습니다.
+- `/model`은 먼저 활성 백엔드를 고른 뒤, 나중에 슬롯과 모델을 다시 바꿀 수 있게 해줍니다.
 
-```bash
-npm run dev
-npm run dev:web
-```
+## 처음 사용자용 문제 해결
 
-`npm link` 없이 실행하려면:
-
-```bash
-node dist/cli/main.js
-node dist/cli/main.js web
-```
+- 저장소 체크아웃 환경에서 웹 자산이 없다는 메시지가 보이면, AutoLabOS 패키지 루트에서 `npm --prefix web run build`를 한 번 실행한 뒤 `autolabos web`을 다시 시작하세요.
+- `npm link`를 쓰지 않으려면 AutoLabOS 저장소 루트에서 `node dist/cli/main.js` 또는 `node dist/cli/main.js web`으로 실행할 수 있습니다.
+- 다른 호스트나 포트가 필요하면 `autolabos web --host 0.0.0.0 --port 8080`을 사용하세요.
+- 로컬 개발 모드는 `npm run dev`, `npm run dev:web`입니다.
 
 > [!NOTE]
 > 외부 진입 커맨드는 `autolabos`와 `autolabos web`입니다. `autolabos init`은 의도적으로 지원하지 않습니다.
-
-## 첫 실행
-
-1. 빈 프로젝트에서 `autolabos` 또는 `autolabos web`을 실행합니다.
-2. `.autolabos/config.yaml`이 없으면 TUI에서는 setup wizard가, 웹에서는 onboarding 폼이 열립니다.
-3. 두 흐름 모두 같은 설정과 스캐폴드를 만들고, Semantic Scholar 키를 저장한 뒤 메인 대시보드로 진입합니다.
-4. 기본 LLM provider를 선택합니다.
-   - `codex`: 메인 워크플로를 Codex ChatGPT 로그인으로 실행 (기본값)
-   - `api`: 메인 워크플로를 OpenAI API 모델로 실행 (`OPENAI_API_KEY` 필요)
-5. PDF 분석 모드를 선택합니다.
-   - `codex`: PDF를 로컬에서 텍스트 추출 후 Codex로 분석 (기본값)
-   - `api`: PDF를 Responses API로 직접 전달해 분석 (`OPENAI_API_KEY` 필요)
-6. provider 또는 PDF 분석 모드가 `api`이면 setup wizard와 `/settings`에서 모델을 고를 수 있습니다.
-   - 현재 내장 카탈로그: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`
-7. `/model`은 먼저 사용할 백엔드를 고른 뒤, 그 백엔드에 맞는 슬롯/모델을 선택합니다.
-   - Codex CLI backend: Codex 모델 선택기
-   - OpenAI API backend: OpenAI API 모델 선택기
-8. 실행 시 AutoLabOS는 `process.env` 또는 `.env`의 `SEMANTIC_SCHOLAR_API_KEY`, `OPENAI_API_KEY`를 읽습니다.
 
 ## Web Ops UI
 
 `autolabos web`은 TUI와 같은 런타임을 공유하는 로컬 단일 사용자용 브라우저 UI를 실행합니다.
 
 - 온보딩은 같은 비대화형 setup helper를 사용하므로, 웹에서 초기 설정해도 TUI wizard와 동일한 `.autolabos/config.yaml`과 `.env` 값이 생성됩니다.
-- 대시보드에서 run 검색/선택, 8개 노드 워크플로 보기, 노드 액션, 라이브 로그, 체크포인트, 아티팩트, 메타데이터, `/doctor` 요약을 확인할 수 있습니다.
+- 대시보드에서 run 검색/선택, 9개 노드 워크플로 보기, 노드 액션, 라이브 로그, 체크포인트, 아티팩트, 메타데이터, `/doctor` 요약을 확인할 수 있습니다.
 - 하단 컴포저는 슬래시 명령과 지원되는 자연어 입력을 모두 받습니다.
 - 복합 자연어 실행 계획은 `y/a/n` 대신 `Run next`, `Run all`, `Cancel` 버튼으로 제어합니다.
 - 아티팩트 브라우저는 `.autolabos/runs/<run_id>` 범위로 제한되며, 주요 텍스트 파일·이미지·PDF는 inline preview를 제공합니다.
@@ -245,7 +222,7 @@ stateDiagram-v2
     write_paper --> [*]: approve
 ```
 
-기본 `agent_approval` 모드에서는 각 노드가 끝날 때마다 멈춥니다. 예외적으로 `implement_experiments`는 `run_experiments`로 자동 handoff할 수 있고, `analyze_results`는 명시적인 backward recommendation을 낼 수 있으며, `review`는 패널 결정을 review packet으로 묶은 뒤 approve 시 advance, backtrack, human hold 중 하나로 이어질 수 있습니다.
+기본 `agent_approval` 모드는 이제 `workflow.approval_mode: minimal`로 동작하므로, 성공한 노드는 자동으로 다음 단계로 넘어가고 사람이 꼭 판단해야 하는 transition일 때만 승인을 요청합니다. 예전처럼 각 노드마다 멈추고 싶다면 `workflow.approval_mode: manual`로 바꾸면 됩니다. `implement_experiments`는 여전히 `run_experiments`로 자동 handoff할 수 있고, `analyze_results`는 명시적인 backward recommendation을 낼 수 있으며, `review`는 패널 결정을 review packet으로 묶어 advance, backtrack, human hold 중 하나로 이어집니다.
 
 ### 단계별 연결 그래프
 

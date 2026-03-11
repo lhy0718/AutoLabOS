@@ -12,7 +12,7 @@ import { RunStore } from "../src/core/runs/runStore.js";
 import { CheckpointStore } from "../src/core/stateGraph/checkpointStore.js";
 import { StateGraphRuntime } from "../src/core/stateGraph/runtime.js";
 import { GraphNodeHandler, GraphNodeRegistry } from "../src/core/stateGraph/types.js";
-import { GRAPH_NODE_ORDER, GraphNodeId } from "../src/types.js";
+import { GRAPH_NODE_ORDER, GraphNodeId, WorkflowApprovalMode } from "../src/types.js";
 
 const tempDirs: string[] = [];
 
@@ -97,7 +97,10 @@ function cancellableSlowNode(id: GraphNodeId, delayMs: number): GraphNodeHandler
   };
 }
 
-async function setup(registry: GraphNodeRegistry): Promise<{
+async function setup(
+  registry: GraphNodeRegistry,
+  runtimeOptions?: { approvalMode?: WorkflowApprovalMode }
+): Promise<{
   store: RunStore;
   orchestrator: AgentOrchestrator;
   checkpointStore: CheckpointStore;
@@ -110,14 +113,34 @@ async function setup(registry: GraphNodeRegistry): Promise<{
 
   const store = new RunStore(paths);
   const checkpointStore = new CheckpointStore(paths);
-  const runtime = new StateGraphRuntime(store, registry, checkpointStore, new InMemoryEventStream());
+  const runtime = new StateGraphRuntime(store, registry, checkpointStore, new InMemoryEventStream(), runtimeOptions);
   const orchestrator = new AgentOrchestrator(store, runtime, checkpointStore);
   return { store, orchestrator, checkpointStore };
 }
 
 describe("AgentOrchestrator (state graph)", () => {
-  it("runs node and pauses on approval gate", async () => {
+  it("auto-approves standard node gates under the default minimal approval mode", async () => {
     const { store, orchestrator } = await setup(new DeterministicRegistry({}));
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const result = await orchestrator.runAgent(run.id, "collect_papers");
+    expect(result.result.status).toBe("success");
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).toBe("analyze_papers");
+    expect(latest?.graph.nodeStates.collect_papers.status).toBe("completed");
+  });
+
+  it("still supports explicit manual approval mode", async () => {
+    const { store, orchestrator } = await setup(new DeterministicRegistry({}), {
+      approvalMode: "manual"
+    });
 
     const run = await store.createRun({
       title: "Run",
@@ -162,9 +185,9 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(result.result.status).toBe("success");
 
     const latest = await store.getRun(run.id);
-    expect(latest?.currentNode).toBe("run_experiments");
+    expect(latest?.currentNode).toBe("analyze_results");
     expect(latest?.graph.nodeStates.implement_experiments.status).toBe("completed");
-    expect(latest?.graph.nodeStates.run_experiments.status).toBe("needs_approval");
+    expect(latest?.graph.nodeStates.run_experiments.status).toBe("completed");
   });
 
   it("applies a review backtrack when the review approval is accepted", async () => {
@@ -262,8 +285,8 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(implementCalls).toBe(2);
     expect(seenFeedback[0]).toBe("");
     expect(seenFeedback[1]).toContain("metrics output");
-    expect(latest?.currentNode).toBe("implement_experiments");
-    expect(latest?.graph.nodeStates.implement_experiments.status).toBe("needs_approval");
+    expect(latest?.currentNode).toBe("run_experiments");
+    expect(latest?.graph.nodeStates.implement_experiments.status).toBe("completed");
     expect((latest?.graph.retryCounters.run_experiments ?? 0)).toBeGreaterThanOrEqual(3);
   });
 
@@ -284,7 +307,7 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(outcome.result.status).toBe("success");
 
     const latest = await store.getRun(run.id);
-    expect(latest?.currentNode).toBe("analyze_papers");
+    expect(latest?.currentNode).toBe("generate_hypotheses");
     expect(latest?.graph.rollbackCounters.generate_hypotheses).toBe(1);
     expect((latest?.graph.retryCounters.generate_hypotheses ?? 0)).toBeGreaterThanOrEqual(3);
   });

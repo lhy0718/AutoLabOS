@@ -15,6 +15,7 @@ import {
   getCurrentCodexModelSelectionValue,
   getReasoningEffortChoicesForModel,
   normalizeReasoningEffortForModel,
+  RECOMMENDED_CODEX_MODEL,
   resolveCodexModelSelection
 } from "../integrations/codex/modelCatalog.js";
 import {
@@ -2151,24 +2152,6 @@ export class TerminalApp {
       }
       await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
     }
-    const pdfMode = await this.openSelectionMenu(
-      "Select PDF analysis mode",
-      this.buildPdfAnalysisModeOptions(),
-      this.config.analysis.pdf_mode
-    );
-    if (!pdfMode) {
-      this.pushLog("Settings update canceled.");
-      return;
-    }
-
-    if (pdfMode === "responses_api_pdf" && !(await resolveOpenAiApiKey(process.cwd()))) {
-      const openAiApiKey = await this.askWithinTui("OpenAI API key", "");
-      if (!openAiApiKey.trim()) {
-        this.pushLog("OpenAI API key is required for Responses API PDF analysis.");
-        return;
-      }
-      await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
-    }
 
     if (llmMode === "codex_chatgpt_only") {
       const chatSlot = await this.selectCodexSlot(
@@ -2182,18 +2165,6 @@ export class TerminalApp {
         return;
       }
       this.applyCodexSlotSelection("chat", chatSlot.selection, chatSlot.effort);
-
-      const taskSlot = await this.selectCodexSlot(
-        "analysis/hypothesis",
-        this.getCurrentCodexSlotSelection("task"),
-        this.config.providers.codex.reasoning_effort,
-        "task"
-      );
-      if (!taskSlot) {
-        this.pushLog("Settings update canceled.");
-        return;
-      }
-      this.applyCodexSlotSelection("task", taskSlot.selection, taskSlot.effort);
     } else {
       const chatSlot = await this.selectOpenAiSlot(
         "general chat",
@@ -2206,63 +2177,10 @@ export class TerminalApp {
         return;
       }
       this.applyOpenAiSlotSelection("chat", chatSlot.model, chatSlot.effort);
-
-      const taskSlot = await this.selectOpenAiSlot(
-        "analysis/hypothesis",
-        this.config.providers.openai.model,
-        this.config.providers.openai.reasoning_effort,
-        "task"
-      );
-      if (!taskSlot) {
-        this.pushLog("Settings update canceled.");
-        return;
-      }
-      this.applyOpenAiSlotSelection("task", taskSlot.model, taskSlot.effort);
-      this.openAiTextClient?.updateDefaults({
-        model: this.config.providers.openai.model,
-        reasoningEffort: this.config.providers.openai.reasoning_effort
-      });
     }
 
-    let responsesPdfModel = this.config.analysis.responses_model;
-    let responsesPdfReasoningEffort: AppConfig["analysis"]["responses_reasoning_effort"] =
-      (this.config.analysis.responses_reasoning_effort || "xhigh") as AppConfig["analysis"]["responses_reasoning_effort"];
-    if (pdfMode === "responses_api_pdf") {
-      const selectedResponsesSlot = await this.selectResponsesPdfSlot(
-        normalizeResponsesPdfModel(this.config.analysis.responses_model),
-        this.config.analysis.responses_reasoning_effort || "xhigh"
-      );
-      if (!selectedResponsesSlot) {
-        this.pushLog("Settings update canceled.");
-        return;
-      }
-      responsesPdfModel = selectedResponsesSlot.model;
-      responsesPdfReasoningEffort =
-        selectedResponsesSlot.effort as AppConfig["analysis"]["responses_reasoning_effort"];
-    } else if (llmMode === "codex_chatgpt_only") {
-      const pdfSlot = await this.selectCodexSlot(
-        "PDF analysis",
-        this.getCurrentCodexSlotSelection("pdf"),
-        this.config.providers.codex.pdf_reasoning_effort || this.config.providers.codex.reasoning_effort,
-        "pdf"
-      );
-      if (!pdfSlot) {
-        this.pushLog("Settings update canceled.");
-        return;
-      }
-      this.applyCodexSlotSelection("pdf", pdfSlot.selection, pdfSlot.effort);
-    } else {
-      const pdfSlot = await this.selectOpenAiSlot(
-        "PDF text analysis",
-        this.config.providers.openai.pdf_model || this.config.providers.openai.model,
-        this.config.providers.openai.pdf_reasoning_effort || this.config.providers.openai.reasoning_effort,
-        "pdf"
-      );
-      if (!pdfSlot) {
-        this.pushLog("Settings update canceled.");
-        return;
-      }
-      this.applyOpenAiSlotSelection("pdf", pdfSlot.model, pdfSlot.effort);
+    if (!(await this.configureResearchBackend(llmMode as AppConfig["providers"]["llm_mode"], "Settings update canceled."))) {
+      return;
     }
 
     this.config.research.default_topic = topic;
@@ -2272,10 +2190,18 @@ export class TerminalApp {
       .filter(Boolean);
     this.config.research.default_objective_metric = metric;
     this.config.providers.llm_mode = llmMode as AppConfig["providers"]["llm_mode"];
-    this.config.analysis.pdf_mode = pdfMode as AppConfig["analysis"]["pdf_mode"];
-    this.config.analysis.responses_model = responsesPdfModel;
-    this.config.analysis.responses_reasoning_effort =
-      responsesPdfReasoningEffort as AppConfig["analysis"]["responses_reasoning_effort"];
+    if (this.config.providers.llm_mode === "openai_api") {
+      this.openAiTextClient?.updateDefaults({
+        model: this.config.providers.openai.model,
+        reasoningEffort: this.config.providers.openai.reasoning_effort
+      });
+    } else {
+      this.codex?.updateDefaults?.({
+        model: this.config.providers.codex.model,
+        reasoningEffort: this.config.providers.codex.reasoning_effort,
+        fastMode: this.config.providers.codex.fast_mode
+      });
+    }
 
     await this.saveConfigFn(this.config);
     const analysisSummary =
@@ -2314,10 +2240,14 @@ export class TerminalApp {
     const slot = await this.openSelectionMenu(
       "Select model slot",
       this.buildModelSlotOptions(),
-      "task"
+      "backend"
     );
     if (!slot) {
       this.pushLog("Model selection canceled.");
+      return;
+    }
+    if (slot === "backend") {
+      await this.handleResearchBackendSelection();
       return;
     }
 
@@ -2365,7 +2295,7 @@ export class TerminalApp {
     }
 
     this.applyCodexSlotSelection(slot, selected.selection, selected.effort);
-    this.codex.updateDefaults({
+    this.codex?.updateDefaults?.({
       model: this.config.providers.codex.model,
       reasoningEffort: this.config.providers.codex.reasoning_effort,
       fastMode: this.config.providers.codex.fast_mode
@@ -2423,6 +2353,97 @@ export class TerminalApp {
     await this.saveConfigFn(this.config);
     this.pushLog(`OpenAI API ${this.describeModelSlot(slot)} model updated.`);
     this.pushCurrentModelDefaults();
+  }
+
+  private async handleResearchBackendSelection(): Promise<void> {
+    this.pushCurrentModelDefaults();
+    if (!(await this.configureResearchBackend(this.config.providers.llm_mode, "Model selection canceled."))) {
+      return;
+    }
+    if (this.config.providers.llm_mode === "openai_api") {
+      this.openAiTextClient?.updateDefaults({
+        model: this.config.providers.openai.model,
+        reasoningEffort: this.config.providers.openai.reasoning_effort
+      });
+    } else {
+      this.codex?.updateDefaults?.({
+        model: this.config.providers.codex.model,
+        reasoningEffort: this.config.providers.codex.reasoning_effort,
+        fastMode: this.config.providers.codex.fast_mode
+      });
+    }
+    await this.saveConfigFn(this.config);
+    this.pushLog("Research backend updated.");
+    this.pushCurrentModelDefaults();
+  }
+
+  private async configureResearchBackend(
+    llmMode: AppConfig["providers"]["llm_mode"],
+    cancelMessage: string
+  ): Promise<boolean> {
+    if (llmMode === "openai_api") {
+      const taskSlot = await this.selectOpenAiSlot(
+        "research backend",
+        this.config.providers.openai.model,
+        this.config.providers.openai.reasoning_effort,
+        "task"
+      );
+      if (!taskSlot) {
+        this.pushLog(cancelMessage);
+        return false;
+      }
+      this.applyOpenAiSlotSelection("task", taskSlot.model, taskSlot.effort);
+      this.applyOpenAiSlotSelection("pdf", taskSlot.model, taskSlot.effort);
+    } else {
+      const taskSlot = await this.selectCodexSlot(
+        "research backend",
+        this.getCurrentCodexSlotSelection("task"),
+        this.config.providers.codex.reasoning_effort,
+        "task"
+      );
+      if (!taskSlot) {
+        this.pushLog(cancelMessage);
+        return false;
+      }
+      this.applyCodexSlotSelection("task", taskSlot.selection, taskSlot.effort);
+      this.applyCodexSlotSelection("pdf", taskSlot.selection, taskSlot.effort);
+    }
+
+    const pdfMode = await this.openSelectionMenu(
+      "Select research backend PDF mode",
+      this.buildPdfAnalysisModeOptions(),
+      this.config.analysis.pdf_mode
+    );
+    if (!pdfMode) {
+      this.pushLog(cancelMessage);
+      return false;
+    }
+
+    if (pdfMode === "responses_api_pdf" && !(await resolveOpenAiApiKey(process.cwd()))) {
+      const openAiApiKey = await this.askWithinTui("OpenAI API key", "");
+      if (!openAiApiKey.trim()) {
+        this.pushLog("OpenAI API key is required for Responses API PDF analysis.");
+        return false;
+      }
+      await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
+    }
+
+    this.config.analysis.pdf_mode = pdfMode as AppConfig["analysis"]["pdf_mode"];
+    if (pdfMode === "responses_api_pdf") {
+      const selectedResponsesSlot = await this.selectResponsesPdfSlot(
+        normalizeResponsesPdfModel(this.config.analysis.responses_model),
+        this.config.analysis.responses_reasoning_effort || "xhigh"
+      );
+      if (!selectedResponsesSlot) {
+        this.pushLog(cancelMessage);
+        return false;
+      }
+      this.config.analysis.responses_model = selectedResponsesSlot.model;
+      this.config.analysis.responses_reasoning_effort =
+        selectedResponsesSlot.effort as AppConfig["analysis"]["responses_reasoning_effort"];
+    }
+
+    return true;
   }
 
   private pushCurrentModelDefaults(): void {
@@ -2752,6 +2773,11 @@ export class TerminalApp {
         description: `Current: ${this.getCurrentSlotPreset("chat")} | Recommended: ${this.getRecommendedSlotPreset("chat")}`
       },
       {
+        value: "backend",
+        label: "research_backend",
+        description: `Current: ${this.getCurrentResearchBackendPreset()} | Recommended: ${this.getRecommendedResearchBackendPreset()}`
+      },
+      {
         value: "task",
         label: "analysis_hypothesis",
         description: `Current: ${this.getCurrentSlotPreset("task")} | Recommended: ${this.getRecommendedSlotPreset("task")}`
@@ -2984,7 +3010,7 @@ export class TerminalApp {
   }
 
   private getRecommendedCodexSelection(slot: "chat" | "task" | "pdf"): string {
-    return "gpt-5.4";
+    return RECOMMENDED_CODEX_MODEL;
   }
 
   private getRecommendedOpenAiModel(slot: "chat" | "task" | "pdf"): string {
@@ -2993,6 +3019,19 @@ export class TerminalApp {
 
   private getRecommendedResponsesPdfModel(): string {
     return "gpt-5.4";
+  }
+
+  private getCurrentResearchBackendPreset(): string {
+    const pdfMode = this.config.analysis?.pdf_mode || "codex_text_image_hybrid";
+    const pdfSummary =
+      pdfMode === "responses_api_pdf"
+        ? `${this.describePdfAnalysisMode(pdfMode)} (${this.config.analysis?.responses_model || "gpt-5.4"} + ${this.config.analysis?.responses_reasoning_effort || "xhigh"})`
+        : this.describePdfAnalysisMode(pdfMode);
+    return `${this.getCurrentSlotPreset("task")} | ${pdfSummary}`;
+  }
+
+  private getRecommendedResearchBackendPreset(): string {
+    return `${this.getRecommendedSlotPreset("task")} | ${this.describePdfAnalysisMode("codex_text_image_hybrid")}`;
   }
 
   private annotateRecommendedDescription(

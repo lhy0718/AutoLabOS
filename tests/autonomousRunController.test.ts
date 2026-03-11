@@ -105,11 +105,11 @@ describe("AutonomousRunController", () => {
     const result = await controller.runOvernight(run.id, policy);
 
     expect(result.status).toBe("stopped");
-    expect(result.reason).toContain("design_experiments");
+    expect(result.reason).toBe("Reached write_paper gate.");
     expect(result.transitionsApplied).toBe(1);
 
     const latest = await store.getRun(run.id);
-    expect(latest?.currentNode).toBe("design_experiments");
+    expect(latest?.currentNode).toBe("write_paper");
     expect(latest?.graph.transitionHistory.at(-1)?.action).toBe("backtrack_to_design");
   });
 
@@ -149,8 +149,8 @@ describe("AutonomousRunController", () => {
     expect(result.transitionsApplied).toBe(1);
 
     const latest = await store.getRun(run.id);
-    expect(latest?.currentNode).toBe("generate_hypotheses");
-    expect(latest?.graph.transitionHistory.at(-1)?.toNode).toBe("generate_hypotheses");
+    expect(latest?.currentNode).toBe("write_paper");
+    expect(latest?.graph.transitionHistory.some((item) => item.toNode === "generate_hypotheses")).toBe(true);
   });
 
   it("routes an advance recommendation into the review node", async () => {
@@ -189,7 +189,7 @@ describe("AutonomousRunController", () => {
     expect(result.transitionsApplied).toBe(1);
 
     const latest = await store.getRun(run.id);
-    expect(latest?.currentNode).toBe("review");
+    expect(latest?.currentNode).toBe("write_paper");
     expect(latest?.graph.transitionHistory.at(-1)?.toNode).toBe("review");
   });
 

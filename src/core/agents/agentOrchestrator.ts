@@ -43,7 +43,10 @@ export class AgentOrchestrator {
       await this.runtime.jumpToNode(runId, nodeId, "force", "manual node run");
     }
 
-    const run = await this.runtime.runUntilPause(runId, opts?.abortSignal);
+    const run = await this.runtime.runUntilPause(runId, {
+      abortSignal: opts?.abortSignal,
+      stopAfterApprovalBoundary: true
+    });
     if (["failed", "failed_budget"].includes(run.status)) {
       return {
         run,
@@ -73,7 +76,9 @@ export class AgentOrchestrator {
     opts?: { abortSignal?: AbortSignal }
   ): Promise<AgentRunResponse> {
     await this.runtime.start(runId);
-    const run = await this.runtime.runUntilPause(runId, opts?.abortSignal);
+    const run = await this.runtime.runUntilPause(runId, {
+      abortSignal: opts?.abortSignal
+    });
 
     if (["failed", "failed_budget"].includes(run.status)) {
       return {

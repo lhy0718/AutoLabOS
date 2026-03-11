@@ -175,7 +175,9 @@ export async function createAutoLabOSRuntime(
   });
 
   const checkpointStore = new CheckpointStore(paths);
-  const runtime = new StateGraphRuntime(runStore, nodeRegistry, checkpointStore, eventStream);
+  const runtime = new StateGraphRuntime(runStore, nodeRegistry, checkpointStore, eventStream, {
+    approvalMode: config.workflow?.approval_mode
+  });
   const orchestrator = new AgentOrchestrator(runStore, runtime, checkpointStore);
 
   return {

@@ -7,7 +7,8 @@ import {
   GraphNodeId,
   RunGraphState,
   RunRecord,
-  TransitionRecommendation
+  TransitionRecommendation,
+  WorkflowApprovalMode
 } from "../../types.js";
 import { CheckpointStore } from "./checkpointStore.js";
 import { GraphNodeRegistry, JumpMode } from "./types.js";
@@ -18,7 +19,10 @@ export class StateGraphRuntime {
     private readonly runStore: RunStore,
     private readonly nodeRegistry: GraphNodeRegistry,
     private readonly checkpointStore: CheckpointStore,
-    private readonly eventStream: EventStream
+    private readonly eventStream: EventStream,
+    private readonly options: {
+      approvalMode?: WorkflowApprovalMode;
+    } = {}
   ) {}
 
   async start(runId: string): Promise<RunRecord> {
@@ -170,23 +174,38 @@ export class StateGraphRuntime {
     }
   }
 
-  async runUntilPause(runId: string, abortSignal?: AbortSignal): Promise<RunRecord> {
+  async runUntilPause(
+    runId: string,
+    opts?: {
+      abortSignal?: AbortSignal;
+      stopAfterApprovalBoundary?: boolean;
+    }
+  ): Promise<RunRecord> {
     let run = await this.getRunOrThrow(runId);
     try {
-      this.throwIfAborted(abortSignal);
+      this.throwIfAborted(opts?.abortSignal);
       run.status = "running";
       await this.runStore.updateRun(run);
 
       while (true) {
-        this.throwIfAborted(abortSignal);
-        run = await this.step(run.id, abortSignal);
+        this.throwIfAborted(opts?.abortSignal);
+        run = await this.step(run.id, opts?.abortSignal);
         if (["completed", "failed", "failed_budget"].includes(run.status)) {
           return run;
         }
 
-        const state = run.graph.nodeStates[run.currentNode];
-        if (state.status === "needs_approval") {
-          return run;
+        if (run.status === "paused" && run.graph.nodeStates[run.currentNode].status === "needs_approval") {
+          run = await this.resolveApprovalGate(run);
+          if (["completed", "failed", "failed_budget"].includes(run.status)) {
+            return run;
+          }
+          if (run.status === "paused") {
+            return run;
+          }
+          if (opts?.stopAfterApprovalBoundary) {
+            return run;
+          }
+          continue;
         }
 
         if (run.status === "paused") {
@@ -202,6 +221,58 @@ export class StateGraphRuntime {
       }
       throw error;
     }
+  }
+
+  private async resolveApprovalGate(run: RunRecord): Promise<RunRecord> {
+    while (run.status === "paused" && run.graph.nodeStates[run.currentNode].status === "needs_approval") {
+      const action = this.selectApprovalResolution(run);
+      if (action === "pause") {
+        return run;
+      }
+
+      if (action === "apply_transition") {
+        const recommendation = run.graph.pendingTransition;
+        this.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: run.currentNode,
+          payload: {
+            text: `Minimal approval mode auto-applied ${recommendation?.action || "transition"}${recommendation?.targetNode ? ` -> ${recommendation.targetNode}` : ""}.`
+          }
+        });
+        run = await this.applyPendingTransition(run.id);
+        continue;
+      }
+
+      this.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: run.currentNode,
+        payload: {
+          text: `Minimal approval mode auto-approved ${run.currentNode}.`
+        }
+      });
+      run = await this.approveCurrent(run.id);
+    }
+
+    return run;
+  }
+
+  private selectApprovalResolution(run: RunRecord): "pause" | "approve" | "apply_transition" {
+    if (this.options.approvalMode === "manual") {
+      return "pause";
+    }
+
+    const recommendation = run.graph.pendingTransition;
+    if (!recommendation) {
+      return "approve";
+    }
+
+    if (recommendation.action === "pause_for_human" || !recommendation.autoExecutable) {
+      return "pause";
+    }
+
+    return "apply_transition";
   }
 
   async approveCurrent(runId: string): Promise<RunRecord> {

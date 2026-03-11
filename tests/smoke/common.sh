@@ -62,6 +62,7 @@ research:
 workflow:
   mode: agent_approval
   wizard_enabled: true
+  approval_mode: manual
 experiments:
   runner: local_python
   timeout_sec: 3600

@@ -51,12 +51,23 @@
 | Research runtime patterns | ReAct, ReWOO, ToT, and Reflexion are used where they make sense |
 | Local ACI execution | `implement_experiments` and `run_experiments` execute through file, command, and test actions |
 
+## Start Here
+
+- If this is your first time, start with `autolabos web`. It gives you guided onboarding, the dashboard, logs, checkpoints, and artifact browsing in one place.
+- Use `autolabos` when you prefer a terminal-first loop with slash commands.
+- Run either command from the research project directory you want AutoLabOS to manage. Workspace state lives under `.autolabos/`.
+
+## What You Need
+
+| Item | When it is needed | Notes |
+| --- | --- | --- |
+| `SEMANTIC_SCHOLAR_API_KEY` | Always | Required for paper discovery and metadata lookup |
+| `OPENAI_API_KEY` | Only when the primary provider or PDF mode is `api` | Used for OpenAI API model execution |
+| Codex CLI login | Only when the primary provider or PDF mode is `codex` | AutoLabOS uses your local Codex session |
+
 ## Quick Start
 
-> [!IMPORTANT]
-> `SEMANTIC_SCHOLAR_API_KEY` is required. `OPENAI_API_KEY` is only needed when the main provider or PDF analysis mode is `api`.
-
-1. Install and build
+1. Install and build AutoLabOS.
 
 ```bash
 npm install
@@ -64,77 +75,43 @@ npm run build
 npm link
 ```
 
-2. Add environment variables
+2. Move into the research project directory you want to use as the workspace.
 
 ```bash
-cp .env.example .env
-echo 'SEMANTIC_SCHOLAR_API_KEY=your_key_here' >> .env
-echo 'OPENAI_API_KEY=your_openai_key_here' >> .env
+cd /path/to/your-research-project
 ```
 
-3. Launch the TUI
-
-```bash
-autolabos
-```
-
-4. Launch the web UI
+3. Start the recommended browser workflow.
 
 ```bash
 autolabos web
 ```
 
-The web server listens on `http://127.0.0.1:4317` by default.
-Run this from the research project directory you want AutoLabOS to use as its workspace.
+The web server listens on `http://127.0.0.1:4317` by default. Use `autolabos` instead if you want the TUI first.
 
-If you are using a repository checkout and the CLI says the installed web assets are missing, build the web bundle once from the AutoLabOS package root:
+4. Finish onboarding. If `.autolabos/config.yaml` does not exist yet, the web app opens onboarding and the TUI opens the setup wizard. Both flows write the same workspace scaffold and config.
 
-```bash
-cd /path/to/AutoLabOS
-npm --prefix web run build
-autolabos web
-```
+5. Confirm the first run worked. You should now have `.autolabos/config.yaml`, a configured workspace, and either the dashboard or the TUI home screen ready for a run.
 
-Use a custom bind address or port when needed:
+6. Create or select a run, then start with `/new`, `/agent collect "your topic"`, or the workflow cards in the web UI.
 
-```bash
-autolabos web --host 0.0.0.0 --port 8080
-```
+## What Happens On First Run
 
-Development mode:
+- AutoLabOS stores workspace config in `.autolabos/config.yaml` and reads `SEMANTIC_SCHOLAR_API_KEY` and `OPENAI_API_KEY` from `process.env` or `.env`.
+- Choose the primary LLM provider: `codex` uses your local Codex session, while `api` uses OpenAI API models.
+- Choose the PDF analysis mode separately: `codex` keeps PDF extraction local before analysis, while `api` sends the PDF to the Responses API.
+- If the primary provider or PDF mode is `api`, onboarding and `/settings` let you choose the OpenAI model.
+- `/model` lets you switch the active backend first, then choose the slot and model later.
 
-```bash
-npm run dev
-npm run dev:web
-```
+## Common First-Run Fixes
 
-Without `npm link`, you can still run:
-
-```bash
-node dist/cli/main.js
-node dist/cli/main.js web
-```
+- If a repository checkout says the installed web assets are missing, build them once from the AutoLabOS package root with `npm --prefix web run build`, then restart `autolabos web`.
+- If you do not want `npm link`, you can still run `node dist/cli/main.js` or `node dist/cli/main.js web` from the AutoLabOS repository root.
+- If you need a different bind address or port, run `autolabos web --host 0.0.0.0 --port 8080`.
+- For local development, use `npm run dev` and `npm run dev:web`.
 
 > [!NOTE]
 > External entrypoints are `autolabos` and `autolabos web`. `autolabos init` is intentionally not supported.
-
-## First Run
-
-1. Run `autolabos` or `autolabos web` in an empty project.
-2. If `.autolabos/config.yaml` does not exist, the TUI opens the setup wizard and the web app shows the onboarding form.
-3. Both flows create the same scaffold/config, store your Semantic Scholar key, and open the main dashboard.
-4. Choose the primary LLM provider:
-   - `codex`: use Codex ChatGPT login for the main workflow (default)
-   - `api`: use OpenAI API models for the main workflow (`OPENAI_API_KEY` required)
-5. Choose the PDF analysis mode:
-   - `codex`: download and extract PDF text locally, then analyze with Codex (default)
-   - `api`: send the PDF directly to the Responses API (`OPENAI_API_KEY` required)
-6. If the provider or PDF mode is `api`, setup wizard and `/settings` let you choose a model.
-   - Current built-in catalog: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`
-7. `/model` now lets you choose the active backend first, then select the slot/model:
-   - Codex CLI backend: Codex model selector
-   - OpenAI API backend: OpenAI API model selector
-8. At runtime, AutoLabOS reads `SEMANTIC_SCHOLAR_API_KEY` and `OPENAI_API_KEY` from `process.env` or `.env`.
 
 ## Web Ops UI
 
@@ -246,7 +223,7 @@ stateDiagram-v2
     write_paper --> [*]: approve
 ```
 
-Default `agent_approval` mode pauses after every node. `implement_experiments` is the one forward step that can skip its pause through automatic handoff to `run_experiments`, `analyze_results` can emit explicit backward recommendations, and `review` now packages a review decision that approval can turn into an advance, a backtrack, or a human hold.
+Default `agent_approval` mode now runs with `workflow.approval_mode: minimal`, so successful nodes auto-advance and human approval is only requested when a transition explicitly requires human judgment. Set `workflow.approval_mode: manual` if you want the legacy pause-after-each-node behavior. `implement_experiments` can still auto-handoff into `run_experiments`, `analyze_results` can emit explicit backward recommendations, and `review` still turns panel output into an advance, a backtrack, or a human hold.
 
 ### Phase-by-Phase Connection Graphs
 
