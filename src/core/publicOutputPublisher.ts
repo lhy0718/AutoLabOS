@@ -194,10 +194,8 @@ function normalizeWorkspaceChangedFiles(
 async function listSectionFiles(sectionDir: string, outputRoot: string): Promise<string[]> {
   const collected = new Set<string>();
   async function walk(currentDir: string): Promise<void> {
-    let entries: Awaited<ReturnType<typeof fs.readdir>>;
-    try {
-      entries = await fs.readdir(currentDir, { withFileTypes: true });
-    } catch {
+    const entries = await fs.readdir(currentDir, { withFileTypes: true }).catch(() => undefined);
+    if (!entries) {
       return;
     }
     for (const entry of entries) {

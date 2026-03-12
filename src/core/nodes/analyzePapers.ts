@@ -420,7 +420,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             transitionRecommendation: preservedSelectionRegression.transitionRecommendation
           };
         }
-        let manifest =
+        let manifest: AnalysisManifest | undefined =
           existingManifest &&
           existingManifest.selectionFingerprint === selection.selectionFingerprint &&
           existingManifest.analysisFingerprint === analysisFingerprint
@@ -473,7 +473,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         }
 
         const reconciledState = reconcileManifestWithOutputs(manifest, existingSummaryRows, existingEvidenceRows);
-        manifest = reconciledState.manifest;
+        let manifestState: AnalysisManifest = reconciledState.manifest;
         if (reconciledState.changed) {
           if (reconciledState.requeuedPaperIds.length > 0 || reconciledState.droppedSummaryRows > 0 || reconciledState.droppedEvidenceRows > 0) {
             emitLog(
@@ -484,7 +484,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           }
           await appendJsonl(run, "paper_summaries.jsonl", reconciledState.summaryRows);
           await appendJsonl(run, "evidence_store.jsonl", reconciledState.evidenceRows);
-          await writeJsonFile(manifestPath, manifest);
+          await writeJsonFile(manifestPath, manifestState);
         }
         let summaryRowsState = reconciledState.summaryRows;
         let evidenceRowsState = reconciledState.evidenceRows;
@@ -509,8 +509,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           })
         });
 
-        const pendingRows = selectedRows.filter((row) => manifest!.papers[row.paper_id]?.status !== "completed");
-        const previousFailedPaperIds = getSelectedFailedPaperIds(manifest);
+        const pendingRows = selectedRows.filter((row) => manifestState.papers[row.paper_id]?.status !== "completed");
+        const previousFailedPaperIds = getSelectedFailedPaperIds(manifestState);
         const analysisConcurrency = getAnalysisConcurrency(analysisMode);
         if (pendingRows.length > 0) {
           emitLog(`Analyzing ${pendingRows.length} paper(s) with concurrency ${analysisConcurrency}.`);
@@ -664,11 +664,11 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             const nextSummaryRowsState = replaceSummaryRow(summaryRowsState, analysis.summaryRow);
             const nextEvidenceRowsState = replaceEvidenceRowsForPaper(evidenceRowsState, row.paper_id, analysis.evidenceRows);
             const nextManifest: AnalysisManifest = {
-              ...manifest,
-              papers: { ...manifest.papers }
+              ...manifestState,
+              papers: { ...manifestState.papers }
             };
 
-            const manifestEntry = manifest.papers[row.paper_id];
+            const manifestEntry = manifestState.papers[row.paper_id];
             nextManifest.papers[row.paper_id] = {
               ...manifestEntry,
               paper_id: row.paper_id,
@@ -716,7 +716,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 analysisMode
               })
             });
-            manifest = nextManifest;
+            manifestState = nextManifest;
             summaryRowsState = nextSummaryRowsState;
             evidenceRowsState = nextEvidenceRowsState;
             emitLog(
@@ -735,8 +735,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             if (quarantineRecord) {
               await appendJsonlItems(run, "analysis_quarantine.jsonl", [quarantineRecord]);
             }
-            const manifestEntry = manifest.papers[row.paper_id];
-            manifest.papers[row.paper_id] = {
+            const manifestEntry = manifestState.papers[row.paper_id];
+            manifestState.papers[row.paper_id] = {
               ...manifestEntry,
               paper_id: row.paper_id,
               title: row.title,
@@ -758,8 +758,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               figure_reference_count: 0,
               updatedAt: new Date().toISOString()
             };
-            manifest.updatedAt = new Date().toISOString();
-            await writeJsonFile(manifestPath, manifest);
+            manifestState.updatedAt = new Date().toISOString();
+            await writeJsonFile(manifestPath, manifestState);
             await syncAnalyzeRunRecord({
               runStore: deps.runStore,
               runId: run.id,
@@ -801,8 +801,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         );
 
         if (failedCount > 0) {
-          const failedPaperIds = getSelectedFailedPaperIds(manifest);
-          const failureSummary = summarizeSelectedFailures(manifest, selection.selectedPaperIds);
+          const failedPaperIds = getSelectedFailedPaperIds(manifestState);
+          const failureSummary = summarizeSelectedFailures(manifestState, selection.selectedPaperIds);
           const zeroProgress = progress.summaryRows.length === 0 && progress.evidenceRows.length === 0;
           const allSelectedFailed =
             selection.selectedPaperIds.length > 0 && failedPaperIds.size === selection.selectedPaperIds.length;
