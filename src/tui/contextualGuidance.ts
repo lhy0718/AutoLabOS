@@ -1,5 +1,5 @@
 import { GRAPH_NODE_ORDER, RunRecord } from "../types.js";
-import { normalizeRunForDisplay } from "./runProjection.js";
+import { projectRunForDisplay, RunProjectionHints } from "./runProjection.js";
 
 export type GuidanceLanguage = "en" | "ko";
 
@@ -33,6 +33,7 @@ export interface PendingHumanInterventionGuidance {
 
 export interface ContextualGuidanceInput {
   run?: RunRecord;
+  projectionHints?: RunProjectionHints;
   pendingPlan?: PendingPlanGuidance;
   humanIntervention?: PendingHumanInterventionGuidance;
   language?: GuidanceLanguage;
@@ -91,21 +92,24 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
     };
   }
 
-  const run = normalizeRunForDisplay(input.run);
+  const projection = projectRunForDisplay(input.run, input.projectionHints);
+  const run = projection.run;
   const nodeStatus = run.graph.nodeStates[run.currentNode].status;
-  const nextNode = getNextNode(run.currentNode);
+  const targetNode = projection.actionableNode;
+  const targetNodeStatus = projection.actionableNodeStatus ?? run.graph.nodeStates[targetNode]?.status;
+  const nextNode = getNextNode(targetNode);
   const statusCommand = `/agent status ${run.id}`;
   const graphCommand = `/agent graph ${run.id}`;
   const budgetCommand = `/agent budget ${run.id}`;
-  const retryCommand = `/agent retry ${run.currentNode} ${run.id}`;
-  const runCommand = `/agent run ${run.currentNode} ${run.id}`;
-  const focusCommand = `/agent focus ${run.currentNode}`;
-  const countCommand = `/agent count ${run.currentNode} ${run.id}`;
+  const retryCommand = `/agent retry ${targetNode} ${run.id}`;
+  const runCommand = `/agent run ${targetNode} ${run.id}`;
+  const focusCommand = `/agent focus ${targetNode}`;
+  const countCommand = `/agent count ${targetNode} ${run.id}`;
   const jumpNextCommand = nextNode ? `/agent jump ${nextNode} ${run.id}` : undefined;
-  const nodeExampleCommand = nodeSpecificCommandExample(run, language);
+  const nodeExampleCommand = nodeSpecificCommandExample({ ...run, currentNode: targetNode }, language);
   const statusPrompt = localize(language, "show current status", "현재 상태 보여줘");
   const nextPrompt = localize(language, "what should I do next?", "다음에 뭐 해야 해?");
-  const countPrompt = naturalCountPromptForNode(run.currentNode, language);
+  const countPrompt = naturalCountPromptForNode(targetNode, language);
 
   if (run.status === "completed") {
     return {
@@ -133,7 +137,7 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
         },
         {
           label: retryCommand,
-          description: localize(language, `Retry ${run.currentNode}`, `${run.currentNode} 재시도`)
+          description: localize(language, `Retry ${targetNode}`, `${targetNode} 재시도`)
         },
         {
           label: statusCommand,
@@ -145,11 +149,11 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
         },
         {
           label: focusCommand,
-          description: localize(language, `Focus ${run.currentNode}`, `${run.currentNode} 포커스 이동`)
+          description: localize(language, `Focus ${targetNode}`, `${targetNode} 포커스 이동`)
         },
         {
           label: countCommand,
-          description: localize(language, `Count ${run.currentNode} artifacts`, `${run.currentNode} 산출물 개수 보기`)
+          description: localize(language, `Count ${targetNode} artifacts`, `${targetNode} 산출물 개수 보기`)
         },
         jumpNextCommand
           ? {
@@ -163,17 +167,41 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
     };
   }
 
-  if (run.status === "failed" || nodeStatus === "failed") {
+  if (projection.usageLimitBlocked) {
     return {
       title: localize(language, "Next actions", "다음 액션"),
       items: dedupeGuidanceItems([
         {
-          label: retryCommand,
-          description: localize(language, `Retry ${run.currentNode}`, `${run.currentNode} 재시도`)
+          label: "/model",
+          description: localize(
+            language,
+            "Switch away from the blocked model before retrying",
+            "재시도 전에 막힌 모델 대신 다른 모델로 바꾸기"
+          )
         },
         {
           label: statusCommand,
-          description: localize(language, "Show the current run status", "현재 run 상태 보기")
+          description: localize(
+            language,
+            "Inspect the usage-limit block and paused retry state",
+            "usage-limit block과 pause/retry 상태 확인"
+          )
+        },
+        {
+          label: retryCommand,
+          description: localize(
+            language,
+            `Retry ${targetNode} after changing model or waiting for quota reset`,
+            `모델 변경 또는 quota reset 이후 ${targetNode} 재시도`
+          )
+        },
+        {
+          label: countCommand,
+          description: localize(
+            language,
+            `Verify whether ${targetNode} produced any artifacts`,
+            `${targetNode} 산출물이 실제로 생겼는지 확인`
+          )
         },
         {
           label: graphCommand,
@@ -185,11 +213,103 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
         },
         {
           label: focusCommand,
-          description: localize(language, `Focus ${run.currentNode}`, `${run.currentNode} 포커스 이동`)
+          description: localize(language, `Focus ${targetNode}`, `${targetNode} 포커스 이동`)
+        },
+        { label: nextPrompt, description: localize(language, "Ask for the recommended recovery step", "권장 복구 단계를 물어보기") },
+        { label: statusPrompt, description: localize(language, "Natural-language status query", "자연어 상태 질문") }
+      ])
+    };
+  }
+
+  if (projection.blockedByUpstream) {
+    return {
+      title: localize(language, "Next actions", "다음 액션"),
+      items: dedupeGuidanceItems([
+        {
+          label: retryCommand,
+          description: localize(
+            language,
+            `Recover ${targetNode} before retrying ${run.currentNode}`,
+            `${run.currentNode}보다 먼저 ${targetNode} 복구`
+          )
+        },
+        {
+          label: statusCommand,
+          description: localize(
+            language,
+            "Show the downstream block and upstream failure details",
+            "downstream block과 upstream 실패 원인 확인"
+          )
         },
         {
           label: countCommand,
-          description: localize(language, `Count ${run.currentNode} artifacts`, `${run.currentNode} 산출물 개수 보기`)
+          description: localize(
+            language,
+            `Check whether ${targetNode} produced the missing artifacts`,
+            `${targetNode}가 필요한 산출물을 만들었는지 확인`
+          )
+        },
+        {
+          label: graphCommand,
+          description: localize(language, "Inspect the full workflow state", "전체 워크플로 상태 보기")
+        },
+        {
+          label: focusCommand,
+          description: localize(language, `Focus ${targetNode}`, `${targetNode} 포커스 이동`)
+        },
+        {
+          label: budgetCommand,
+          description: localize(language, "Inspect budget usage", "예산 사용량 확인")
+        },
+        { label: nextPrompt, description: localize(language, "Ask for the recommended recovery step", "권장 복구 단계를 물어보기") },
+        { label: statusPrompt, description: localize(language, "Natural-language status query", "자연어 상태 질문") }
+      ])
+    };
+  }
+
+  if (run.status === "failed" || nodeStatus === "failed" || targetNodeStatus === "failed") {
+    const retryDescription = projection.pausedRetry
+      ? localize(
+          language,
+          `Retry ${targetNode} after reviewing the last failed attempt`,
+          `마지막 실패 시도를 확인한 뒤 ${targetNode} 재시도`
+        )
+      : localize(language, `Retry ${targetNode}`, `${targetNode} 재시도`);
+
+    const countDescription = projection.noArtifactProgress
+      ? localize(
+          language,
+          `Confirm that ${targetNode} still has no persisted artifacts`,
+          `${targetNode} 산출물이 아직 없는지 확인`
+        )
+      : localize(language, `Count ${targetNode} artifacts`, `${targetNode} 산출물 개수 보기`);
+
+    return {
+      title: localize(language, "Next actions", "다음 액션"),
+      items: dedupeGuidanceItems([
+        {
+          label: statusCommand,
+          description: localize(language, "Show the current run status", "현재 run 상태 보기")
+        },
+        {
+          label: retryCommand,
+          description: retryDescription
+        },
+        {
+          label: countCommand,
+          description: countDescription
+        },
+        {
+          label: graphCommand,
+          description: localize(language, "Inspect the full workflow state", "전체 워크플로 상태 보기")
+        },
+        {
+          label: budgetCommand,
+          description: localize(language, "Inspect budget usage", "예산 사용량 확인")
+        },
+        {
+          label: focusCommand,
+          description: localize(language, `Focus ${targetNode}`, `${targetNode} 포커스 이동`)
         },
         jumpNextCommand
           ? {
@@ -209,11 +329,11 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
       items: dedupeGuidanceItems([
         {
           label: "/approve",
-          description: localize(language, `Approve ${run.currentNode}`, `${run.currentNode} 승인`)
+          description: localize(language, `Approve ${targetNode}`, `${targetNode} 승인`)
         },
         {
           label: retryCommand,
-          description: localize(language, `Retry ${run.currentNode}`, `${run.currentNode} 재시도`)
+          description: localize(language, `Retry ${targetNode}`, `${targetNode} 재시도`)
         },
         {
           label: statusCommand,
@@ -229,11 +349,11 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
         },
         {
           label: focusCommand,
-          description: localize(language, `Focus ${run.currentNode}`, `${run.currentNode} 포커스 이동`)
+          description: localize(language, `Focus ${targetNode}`, `${targetNode} 포커스 이동`)
         },
         {
           label: countCommand,
-          description: localize(language, `Count ${run.currentNode} artifacts`, `${run.currentNode} 산출물 개수 보기`)
+          description: localize(language, `Count ${targetNode} artifacts`, `${targetNode} 산출물 개수 보기`)
         },
         {
           label: nextPrompt,
@@ -247,12 +367,60 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
     };
   }
 
+  if (run.status === "paused" && projection.pausedRetry) {
+    return {
+      title: localize(language, "Next actions", "다음 액션"),
+      items: dedupeGuidanceItems([
+        {
+          label: statusCommand,
+          description: localize(
+            language,
+            "Show why the run paused after the retry attempt",
+            "재시도 후 왜 멈췄는지 확인"
+          )
+        },
+        {
+          label: countCommand,
+          description: projection.noArtifactProgress
+            ? localize(
+                language,
+                `Confirm that ${targetNode} still has no persisted artifacts`,
+                `${targetNode} 산출물이 아직 없는지 확인`
+              )
+            : localize(language, `Count ${targetNode} artifacts`, `${targetNode} 산출물 개수 보기`)
+        },
+        {
+          label: retryCommand,
+          description: localize(
+            language,
+            `Retry ${targetNode} after reviewing the paused attempt`,
+            `멈춘 시도를 확인한 뒤 ${targetNode} 재시도`
+          )
+        },
+        {
+          label: graphCommand,
+          description: localize(language, "Inspect the full workflow state", "전체 워크플로 상태 보기")
+        },
+        {
+          label: budgetCommand,
+          description: localize(language, "Inspect budget usage", "예산 사용량 확인")
+        },
+        {
+          label: focusCommand,
+          description: localize(language, `Focus ${targetNode}`, `${targetNode} 포커스 이동`)
+        },
+        { label: nextPrompt, description: localize(language, "Ask for the recommended recovery step", "권장 복구 단계를 물어보기") },
+        { label: statusPrompt, description: localize(language, "Natural-language status query", "자연어 상태 질문") }
+      ])
+    };
+  }
+
   return {
     title: localize(language, "Next actions", "다음 액션"),
     items: dedupeGuidanceItems([
       {
         label: runCommand,
-        description: localize(language, `Continue ${run.currentNode}`, `${run.currentNode} 계속 실행`)
+        description: localize(language, `Continue ${targetNode}`, `${targetNode} 계속 실행`)
       },
       {
         label: statusCommand,
@@ -268,15 +436,15 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
       },
       {
         label: focusCommand,
-        description: localize(language, `Focus ${run.currentNode}`, `${run.currentNode} 포커스 이동`)
+        description: localize(language, `Focus ${targetNode}`, `${targetNode} 포커스 이동`)
       },
       {
         label: countCommand,
-        description: localize(language, `Count ${run.currentNode} artifacts`, `${run.currentNode} 산출물 개수 보기`)
+        description: localize(language, `Count ${targetNode} artifacts`, `${targetNode} 산출물 개수 보기`)
       },
       {
         label: retryCommand,
-        description: localize(language, `Retry ${run.currentNode}`, `${run.currentNode} 재시도`)
+        description: localize(language, `Retry ${targetNode}`, `${targetNode} 재시도`)
       },
       jumpNextCommand
         ? {
@@ -286,7 +454,7 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
         : undefined,
       nodeExampleCommand,
       {
-        label: naturalPromptForNode(run.currentNode, language),
+        label: naturalPromptForNode(targetNode, language),
         description: localize(language, "Natural-language example for this step", "이 단계에서 바로 쓸 수 있는 자연어 예시")
       },
       {

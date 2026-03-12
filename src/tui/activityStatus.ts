@@ -28,12 +28,14 @@ export interface AnalyzeProgressState {
   startedAtMs: number;
   lastUpdatedAtMs: number;
   samples: AnalyzeProgressSample[];
-  phase: "ranking" | "rerank" | "analyzing";
+  phase: "ranking" | "rerank" | "rerank_fallback" | "analyzing";
   candidatePoolSize?: number;
   rerankStage?: number;
   rerankStageTotal?: number;
   rerankPercent?: number;
   rerankLabel?: string;
+  persistedSummaryCount?: number;
+  persistedEvidenceCount?: number;
 }
 
 const MAX_SAMPLES = 8;
@@ -374,7 +376,9 @@ export function updateAnalyzeProgressFromLog(
         startedAtMs: nowMs,
         lastUpdatedAtMs: nowMs,
         samples: [],
-        phase: "ranking"
+        phase: "ranking",
+        persistedSummaryCount: current?.persistedSummaryCount ?? 0,
+        persistedEvidenceCount: current?.persistedEvidenceCount ?? 0
       };
     }
   }
@@ -389,7 +393,9 @@ export function updateAnalyzeProgressFromLog(
         startedAtMs: nowMs,
         lastUpdatedAtMs: nowMs,
         samples: [],
-        phase: "ranking"
+        phase: "ranking",
+        persistedSummaryCount: current?.persistedSummaryCount ?? 0,
+        persistedEvidenceCount: current?.persistedEvidenceCount ?? 0
       };
     }
   }
@@ -410,7 +416,9 @@ export function updateAnalyzeProgressFromLog(
         rerankStage: undefined,
         rerankStageTotal: undefined,
         rerankPercent: undefined,
-        rerankLabel: undefined
+        rerankLabel: undefined,
+        persistedSummaryCount: current?.persistedSummaryCount ?? 0,
+        persistedEvidenceCount: current?.persistedEvidenceCount ?? 0
       };
     }
   }
@@ -439,9 +447,31 @@ export function updateAnalyzeProgressFromLog(
         rerankStage: stage,
         rerankStageTotal: stageTotal,
         rerankPercent: rerankPercent >= 0 ? Math.min(100, rerankPercent) : undefined,
-        rerankLabel
+        rerankLabel,
+        persistedSummaryCount: current?.persistedSummaryCount ?? 0,
+        persistedEvidenceCount: current?.persistedEvidenceCount ?? 0
       };
     }
+  }
+
+  const rerankFallbackMatch = line.match(/LLM rerank (?:fallback activated\. Using|unavailable, falling back to) deterministic order(?: \((.+)\))?\./u);
+  if (rerankFallbackMatch) {
+    const reason = rerankFallbackMatch[1]?.trim();
+    return {
+      total: current?.total ?? 0,
+      current: current?.current ?? 0,
+      startedAtMs: current?.startedAtMs ?? nowMs,
+      lastUpdatedAtMs: nowMs,
+      samples: current?.samples ? [...current.samples] : [],
+      phase: "rerank_fallback",
+      candidatePoolSize: current?.candidatePoolSize,
+      rerankStage: current?.rerankStage,
+      rerankStageTotal: current?.rerankStageTotal,
+      rerankPercent: current?.rerankPercent,
+      rerankLabel: reason ? summarizeAnalyzeReason(reason) : undefined,
+      persistedSummaryCount: current?.persistedSummaryCount ?? 0,
+      persistedEvidenceCount: current?.persistedEvidenceCount ?? 0
+    };
   }
 
   const paperMatch = line.match(/Analyzing paper (\d+)\/(\d+): /u);
@@ -459,7 +489,9 @@ export function updateAnalyzeProgressFromLog(
           current: currentPaper,
           lastUpdatedAtMs: nowMs,
           phase: "analyzing",
-          samples: [...current.samples]
+          samples: [...current.samples],
+          persistedSummaryCount: current.persistedSummaryCount ?? 0,
+          persistedEvidenceCount: current.persistedEvidenceCount ?? 0
         }
       : {
           total,
@@ -467,7 +499,9 @@ export function updateAnalyzeProgressFromLog(
           startedAtMs: nowMs,
           lastUpdatedAtMs: nowMs,
           samples: [],
-          phase: "analyzing"
+          phase: "analyzing",
+          persistedSummaryCount: 0,
+          persistedEvidenceCount: 0
         };
 
     const lastSample = next.samples[next.samples.length - 1];
@@ -481,6 +515,23 @@ export function updateAnalyzeProgressFromLog(
     return next;
   }
 
+  const persistedOutputMatch = line.match(
+    /Persisted analysis outputs for ".+" \((\d+) summary row, (\d+) evidence row\(s\)\)\./u
+  );
+  if (persistedOutputMatch?.[1] && persistedOutputMatch?.[2]) {
+    const summaryRows = Number(persistedOutputMatch[1]);
+    const evidenceRows = Number(persistedOutputMatch[2]);
+    if (!Number.isFinite(summaryRows) || !Number.isFinite(evidenceRows) || !current) {
+      return current;
+    }
+    return {
+      ...current,
+      lastUpdatedAtMs: nowMs,
+      persistedSummaryCount: (current.persistedSummaryCount ?? 0) + Math.max(0, summaryRows),
+      persistedEvidenceCount: (current.persistedEvidenceCount ?? 0) + Math.max(0, evidenceRows)
+    };
+  }
+
   return current;
 }
 
@@ -492,6 +543,7 @@ export function isAnalyzeProgressLog(line: string): boolean {
     /Deterministic pre-rank completed for \d+ candidate\(s\)\./u.test(line) ||
     /Preparing LLM rerank for \d+ candidate\(s\) to choose top \d+\./u.test(line) ||
     /Rerank progress: \d+\/\d+ \(\d+%\) .+\./u.test(line) ||
+    /LLM rerank (?:fallback activated\. Using|unavailable, falling back to) deterministic order(?: \(.+\))?\./u.test(line) ||
     /Analyzing paper \d+\/\d+: /u.test(line)
   );
 }
@@ -532,12 +584,43 @@ export function formatAnalyzeProgressLogLine(
     return base;
   }
 
+  if (state.phase === "rerank_fallback") {
+    const base =
+      state.total > 0
+        ? `Analyzing... rerank unavailable, using deterministic order for top ${state.total}`
+        : "Analyzing... rerank unavailable, using deterministic order";
+    return state.rerankLabel ? `${base} (${state.rerankLabel})` : base;
+  }
+
   const base = `Analyzing... ${Math.max(0, state.current)}/${state.total}`;
   const eta = estimateAnalyzeRemainingMs(state, nowMs);
+  const outputDetail = formatAnalyzeOutputDetail(state);
   if (eta === undefined) {
-    return base;
+    return outputDetail ? `${base} (${outputDetail})` : base;
   }
-  return `${base} (ETA ~${formatDuration(eta)})`;
+  const details = [outputDetail, `ETA ~${formatDuration(eta)}`].filter(Boolean).join(", ");
+  return `${base} (${details})`;
+}
+
+function formatAnalyzeOutputDetail(state: AnalyzeProgressState): string | undefined {
+  const summaries = state.persistedSummaryCount ?? 0;
+  const evidence = state.persistedEvidenceCount ?? 0;
+  if (summaries <= 0 && evidence <= 0) {
+    return state.current >= 3 ? "no persisted outputs yet" : undefined;
+  }
+  return `${summaries} summary row(s), ${evidence} evidence row(s)`;
+}
+
+function summarizeAnalyzeReason(value: string): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  const usageLimitMatch = normalized.match(/usage limit for ([A-Za-z0-9._-]+)/iu);
+  if (usageLimitMatch?.[1]) {
+    return `${usageLimitMatch[1].replace(/[.,;:!?]+$/u, "")} usage limit`;
+  }
+  if (/shell snapshot/iu.test(normalized)) {
+    return "shell snapshot warning";
+  }
+  return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
 }
 
 function estimateAnalyzeRemainingMs(state: AnalyzeProgressState, nowMs: number): number | undefined {

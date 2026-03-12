@@ -57,7 +57,9 @@ export function looksLikeRunBriefRequest(text: string): boolean {
 }
 
 export async function extractRunBrief(input: ExtractRunBriefInput): Promise<ExtractedRunBrief> {
+  const normalizedBrief = input.brief.replace(/\r/g, "").trim();
   const heuristic = extractRunBriefHeuristically(input.brief, input.defaults);
+  const explicitAnchors = extractStructuredRunBriefAnchors(normalizedBrief);
   if (!input.llm) {
     return heuristic;
   }
@@ -74,6 +76,15 @@ export async function extractRunBrief(input: ExtractRunBriefInput): Promise<Extr
     const parsed = parseRunBriefJson(raw, input.defaults, input.brief);
     return {
       ...parsed,
+      topic: explicitAnchors.topic || parsed.topic || heuristic.topic,
+      objectiveMetric: explicitAnchors.objectiveMetric || parsed.objectiveMetric || heuristic.objectiveMetric,
+      constraints:
+        explicitAnchors.constraints && explicitAnchors.constraints.length > 0
+          ? explicitAnchors.constraints
+          : parsed.constraints.length > 0
+            ? parsed.constraints
+            : heuristic.constraints,
+      planSummary: parsed.planSummary || heuristic.planSummary,
       source: "llm"
     };
   } catch {
@@ -147,64 +158,33 @@ function extractRunBriefHeuristically(
   defaults: ExtractRunBriefInput["defaults"]
 ): ExtractedRunBrief {
   const normalized = brief.replace(/\r/g, "").trim();
-  const markdownSections = parseMarkdownRunBriefSections(normalized);
-  const topicLabel = markdownSections?.topic || extractLabeledValue(normalized, ["topic", "research topic", "study topic", "주제"]);
-  const objectiveLabel = extractLabeledValue(normalized, [
-    "objective",
-    "objective metric",
-    "goal",
-    "success metric",
-    "metric",
-    "목표",
-    "지표"
-  ]);
-  const objectiveSection = markdownSections?.objectiveMetric;
-  const constraintsLabel = extractLabeledValue(normalized, [
-    "constraints",
-    "constraint",
-    "requirements",
-    "limits",
-    "조건",
-    "제약"
-  ]);
-  const constraintsSection = markdownSections?.constraints;
-  const planLabel = extractLabeledValue(normalized, [
-    "plan",
-    "approach",
-    "experimental plan",
-    "method",
-    "계획",
-    "방법"
-  ]);
-  const planSection = markdownSections?.plan;
+  const explicitAnchors = extractStructuredRunBriefAnchors(normalized);
+  const sentenceObjective = cleanText(extractObjectiveFromSentence(normalized));
+  const sentenceConstraints = parseConstraintList(extractConstraintSentence(normalized));
+  const sentencePlan = cleanText(extractPlanSentence(normalized));
 
-  const topic =
-    cleanText(topicLabel) ||
-    cleanText(stripRunCreationLead(normalized)) ||
-    defaults.topic;
-  const objectiveMetric =
-    cleanText(objectiveSection) ||
-    cleanText(objectiveLabel) ||
-    cleanText(extractObjectiveFromSentence(normalized)) ||
-    defaults.objectiveMetric;
-  const constraints =
-    parseConstraintList(constraintsSection) ||
-    parseConstraintList(constraintsLabel) ||
-    parseConstraintList(extractConstraintSentence(normalized)) ||
-    defaults.constraints;
-  const planSummary = cleanText(planSection) || cleanText(planLabel) || cleanText(extractPlanSentence(normalized)) || undefined;
+  const topic = explicitAnchors.topic || cleanText(stripRunCreationLead(normalized)) || defaults.topic;
+  const objectiveMetric = explicitAnchors.objectiveMetric || sentenceObjective || defaults.objectiveMetric;
+  const constraints = explicitAnchors.constraints || sentenceConstraints || defaults.constraints;
+  const planSummary = explicitAnchors.planSummary || sentencePlan || undefined;
+  const assumptions: string[] = [];
+
+  if (!explicitAnchors.objectiveMetric && !sentenceObjective) {
+    assumptions.push(`Used default objective metric: ${objectiveMetric}`);
+  }
+  if (!explicitAnchors.constraints && !sentenceConstraints) {
+    assumptions.push(`Used default constraints: ${constraints.join(", ") || "none"}`);
+  }
+  if (!explicitAnchors.planSummary && planSummary) {
+    assumptions.push("Derived a short plan summary from the free-form brief.");
+  }
 
   return {
     topic,
     objectiveMetric,
     constraints,
     planSummary,
-    assumptions: buildHeuristicAssumptions(normalized, {
-      topic,
-      objectiveMetric,
-      constraints,
-      planSummary
-    }),
+    assumptions: assumptions.slice(0, 4),
     source: "heuristic_fallback",
     rawBrief: brief
   };
@@ -236,8 +216,10 @@ function buildRunBriefPrompt(
     "",
     "Rules:",
     "- topic should be concise and specific enough for literature collection.",
+    "- If the brief already has an explicit Topic/주제 field, preserve its wording closely and do not fold constraints into the topic.",
     "- objective_metric should be the main success criterion or metric.",
     "- constraints should capture explicit limits, required datasets/tools, time windows, venue style, or budget constraints.",
+    "- Preserve one constraint per bullet/item when the brief uses a list.",
     "- plan_summary should preserve experimental intent that does not fit neatly into topic/objective/constraints.",
     "- If a field is missing, fall back to the provided defaults only when necessary.",
     "",
@@ -308,35 +290,33 @@ function extractPlanSentence(text: string): string | undefined {
 }
 
 function parseConstraintList(value: string | undefined): string[] | undefined {
-  const cleaned = cleanText(value);
-  if (!cleaned) {
+  if (typeof value !== "string") {
     return undefined;
   }
-  const items = cleaned
-    .split(/\n|[;,]/u)
-    .map((item) => item.replace(/^[-*+]\s*/u, "").trim())
+
+  const normalized = value.replace(/\r/g, "").trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const bulletItems = parseMarkdownListItems(normalized);
+  if (bulletItems.length > 0) {
+    return bulletItems;
+  }
+
+  const lines = normalized
+    .split("\n")
+    .map((line) => cleanText(line.replace(/^[-*+]\s*/u, "")))
+    .filter(Boolean);
+  if (lines.length > 1) {
+    return lines;
+  }
+
+  const items = normalized
+    .split(/[;,]/u)
+    .map((item) => cleanText(item.replace(/^[-*+]\s*/u, "")))
     .filter(Boolean);
   return items.length > 0 ? items : undefined;
-}
-
-function buildHeuristicAssumptions(
-  brief: string,
-  extracted: { topic: string; objectiveMetric: string; constraints: string[]; planSummary?: string }
-): string[] {
-  const assumptions: string[] = [];
-  if (!extractObjectiveFromSentence(brief) && !extractLabeledValue(brief, ["objective", "goal", "metric", "목표", "지표"])) {
-    assumptions.push(`Used default objective metric: ${extracted.objectiveMetric}`);
-  }
-  if (
-    !extractConstraintSentence(brief) &&
-    !extractLabeledValue(brief, ["constraints", "constraint", "requirements", "limits", "조건", "제약"])
-  ) {
-    assumptions.push(`Used default constraints: ${extracted.constraints.join(", ") || "none"}`);
-  }
-  if (!extractLabeledValue(brief, ["plan", "approach", "experimental plan", "method", "계획", "방법"]) && extracted.planSummary) {
-    assumptions.push("Derived a short plan summary from the free-form brief.");
-  }
-  return assumptions.slice(0, 4);
 }
 
 function stripRunCreationLead(text: string): string {
@@ -403,4 +383,79 @@ function collapseMarkdownSection(lines: string[] | undefined): string | undefine
   }
   const value = lines.join("\n").trim();
   return value || undefined;
+}
+
+function extractStructuredRunBriefAnchors(markdown: string): {
+  topic?: string;
+  objectiveMetric?: string;
+  constraints?: string[];
+  planSummary?: string;
+} {
+  const markdownSections = parseMarkdownRunBriefSections(markdown);
+
+  return {
+    topic:
+      cleanText(markdownSections?.topic) ||
+      cleanText(extractLabeledValue(markdown, ["topic", "research topic", "study topic", "주제"])) ||
+      undefined,
+    objectiveMetric:
+      cleanText(markdownSections?.objectiveMetric) ||
+      cleanText(
+        extractLabeledValue(markdown, [
+          "objective",
+          "objective metric",
+          "goal",
+          "success metric",
+          "metric",
+          "목표",
+          "지표"
+        ])
+      ) ||
+      undefined,
+    constraints:
+      parseConstraintList(markdownSections?.constraints) ||
+      parseConstraintList(
+        extractLabeledValue(markdown, ["constraints", "constraint", "requirements", "limits", "조건", "제약"])
+      ) ||
+      undefined,
+    planSummary:
+      cleanText(markdownSections?.plan) ||
+      cleanText(extractLabeledValue(markdown, ["plan", "approach", "experimental plan", "method", "계획", "방법"])) ||
+      undefined
+  };
+}
+
+function parseMarkdownListItems(value: string): string[] {
+  const items: string[] = [];
+  let current: string[] = [];
+
+  const flush = () => {
+    const combined = cleanText(current.join(" "));
+    if (combined) {
+      items.push(combined);
+    }
+    current = [];
+  };
+
+  for (const line of value.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flush();
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^(?:[-*+]|\d+[.)])\s+(.*)$/u);
+    if (bulletMatch) {
+      flush();
+      current.push(bulletMatch[1]);
+      continue;
+    }
+
+    if (current.length > 0) {
+      current.push(trimmed);
+    }
+  }
+
+  flush();
+  return items;
 }

@@ -58,6 +58,16 @@ class CountingJsonLLM extends MockLLMClient {
   }
 }
 
+class FixedErrorLLM extends MockLLMClient {
+  constructor(private readonly error: Error) {
+    super();
+  }
+
+  override async complete(_prompt: string): Promise<{ text: string }> {
+    throw this.error;
+  }
+}
+
 function makeRun(runId: string): RunRecord {
   return {
     version: 3,
@@ -488,6 +498,117 @@ describe("analyzePapers node", () => {
     expect(loggedTexts.some((text) => text.includes("would not reduce the failed subset"))).toBe(true);
   });
 
+  it("pauses after repeated zero-output retries when the failed subset does not shrink", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-zero-output-retry-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-zero-output-retry";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [{ paper_id: "p1", title: "Paper 1", abstract: "Abstract 1", authors: ["Alice"] }]);
+
+    const firstNode = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequenceJsonLLM(["invalid-json"]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const first = await firstNode.execute({ run, graph: run.graph });
+    expect(first.status).toBe("failure");
+
+    run.graph.retryCounters.analyze_papers = 1;
+
+    const eventStream = new InMemoryEventStream();
+    const secondNode = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new SequenceJsonLLM(["invalid-json"]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const second = await secondNode.execute({ run, graph: run.graph });
+    expect(second.status).toBe("success");
+    expect(second.needsApproval).toBe(true);
+    expect(second.transitionRecommendation?.action).toBe("pause_for_human");
+    expect(second.summary).toContain("no summaries or evidence");
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8").catch(() => "");
+    const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8").catch(() => "");
+    expect(summariesRaw).toBe("");
+    expect(evidenceRaw).toBe("");
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("produced zero summaries/evidence"))).toBe(true);
+  });
+
+  it("pauses for human when the requested model hits a usage limit before any outputs are produced", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-usage-limit-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-usage-limit";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [{ paper_id: "p1", title: "Paper 1", abstract: "Abstract 1", authors: ["Alice"] }]);
+
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new FixedErrorLLM(
+        new Error(
+          "You've hit your usage limit for GPT-5.3-Codex-Spark. Switch to another model now, or try again at 8:24 PM."
+        )
+      ),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(result.transitionRecommendation?.action).toBe("pause_for_human");
+    expect(result.summary).toContain("usage limit");
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8").catch(() => "");
+    const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8").catch(() => "");
+    expect(summariesRaw).toBe("");
+    expect(evidenceRaw).toBe("");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await runContext.get("analyze_papers.summary_count")).toBe(0);
+    expect(await runContext.get("analyze_papers.evidence_count")).toBe(0);
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("model usage-limit failure"))).toBe(true);
+  });
+
   it("rejects mismatched full-text sources before persisting analysis artifacts", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-source-mismatch-"));
     tempDirs.push(root);
@@ -780,6 +901,68 @@ describe("analyzePapers node", () => {
     expect(manifestRaw).toContain('"selectedPaperIds": [');
     expect(manifestRaw).toContain('"p2"');
     expect(manifestRaw).toContain('"selectionFingerprint"');
+  });
+
+  it("auto-gates a large corpus to top 30 when no explicit selection request is stored", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-auto-top30-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-auto-top30";
+    const run = makeRun(runId);
+    await writeCorpus(
+      runId,
+      Array.from({ length: 31 }, (_, index) => ({
+        paper_id: `p${index + 1}`,
+        title: `Paper ${index + 1}`,
+        abstract: `Abstract ${index + 1}`,
+        authors: [`Author ${index + 1}`],
+        pdf_url: `https://example.com/p${index + 1}.pdf`
+      }))
+    );
+
+    let analyzePdfCalls = 0;
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "responses_api_pdf",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new SequenceJsonLLM([
+        JSON.stringify({
+          ordered_paper_ids: Array.from({ length: 31 }, (_, index) => `p${index + 1}`)
+        })
+      ]),
+      pdfTextLlm: new SequenceJsonLLM([]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => {
+          analyzePdfCalls += 1;
+          return { text: jsonOutput(`summary ${analyzePdfCalls}`, `claim ${analyzePdfCalls}`) };
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(analyzePdfCalls).toBe(30);
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await runContext.get("analyze_papers.request")).toMatchObject({
+      topN: 30,
+      selectionMode: "top_n"
+    });
+    expect(await runContext.get("analyze_papers.selected_count")).toBe(30);
+
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
+    expect(manifestRaw).toContain('"topN": 30');
   });
 
   it("reuses cached rerank selection when request and corpus are unchanged", async () => {

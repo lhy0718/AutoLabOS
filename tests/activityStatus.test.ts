@@ -94,9 +94,38 @@ describe("activityStatus", () => {
     expect(isAnalyzeProgressLog("Rerank progress: 3/4 (75%) parsing model ordering.")).toBe(true);
   });
 
+  it("shows deterministic fallback when LLM rerank is unavailable", () => {
+    let state = updateAnalyzeProgressFromLog(undefined, "Ranking 300 papers and selecting the top 30 for analysis.", 0);
+    state = updateAnalyzeProgressFromLog(state, "Preparing LLM rerank for 90 candidate(s) to choose top 30.", 5_000);
+    state = updateAnalyzeProgressFromLog(
+      state,
+      "LLM rerank unavailable, falling back to deterministic order (You've hit your usage limit for GPT-5.3-Codex-Spark.).",
+      10_000
+    );
+
+    expect(formatAnalyzeProgressLogLine(state, 10_000)).toBe(
+      "Analyzing... rerank unavailable, using deterministic order for top 30 (GPT-5.3-Codex-Spark usage limit)"
+    );
+  });
+
+  it("warns when multiple analyzed papers still produced no persisted outputs", () => {
+    let state = updateAnalyzeProgressFromLog(undefined, "Ranking 300 papers and selecting the top 30 for analysis.", 0);
+    state = updateAnalyzeProgressFromLog(state, 'Analyzing paper 1/30: "Paper 1".', 60_000);
+    state = updateAnalyzeProgressFromLog(state, 'Analyzing paper 5/30: "Paper 5".', 300_000);
+
+    expect(formatAnalyzeProgressLogLine(state, 300_000)).toBe(
+      "Analyzing... 5/30 (no persisted outputs yet, ETA ~25m)"
+    );
+  });
+
   it("recognizes and clears analyze progress log lines", () => {
     expect(isAnalyzeProgressLog("Deterministic pre-rank started for 300 paper(s) using title/topic similarity, citation count, and recency.")).toBe(true);
     expect(isAnalyzeProgressLog('Analyzing paper 5/30: "Paper".')).toBe(true);
+    expect(
+      isAnalyzeProgressLog(
+        "LLM rerank fallback activated. Using deterministic order (You've hit your usage limit for GPT-5.3-Codex-Spark.)."
+      )
+    ).toBe(true);
     expect(isAnalyzeProgressLog("Persisted analysis outputs for \"Paper\" (1 summary row, 4 evidence row(s)).")).toBe(false);
 
     expect(shouldClearAnalyzeProgress("Analysis totals: summaries=30, evidence=120, full_text=30, abstract_fallback=0.")).toBe(true);

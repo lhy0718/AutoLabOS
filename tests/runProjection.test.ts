@@ -3,7 +3,12 @@ import { describe, expect, it } from "vitest";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { AutoLabOSEvent } from "../src/core/events.js";
 import { RunRecord } from "../src/types.js";
-import { applyEventToRunProjection, normalizeRunForDisplay, resolveFailedNode } from "../src/tui/runProjection.js";
+import {
+  applyEventToRunProjection,
+  normalizeRunForDisplay,
+  projectRunForDisplay,
+  resolveFailedNode
+} from "../src/tui/runProjection.js";
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   const now = new Date().toISOString();
@@ -108,5 +113,66 @@ describe("runProjection", () => {
     run.graph.nodeStates.generate_hypotheses.updatedAt = "2026-03-12T07:00:10.000Z";
 
     expect(resolveFailedNode(run)).toBe("generate_hypotheses");
+  });
+
+  it("prefers paused analyze failure details over a stale collect summary", () => {
+    const run = makeRun({
+      status: "paused",
+      currentNode: "analyze_papers",
+      latestSummary: 'Semantic Scholar stored 200 papers for "topic". Deferred enrichment continues for 173 paper(s).'
+    });
+    run.graph.currentNode = "analyze_papers";
+    run.graph.retryCounters.analyze_papers = 1;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "pending";
+    run.graph.nodeStates.analyze_papers.note = "Canceled by user";
+    run.graph.nodeStates.analyze_papers.lastError = "Analysis incomplete: 1 paper(s) failed validation or LLM extraction.";
+
+    const projection = projectRunForDisplay(run, {
+      collect: {
+        enrichmentStatus: "completed"
+      },
+      analyze: {
+        selectedCount: 1,
+        totalCandidates: 200,
+        summaryCount: 0,
+        evidenceCount: 0,
+        rerankApplied: false,
+        rerankFallbackReason: "You've hit your usage limit for GPT-5.3-Codex-Spark.",
+        selectedPaperLastError: "You've hit your usage limit for GPT-5.3-Codex-Spark."
+      }
+    });
+
+    expect(projection.staleLatestSummary).toBe(true);
+    expect(projection.usageLimitBlocked).toBe(true);
+    expect(projection.noArtifactProgress).toBe(true);
+    expect(projection.headline).toContain("paused after retry 1/3");
+    expect(projection.detail).toContain("LLM rerank fell back to deterministic order");
+  });
+
+  it("redirects actionable recovery to the upstream node when a downstream step lacks evidence", () => {
+    const run = makeRun({
+      status: "failed",
+      currentNode: "generate_hypotheses"
+    });
+    run.graph.currentNode = "generate_hypotheses";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.lastError = "Analysis incomplete: 19 paper(s) failed validation or LLM extraction.";
+    run.graph.nodeStates.generate_hypotheses.status = "failed";
+    run.graph.nodeStates.generate_hypotheses.lastError =
+      "generate_hypotheses requires at least one evidence item from analyze_papers.";
+
+    const projection = projectRunForDisplay(run, {
+      analyze: {
+        selectedCount: 0,
+        totalCandidates: 0,
+        summaryCount: 0,
+        evidenceCount: 0
+      }
+    });
+
+    expect(projection.actionableNode).toBe("analyze_papers");
+    expect(projection.blockedByUpstream).toBe(true);
+    expect(projection.headline).toContain("generate_hypotheses is blocked because analyze_papers has 0 evidence item(s)");
   });
 });

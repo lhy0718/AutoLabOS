@@ -83,6 +83,19 @@ interface AnalysisManifestEntry {
 }
 
 const MAX_AUTO_SELECTION_EXPANSIONS = 2;
+const DEFAULT_SAFE_ANALYSIS_TOP_N = 30;
+
+interface LoadedAnalysisSelectionRequest {
+  request: AnalysisSelectionRequest;
+  autoDefaultReason?: string;
+}
+
+interface SelectedFailureSummary {
+  failedEntries: AnalysisManifestEntry[];
+  usageLimitEntries: AnalysisManifestEntry[];
+  environmentBlockedEntries: AnalysisManifestEntry[];
+  cleanedMessages: string[];
+}
 
 export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -107,7 +120,16 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const summaryPath = path.join(artifactsRoot, "paper_summaries.jsonl");
       const evidencePath = path.join(artifactsRoot, "evidence_store.jsonl");
 
-      let request = await loadAnalysisSelectionRequest(runContextMemory);
+      const initialManifest = await readExistingManifest(manifestPath);
+      const loadedRequest = await loadAnalysisSelectionRequest(
+        runContextMemory,
+        corpusRows.length,
+        initialManifest?.request
+      );
+      let request = loadedRequest.request;
+      if (loadedRequest.autoDefaultReason) {
+        emitLog(loadedRequest.autoDefaultReason);
+      }
       const includePageImages = deps.config.providers?.llm_mode === "codex_chatgpt_only";
       const analysisFingerprint = buildAnalysisFingerprint({
         analysisMode,
@@ -117,15 +139,12 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       });
       let autoExpansionCount = 0;
       let autoExpansionReason: string | undefined;
-      let startedWithExistingManifest: boolean | undefined;
+      const startedWithExistingManifest = Boolean(initialManifest);
 
       while (true) {
         await runContextMemory.put("analyze_papers.request", request);
         const selectionRequestFingerprint = buildSelectionRequestFingerprint(request, run.title, run.topic);
         const existingManifest = await readExistingManifest(manifestPath);
-        if (startedWithExistingManifest === undefined) {
-          startedWithExistingManifest = Boolean(existingManifest);
-        }
         const reuseCachedSelection = canReuseManifestSelection(
           existingManifest,
           request,
@@ -551,6 +570,83 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
         if (failedCount > 0) {
           const failedPaperIds = getSelectedFailedPaperIds(manifest);
+          const failureSummary = summarizeSelectedFailures(manifest, selection.selectedPaperIds);
+          const zeroProgress = progress.summaryRows.length === 0 && progress.evidenceRows.length === 0;
+          const allSelectedFailed =
+            selection.selectedPaperIds.length > 0 && failedPaperIds.size === selection.selectedPaperIds.length;
+
+          if (failureSummary.usageLimitEntries.length > 0) {
+            const blockedCount = failureSummary.usageLimitEntries.length;
+            const sampleMessage = failureSummary.cleanedMessages[0] || "Model usage limit reached.";
+            emitLog(
+              `Detected model usage-limit failure for ${blockedCount} selected paper(s). Pausing analyze_papers instead of auto-retrying because the requested model is currently unavailable.`
+            );
+            return {
+              status: "success",
+              summary:
+                progress.evidenceRows.length > 0
+                  ? request.selectionMode === "top_n" && request.topN
+                    ? `Preserved partial analysis for top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers (${progress.summaryRows.length} summaries, ${progress.evidenceRows.length} evidence item(s)) after ${blockedCount} paper(s) hit the current model usage limit.`
+                    : `Preserved partial analysis (${progress.summaryRows.length} summaries, ${progress.evidenceRows.length} evidence item(s)) after ${blockedCount} paper(s) hit the current model usage limit.`
+                  : request.selectionMode === "top_n" && request.topN
+                    ? `analyze_papers paused because ${blockedCount}/${selection.selectedPaperIds.length} selected paper(s) hit the current model usage limit before any summaries or evidence were produced.`
+                    : `analyze_papers paused because ${blockedCount} selected paper(s) hit the current model usage limit before any summaries or evidence were produced.`,
+              needsApproval: true,
+              toolCallsUsed: Math.max(1, pendingRows.length),
+              transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+                runId: run.id,
+                reason:
+                  "analyze_papers is blocked by a model usage limit, so retrying immediately would churn without producing new outputs.",
+                confidence: 0.98,
+                targetNode: progress.evidenceRows.length > 0 ? "generate_hypotheses" : undefined,
+                evidence: [
+                  `${blockedCount} selected paper(s) reported a model usage-limit failure.`,
+                  progress.evidenceRows.length > 0
+                    ? `${progress.summaryRows.length} summary row(s) and ${progress.evidenceRows.length} evidence item(s) are already persisted.`
+                    : "No summaries or evidence were persisted before the limit was hit.",
+                  sampleMessage
+                ],
+                suggestedCommands:
+                  progress.evidenceRows.length > 0
+                    ? [`/agent run generate_hypotheses ${run.id}`, `/model`, `/agent run analyze_papers ${run.id}`]
+                    : ["/model", `/agent run analyze_papers ${run.id}`]
+              })
+            };
+          }
+
+          if (
+            zeroProgress &&
+            allSelectedFailed &&
+            failureSummary.environmentBlockedEntries.length === failureSummary.failedEntries.length &&
+            failureSummary.environmentBlockedEntries.length > 0
+          ) {
+            const sampleMessage = failureSummary.cleanedMessages[0] || "Environment blocked paper analysis.";
+            emitLog(
+              "All selected papers failed with environment or permission errors before any summaries/evidence were produced. Pausing instead of auto-retrying the same blocked analysis pass."
+            );
+            return {
+              status: "success",
+              summary:
+                request.selectionMode === "top_n" && request.topN
+                  ? `analyze_papers paused because all top ${selection.selectedPaperIds.length} selected paper(s) failed with environment or permission errors before any summaries or evidence were produced.`
+                  : "analyze_papers paused because all selected papers failed with environment or permission errors before any summaries or evidence were produced.",
+              needsApproval: true,
+              toolCallsUsed: Math.max(1, pendingRows.length),
+              transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+                runId: run.id,
+                reason:
+                  "analyze_papers is blocked by environment or permission errors, so another automatic retry would likely fail the same way.",
+                confidence: 0.96,
+                evidence: [
+                  `${failureSummary.environmentBlockedEntries.length} selected paper(s) failed with environment or permission errors.`,
+                  "No summaries or evidence were persisted in this pass.",
+                  sampleMessage
+                ],
+                suggestedCommands: ["/doctor", "/model", `/agent run analyze_papers ${run.id}`]
+              })
+            };
+          }
+
           const stalledFailures = shouldPauseForRepeatedAnalysisFailures({
             previousFailedPaperIds,
             currentFailedPaperIds: failedPaperIds,
@@ -582,6 +678,32 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                     ? `The failed subset stayed at ${previousFailedPaperIds.size} -> ${failedPaperIds.size} paper(s).`
                     : `Retry counter before this pass was ${run.graph.retryCounters.analyze_papers ?? 0}.`
                 ]
+              })
+            };
+          }
+          if (stalledFailures && zeroProgress && allSelectedFailed) {
+            emitLog(
+              `Repeated analyze_papers retry still produced zero summaries/evidence and did not shrink the failed subset (${failedPaperIds.size} paper(s)). Pausing for manual review instead of retrying again.`
+            );
+            return {
+              status: "success",
+              summary:
+                request.selectionMode === "top_n" && request.topN
+                  ? `analyze_papers produced no summaries or evidence after repeated retries on top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers, so the node paused for manual review.`
+                  : "analyze_papers produced no summaries or evidence after repeated retries, so the node paused for manual review.",
+              needsApproval: true,
+              toolCallsUsed: Math.max(1, pendingRows.length),
+              transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+                runId: run.id,
+                reason:
+                  "Repeated analyze_papers retries produced zero persisted outputs and the failed paper subset did not shrink.",
+                confidence: 0.94,
+                evidence: [
+                  `${failedPaperIds.size} selected paper(s) remain failed after repeated retries.`,
+                  "No summaries or evidence are currently persisted for the selected set.",
+                  failureSummary.cleanedMessages[0] || `Retry counter before this pass was ${run.graph.retryCounters.analyze_papers ?? 0}.`
+                ],
+                suggestedCommands: ["/doctor", "/model", `/agent run analyze_papers ${run.id}`]
               })
             };
           }
@@ -732,7 +854,11 @@ function isAbortError(error: unknown): boolean {
   return message.includes("aborted") || message.includes("abort");
 }
 
-async function loadAnalysisSelectionRequest(runContextMemory: RunContextMemory): Promise<AnalysisSelectionRequest> {
+async function loadAnalysisSelectionRequest(
+  runContextMemory: RunContextMemory,
+  corpusCount: number,
+  existingRequest?: AnalysisSelectionRequest
+): Promise<LoadedAnalysisSelectionRequest> {
   const stored = await runContextMemory.get<{ topN?: unknown; selectionMode?: unknown; selectionPolicy?: unknown }>(
     "analyze_papers.request"
   );
@@ -740,7 +866,32 @@ async function loadAnalysisSelectionRequest(runContextMemory: RunContextMemory):
     typeof stored?.topN === "number" && Number.isFinite(stored.topN) && stored.topN > 0
       ? Math.floor(stored.topN)
       : null;
-  return normalizeAnalysisSelectionRequest(topN);
+  if (topN) {
+    return {
+      request: normalizeAnalysisSelectionRequest(topN)
+    };
+  }
+  if (stored && typeof stored === "object" && stored.selectionMode === "all") {
+    return {
+      request: normalizeAnalysisSelectionRequest(null)
+    };
+  }
+  if (existingRequest) {
+    return {
+      request: existingRequest
+    };
+  }
+  if (corpusCount > DEFAULT_SAFE_ANALYSIS_TOP_N) {
+    return {
+      request: normalizeAnalysisSelectionRequest(DEFAULT_SAFE_ANALYSIS_TOP_N),
+      autoDefaultReason:
+        `No explicit analyze_papers selection was stored. ` +
+        `For a large corpus of ${corpusCount} papers, auto-start is using top ${DEFAULT_SAFE_ANALYSIS_TOP_N} instead of analyzing all candidates.`
+    };
+  }
+  return {
+    request: normalizeAnalysisSelectionRequest(null)
+  };
 }
 
 async function readCorpusRows(runId: string): Promise<AnalysisCorpusRow[]> {
@@ -1208,6 +1359,7 @@ function createAnalyzePapersManualReviewRecommendation(input: {
   evidence: string[];
   confidence: number;
   targetNode?: TransitionRecommendation["targetNode"];
+  suggestedCommands?: string[];
 }): TransitionRecommendation {
   return {
     action: "pause_for_human",
@@ -1217,9 +1369,80 @@ function createAnalyzePapersManualReviewRecommendation(input: {
     confidence: Number(input.confidence.toFixed(2)),
     autoExecutable: false,
     evidence: input.evidence.slice(0, 4),
-    suggestedCommands: [`/agent run generate_hypotheses ${input.runId}`, `/agent run analyze_papers ${input.runId}`],
+    suggestedCommands:
+      input.suggestedCommands && input.suggestedCommands.length > 0
+        ? input.suggestedCommands.slice(0, 4)
+        : [`/agent run generate_hypotheses ${input.runId}`, `/agent run analyze_papers ${input.runId}`],
     generatedAt: new Date().toISOString()
   };
+}
+
+function summarizeSelectedFailures(
+  manifest: AnalysisManifest,
+  selectedPaperIds: string[]
+): SelectedFailureSummary {
+  const selectedSet = new Set(selectedPaperIds);
+  const failedEntries = Object.values(manifest.papers).filter(
+    (entry) => selectedSet.has(entry.paper_id) && entry.status === "failed"
+  );
+  return {
+    failedEntries,
+    usageLimitEntries: failedEntries.filter((entry) => isModelUsageLimitError(entry.last_error)),
+    environmentBlockedEntries: failedEntries.filter((entry) => isEnvironmentBlockedError(entry.last_error)),
+    cleanedMessages: Array.from(
+      new Set(
+        failedEntries
+          .map((entry) => cleanFailureMessage(entry.last_error))
+          .filter((message): message is string => Boolean(message))
+      )
+    )
+  };
+}
+
+function cleanFailureMessage(message: string | undefined): string | undefined {
+  if (!message) {
+    return undefined;
+  }
+  const lines = message
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !isBenignCodexCleanupWarning(line));
+  const cleaned = (lines.length > 0 ? lines.join(" ") : message.trim()).trim();
+  if (!cleaned) {
+    return undefined;
+  }
+  return cleaned.length > 240 ? `${cleaned.slice(0, 237)}...` : cleaned;
+}
+
+function isBenignCodexCleanupWarning(message: string): boolean {
+  return /codex_core::shell_snapshot/i.test(message) || /failed to delete shell snapshot/i.test(message);
+}
+
+function isModelUsageLimitError(message: string | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+  return (
+    /usage limit/i.test(message) ||
+    /switch to another model/i.test(message) ||
+    /try again at \d{1,2}:\d{2}/i.test(message) ||
+    /quota exceeded/i.test(message)
+  );
+}
+
+function isEnvironmentBlockedError(message: string | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+  return [
+    /operation not permitted/i,
+    /failed to write models cache/i,
+    /readonly database/i,
+    /read-only database/i,
+    /could not update path/i,
+    /attempt to write a readonly database/i
+  ].some((pattern) => pattern.test(message));
 }
 
 const SOURCE_IDENTITY_STOPWORDS = new Set([

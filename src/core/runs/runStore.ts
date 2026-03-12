@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 
 import { AppPaths } from "../../config.js";
-import { GraphNodeId, NodeStatus, RunRecord, RunsFile, SlashContextRun } from "../../types.js";
+import { GRAPH_NODE_ORDER, GraphNodeId, NodeStatus, RunRecord, RunsFile, SlashContextRun } from "../../types.js";
 import { ensureDir, readJsonFile, writeJsonFile } from "../../utils/fs.js";
 import { nowIso } from "../../utils/time.js";
 import {
@@ -13,6 +13,7 @@ import {
   migrateAnyRunsFileToV3
 } from "./migrateRuns.js";
 import { createDefaultGraphState } from "../stateGraph/defaults.js";
+import { RunContextItem } from "../memory/runContextMemory.js";
 
 export interface CreateRunInput {
   title: string;
@@ -26,7 +27,14 @@ export class RunStore {
 
   async listRuns(): Promise<RunRecord[]> {
     const runsFile = await this.readRunsFile();
-    return [...runsFile.runs].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    const reconciledRuns = await Promise.all(runsFile.runs.map((run) => this.reconcileRunRecord(run)));
+    if (JSON.stringify(runsFile.runs) !== JSON.stringify(reconciledRuns)) {
+      await this.writeRunsFile({
+        version: 3,
+        runs: reconciledRuns
+      });
+    }
+    return [...reconciledRuns].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   }
 
   async getRun(id: string): Promise<RunRecord | undefined> {
@@ -87,8 +95,9 @@ export class RunStore {
       throw new Error(`Run not found: ${run.id}`);
     }
 
-    run.updatedAt = nowIso();
-    runsFile.runs[idx] = run;
+    const reconciled = await this.reconcileRunRecord(run);
+    reconciled.updatedAt = nowIso();
+    runsFile.runs[idx] = reconciled;
     await this.writeRunsFile(runsFile);
   }
 
@@ -180,35 +189,127 @@ export class RunStore {
       ensureDir(path.join(runRoot, "paper"))
     ]);
   }
+
+  private async reconcileRunRecord(run: RunRecord): Promise<RunRecord> {
+    let next = normalizeRunRecord(run);
+    const details = await this.readDerivedRunDetails(next);
+    const collectSummary = buildCollectDerivedSummary(details);
+    const analyzeSummary = buildAnalyzeDerivedSummary(details);
+
+    next = applyCollectDerivedState(next, collectSummary);
+    next = applyAnalyzeDerivedState(next, analyzeSummary);
+    next = normalizeCurrentRunPointer(next);
+
+    const latestSummary = pickLatestSummary(next);
+    if (latestSummary) {
+      next.latestSummary = latestSummary;
+    }
+
+    const latestTimestamp = maxIso([
+      next.updatedAt,
+      ...GRAPH_NODE_ORDER.map((node) => next.graph.nodeStates[node]?.updatedAt),
+      collectSummary.updatedAt,
+      analyzeSummary.updatedAt
+    ]);
+    if (latestTimestamp) {
+      next.updatedAt = latestTimestamp;
+    }
+
+    return next;
+  }
+
+  private async readDerivedRunDetails(run: RunRecord): Promise<DerivedRunDetails> {
+    const runRoot = path.join(this.paths.runsDir, run.id);
+    const runContextPath = this.resolveWorkspacePath(run.memoryRefs.runContextPath);
+    const [contextItems, collectResultFile, analysisManifest, summaryArtifact, evidenceArtifact] = await Promise.all([
+      this.readRunContextItems(runContextPath),
+      this.readOptionalJson<CollectResultLike>(path.join(runRoot, "collect_result.json")),
+      this.readOptionalJson<AnalysisManifestLike>(path.join(runRoot, "analysis_manifest.json")),
+      this.readJsonlArtifact(path.join(runRoot, "paper_summaries.jsonl")),
+      this.readJsonlArtifact(path.join(runRoot, "evidence_store.jsonl"))
+    ]);
+
+    return {
+      contextEntries: new Map(contextItems.map((item) => [item.key, item])),
+      collectResultFile,
+      analysisManifest,
+      summaryArtifact,
+      evidenceArtifact
+    };
+  }
+
+  private resolveWorkspacePath(filePath: string): string {
+    return path.isAbsolute(filePath) ? filePath : path.join(this.paths.cwd, filePath);
+  }
+
+  private async readRunContextItems(filePath: string): Promise<RunContextItem[]> {
+    try {
+      const raw = await readJsonFile<{ items?: RunContextItem[] }>(filePath);
+      return Array.isArray(raw.items) ? raw.items : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private async readOptionalJson<T>(filePath: string): Promise<DerivedJsonFile<T>> {
+    try {
+      const [value, stat] = await Promise.all([readJsonFile<T>(filePath), fs.stat(filePath)]);
+      return {
+        value,
+        updatedAt: extractUpdatedAtCandidate(value, stat.mtime.toISOString())
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  private async readJsonlArtifact(filePath: string): Promise<DerivedCountFile> {
+    try {
+      const [raw, stat] = await Promise.all([fs.readFile(filePath, "utf8"), fs.stat(filePath)]);
+      return {
+        count: raw
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0).length,
+        updatedAt: stat.mtime.toISOString()
+      };
+    } catch {
+      return {};
+    }
+  }
 }
 
 function normalizeRunsV3(runsFile: RunsFile): RunsFile {
   return {
     version: 3,
-    runs: runsFile.runs.map((run) => ({
-      ...run,
-      version: 3,
-      workflowVersion: 3,
-      graph: {
-        ...createDefaultGraphState(),
-        ...run.graph,
-        nodeStates: {
-          ...createDefaultGraphState().nodeStates,
-          ...(run.graph?.nodeStates ?? {})
-        },
-        retryCounters: run.graph?.retryCounters ?? {},
-        rollbackCounters: run.graph?.rollbackCounters ?? {},
-        researchCycle: run.graph?.researchCycle ?? 0,
-        transitionHistory: run.graph?.transitionHistory ?? [],
-        pendingTransition: normalizePendingTransition(run.graph?.pendingTransition)
+    runs: runsFile.runs.map((run) => normalizeRunRecord(run))
+  };
+}
+
+function normalizeRunRecord(run: RunRecord): RunRecord {
+  return {
+    ...run,
+    version: 3,
+    workflowVersion: 3,
+    graph: {
+      ...createDefaultGraphState(),
+      ...run.graph,
+      nodeStates: {
+        ...createDefaultGraphState().nodeStates,
+        ...(run.graph?.nodeStates ?? {})
       },
-      nodeThreads: run.nodeThreads ?? {},
-      memoryRefs: run.memoryRefs ?? {
-        runContextPath: `.autolabos/runs/${run.id}/memory/run_context.json`,
-        longTermPath: `.autolabos/runs/${run.id}/memory/long_term.jsonl`,
-        episodePath: `.autolabos/runs/${run.id}/memory/episodes.jsonl`
-      }
-    }))
+      retryCounters: run.graph?.retryCounters ?? {},
+      rollbackCounters: run.graph?.rollbackCounters ?? {},
+      researchCycle: run.graph?.researchCycle ?? 0,
+      transitionHistory: run.graph?.transitionHistory ?? [],
+      pendingTransition: normalizePendingTransition(run.graph?.pendingTransition)
+    },
+    nodeThreads: run.nodeThreads ?? {},
+    memoryRefs: run.memoryRefs ?? {
+      runContextPath: `.autolabos/runs/${run.id}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${run.id}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${run.id}/memory/episodes.jsonl`
+    }
   };
 }
 
@@ -229,4 +330,383 @@ function normalizePendingTransition(
     };
   }
   return transition;
+}
+
+interface DerivedJsonFile<T> {
+  value?: T;
+  updatedAt?: string;
+}
+
+interface DerivedCountFile {
+  count?: number;
+  updatedAt?: string;
+}
+
+interface DerivedRunDetails {
+  contextEntries: Map<string, RunContextItem>;
+  collectResultFile: DerivedJsonFile<CollectResultLike>;
+  analysisManifest: DerivedJsonFile<AnalysisManifestLike>;
+  summaryArtifact: DerivedCountFile;
+  evidenceArtifact: DerivedCountFile;
+}
+
+interface DerivedNodeSummary {
+  summary?: string;
+  updatedAt?: string;
+}
+
+interface CollectResultLike {
+  query?: unknown;
+  stored?: unknown;
+  pdfRecovered?: unknown;
+  bibtexEnriched?: unknown;
+  enrichment?: {
+    status?: unknown;
+    targetCount?: unknown;
+  };
+}
+
+interface AnalyzeRequestLike {
+  topN?: unknown;
+  selectionMode?: unknown;
+}
+
+interface AnalysisManifestEntryLike {
+  status?: unknown;
+  selected?: unknown;
+  summary_count?: unknown;
+  evidence_count?: unknown;
+  updatedAt?: unknown;
+  source_type?: unknown;
+}
+
+interface AnalysisManifestLike {
+  updatedAt?: unknown;
+  request?: AnalyzeRequestLike;
+  totalCandidates?: unknown;
+  selectedPaperIds?: unknown;
+  analysisFingerprint?: unknown;
+  papers?: Record<string, AnalysisManifestEntryLike>;
+}
+
+function applyCollectDerivedState(run: RunRecord, summary: DerivedNodeSummary): RunRecord {
+  if (!summary.summary) {
+    return run;
+  }
+
+  const state = run.graph.nodeStates.collect_papers;
+  return {
+    ...run,
+    graph: {
+      ...run.graph,
+      nodeStates: {
+        ...run.graph.nodeStates,
+        collect_papers: mergeNodeNote(state, summary)
+      }
+    }
+  };
+}
+
+function applyAnalyzeDerivedState(run: RunRecord, summary: DerivedNodeSummary): RunRecord {
+  if (!summary.summary) {
+    return run;
+  }
+
+  const state = run.graph.nodeStates.analyze_papers;
+  return {
+    ...run,
+    graph: {
+      ...run.graph,
+      nodeStates: {
+        ...run.graph.nodeStates,
+        analyze_papers: mergeNodeNote(state, summary)
+      }
+    }
+  };
+}
+
+function buildCollectDerivedSummary(details: DerivedRunDetails): DerivedNodeSummary {
+  const fromContext = getContextEntryValue<CollectResultLike>(details.contextEntries, "collect_papers.last_result");
+  const fromRequest = getContextEntryValue<Record<string, unknown>>(details.contextEntries, "collect_papers.last_request");
+  const meta = fromContext.value ?? details.collectResultFile.value;
+  if (!meta) {
+    return {};
+  }
+
+  const stored = toFiniteNumber(meta.stored);
+  if (stored == null) {
+    return {};
+  }
+
+  const query =
+    toOptionalString(meta.query) ||
+    toOptionalString(fromRequest.value?.query) ||
+    undefined;
+  const pdfRecovered = toFiniteNumber(meta.pdfRecovered) ?? 0;
+  const bibtexEnriched = toFiniteNumber(meta.bibtexEnriched) ?? 0;
+  const enrichmentStatus = toOptionalString(meta.enrichment?.status);
+  const enrichmentTargetCount = toFiniteNumber(meta.enrichment?.targetCount) ?? 0;
+  const baseSummary = query
+    ? `Semantic Scholar stored ${stored} papers for "${query}".`
+    : `Semantic Scholar stored ${stored} papers.`;
+  const enrichmentSummary =
+    enrichmentStatus === "completed"
+      ? ` PDF recovered ${pdfRecovered}; BibTeX enriched ${bibtexEnriched}.`
+      : enrichmentTargetCount > 0
+        ? ` Deferred enrichment continues for ${enrichmentTargetCount} paper(s).`
+        : "";
+
+  return {
+    summary: `${baseSummary}${enrichmentSummary}`.trim(),
+    updatedAt: maxIso([fromContext.updatedAt, details.collectResultFile.updatedAt])
+  };
+}
+
+function buildAnalyzeDerivedSummary(details: DerivedRunDetails): DerivedNodeSummary {
+  const manifest = details.analysisManifest.value;
+  const manifestEntries = Object.values(manifest?.papers ?? {});
+  const contextRequest = getContextEntryValue<AnalyzeRequestLike>(details.contextEntries, "analyze_papers.request");
+  const selectedCount = maxNumber([
+    toFiniteNumber(getContextEntryValue(details.contextEntries, "analyze_papers.selected_count").value),
+    Array.isArray(manifest?.selectedPaperIds) ? manifest.selectedPaperIds.length : undefined
+  ]);
+  const totalCandidates = maxNumber([
+    toFiniteNumber(getContextEntryValue(details.contextEntries, "analyze_papers.total_candidates").value),
+    toFiniteNumber(manifest?.totalCandidates)
+  ]);
+  const summaryCount = maxNumber([
+    toFiniteNumber(getContextEntryValue(details.contextEntries, "analyze_papers.summary_count").value),
+    details.summaryArtifact.count,
+    sumManifestCounts(manifestEntries, "summary_count")
+  ]) ?? 0;
+  const evidenceCount = maxNumber([
+    toFiniteNumber(getContextEntryValue(details.contextEntries, "analyze_papers.evidence_count").value),
+    details.evidenceArtifact.count,
+    sumManifestCounts(manifestEntries, "evidence_count")
+  ]) ?? 0;
+  const fullTextCount = maxNumber([
+    toFiniteNumber(getContextEntryValue(details.contextEntries, "analyze_papers.full_text_count").value),
+    countManifestBySourceType(manifestEntries, "full_text")
+  ]) ?? 0;
+  const abstractFallbackCount = maxNumber([
+    toFiniteNumber(getContextEntryValue(details.contextEntries, "analyze_papers.abstract_fallback_count").value),
+    countManifestBySourceType(manifestEntries, "abstract")
+  ]) ?? 0;
+  const failedCount = countSelectedFailedEntries(manifestEntries);
+  const request = contextRequest.value ?? manifest?.request;
+  const topN = toFiniteNumber(request?.topN);
+  const selectionMode = toOptionalString(request?.selectionMode);
+  const analysisMode = extractAnalysisMode(manifest?.analysisFingerprint);
+
+  if ((selectedCount ?? 0) <= 0 && summaryCount <= 0 && evidenceCount <= 0 && failedCount <= 0) {
+    return {};
+  }
+
+  let summary: string;
+  if (failedCount > 0) {
+    if (selectionMode === "top_n" && topN && (totalCandidates ?? 0) > 0 && (selectedCount ?? 0) > 0) {
+      summary = `Analyzed ${summaryCount}/${selectedCount} selected papers from ${totalCandidates} candidates; ${failedCount} failed and can be retried.`;
+    } else if ((selectedCount ?? 0) > 0 && (totalCandidates ?? 0) > 0) {
+      summary = `Analyzed ${summaryCount}/${selectedCount} selected papers from ${totalCandidates} candidates; ${failedCount} failed and can be retried.`;
+    } else if (summaryCount > 0 || evidenceCount > 0) {
+      summary = `Analyzed ${summaryCount} papers into ${evidenceCount} evidence item(s); ${failedCount} failed and can be retried.`;
+    } else {
+      summary = `Analysis incomplete: ${failedCount} paper(s) failed validation or LLM extraction.`;
+    }
+  } else if (selectionMode === "top_n" && topN && (totalCandidates ?? 0) > 0 && (selectedCount ?? 0) > 0) {
+    summary = `Analyzed top ${selectedCount}/${totalCandidates} ranked papers into ${evidenceCount} evidence item(s); ${fullTextCount} full-text and ${abstractFallbackCount} abstract fallback${analysisMode ? ` (mode=${analysisMode})` : ""}.`;
+  } else if ((selectedCount ?? 0) > 0 || summaryCount > 0 || evidenceCount > 0) {
+    summary = `Analyzed ${summaryCount} papers into ${evidenceCount} evidence item(s); ${fullTextCount} full-text and ${abstractFallbackCount} abstract fallback${analysisMode ? ` (mode=${analysisMode})` : ""}.`;
+  } else {
+    summary = `Prepared analysis selection for ${totalCandidates ?? 0} candidate paper(s).`;
+  }
+
+  const updatedAt = maxIso([
+    contextRequest.updatedAt,
+    getContextEntryValue(details.contextEntries, "analyze_papers.summary_count").updatedAt,
+    getContextEntryValue(details.contextEntries, "analyze_papers.evidence_count").updatedAt,
+    getContextEntryValue(details.contextEntries, "analyze_papers.full_text_count").updatedAt,
+    getContextEntryValue(details.contextEntries, "analyze_papers.abstract_fallback_count").updatedAt,
+    getContextEntryValue(details.contextEntries, "analyze_papers.selected_count").updatedAt,
+    getContextEntryValue(details.contextEntries, "analyze_papers.total_candidates").updatedAt,
+    details.analysisManifest.updatedAt,
+    details.summaryArtifact.updatedAt,
+    details.evidenceArtifact.updatedAt
+  ]);
+
+  return {
+    summary,
+    updatedAt
+  };
+}
+
+function mergeNodeNote(
+  state: RunRecord["graph"]["nodeStates"][GraphNodeId],
+  derived: DerivedNodeSummary
+): RunRecord["graph"]["nodeStates"][GraphNodeId] {
+  if (!derived.summary) {
+    return state;
+  }
+
+  const note = (state.note || "").trim();
+  let nextNote = note;
+  if (!nextNote) {
+    nextNote = derived.summary;
+  } else if (updatedAtMs(derived.updatedAt) > updatedAtMs(state.updatedAt)) {
+    nextNote = derived.summary;
+  } else if (isAugmentableNote(nextNote)) {
+    nextNote = appendSummary(nextNote, derived.summary);
+  }
+
+  return {
+    ...state,
+    note: nextNote,
+    updatedAt: maxIso([state.updatedAt, derived.updatedAt]) || state.updatedAt
+  };
+}
+
+function normalizeCurrentRunPointer(run: RunRecord): RunRecord {
+  const activeNodes = GRAPH_NODE_ORDER.filter((node) => {
+    const status = run.graph.nodeStates[node]?.status;
+    return status === "running" || status === "needs_approval";
+  });
+  if (activeNodes.length === 0) {
+    return run;
+  }
+
+  const latestActiveNode = activeNodes.sort((left, right) => {
+    return updatedAtMs(run.graph.nodeStates[left]?.updatedAt) - updatedAtMs(run.graph.nodeStates[right]?.updatedAt);
+  })[activeNodes.length - 1];
+  if (latestActiveNode === run.currentNode && latestActiveNode === run.graph.currentNode) {
+    return run;
+  }
+
+  return {
+    ...run,
+    currentNode: latestActiveNode,
+    status: run.graph.nodeStates[latestActiveNode].status === "needs_approval" ? "paused" : "running",
+    graph: {
+      ...run.graph,
+      currentNode: latestActiveNode
+    }
+  };
+}
+
+function pickLatestSummary(run: RunRecord): string | undefined {
+  const currentNote = run.graph.nodeStates[run.currentNode]?.note?.trim();
+  if (currentNote) {
+    return currentNote;
+  }
+
+  const notedNodes = GRAPH_NODE_ORDER.filter((node) => Boolean(run.graph.nodeStates[node]?.note?.trim()));
+  if (notedNodes.length === 0) {
+    return run.latestSummary;
+  }
+
+  const latestNode = notedNodes.sort((left, right) => {
+    return updatedAtMs(run.graph.nodeStates[left]?.updatedAt) - updatedAtMs(run.graph.nodeStates[right]?.updatedAt);
+  })[notedNodes.length - 1];
+  return run.graph.nodeStates[latestNode]?.note?.trim() || run.latestSummary;
+}
+
+function getContextEntryValue<T>(
+  entries: Map<string, RunContextItem>,
+  key: string
+): { value?: T; updatedAt?: string } {
+  const item = entries.get(key);
+  return {
+    value: item?.value as T | undefined,
+    updatedAt: item?.updatedAt
+  };
+}
+
+function sumManifestCounts(entries: AnalysisManifestEntryLike[], field: "summary_count" | "evidence_count"): number | undefined {
+  if (entries.length === 0) {
+    return undefined;
+  }
+  return entries.reduce((total, entry) => total + (toFiniteNumber(entry[field]) ?? 0), 0);
+}
+
+function countSelectedFailedEntries(entries: AnalysisManifestEntryLike[]): number {
+  return entries.filter((entry) => {
+    return (entry.selected !== false) && toOptionalString(entry.status) === "failed";
+  }).length;
+}
+
+function countManifestBySourceType(entries: AnalysisManifestEntryLike[], sourceType: string): number | undefined {
+  if (entries.length === 0) {
+    return undefined;
+  }
+  return entries.filter((entry) => {
+    return (toFiniteNumber(entry.summary_count) ?? 0) > 0 && toOptionalString(entry.source_type) === sourceType;
+  }).length;
+}
+
+function extractAnalysisMode(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as { analysisMode?: unknown };
+    return toOptionalString(parsed.analysisMode);
+  } catch {
+    return undefined;
+  }
+}
+
+function extractUpdatedAtCandidate(value: unknown, fallback: string): string {
+  if (value && typeof value === "object") {
+    const updatedAt = toOptionalString((value as { updatedAt?: unknown }).updatedAt);
+    if (updatedAt) {
+      return updatedAt;
+    }
+    const timestamp = toOptionalString((value as { timestamp?: unknown }).timestamp);
+    if (timestamp) {
+      return timestamp;
+    }
+  }
+  return fallback;
+}
+
+function appendSummary(prefix: string, detail: string): string {
+  if (!detail || prefix.includes(detail)) {
+    return prefix;
+  }
+  return prefix.endsWith(".") ? `${prefix} ${detail}` : `${prefix}. ${detail}`;
+}
+
+function isAugmentableNote(note: string): boolean {
+  return [/^Canceled by user$/i, /^manual retry$/i, /^Auto retry scheduled/i].some((pattern) => pattern.test(note.trim()));
+}
+
+function toOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function toFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function maxNumber(values: Array<number | undefined>): number | undefined {
+  const present = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (present.length === 0) {
+    return undefined;
+  }
+  return Math.max(...present);
+}
+
+function maxIso(values: Array<string | undefined>): string | undefined {
+  const present = values.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (present.length === 0) {
+    return undefined;
+  }
+  return present.sort((left, right) => updatedAtMs(left) - updatedAtMs(right))[present.length - 1];
+}
+
+function updatedAtMs(value: string | undefined): number {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }

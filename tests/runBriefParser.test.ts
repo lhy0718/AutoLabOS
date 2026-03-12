@@ -46,6 +46,36 @@ describe("runBriefParser", () => {
     );
   });
 
+  it("preserves markdown bullet constraints in heuristic fallback", async () => {
+    const extracted = await extractRunBrief({
+      brief: [
+        "# Research Brief",
+        "",
+        "## Topic",
+        "",
+        "Classical machine learning baselines for tabular classification.",
+        "",
+        "## Constraints",
+        "",
+        "- Prefer CPU-only execution and lightweight Python dependencies.",
+        "- Avoid large model downloads, GPU-specific methods, and heavy preprocessing pipelines.",
+        "- Use a fixed train/validation/test protocol and report macro-F1, runtime, and memory consistently."
+      ].join("\n"),
+      defaults: {
+        topic: "default topic",
+        constraints: ["default constraint"],
+        objectiveMetric: "default metric"
+      }
+    });
+
+    expect(extracted.source).toBe("heuristic_fallback");
+    expect(extracted.constraints).toEqual([
+      "Prefer CPU-only execution and lightweight Python dependencies.",
+      "Avoid large model downloads, GPU-specific methods, and heavy preprocessing pipelines.",
+      "Use a fixed train/validation/test protocol and report macro-F1, runtime, and memory consistently."
+    ]);
+  });
+
   it("prefers the LLM extraction when valid JSON is returned", async () => {
     const llm = {
       runForText: vi.fn(async () =>
@@ -82,5 +112,48 @@ describe("runBriefParser", () => {
       assumptions: ["Assumed the benchmark is public."],
       source: "llm"
     });
+  });
+
+  it("keeps an explicit topic from the brief even when the llm narrows it", async () => {
+    const llm = {
+      runForText: vi.fn(async () =>
+        JSON.stringify({
+          topic: "Laptop-safe benchmarking of lightweight tabular classifiers versus logistic regression on small public datasets",
+          objective_metric: "robust macro-F1",
+          constraints: ["single GPU"],
+          plan_summary: "Compare a few classical models.",
+          assumptions: []
+        })
+      )
+    };
+
+    const extracted = await extractRunBrief({
+      brief: [
+        "# Research Brief",
+        "",
+        "## Topic",
+        "",
+        "Classical machine learning baselines for tabular classification.",
+        "",
+        "## Constraints",
+        "",
+        "- Prefer CPU-only execution and lightweight Python dependencies.",
+        "- Avoid large model downloads, GPU-specific methods, and heavy preprocessing pipelines."
+      ].join("\n"),
+      defaults: {
+        topic: "default topic",
+        constraints: ["default constraint"],
+        objectiveMetric: "default metric"
+      },
+      llm
+    });
+
+    expect(extracted.source).toBe("llm");
+    expect(extracted.topic).toBe("Classical machine learning baselines for tabular classification.");
+    expect(extracted.constraints).toEqual([
+      "Prefer CPU-only execution and lightweight Python dependencies.",
+      "Avoid large model downloads, GPU-specific methods, and heavy preprocessing pipelines."
+    ]);
+    expect(extracted.planSummary).toBe("Compare a few classical models.");
   });
 });

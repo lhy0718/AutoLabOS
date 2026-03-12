@@ -95,7 +95,14 @@ import {
   updateAnalyzeProgressFromLog,
   updateCollectProgressFromLog
 } from "./activityStatus.js";
-import { applyEventToRunProjection, normalizeRunForDisplay, resolveFailedNode } from "./runProjection.js";
+import {
+  applyEventToRunProjection,
+  normalizeRunForDisplay,
+  projectRunForDisplay,
+  resolveFailedNode,
+  RunDisplayProjection,
+  RunProjectionHints
+} from "./runProjection.js";
 import {
   deleteBackward,
   deleteToLineStart,
@@ -226,6 +233,7 @@ export class TerminalApp {
   private activeBusyLabel?: string;
   private collectProgress?: CollectProgressState;
   private analyzeProgress?: AnalyzeProgressState;
+  private readonly runProjectionHints = new Map<string, RunProjectionHints>();
   private readonly corpusInsightsCache = new Map<string, CorpusInsightsCacheEntry>();
   private stopped = false;
   private resolver?: () => void;
@@ -262,6 +270,11 @@ export class TerminalApp {
     }
     this.unsubscribeEvents = this.eventStream.subscribe((event) => {
       this.applyProjectedRunEvent(event);
+      void this.refreshRunProjectionHints(event.runId).then(() => {
+        if (this.activeRunId === event.runId) {
+          this.render();
+        }
+      });
       const line = formatEventLog(event);
       if (!line) {
         return;
@@ -3396,7 +3409,40 @@ export class TerminalApp {
 
   private getRenderableRun(): RunRecord | undefined {
     const run = this.getActiveIndexedRun();
-    return run ? normalizeRunForDisplay(run) : undefined;
+    return run ? normalizeRunForDisplay(run, this.getRunProjectionHints(run)) : undefined;
+  }
+
+  private getRunProjectionHints(run?: RunRecord): RunProjectionHints | undefined {
+    if (!run) {
+      return undefined;
+    }
+    return this.runProjectionHints.get(run.id);
+  }
+
+  private getRunDisplayProjection(run?: RunRecord): RunDisplayProjection | undefined {
+    if (!run) {
+      return undefined;
+    }
+    return projectRunForDisplay(run, this.getRunProjectionHints(run));
+  }
+
+  private async refreshRunProjectionHints(runId = this.activeRunId): Promise<void> {
+    if (!runId) {
+      return;
+    }
+
+    const run = this.runIndex.find((item) => item.id === runId);
+    if (!run) {
+      this.runProjectionHints.delete(runId);
+      return;
+    }
+
+    const hints = await readRunProjectionHints(process.cwd(), run);
+    if (hints) {
+      this.runProjectionHints.set(run.id, hints);
+    } else {
+      this.runProjectionHints.delete(run.id);
+    }
   }
 
   private applyProjectedRunEvent(event: AutoLabOSEvent): void {
@@ -3518,6 +3564,7 @@ export class TerminalApp {
     this.analyzeProgress = undefined;
     await this.loadHistoryForRun(runId);
     await this.refreshActiveRunInsight();
+    await this.refreshRunProjectionHints(runId);
   }
 
   private async refreshActiveRunInsight(): Promise<void> {
@@ -3657,6 +3704,7 @@ export class TerminalApp {
     } else if (this.activeRunId) {
       await this.setActiveRunId(undefined);
     }
+    await this.refreshRunProjectionHints(this.activeRunId);
     await this.refreshActiveRunInsight();
     await this.refreshPendingHumanInterventionState();
     this.updateSuggestions();
@@ -3707,6 +3755,7 @@ export class TerminalApp {
   private getContextualGuidance(run = this.getRenderableRun()) {
     return buildContextualGuidance({
       run,
+      projectionHints: this.getRunProjectionHints(run),
       humanIntervention: this.pendingHumanIntervention?.request,
       language: this.guidanceLanguage,
       pendingPlan: this.pendingNaturalCommand
@@ -3762,10 +3811,40 @@ export class TerminalApp {
 
   private getRenderableLogs(run?: RunRecord): string[] {
     const progressLine = this.getTransientProgressLog(run);
-    if (!progressLine) {
+    const statusLines = this.buildProjectedStatusLines(run);
+    if (!progressLine && statusLines.length === 0) {
       return this.logs;
     }
-    return [...this.logs, progressLine];
+    const maxHistory = Math.max(0, 12 - statusLines.length - (progressLine ? 1 : 0));
+    const baseLogs = this.logs.slice(-maxHistory);
+    return [...baseLogs, ...statusLines, ...(progressLine ? [progressLine] : [])];
+  }
+
+  private buildProjectedStatusLines(run?: RunRecord): string[] {
+    const projection = this.getRunDisplayProjection(run);
+    if (!projection) {
+      return [];
+    }
+
+    const recentLines = new Set(this.logs.slice(-6));
+    const lines: string[] = [];
+    const headline = projection.headline?.trim();
+    const detail = projection.detail?.trim();
+
+    if (headline) {
+      const line = `Status: ${headline}`;
+      if (!recentLines.has(line)) {
+        lines.push(line);
+      }
+    }
+    if (detail) {
+      const line = `Detail: ${detail}`;
+      if (!recentLines.has(line)) {
+        lines.push(line);
+      }
+    }
+
+    return lines;
   }
 
   private getTransientProgressLog(run?: RunRecord): string | undefined {
@@ -5015,6 +5094,165 @@ async function readAnalyzeSelectionCount(manifestPath: string): Promise<{ select
   } catch {
     return undefined;
   }
+}
+
+async function readRunProjectionHints(workspaceRoot: string, run: RunRecord): Promise<RunProjectionHints | undefined> {
+  const runDir = path.join(workspaceRoot, ".autolabos", "runs", run.id);
+  const [runContextRaw, analyzeManifestRaw] = await Promise.all([
+    safeRead(path.join(workspaceRoot, run.memoryRefs.runContextPath)),
+    safeRead(path.join(runDir, "analysis_manifest.json"))
+  ]);
+
+  const hints: RunProjectionHints = {};
+  const runContextHints = parseRunContextProjectionHints(runContextRaw);
+  const analyzeManifestHints = parseAnalyzeManifestProjectionHints(analyzeManifestRaw);
+
+  if (runContextHints.collect || analyzeManifestHints?.collect) {
+    hints.collect = {
+      ...runContextHints.collect,
+      ...analyzeManifestHints?.collect
+    };
+  }
+  if (runContextHints.analyze || analyzeManifestHints?.analyze) {
+    hints.analyze = {
+      ...runContextHints.analyze,
+      ...analyzeManifestHints?.analyze
+    };
+  }
+
+  return hints.collect || hints.analyze ? hints : undefined;
+}
+
+function parseRunContextProjectionHints(raw: string): RunProjectionHints {
+  if (!raw.trim()) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      items?: Array<{
+        key?: unknown;
+        value?: unknown;
+      }>;
+    };
+    const items = Array.isArray(parsed.items) ? parsed.items : [];
+    const values = new Map<string, unknown>();
+    for (const item of items) {
+      if (typeof item?.key === "string") {
+        values.set(item.key, item.value);
+      }
+    }
+
+    const collectResult = readRecord(values.get("collect_papers.last_result"));
+    const collectEnrichment = readRecord(collectResult?.enrichment);
+    const analyzeRequest = readRecord(values.get("analyze_papers.request"));
+
+    return {
+      collect:
+        collectResult || collectEnrichment
+          ? {
+              storedCount: readNumber(collectResult?.stored),
+              enrichmentStatus: readString(collectEnrichment?.status),
+              enrichmentTargetCount: readNumber(collectEnrichment?.targetCount),
+              enrichmentProcessedCount: readNumber(collectEnrichment?.processedCount)
+            }
+          : undefined,
+      analyze:
+        analyzeRequest ||
+        values.has("analyze_papers.selected_count") ||
+        values.has("analyze_papers.summary_count") ||
+        values.has("analyze_papers.evidence_count")
+          ? {
+              selectionMode: readString(analyzeRequest?.selectionMode),
+              requestedTopN: readNullableNumber(analyzeRequest?.topN),
+              selectedCount: readNumber(values.get("analyze_papers.selected_count")),
+              totalCandidates: readNumber(values.get("analyze_papers.total_candidates")),
+              summaryCount: readNumber(values.get("analyze_papers.summary_count")),
+              evidenceCount: readNumber(values.get("analyze_papers.evidence_count")),
+              fullTextCount: readNumber(values.get("analyze_papers.full_text_count")),
+              abstractFallbackCount: readNumber(values.get("analyze_papers.abstract_fallback_count"))
+            }
+          : undefined
+    };
+  } catch {
+    return {};
+  }
+}
+
+function parseAnalyzeManifestProjectionHints(raw: string): RunProjectionHints | undefined {
+  if (!raw.trim()) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      totalCandidates?: unknown;
+      candidatePoolSize?: unknown;
+      rerankApplied?: unknown;
+      rerankFallbackReason?: unknown;
+      selectedPaperIds?: unknown;
+      papers?: unknown;
+    };
+
+    const selectedPaperIds = Array.isArray(parsed.selectedPaperIds)
+      ? parsed.selectedPaperIds.filter((value): value is string => typeof value === "string")
+      : [];
+    const papers = readRecordMap(parsed.papers);
+    const selectedPaperRecords = selectedPaperIds
+      .map((paperId) => readRecord(papers?.[paperId]))
+      .filter((paper): paper is Record<string, unknown> => Boolean(paper));
+    const selectedFailedCount = selectedPaperRecords.filter((paper) => readString(paper.status) === "failed").length;
+    const selectedPaper = selectedPaperRecords[0];
+
+    return {
+      analyze:
+        selectedPaperIds.length > 0 || typeof parsed.rerankApplied === "boolean" || typeof parsed.totalCandidates === "number"
+          ? {
+              selectedCount: selectedPaperIds.length,
+              totalCandidates: readNumber(parsed.totalCandidates),
+              candidatePoolSize: readNumber(parsed.candidatePoolSize),
+              rerankApplied: typeof parsed.rerankApplied === "boolean" ? parsed.rerankApplied : undefined,
+              rerankFallbackReason: readString(parsed.rerankFallbackReason),
+              selectedPaperTitle: readString(selectedPaper?.title),
+              selectedPaperLastError: readString(selectedPaper?.last_error),
+              selectedPaperSourceType: readString(selectedPaper?.source_type),
+              selectedPaperFallbackReason: readString(selectedPaper?.fallback_reason),
+              selectedFailedCount
+            }
+          : undefined
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readRecordMap(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readNullableNumber(value: unknown): number | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  return readNumber(value);
 }
 
 function detectInitialGuidanceLanguage(): GuidanceLanguage {

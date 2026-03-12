@@ -82,6 +82,69 @@ describe("buildContextualGuidance", () => {
     expect(guidance?.items.some((item) => item.label === "/agent retry generate_hypotheses run-recovery")).toBe(false);
   });
 
+  it("surfaces model-switch guidance when analyze_papers is blocked by a usage limit", () => {
+    const run = makeRun({
+      id: "run-usage-limit",
+      currentNode: "analyze_papers",
+      status: "paused",
+      latestSummary: 'Semantic Scholar stored 200 papers for "topic". Deferred enrichment continues for 173 paper(s).'
+    });
+    run.graph.currentNode = "analyze_papers";
+    run.graph.retryCounters.analyze_papers = 1;
+    run.graph.nodeStates.analyze_papers.status = "pending";
+    run.graph.nodeStates.analyze_papers.note = "Canceled by user";
+    run.graph.nodeStates.analyze_papers.lastError = "Analysis incomplete: 1 paper(s) failed validation or LLM extraction.";
+
+    const guidance = buildContextualGuidance({
+      run,
+      projectionHints: {
+        collect: { enrichmentStatus: "completed" },
+        analyze: {
+          selectedCount: 1,
+          totalCandidates: 200,
+          summaryCount: 0,
+          evidenceCount: 0,
+          rerankApplied: false,
+          rerankFallbackReason: "You've hit your usage limit for GPT-5.3-Codex-Spark.",
+          selectedPaperLastError: "You've hit your usage limit for GPT-5.3-Codex-Spark."
+        }
+      }
+    });
+
+    expect(guidance?.items[0]?.label).toBe("/model");
+    expect(guidance?.items.some((item) => item.label === "/agent retry analyze_papers run-usage-limit")).toBe(true);
+    expect(guidance?.items.some((item) => item.label === "/agent count analyze_papers run-usage-limit")).toBe(true);
+  });
+
+  it("targets the upstream node when a downstream step is blocked by missing evidence", () => {
+    const run = makeRun({
+      id: "run-blocked",
+      currentNode: "generate_hypotheses",
+      status: "failed"
+    });
+    run.graph.currentNode = "generate_hypotheses";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.lastError = "Analysis incomplete: 19 paper(s) failed validation or LLM extraction.";
+    run.graph.nodeStates.generate_hypotheses.status = "failed";
+    run.graph.nodeStates.generate_hypotheses.lastError =
+      "generate_hypotheses requires at least one evidence item from analyze_papers.";
+
+    const guidance = buildContextualGuidance({
+      run,
+      projectionHints: {
+        analyze: {
+          selectedCount: 0,
+          totalCandidates: 0,
+          summaryCount: 0,
+          evidenceCount: 0
+        }
+      }
+    });
+
+    expect(guidance?.items[0]?.label).toBe("/agent retry analyze_papers run-blocked");
+    expect(guidance?.items.some((item) => item.label === "/agent retry generate_hypotheses run-blocked")).toBe(false);
+  });
+
   it("shows y/a/n controls for pending plans", () => {
     const guidance = buildContextualGuidance({
       pendingPlan: {

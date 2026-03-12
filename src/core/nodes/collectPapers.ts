@@ -449,7 +449,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           runId: run.id,
           node: "collect_papers",
           payload: {
-            text: `Corpus saved with ${storedCount} paper(s). Deferred enrichment will continue in the background for ${papersToEnrich.length} paper(s).`
+            text: `Corpus saved with ${storedCount} paper(s). Deferred enrichment is scheduled in the background for ${papersToEnrich.length} paper(s).`
           }
         });
 
@@ -460,7 +460,6 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           mode,
           baseCount,
           bibtexMode,
-          abortSignal,
           papers: papersToEnrich,
           fetchedCount: fetchedPapers.length,
           diagnostics,
@@ -472,6 +471,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           persistedEnrichmentLogs,
           storedCount,
           newPaperIds,
+          pendingSummary: buildCollectSummary(resultMeta),
           requestedQuery: normalizedRequest.requestedQuery,
           queryAttempts
         });
@@ -479,14 +479,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
       return {
         status: "success",
-        summary:
-          mode === "additional"
-            ? papersToEnrich.length > 0
-              ? `Semantic Scholar stored ${storedCount} total papers for "${effectiveRequest.query}" (${newPaperIds.size} newly added). Deferred enrichment continues for ${papersToEnrich.length} paper(s).`
-              : `Semantic Scholar stored ${storedCount} total papers for "${effectiveRequest.query}" (${newPaperIds.size} newly added).`
-            : papersToEnrich.length > 0
-              ? `Semantic Scholar stored ${storedCount} papers for "${effectiveRequest.query}". Deferred enrichment continues for ${papersToEnrich.length} paper(s).`
-              : `Semantic Scholar stored ${storedCount} papers for "${effectiveRequest.query}".`,
+        summary: buildCollectSummary(resultMeta),
         needsApproval: true,
         toolCallsUsed: 1
       };
@@ -642,6 +635,28 @@ function buildCollectFailureMessage(
     return `Semantic Scholar rate limited "${request.query}": ${fetchError}.${chunkNote} Wait a bit and retry, or lower --limit to 50-100 / collect in smaller batches.`;
   }
   return `Semantic Scholar fetch failed for "${request.query}" (${fetchError})`;
+}
+
+function buildCollectSummary(resultMeta: CollectResultMeta): string {
+  const storedSummary =
+    resultMeta.mode === "additional"
+      ? `Semantic Scholar stored ${resultMeta.stored} total papers for "${resultMeta.query}" (${resultMeta.added} newly added).`
+      : `Semantic Scholar stored ${resultMeta.stored} papers for "${resultMeta.query}".`;
+
+  switch (resultMeta.enrichment.status) {
+    case "pending":
+      return `${storedSummary} Deferred enrichment scheduled for ${resultMeta.enrichment.targetCount} paper(s).`;
+    case "completed":
+      return `${storedSummary} Deferred enrichment finished for ${resultMeta.enrichment.targetCount} paper(s). PDF recovered ${resultMeta.pdfRecovered}; BibTeX enriched ${resultMeta.bibtexEnriched}.`;
+    case "failed":
+      return `${storedSummary} Deferred enrichment failed after ${Math.min(
+        resultMeta.enrichment.processedCount,
+        resultMeta.enrichment.targetCount
+      )}/${resultMeta.enrichment.targetCount} paper(s): ${resultMeta.enrichment.lastError || "unknown error"}.`;
+    case "not_needed":
+    default:
+      return storedSummary;
+  }
 }
 
 function usesConservativeChunking(request: SemanticScholarSearchRequest): boolean {
@@ -1095,7 +1110,6 @@ function startDetachedEnrichment(input: {
   mode: "replace" | "additional";
   baseCount: number;
   bibtexMode: BibtexMode;
-  abortSignal?: AbortSignal;
   papers: SemanticScholarPaper[];
   fetchedCount: number;
   diagnostics: SemanticScholarSearchDiagnostics;
@@ -1107,6 +1121,7 @@ function startDetachedEnrichment(input: {
   persistedEnrichmentLogs: Map<string, CollectEnrichmentLogEntry>;
   storedCount: number;
   newPaperIds: Set<string>;
+  pendingSummary: string;
   requestedQuery?: string;
   queryAttempts: CollectQueryAttemptMeta[];
 }): void {
@@ -1151,7 +1166,6 @@ function startDetachedEnrichment(input: {
         diagnostics: input.diagnostics,
         bibtexMode: input.bibtexMode,
         requireOpenAccessPdf: input.request.filters?.openAccessPdf === true,
-        abortSignal: input.abortSignal,
         eventStream: input.deps.eventStream,
         pdfRecovered: input.pdfRecovered,
         bibtexEnriched: input.bibtexEnriched,
@@ -1205,6 +1219,12 @@ function startDetachedEnrichment(input: {
         resultMeta: completionMeta,
         diagnostics: input.diagnostics
       });
+      await syncCollectRunRecord({
+        runStore: input.deps.runStore,
+        runId: input.run.id,
+        summary: buildCollectSummary(completionMeta),
+        replaceLatestSummaryIf: input.pendingSummary
+      });
 
       input.deps.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -1257,6 +1277,12 @@ function startDetachedEnrichment(input: {
         resultMeta: failureMeta,
         diagnostics: input.diagnostics
       });
+      await syncCollectRunRecord({
+        runStore: input.deps.runStore,
+        runId: input.run.id,
+        summary: buildCollectSummary(failureMeta),
+        replaceLatestSummaryIf: input.pendingSummary
+      });
 
       input.deps.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -1272,6 +1298,42 @@ function startDetachedEnrichment(input: {
   })();
 
   activeCollectEnrichmentJobs.set(input.run.id, job);
+}
+
+async function syncCollectRunRecord(input: {
+  runStore: Pick<NodeExecutionDeps["runStore"], "getRun" | "updateRun"> | undefined;
+  runId: string;
+  summary: string;
+  replaceLatestSummaryIf?: string;
+}): Promise<void> {
+  if (
+    !input.runStore ||
+    typeof input.runStore.getRun !== "function" ||
+    typeof input.runStore.updateRun !== "function"
+  ) {
+    return;
+  }
+
+  const run = await input.runStore.getRun(input.runId);
+  if (!run) {
+    return;
+  }
+
+  run.graph.nodeStates.collect_papers = {
+    ...run.graph.nodeStates.collect_papers,
+    updatedAt: new Date().toISOString(),
+    note: input.summary
+  };
+
+  if (
+    run.currentNode === "collect_papers" ||
+    !run.latestSummary ||
+    run.latestSummary === input.replaceLatestSummaryIf
+  ) {
+    run.latestSummary = input.summary;
+  }
+
+  await input.runStore.updateRun(run);
 }
 
 function isSemanticScholarUrl(url: string | undefined): boolean {

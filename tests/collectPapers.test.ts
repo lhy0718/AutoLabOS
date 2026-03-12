@@ -55,6 +55,10 @@ async function readRunContextValue(root: string, runId: string, key: string): Pr
   return parsed.items?.find((item) => item.key === key)?.value;
 }
 
+function cloneRun<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 describe("collectPapers bibtex", () => {
   it("builds bibtex entry with rich metadata", () => {
     const entry = buildBibtexEntry({
@@ -344,7 +348,7 @@ describe("collectPapers bibtex", () => {
         .some((event) => String(event.payload?.text ?? "").includes("Requesting Semantic Scholar batch 1/1."))
     ).toBe(true);
     expect(result.summary).toBe(
-      'Semantic Scholar stored 1 papers for "Multi-Agent Collaboration". Deferred enrichment continues for 1 paper(s).'
+      'Semantic Scholar stored 1 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled for 1 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     expect(result.summary).not.toContain("Collection objective");
@@ -462,7 +466,7 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 3 total papers for "Multi-Agent Collaboration" (2 newly added). Deferred enrichment continues for 3 paper(s).'
+      'Semantic Scholar stored 3 total papers for "Multi-Agent Collaboration" (2 newly added). Deferred enrichment scheduled for 3 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
@@ -576,7 +580,7 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 2 total papers for "Multi-Agent Collaboration" (1 newly added). Deferred enrichment continues for 1 paper(s).'
+      'Semantic Scholar stored 2 total papers for "Multi-Agent Collaboration" (1 newly added). Deferred enrichment scheduled for 1 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
@@ -1179,7 +1183,7 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment continues for 2 paper(s).'
+      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled for 2 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     const observedTexts = eventStream
@@ -1218,5 +1222,232 @@ describe("collectPapers bibtex", () => {
       processedCount: 2
     });
     expect(await readRunContextValue(root, runId, "collect_papers.last_error")).toBeNull();
+  });
+
+  it("prefers the explicit brief topic over a narrowed run topic for the first literature query", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-brief-topic-"));
+    process.chdir(root);
+
+    const runId = "run-collect-brief-topic";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Tabular Baselines",
+      topic: "Laptop-safe benchmarking of lightweight tabular classifiers versus logistic regression on small public datasets",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "run_brief.raw",
+            value: [
+              "# Research Brief",
+              "",
+              "## Topic",
+              "",
+              "Classical machine learning baselines for tabular classification."
+            ].join("\n"),
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const streamSearchPapers = vi.fn(() =>
+      batchStream([
+        {
+          paperId: "paper-1",
+          title: "Tabular Baselines",
+          authors: ["Alice Kim"]
+        }
+      ])
+    );
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(streamSearchPapers).toHaveBeenCalledTimes(1);
+    expect(streamSearchPapers.mock.calls[0]?.[0]).toMatchObject({
+      query: "Classical machine learning baselines for tabular classification"
+    });
+    await waitForCollectEnrichmentJob(runId);
+  });
+
+  it("updates the stored collect summary after deferred enrichment completes when the latest summary is still stale", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-summary-sync-"));
+    process.chdir(root);
+
+    const runId = "run-collect-summary-sync";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Multi-Agent Collaboration",
+      topic: "Multi-agent collaboration",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Multi-Agent Collaboration",
+              limit: 2,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const pendingSummary =
+      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled for 2 paper(s).';
+    let storedRun = cloneRun({
+      ...run,
+      currentNode: "analyze_papers" as const,
+      graph: {
+        ...run.graph,
+        currentNode: "analyze_papers" as const,
+        nodeStates: {
+          ...run.graph.nodeStates,
+          collect_papers: {
+            ...run.graph.nodeStates.collect_papers,
+            status: "completed",
+            updatedAt: new Date().toISOString(),
+            note: pendingSummary
+          },
+          analyze_papers: {
+            ...run.graph.nodeStates.analyze_papers,
+            status: "running",
+            updatedAt: new Date().toISOString(),
+            note: "Analyzing papers."
+          }
+        }
+      },
+      latestSummary: pendingSummary
+    });
+    const runStore = {
+      getRun: vi.fn(async () => cloneRun(storedRun)),
+      updateRun: vi.fn(async (updated: RunRecord) => {
+        storedRun = cloneRun(updated);
+      })
+    };
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: runStore as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers: vi.fn(() =>
+          batchStream([
+            {
+              paperId: "paper-1",
+              title: "Paper 1",
+              authors: ["Alice Kim"]
+            },
+            {
+              paperId: "paper-2",
+              title: "Paper 2",
+              authors: ["Bob Lee"]
+            }
+          ])
+        ),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.summary).toBe(pendingSummary);
+
+    await waitForCollectEnrichmentJob(runId);
+
+    expect(storedRun.graph.nodeStates.collect_papers.note).toBe(
+      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment finished for 2 paper(s). PDF recovered 0; BibTeX enriched 0.'
+    );
+    expect(storedRun.latestSummary).toBe(
+      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment finished for 2 paper(s). PDF recovered 0; BibTeX enriched 0.'
+    );
   });
 });

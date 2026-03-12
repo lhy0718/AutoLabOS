@@ -43,11 +43,12 @@ export class AgentOrchestrator {
       await this.runtime.jumpToNode(runId, nodeId, "force", "manual node run");
     }
 
-    const run = await this.runtime.runUntilPause(runId, {
+    await this.runtime.runUntilPause(runId, {
       abortSignal: opts?.abortSignal,
       stopAfterApprovalBoundary: true,
       floorNode: nodeId
     });
+    const run = await this.getPersistedRunOrThrow(runId);
     if (["failed", "failed_budget"].includes(run.status)) {
       return {
         run,
@@ -81,10 +82,11 @@ export class AgentOrchestrator {
     if (!current) {
       throw new Error(`Run not found: ${runId}`);
     }
-    const run = await this.runtime.runUntilPause(runId, {
+    await this.runtime.runUntilPause(runId, {
       abortSignal: opts?.abortSignal,
       floorNode: current.currentNode
     });
+    const run = await this.getPersistedRunOrThrow(runId);
 
     if (["failed", "failed_budget"].includes(run.status)) {
       return {
@@ -107,19 +109,23 @@ export class AgentOrchestrator {
   }
 
   async approveCurrent(runId: string): Promise<RunRecord> {
-    return this.runtime.approveCurrent(runId);
+    await this.runtime.approveCurrent(runId);
+    return this.getPersistedRunOrThrow(runId);
   }
 
   async applyPendingTransition(runId: string): Promise<RunRecord> {
-    return this.runtime.applyPendingTransition(runId);
+    await this.runtime.applyPendingTransition(runId);
+    return this.getPersistedRunOrThrow(runId);
   }
 
   async retryCurrent(runId: string, node?: GraphNodeId): Promise<RunRecord> {
-    return this.runtime.retryNode(runId, node);
+    await this.runtime.retryNode(runId, node);
+    return this.getPersistedRunOrThrow(runId);
   }
 
   async resumeRun(runId: string, checkpointSeq?: number): Promise<RunRecord> {
-    return this.runtime.resume(runId, checkpointSeq);
+    await this.runtime.resume(runId, checkpointSeq);
+    return this.getPersistedRunOrThrow(runId);
   }
 
   async jumpToNode(
@@ -128,7 +134,8 @@ export class AgentOrchestrator {
     mode: JumpMode,
     reason: string
   ): Promise<RunRecord> {
-    return this.runtime.jumpToNode(runId, targetNode, mode, reason);
+    await this.runtime.jumpToNode(runId, targetNode, mode, reason);
+    return this.getPersistedRunOrThrow(runId);
   }
 
   async getGraphStatus(runId: string): Promise<RunGraphState> {
@@ -143,6 +150,14 @@ export class AgentOrchestrator {
   async listCheckpoints(runId: string): Promise<number[]> {
     const items = await this.checkpointStore.list(runId);
     return items.map((item) => item.seq);
+  }
+
+  private async getPersistedRunOrThrow(runId: string): Promise<RunRecord> {
+    const run = await this.runStore.getRun(runId);
+    if (!run) {
+      throw new Error(`Run not found: ${runId}`);
+    }
+    return run;
   }
 }
 

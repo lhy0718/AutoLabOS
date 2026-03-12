@@ -17,6 +17,23 @@ class FixedResponseLlm extends MockLLMClient {
   }
 }
 
+class SequenceResponseLlm extends MockLLMClient {
+  private index = 0;
+
+  constructor(private readonly outputs: Array<string | Error>) {
+    super();
+  }
+
+  override async complete(_prompt: string): Promise<{ text: string }> {
+    const output = this.outputs[Math.min(this.index, this.outputs.length - 1)];
+    this.index += 1;
+    if (output instanceof Error) {
+      throw output;
+    }
+    return { text: output };
+  }
+}
+
 describe("paperSelection", () => {
   it("deterministically favors title similarity, citations, and recency", async () => {
     const selection = await selectPapersForAnalysis({
@@ -204,6 +221,82 @@ describe("paperSelection", () => {
     expect(selection.rerankApplied).toBe(false);
     expect(selection.rerankFallbackReason).toBeDefined();
     expect(selection.selectedPaperIds).toEqual(["p1", "p2"]);
+  });
+
+  it("retries rerank once when Codex only emits benign shell-snapshot cleanup warnings", async () => {
+    const selection = await selectPapersForAnalysis({
+      llm: new SequenceResponseLlm([
+        new Error(
+          '2026-03-12T08:56:03.104783Z  WARN codex_core::shell_snapshot: Failed to delete shell snapshot at "/Users/hanyonglee/.codex/shell_snapshots/tmp": Os { code: 2, kind: NotFound, message: "No such file or directory" }'
+        ),
+        '{"ordered_paper_ids":["p2","p1"]}'
+      ]),
+      runTitle: "Multi-agent collaboration",
+      runTopic: "Multi-agent collaboration",
+      request: normalizeAnalysisSelectionRequest(1),
+      corpusRows: [
+        { paper_id: "p1", title: "Multi-agent collaboration", abstract: "A", authors: [], citation_count: 10, year: 2025 },
+        { paper_id: "p2", title: "Other collaboration paper", abstract: "B", authors: [], citation_count: 9, year: 2025 }
+      ]
+    });
+
+    expect(selection.rerankApplied).toBe(true);
+    expect(selection.rerankFallbackReason).toBeUndefined();
+    expect(selection.selectedPaperIds).toEqual(["p2"]);
+  });
+
+  it("keeps only the substantive rerank failure when benign cleanup warnings are mixed in", async () => {
+    const selection = await selectPapersForAnalysis({
+      llm: new SequenceResponseLlm([
+        new Error(
+          '2026-03-12T08:56:03.104783Z  WARN codex_core::shell_snapshot: Failed to delete shell snapshot at "/Users/hanyonglee/.codex/shell_snapshots/tmp": Os { code: 2, kind: NotFound, message: "No such file or directory" }\n' +
+            "2026-03-12T08:56:03.586264Z  WARN codex_core::codex: startup websocket prewarm setup failed: You've hit your usage limit for GPT-5.3-Codex-Spark. Switch to another model now, or try again at 8:24 PM."
+        )
+      ]),
+      runTitle: "Multi-agent collaboration",
+      runTopic: "Multi-agent collaboration",
+      request: normalizeAnalysisSelectionRequest(1),
+      corpusRows: [
+        { paper_id: "p1", title: "Multi-agent collaboration", abstract: "A", authors: [], citation_count: 10, year: 2025 },
+        { paper_id: "p2", title: "Other collaboration paper", abstract: "B", authors: [], citation_count: 9, year: 2025 }
+      ]
+    });
+
+    expect(selection.rerankApplied).toBe(false);
+    expect(selection.rerankFallbackReason).toContain("usage limit");
+    expect(selection.rerankFallbackReason).not.toContain("shell_snapshot");
+  });
+
+  it("keeps topic-specific tabular baseline papers ahead of generic ML classification titles", async () => {
+    const selection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm("not-json"),
+      runTitle: "Classical machine learning baselines for tabular classification",
+      runTopic: "Classical machine learning baselines for tabular classification",
+      request: normalizeAnalysisSelectionRequest(1),
+      corpusRows: [
+        {
+          paper_id: "off_topic",
+          title: "A Study on Music Genre Classification using Machine Learning",
+          abstract: "Music genre classification with neural and classical pipelines.",
+          authors: [],
+          citation_count: 500,
+          year: 2025,
+          pdf_url: "https://example.com/music.pdf"
+        },
+        {
+          paper_id: "relevant",
+          title: "Benchmarking classical baselines on structured datasets",
+          abstract:
+            "We compare logistic regression, random forests, and gradient boosting for tabular classification across small public benchmarks.",
+          authors: [],
+          citation_count: 20,
+          year: 2024
+        }
+      ]
+    });
+
+    expect(selection.selectedPaperIds).toEqual(["relevant"]);
+    expect(selection.deterministicRankingPreview[0]?.paper_id).toBe("relevant");
   });
 
   it("propagates abort instead of falling back when rerank is canceled", async () => {

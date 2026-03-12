@@ -74,6 +74,26 @@ const STOPWORDS = new Set([
   "연구"
 ]);
 
+const GENERIC_REFERENCE_TOKENS = new Set([
+  "classification",
+  "classifications",
+  "classifier",
+  "classifiers",
+  "learning",
+  "machine",
+  "model",
+  "models",
+  "study",
+  "studies"
+]);
+
+const RERANK_MAX_ATTEMPTS = 2;
+
+const BENIGN_RERANK_WARNING_PATTERNS = [
+  /codex_core::shell_snapshot/i,
+  /failed to delete shell snapshot/i
+];
+
 const RERANK_SYSTEM_PROMPT = [
   "You rerank scientific papers for AutoLabOS.",
   "Return one JSON object only.",
@@ -230,10 +250,17 @@ function rankPapersDeterministically(referenceTitle: string, corpusRows: Analysi
   const maxCitation = corpusRows.reduce((max, row) => Math.max(max, row.citation_count ?? 0), 0);
   const maxLogCitation = maxCitation > 0 ? Math.log1p(maxCitation) : 0;
   const currentYear = new Date().getUTCFullYear();
+  const referenceTokens = Array.from(new Set(tokenizeTitle(referenceTitle)));
+  const referenceTokenWeights = buildReferenceTokenWeights(referenceTokens, corpusRows);
 
   return [...corpusRows]
     .map((paper) => {
-      const titleSimilarityScore = computeTitleSimilarityScore(referenceTitle, paper.title);
+      const titleSimilarityScore = computeTitleSimilarityScore(
+        referenceTokens,
+        referenceTokenWeights,
+        paper.title,
+        paper.abstract
+      );
       const citationScore =
         maxLogCitation > 0 && (paper.citation_count ?? 0) > 0
           ? Math.log1p(paper.citation_count ?? 0) / maxLogCitation
@@ -242,10 +269,10 @@ function rankPapersDeterministically(referenceTitle: string, corpusRows: Analysi
       const pdfAvailabilityScore = resolvePaperPdfUrl(paper) ? 1 : 0;
       const deterministicScore = Number(
         (
-          titleSimilarityScore * 0.45 +
-          citationScore * 0.25 +
-          recencyScore * 0.1 +
-          pdfAvailabilityScore * 0.2
+          titleSimilarityScore * 0.65 +
+          citationScore * 0.2 +
+          recencyScore * 0.08 +
+          pdfAvailabilityScore * 0.07
         ).toFixed(6)
       );
       return {
@@ -273,58 +300,74 @@ async function rerankCandidates(
   onProgress?: (message: string) => void,
   abortSignal?: AbortSignal
 ): Promise<{ orderedPaperIds: string[]; applied: boolean; fallbackReason?: string }> {
-  try {
-    onProgress?.(`Submitting rerank request for ${candidates.length} candidate(s).`);
-    onProgress?.("Rerank progress: 2/4 (50%) waiting for model response.");
-    const response = await llm.complete(buildRerankPrompt(referenceTitle, runTopic, topN, candidates), {
-      systemPrompt: RERANK_SYSTEM_PROMPT,
-      abortSignal,
-      onProgress: (event) => {
-        if (event.type === "delta") {
-          return;
-        }
-        const text = event.text.trim();
-        if (!text) {
-          return;
-        }
-        onProgress?.(text);
+  for (let attempt = 1; attempt <= RERANK_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      if (attempt > 1) {
+        onProgress?.(`Retrying rerank request (${attempt}/${RERANK_MAX_ATTEMPTS}) after a benign Codex warning.`);
       }
-    });
-    onProgress?.("Rerank progress: 3/4 (75%) parsing model ordering.");
-    onProgress?.("Received rerank response. Parsing JSON ordering.");
-    const parsed = parseRerankJson(response.text);
-    const seen = new Set<string>();
-    const orderedPaperIds = normalizeStringArray(parsed.ordered_paper_ids)
-      .filter((paperId) => candidates.some((candidate) => candidate.paper.paper_id === paperId))
-      .filter((paperId) => {
-        if (seen.has(paperId)) {
-          return false;
+      onProgress?.(`Submitting rerank request for ${candidates.length} candidate(s).`);
+      onProgress?.("Rerank progress: 2/4 (50%) waiting for model response.");
+      const response = await llm.complete(buildRerankPrompt(referenceTitle, runTopic, topN, candidates), {
+        systemPrompt: RERANK_SYSTEM_PROMPT,
+        abortSignal,
+        onProgress: (event) => {
+          if (event.type === "delta") {
+            return;
+          }
+          const text = event.text.trim();
+          if (!text) {
+            return;
+          }
+          onProgress?.(text);
         }
-        seen.add(paperId);
-        return true;
       });
-    onProgress?.(`Parsed rerank JSON with ${orderedPaperIds.length} explicit paper id(s).`);
-    onProgress?.("Rerank progress: 4/4 (100%) applying rerank order.");
+      onProgress?.("Rerank progress: 3/4 (75%) parsing model ordering.");
+      onProgress?.("Received rerank response. Parsing JSON ordering.");
+      const parsed = parseRerankJson(response.text);
+      const seen = new Set<string>();
+      const orderedPaperIds = normalizeStringArray(parsed.ordered_paper_ids)
+        .filter((paperId) => candidates.some((candidate) => candidate.paper.paper_id === paperId))
+        .filter((paperId) => {
+          if (seen.has(paperId)) {
+            return false;
+          }
+          seen.add(paperId);
+          return true;
+        });
+      onProgress?.(`Parsed rerank JSON with ${orderedPaperIds.length} explicit paper id(s).`);
+      onProgress?.("Rerank progress: 4/4 (100%) applying rerank order.");
 
-    const fallbackRemainder = candidates
-      .map((candidate) => candidate.paper.paper_id)
-      .filter((paperId) => !seen.has(paperId));
+      const fallbackRemainder = candidates
+        .map((candidate) => candidate.paper.paper_id)
+        .filter((paperId) => !seen.has(paperId));
 
-    return {
-      orderedPaperIds: [...orderedPaperIds, ...fallbackRemainder],
-      applied: true
-    };
-  } catch (error) {
-    if (isAbortError(error)) {
-      throw error;
+      return {
+        orderedPaperIds: [...orderedPaperIds, ...fallbackRemainder],
+        applied: true
+      };
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+      const failure = classifyRerankFailure(error instanceof Error ? error.message : String(error));
+      if (failure.benignOnly && attempt < RERANK_MAX_ATTEMPTS) {
+        onProgress?.("Rerank request emitted only cleanup warnings without usable output. Retrying once before fallback.");
+        continue;
+      }
+      onProgress?.(`Rerank request failed: ${failure.cleanedMessage}`);
+      return {
+        orderedPaperIds: candidates.map((candidate) => candidate.paper.paper_id),
+        applied: false,
+        fallbackReason: failure.cleanedMessage
+      };
     }
-    onProgress?.(`Rerank request failed: ${error instanceof Error ? error.message : String(error)}`);
-    return {
-      orderedPaperIds: candidates.map((candidate) => candidate.paper.paper_id),
-      applied: false,
-      fallbackReason: error instanceof Error ? error.message : String(error)
-    };
   }
+
+  return {
+    orderedPaperIds: candidates.map((candidate) => candidate.paper.paper_id),
+    applied: false,
+    fallbackReason: "rerank_failed_without_output"
+  };
 }
 
 function isAbortError(error: unknown): boolean {
@@ -439,12 +482,100 @@ function truncateForPrompt(text: string, maxChars: number): string {
   return `${normalized.slice(0, maxChars).trim()}…`;
 }
 
-function computeTitleSimilarityScore(referenceTitle: string, paperTitle: string): number {
-  const referenceTokens = tokenizeTitle(referenceTitle);
-  const paperTokens = tokenizeTitle(paperTitle);
-  const tokenOverlap = computeTokenOverlap(referenceTokens, paperTokens);
-  const bigramDice = computeBigramDice(referenceTokens.join(" "), paperTokens.join(" "));
-  return Number(((tokenOverlap + bigramDice) / 2).toFixed(6));
+function buildReferenceTokenWeights(referenceTokens: string[], corpusRows: AnalysisCorpusRow[]): Map<string, number> {
+  const uniqueReferenceTokens = Array.from(new Set(referenceTokens));
+  if (uniqueReferenceTokens.length === 0) {
+    return new Map();
+  }
+
+  const corpusSize = Math.max(1, corpusRows.length);
+  const tokenDocumentFrequency = new Map<string, number>();
+  for (const row of corpusRows) {
+    const rowTokens = new Set(tokenizeTitle(`${row.title} ${row.abstract || ""}`));
+    for (const token of uniqueReferenceTokens) {
+      if (rowTokens.has(token)) {
+        tokenDocumentFrequency.set(token, (tokenDocumentFrequency.get(token) ?? 0) + 1);
+      }
+    }
+  }
+
+  return new Map(
+    uniqueReferenceTokens.map((token) => {
+      const documentFrequency = tokenDocumentFrequency.get(token) ?? 0;
+      const baseWeight = 1 + Math.log((corpusSize + 1) / (documentFrequency + 1));
+      const adjustedWeight = GENERIC_REFERENCE_TOKENS.has(token) ? baseWeight * 0.25 : baseWeight;
+      return [token, Number(adjustedWeight.toFixed(6))] as const;
+    })
+  );
+}
+
+function computeTitleSimilarityScore(
+  referenceTokens: string[],
+  referenceTokenWeights: Map<string, number>,
+  paperTitle: string,
+  paperAbstract?: string
+): number {
+  const uniqueReferenceTokens = Array.from(new Set(referenceTokens));
+  if (uniqueReferenceTokens.length === 0) {
+    return 0;
+  }
+
+  const paperTitleTokens = tokenizeTitle(paperTitle);
+  const paperTitleTokenSet = new Set(paperTitleTokens);
+  const paperAbstractTokenSet = new Set(tokenizeTitle(paperAbstract || ""));
+  const totalWeight = uniqueReferenceTokens.reduce(
+    (sum, token) => sum + (referenceTokenWeights.get(token) ?? 1),
+    0
+  );
+  if (totalWeight <= 0) {
+    return 0;
+  }
+
+  let matchedWeight = 0;
+  for (const token of uniqueReferenceTokens) {
+    const weight = referenceTokenWeights.get(token) ?? 1;
+    if (paperTitleTokenSet.has(token)) {
+      matchedWeight += weight;
+      continue;
+    }
+    if (paperAbstractTokenSet.has(token)) {
+      matchedWeight += weight * 0.35;
+    }
+  }
+
+  const anchorTokens = selectAnchorTokens(uniqueReferenceTokens, referenceTokenWeights);
+  const anchorTitleHits = anchorTokens.filter((token) => paperTitleTokenSet.has(token)).length;
+  const anchorAbstractHits = anchorTokens.filter((token) => paperAbstractTokenSet.has(token)).length;
+  const weightedOverlap = matchedWeight / totalWeight;
+  const bigramDice = computeBigramDice(uniqueReferenceTokens.join(" "), paperTitleTokens.join(" "));
+
+  let score = weightedOverlap * 0.8 + bigramDice * 0.2;
+  if (anchorTokens.length > 0 && anchorTitleHits === 0 && anchorAbstractHits === 0) {
+    score *= 0.35;
+  } else if (anchorTokens.length > 0 && anchorTitleHits === 0 && anchorAbstractHits > 0) {
+    score *= 0.85;
+  }
+
+  return Number(Math.max(0, Math.min(1, score)).toFixed(6));
+}
+
+function selectAnchorTokens(referenceTokens: string[], referenceTokenWeights: Map<string, number>): string[] {
+  if (referenceTokens.length === 0) {
+    return [];
+  }
+
+  const weightedTokens = referenceTokens
+    .map((token) => ({
+      token,
+      weight: referenceTokenWeights.get(token) ?? 1
+    }))
+    .sort((left, right) => right.weight - left.weight || left.token.localeCompare(right.token));
+  const averageWeight =
+    weightedTokens.reduce((sum, item) => sum + item.weight, 0) / Math.max(1, weightedTokens.length);
+
+  return weightedTokens
+    .filter((item, index) => item.weight >= averageWeight || index < Math.min(2, weightedTokens.length))
+    .map((item) => item.token);
 }
 
 function tokenizeTitle(text: string): string[] {
@@ -454,21 +585,6 @@ function tokenizeTitle(text: string): string[] {
     .split(/\s+/u)
     .map((token) => token.trim())
     .filter((token) => token && !STOPWORDS.has(token));
-}
-
-function computeTokenOverlap(left: string[], right: string[]): number {
-  if (left.length === 0 || right.length === 0) {
-    return 0;
-  }
-  const leftSet = new Set(left);
-  const rightSet = new Set(right);
-  let shared = 0;
-  for (const token of leftSet) {
-    if (rightSet.has(token)) {
-      shared += 1;
-    }
-  }
-  return shared / Math.max(leftSet.size, rightSet.size);
 }
 
 function computeBigramDice(left: string, right: string): number {
@@ -543,5 +659,33 @@ function toPreviewRow(candidate: RankedPaperCandidate): SelectionPreviewRow {
     title: candidate.paper.title,
     deterministic_score: candidate.deterministicScore,
     score_breakdown: candidate.scoreBreakdown
+  };
+}
+
+function classifyRerankFailure(message: string): { cleanedMessage: string; benignOnly: boolean } {
+  const lines = message
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    return {
+      cleanedMessage: "rerank_failed_without_output",
+      benignOnly: false
+    };
+  }
+
+  const substantiveLines = lines.filter(
+    (line) => !BENIGN_RERANK_WARNING_PATTERNS.some((pattern) => pattern.test(line))
+  );
+  if (substantiveLines.length === 0) {
+    return {
+      cleanedMessage: "rerank emitted only benign Codex cleanup warnings and no usable output",
+      benignOnly: true
+    };
+  }
+
+  return {
+    cleanedMessage: substantiveLines.join("\n"),
+    benignOnly: false
   };
 }

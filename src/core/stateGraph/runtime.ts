@@ -33,6 +33,7 @@ export class StateGraphRuntime {
       run.graph.currentNode = run.currentNode;
     }
     run.status = "running";
+    this.syncLatestSummary(run);
     await this.runStore.updateRun(run);
     return run;
   }
@@ -43,14 +44,17 @@ export class StateGraphRuntime {
     if (checkpoint) {
       if (checkpointSeq == null && this.isCheckpointSnapshotStale(current, checkpoint.runSnapshot)) {
         current.status = current.status === "completed" ? "completed" : defaultRunStatusForGraph(current.graph);
+        this.syncLatestSummary(current);
         await this.runStore.updateRun(current);
         return current;
       }
+      this.syncLatestSummary(checkpoint.runSnapshot);
       await this.runStore.updateRun(checkpoint.runSnapshot);
       return checkpoint.runSnapshot;
     }
 
     current.status = current.status === "completed" ? "completed" : defaultRunStatusForGraph(current.graph);
+    this.syncLatestSummary(current);
     await this.runStore.updateRun(current);
     return current;
   }
@@ -160,6 +164,7 @@ export class StateGraphRuntime {
         });
       }
 
+      this.syncLatestSummary(run, node);
       await this.runStore.updateRun(run);
       return run;
     } catch (error) {
@@ -172,6 +177,7 @@ export class StateGraphRuntime {
           updatedAt: new Date().toISOString(),
           note: "Canceled by user"
         };
+        this.syncLatestSummary(run);
         await this.runStore.updateRun(run);
         return run;
       }
@@ -193,6 +199,7 @@ export class StateGraphRuntime {
     try {
       this.throwIfAborted(opts?.abortSignal);
       run.status = "running";
+      this.syncLatestSummary(run);
       await this.runStore.updateRun(run);
 
       while (true) {
@@ -226,6 +233,7 @@ export class StateGraphRuntime {
       if (isAbortError(error)) {
         run = await this.getRunOrThrow(runId);
         run.status = "paused";
+        this.syncLatestSummary(run);
         await this.runStore.updateRun(run);
         return run;
       }
@@ -321,6 +329,7 @@ export class StateGraphRuntime {
     }
 
     await this.checkpointStore.save(run, "after", "approved");
+    this.syncLatestSummary(run, node);
     await this.runStore.updateRun(run);
     return run;
   }
@@ -346,6 +355,7 @@ export class StateGraphRuntime {
         appliedAt: new Date().toISOString()
       }
     ];
+    this.syncLatestSummary(run);
     await this.runStore.updateRun(run);
 
     this.eventStream.emit({
@@ -399,6 +409,7 @@ export class StateGraphRuntime {
       payload: { attempts: run.graph.retryCounters[target], checkpoint: checkpoint.seq }
     });
 
+    this.syncLatestSummary(run);
     await this.runStore.updateRun(run);
     return run;
   }
@@ -458,6 +469,7 @@ export class StateGraphRuntime {
       }
     });
 
+    this.syncLatestSummary(run, targetNode);
     await this.runStore.updateRun(run);
     return run;
   }
@@ -526,6 +538,7 @@ export class StateGraphRuntime {
         node,
         payload: { attempt: nextRetry, checkpoint: retryCheckpoint.seq }
       });
+      this.syncLatestSummary(run, node);
       await this.runStore.updateRun(run);
       return run;
     }
@@ -535,6 +548,7 @@ export class StateGraphRuntime {
 
     if (rollbackCount > run.graph.retryPolicy.maxAutoRollbacksPerNode) {
       run.status = "failed";
+      this.syncLatestSummary(run, node);
       await this.runStore.updateRun(run);
       return run;
     }
@@ -542,6 +556,7 @@ export class StateGraphRuntime {
     const prev = this.previousNode(node);
     if (!prev) {
       run.status = "failed";
+      this.syncLatestSummary(run, node);
       await this.runStore.updateRun(run);
       return run;
     }
@@ -576,6 +591,7 @@ export class StateGraphRuntime {
       }
     });
 
+    this.syncLatestSummary(run, prev);
     await this.runStore.updateRun(run);
     return run;
   }
@@ -603,6 +619,7 @@ export class StateGraphRuntime {
       }
     });
 
+    this.syncLatestSummary(run);
     await this.runStore.updateRun(run);
     return run;
   }
@@ -670,8 +687,23 @@ export class StateGraphRuntime {
       )
     };
 
+    this.syncLatestSummary(run);
     await this.runStore.updateRun(run);
     return run;
+  }
+
+  private syncLatestSummary(run: RunRecord, preferredNode?: GraphNodeId): void {
+    const primaryNode = preferredNode ?? run.currentNode;
+    const primaryNote = run.graph.nodeStates[primaryNode]?.note?.trim();
+    if (primaryNote) {
+      run.latestSummary = primaryNote;
+      return;
+    }
+
+    const currentNote = run.graph.nodeStates[run.currentNode]?.note?.trim();
+    if (currentNote) {
+      run.latestSummary = currentNote;
+    }
   }
 
   private isCheckpointSnapshotStale(current: RunRecord, snapshot: RunRecord): boolean {

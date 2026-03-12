@@ -1041,6 +1041,43 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.getRenderableLogs(run)[0]).toContain("Analyzing... 5/30");
   });
 
+  it("adds synthesized paused-analysis status lines when runs.json is stale", () => {
+    const app = makeApp();
+    const run = makeRun("run-paused-analyze");
+    run.status = "paused";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.latestSummary = 'Semantic Scholar stored 200 papers for "topic". Deferred enrichment continues for 173 paper(s).';
+    run.graph.retryCounters.analyze_papers = 1;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "pending";
+    run.graph.nodeStates.analyze_papers.note = "Canceled by user";
+    run.graph.nodeStates.analyze_papers.lastError = "Analysis incomplete: 1 paper(s) failed validation or LLM extraction.";
+
+    app.runProjectionHints.set(run.id, {
+      collect: {
+        enrichmentStatus: "completed"
+      },
+      analyze: {
+        selectedCount: 1,
+        totalCandidates: 200,
+        summaryCount: 0,
+        evidenceCount: 0,
+        rerankApplied: false,
+        rerankFallbackReason: "You've hit your usage limit for GPT-5.3-Codex-Spark.",
+        selectedPaperLastError: "You've hit your usage limit for GPT-5.3-Codex-Spark."
+      }
+    });
+
+    const lines = app.getRenderableLogs(run);
+
+    expect(lines[0]).toBe("Status: analyze_papers is paused after retry 1/3 because a model usage limit blocked progress.");
+    expect(lines[1]).toContain("Selected 1/200 paper(s) for analysis.");
+    expect(lines[1]).toContain("LLM rerank fell back to deterministic order.");
+    expect(lines[1]).toContain("GPT-5.3-Codex-Spark usage limit");
+    expect(lines[1]).toContain("Ignoring stale top-level summary");
+  });
+
   it("creates a Markdown brief file when /new is used without an editor", async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-new-"));
     const originalCwd = process.cwd();

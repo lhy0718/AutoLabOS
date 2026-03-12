@@ -245,19 +245,16 @@ export function buildLiteratureQueryCandidates(input: {
   const strippedRunTopic = stripLiteratureConstraintPhrases(runTopic);
 
   pushCandidate(requested, "requested_query");
-
-  if (!requested) {
-    pushCandidate(briefTopic, "brief_topic");
-    pushCandidate(runTopic, "run_topic");
-  } else {
-    pushCandidate(briefTopic, "brief_topic");
-    pushCandidate(runTopic, "run_topic");
-  }
-
   pushCandidate(strippedRequested, "constraint_stripped");
+
+  pushCandidate(briefTopic, "brief_topic");
   pushCandidate(strippedBriefTopic, "constraint_stripped");
+  pushCandidate(runTopic, "run_topic");
   pushCandidate(strippedRunTopic, "constraint_stripped");
-  pushCandidate(buildKeywordAnchorQuery(strippedRequested || strippedBriefTopic || strippedRunTopic || briefTopic || runTopic), "keyword_anchor");
+  pushCandidate(
+    buildKeywordAnchorQuery(strippedRequested || strippedBriefTopic || briefTopic || strippedRunTopic || runTopic),
+    "keyword_anchor"
+  );
 
   return candidates;
 }
