@@ -9,7 +9,7 @@ import { mapCodexEventToAutoLabOSEvents } from "../../integrations/codex/codexEv
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { EpisodeMemory, EpisodeRecord } from "../memory/episodeMemory.js";
 import { LongTermEntry, LongTermStore } from "../memory/longTermStore.js";
-import { ensureDir, fileExists, writeJsonFile } from "../../utils/fs.js";
+import { ensureDir, fileExists, normalizeFsPath, writeJsonFile } from "../../utils/fs.js";
 import { safeRead } from "../nodes/helpers.js";
 import { buildPublicExperimentDir } from "../publicArtifacts.js";
 import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
@@ -1350,7 +1350,7 @@ async function appendImplementProgressItem(
     verifyStatus?: VerifyReport["status"];
   }
 ): Promise<void> {
-  const filePath = path.join(runDir, IMPLEMENT_PROGRESS_LOG_ARTIFACT);
+  const filePath = normalizeFsPath(path.join(runDir, IMPLEMENT_PROGRESS_LOG_ARTIFACT));
   await ensureDir(path.dirname(filePath));
   await fs.appendFile(filePath, `${JSON.stringify(item)}\n`, "utf8");
 }
