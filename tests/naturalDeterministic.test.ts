@@ -43,10 +43,11 @@ describe("naturalDeterministic", () => {
     expect(isSupportedNaturalInputsQuery("what natural inputs are supported?")).toBe(true);
   });
 
-  it("formats supported natural input lines", () => {
+  it("formats the supported-input help in English-only minimal form", () => {
     const lines = formatSupportedNaturalInputLines("ko");
-    expect(lines[0]).toContain("지원되는 자연어 입력");
-    expect(lines.some((line) => line.includes("/agent collect"))).toBe(true);
+    expect(lines[0]).toBe("Supported natural-language controls:");
+    expect(lines.some((line) => line.includes("/brief start --latest"))).toBe(true);
+    expect(lines.some((line) => line.includes("Steering"))).toBe(true);
   });
 
   it("maps run selection requests to /run", () => {
@@ -58,6 +59,7 @@ describe("naturalDeterministic", () => {
 
     expect(result?.pendingCommand).toBe(`/run ${run.id}`);
     expect(result?.targetRunId).toBe(run.id);
+    expect(result?.lines).toEqual([`Selecting run ${run.id}.`]);
   });
 
   it("maps node count requests to /agent count", () => {

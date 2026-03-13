@@ -623,95 +623,77 @@ function buildCommandForStructuredAction(action: StructuredAction, runId?: strin
 }
 
 function buildSummaryLines(actions: StructuredAction[], language: "ko" | "en"): string[] {
+  void language;
   if (actions.length === 1) {
     const action = actions[0];
     switch (action.type) {
       case "collect":
         return [
-          language === "ko" ? "구조화된 논문 수집 요청을 인식했습니다." : "Recognized a structured paper collection request.",
-          `- ${summarizeAction(action, language)}`
+          "Recognized a structured paper collection request.",
+          `- ${summarizeAction(action, "en")}`
         ];
       case "analyze_papers":
         return [
           action.top_n
-            ? language === "ko"
-              ? `상위 ${action.top_n}개 논문만 분석합니다.`
-              : `Analyzing only the top ${action.top_n} ranked papers.`
-            : language === "ko"
-              ? "논문 분석 요청을 인식했습니다."
-              : "Recognized a paper analysis request.",
-          `- ${summarizeAction(action, language)}`
+            ? `Analyzing only the top ${action.top_n} ranked papers.`
+            : "Recognized a paper analysis request.",
+          `- ${summarizeAction(action, "en")}`
         ];
       case "generate_hypotheses":
         return [
           action.top_k
-            ? language === "ko"
-              ? `가설 ${action.top_k}개 생성을 준비합니다.`
-              : `Preparing to generate ${action.top_k} hypotheses.`
-            : language === "ko"
-              ? "가설 생성 요청을 인식했습니다."
-              : "Recognized a hypothesis-generation request.",
-          `- ${summarizeAction(action, language)}`
+            ? `Preparing to generate ${action.top_k} hypotheses.`
+            : "Recognized a hypothesis-generation request.",
+          `- ${summarizeAction(action, "en")}`
         ];
       case "clear":
         return [
-          language === "ko" ? "산출물 정리 요청을 인식했습니다." : "Recognized a clear-artifacts request.",
-          `- ${summarizeAction(action, language)}`
+          "Recognized a clear-artifacts request.",
+          `- ${summarizeAction(action, "en")}`
         ];
       case "jump":
         return [
-          language === "ko" ? "노드 이동 요청을 인식했습니다." : "Recognized a node jump request.",
-          `- ${summarizeAction(action, language)}`
+          "Recognized a node jump request.",
+          `- ${summarizeAction(action, "en")}`
         ];
       case "title":
         return [
-          language === "ko" ? "run title 변경 요청을 인식했습니다." : "Recognized a run title change request.",
-          `- ${summarizeAction(action, language)}`
+          "Recognized a run title change request.",
+          `- ${summarizeAction(action, "en")}`
         ];
     }
   }
-  const lines = [
-    language === "ko"
-      ? `구조화된 실행 계획을 인식했습니다. 총 ${actions.length}단계입니다.`
-      : `Recognized a structured execution plan with ${actions.length} step(s).`
-  ];
+  const lines = [`Recognized a structured execution plan with ${actions.length} step(s).`];
   actions.forEach((action, index) => {
-    lines.push(`- [${index + 1}/${actions.length}] ${summarizeAction(action, language)}`);
+    lines.push(`- [${index + 1}/${actions.length}] ${summarizeAction(action, "en")}`);
   });
   return lines;
 }
 
 function summarizeAction(action: StructuredAction, language: "ko" | "en"): string {
+  void language;
   switch (action.type) {
     case "collect": {
       const fragments: string[] = [];
       if (action.query) {
-        fragments.push(language === "ko" ? `query="${action.query}"` : `query="${action.query}"`);
+        fragments.push(`query="${action.query}"`);
       }
       if (action.limit) {
-        fragments.push(language === "ko" ? `limit=${action.limit}` : `limit=${action.limit}`);
+        fragments.push(`limit=${action.limit}`);
       }
       if (action.additional) {
-        fragments.push(language === "ko" ? `additional=${action.additional}` : `additional=${action.additional}`);
+        fragments.push(`additional=${action.additional}`);
       }
       if (action.filters?.last_years) {
-        fragments.push(language === "ko" ? `lastYears=${action.filters.last_years}` : `lastYears=${action.filters.last_years}`);
+        fragments.push(`lastYears=${action.filters.last_years}`);
       }
       if (action.filters?.open_access) {
-        fragments.push(language === "ko" ? "openAccess=true" : "openAccess=true");
+        fragments.push("openAccess=true");
       }
-      return language === "ko"
-        ? `논문 수집 (${fragments.join(", ") || "기본값"})`
-        : `Collect papers (${fragments.join(", ") || "defaults"})`;
+      return `Collect papers (${fragments.join(", ") || "defaults"})`;
     }
     case "analyze_papers":
-      return action.top_n
-        ? language === "ko"
-          ? `상위 ${action.top_n}개 논문 분석`
-          : `Analyze top ${action.top_n} papers`
-        : language === "ko"
-          ? "논문 분석"
-          : "Analyze papers";
+      return action.top_n ? `Analyze top ${action.top_n} papers` : "Analyze papers";
     case "generate_hypotheses": {
       const fragments: string[] = [];
       if (action.top_k) {
@@ -720,18 +702,14 @@ function summarizeAction(action: StructuredAction, language: "ko" | "en"): strin
       if (action.branch_count) {
         fragments.push(`branchCount=${action.branch_count}`);
       }
-      return language === "ko"
-        ? `가설 생성 (${fragments.join(", ") || "기본값"})`
-        : `Generate hypotheses (${fragments.join(", ") || "defaults"})`;
+      return `Generate hypotheses (${fragments.join(", ") || "defaults"})`;
     }
     case "clear":
-      return language === "ko" ? `${action.node} 산출물 정리` : `Clear ${action.node} artifacts`;
+      return `Clear ${action.node} artifacts`;
     case "jump":
-      return language === "ko"
-        ? `${action.node}${action.force ? "로 강제 이동" : "로 이동"}`
-        : `${action.force ? "Force jump" : "Jump"} to ${action.node}`;
+      return `${action.force ? "Force jump" : "Jump"} to ${action.node}`;
     case "title":
-      return language === "ko" ? `title 변경 -> "${action.title}"` : `Rename title -> "${action.title}"`;
+      return `Rename title -> "${action.title}"`;
   }
 }
 

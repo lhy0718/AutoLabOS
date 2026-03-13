@@ -241,7 +241,7 @@ export async function maybeRunRelatedWorkScout(
   const addedRows: StoredCorpusRow[] = [];
   const executedQueries: RelatedWorkScoutExecutedQuery[] = [];
   const before = buildCoverageSnapshot(input.bundle, request.target_additional_papers);
-  let lastStopReason = "query budget exhausted before coverage target was reached";
+  let lastStopReason = "query limit exhausted before coverage target was reached";
 
   try {
     for (const plannedQuery of plan.planned_queries) {
@@ -312,7 +312,7 @@ export async function maybeRunRelatedWorkScout(
         : "partial",
       reason:
         addedRows.length > 0
-          ? "related-work scout completed within its bounded query budget"
+          ? "related-work scout completed within its bounded query limit"
           : "semantic scholar returned no novel related-work candidates beyond the existing corpus",
       stopReason: hasSufficientCoverage(
         buildCoverageAudit({
@@ -325,7 +325,7 @@ export async function maybeRunRelatedWorkScout(
         })
       )
         ? lastStopReason
-        : "query budget exhausted before the coverage target was met"
+        : "query limit exhausted before the coverage target was met"
     });
     const papers = addedRows.map(buildScoutPaperArtifact);
     const result: RelatedWorkScoutResult = {

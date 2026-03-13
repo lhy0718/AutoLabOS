@@ -1,3 +1,4 @@
+import path from "node:path";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 
@@ -41,6 +42,45 @@ export interface RunTurnResult {
 export interface CliCheckResult {
   ok: boolean;
   detail: string;
+}
+
+const SANDBOX_PATH_ALIAS_PREFIXES = [
+  ["/private/tmp", "/tmp"],
+  ["/private/var/folders", "/var/folders"]
+] as const;
+
+export function presentCodexPath(filePath: string): string {
+  for (const [internalPrefix, visiblePrefix] of SANDBOX_PATH_ALIAS_PREFIXES) {
+    const mapped = remapPathPrefix(filePath, internalPrefix, visiblePrefix);
+    if (mapped) {
+      return mapped;
+    }
+  }
+  return filePath;
+}
+
+export function normalizeCodexWorkspacePath(filePath: string | undefined, workspaceRoot: string): string | undefined {
+  if (!filePath) {
+    return undefined;
+  }
+
+  if (!path.isAbsolute(filePath)) {
+    const resolved = path.resolve(workspaceRoot, filePath);
+    return isPathInsideOrEqual(resolved, workspaceRoot) ? resolved : undefined;
+  }
+
+  for (const root of buildWorkspacePathAliases(workspaceRoot)) {
+    if (!isPathInsideOrEqual(filePath, root)) {
+      continue;
+    }
+    const relative = path.relative(root, filePath);
+    const normalized = path.resolve(workspaceRoot, relative);
+    if (isPathInsideOrEqual(normalized, workspaceRoot)) {
+      return normalized;
+    }
+  }
+
+  return undefined;
 }
 
 export class CodexCliClient {
@@ -140,12 +180,13 @@ export class CodexCliClient {
     let deltaBuffer = "";
     let aborted = false;
 
+    const workingDirectory = presentCodexPath(opts.workingDirectory || this.defaultWorkingDirectory);
     const args = [
       "exec",
       "--json",
       "--skip-git-repo-check",
       "--cd",
-      opts.workingDirectory || this.defaultWorkingDirectory,
+      workingDirectory,
       "--sandbox",
       opts.sandboxMode
     ];
@@ -182,7 +223,7 @@ export class CodexCliClient {
     }
 
     const child = spawn("codex", args, {
-      cwd: opts.workingDirectory || this.defaultWorkingDirectory,
+      cwd: workingDirectory,
       env: process.env
     });
 
@@ -305,6 +346,36 @@ export class CodexCliClient {
 
     return { exitCode, stdout, stderr };
   }
+}
+
+function remapPathPrefix(filePath: string, fromPrefix: string, toPrefix: string): string | undefined {
+  if (filePath === fromPrefix) {
+    return toPrefix;
+  }
+  if (filePath.startsWith(`${fromPrefix}/`)) {
+    return `${toPrefix}${filePath.slice(fromPrefix.length)}`;
+  }
+  return undefined;
+}
+
+function buildWorkspacePathAliases(workspaceRoot: string): string[] {
+  const aliases = new Set<string>([workspaceRoot]);
+  for (const [internalPrefix, visiblePrefix] of SANDBOX_PATH_ALIAS_PREFIXES) {
+    const toVisible = remapPathPrefix(workspaceRoot, internalPrefix, visiblePrefix);
+    if (toVisible) {
+      aliases.add(toVisible);
+    }
+    const toInternal = remapPathPrefix(workspaceRoot, visiblePrefix, internalPrefix);
+    if (toInternal) {
+      aliases.add(toInternal);
+    }
+  }
+  return [...aliases];
+}
+
+function isPathInsideOrEqual(filePath: string, parentDir: string): boolean {
+  const relative = path.relative(parentDir, filePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 let fakeResponseSequenceSource = "";

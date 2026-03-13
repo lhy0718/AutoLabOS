@@ -134,7 +134,7 @@ describe("review node", () => {
               baselines: ["baseline_model"],
               evaluation_steps: ["run three confirmatory trials", "compare against the baseline"],
               risks: ["limited scope"],
-              budget_notes: ["single-machine execution"]
+              resource_notes: ["single-machine execution"]
             },
             shortlisted_designs: [],
             design_notes: [],
@@ -496,7 +496,7 @@ describe("review node", () => {
               baselines: ["baseline_model"],
               evaluation_steps: ["run three confirmatory trials", "compare against the baseline"],
               risks: [],
-              budget_notes: []
+              resource_notes: []
             },
             shortlisted_designs: [],
             design_notes: [],

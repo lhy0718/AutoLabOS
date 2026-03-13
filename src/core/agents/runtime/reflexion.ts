@@ -40,8 +40,8 @@ function classifyError(message: string): string {
   if (lower.includes("timeout")) {
     return "timeout";
   }
-  if (lower.includes("budget")) {
-    return "budget";
+  if (lower.includes("limit")) {
+    return "limit";
   }
   if (lower.includes("auth") || lower.includes("permission")) {
     return "auth";

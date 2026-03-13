@@ -396,7 +396,7 @@ describe("TerminalApp pending natural plan execution", () => {
     const handled = await app.handleFastNaturalIntent("수집된 논문은 몇건이지?", new AbortController().signal);
 
     expect(handled).toBe(true);
-    expect(app.logs).toContain("현재 수집된 논문은 42편입니다.");
+    expect(app.logs).toContain("The current run has 42 collected papers.");
     expect(app.pendingNaturalCommand).toBeUndefined();
   });
 
@@ -418,7 +418,7 @@ describe("TerminalApp pending natural plan execution", () => {
     const handled = await app.handleFastNaturalIntent("수집된 논문들을 모두 지워줘", new AbortController().signal);
 
     expect(handled).toBe(true);
-    expect(app.logs).toContain("산출물 정리 요청을 인식했습니다.");
+    expect(app.logs).toContain("Recognized a clear-artifacts request.");
     expect(app.pendingNaturalCommand?.commands).toEqual([`/agent clear collect_papers ${run.id}`]);
     expect(app.executeParsedSlash).not.toHaveBeenCalled();
   });
@@ -444,10 +444,9 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(handled).toBe(true);
     expect(startThinking).toHaveBeenCalled();
     expect(stopThinking).toHaveBeenCalled();
-    expect(app.logs).toContain(`Resolved slash command: /agent run analyze_papers ${run.id} --top-n 30`);
-    expect(app.logs).toContain("Execution intent detected. Pending command: 상위 30개 논문 분석");
+    expect(app.logs).toContain("Next step ready: Analyze top 30 papers.");
     expect(app.pendingNaturalCommand?.commands).toEqual([`/agent run analyze_papers ${run.id} --top-n 30`]);
-    expect(app.pendingNaturalCommand?.displayCommands).toEqual(["상위 30개 논문 분석"]);
+    expect(app.pendingNaturalCommand?.displayCommands).toEqual(["Analyze top 30 papers"]);
   });
 
   it("arms a pending generate_hypotheses command from a natural hypothesis request", async () => {
@@ -460,14 +459,11 @@ describe("TerminalApp pending natural plan execution", () => {
     const handled = await app.handleFastNaturalIntent("가설을 10개 뽑아줘", new AbortController().signal);
 
     expect(handled).toBe(true);
-    expect(app.logs).toContain("가설 10개 생성을 준비합니다.");
-    expect(app.logs).toContain(
-      `Resolved slash command: /agent run generate_hypotheses ${run.id} --top-k 10 --branch-count 10`
-    );
+    expect(app.logs).toContain("Preparing to generate 10 hypotheses.");
     expect(app.pendingNaturalCommand?.commands).toEqual([
       `/agent run generate_hypotheses ${run.id} --top-k 10 --branch-count 10`
     ]);
-    expect(app.pendingNaturalCommand?.displayCommands).toEqual(["가설 생성 (topK=10, branchCount=10)"]);
+    expect(app.pendingNaturalCommand?.displayCommands).toEqual(["Generate hypotheses (topK=10, branchCount=10)"]);
   });
 
   it("does not surface structured-action timeout errors in the log", async () => {
@@ -506,7 +502,7 @@ describe("TerminalApp pending natural plan execution", () => {
     const handled = await app.handleFastNaturalIntent("지금 나온 가설들을 확인해줘", new AbortController().signal);
 
     expect(handled).toBe(true);
-    expect(app.logs).toContain("현재 저장된 가설 3개 중 3개를 보여드립니다.");
+    expect(app.logs).toContain("Showing 3 of 3 saved hypotheses.");
     expect(app.logs).toContain("1. Hypothesis A");
     expect(app.logs.some((line: string) => line.includes("6개라고"))).toBe(false);
   });
@@ -681,7 +677,7 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs.some((line: string) => line.includes("Manual: Human sign-off"))).toBe(true);
   });
 
-  it("treats ctrl+c like escape while busy", async () => {
+  it("shuts down on ctrl+c while busy instead of replaying queued inputs", async () => {
     const app = makeApp();
     app.busy = true;
     app.cancelCurrentBusyOperation = vi.fn();
@@ -689,8 +685,9 @@ describe("TerminalApp pending natural plan execution", () => {
 
     await app.handleKeypress("", { ctrl: true, name: "c" });
 
-    expect(app.cancelCurrentBusyOperation).toHaveBeenCalledTimes(1);
-    expect(app.shutdown).not.toHaveBeenCalled();
+    expect(app.shutdown).toHaveBeenCalledTimes(1);
+    expect(app.shutdown).toHaveBeenCalledWith({ abortActive: true });
+    expect(app.cancelCurrentBusyOperation).not.toHaveBeenCalled();
   });
 
   it("still shuts down on ctrl+c when idle", async () => {
@@ -702,7 +699,61 @@ describe("TerminalApp pending natural plan execution", () => {
     await app.handleKeypress("", { ctrl: true, name: "c" });
 
     expect(app.shutdown).toHaveBeenCalledTimes(1);
+    expect(app.shutdown).toHaveBeenCalledWith({ abortActive: true });
     expect(app.cancelCurrentBusyOperation).not.toHaveBeenCalled();
+  });
+
+  it("clears queued slash inputs when shutdown interrupts a busy operation", async () => {
+    const app = makeApp();
+    const drainQueuedInputs = vi.fn(async () => {});
+    app.drainQueuedInputs = drainQueuedInputs;
+    app.onQuit = vi.fn();
+    app.detachKeyboard = vi.fn();
+
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+
+    const busyPromise = app.runBusyAction(async (abortSignal: AbortSignal) => {
+      resolveStarted();
+      await new Promise<void>((resolve, reject) => {
+        abortSignal.addEventListener(
+          "abort",
+          () => reject(new Error("Operation aborted by user")),
+          { once: true }
+        );
+      });
+    }, "/brief");
+
+    await started;
+    app.queuedInputs.push("/approve");
+
+    await app.shutdown({ abortActive: true });
+    await busyPromise;
+
+    expect(app.stopped).toBe(true);
+    expect(app.queuedInputs).toEqual([]);
+    expect(drainQueuedInputs).not.toHaveBeenCalled();
+    expect(app.logs.some((line: string) => line.includes("Running queued input: /approve"))).toBe(false);
+  });
+
+  it("queues slash commands instead of treating them as steering while a natural request is active", async () => {
+    const app = makeApp();
+    app.busy = true;
+    app.recordHistory = vi.fn().mockResolvedValue(undefined);
+    app.applySteeringInput = vi.fn();
+    app.activeNaturalRequest = {
+      input: "continue the current natural query",
+      steeringHints: [],
+      abortController: new AbortController()
+    };
+
+    await app.submitInputText("/brief start --latest");
+
+    expect(app.applySteeringInput).not.toHaveBeenCalled();
+    expect(app.queuedInputs).toEqual(["/brief start --latest"]);
+    expect(app.logs).toContain("Queued turn: /brief start --latest");
   });
 
   it("fills the first contextual action on tab when the input is empty", async () => {
@@ -719,16 +770,16 @@ describe("TerminalApp pending natural plan execution", () => {
     app.updateGuidanceLanguage("현재 상태 보여줘");
     const guidance = app.getContextualGuidance();
 
-    expect(guidance?.title).toBe("시작 가이드");
-    expect(guidance?.items.some((item: { label: string }) => item.label === "지원되는 자연어 입력을 보여줘")).toBe(true);
+    expect(guidance?.title).toBe("Research brief");
+    expect(guidance?.items.some((item: { label: string }) => item.label === "new brief")).toBe(true);
   });
 
-  it("fills the executable command on tab even when pending guidance shows a display label", async () => {
+  it("fills 'y' on tab when pending guidance exposes run/cancel controls", async () => {
     const app = makeApp();
     app.pendingNaturalCommand = {
       command: "/agent run analyze_papers run-1 --top-n 30",
       commands: ["/agent run analyze_papers run-1 --top-n 30"],
-      displayCommands: ["상위 30개 논문 분석"],
+      displayCommands: ["Analyze top 30 papers"],
       sourceInput: "30편 분석 진행해줘",
       createdAt: new Date().toISOString(),
       stepIndex: 0,
@@ -737,7 +788,194 @@ describe("TerminalApp pending natural plan execution", () => {
 
     await app.handleKeypress("", { name: "tab" });
 
-    expect(app.input).toBe("/agent run analyze_papers run-1 --top-n 30");
+    expect(app.input).toBe("y");
+  });
+
+  it("completes /brief on enter to the default latest-brief start command before execution", async () => {
+    const app = makeApp();
+    app.input = "/brief";
+    app.cursorIndex = 6;
+    app.suggestions = [
+      {
+        key: "brief",
+        label: "/brief start <path|--latest>",
+        description: "Start research from a brief file",
+        applyValue: "/brief start --latest"
+      }
+    ];
+    app.selectedSuggestion = 0;
+    app.executeInput = vi.fn();
+
+    await app.handleKeypress("", { name: "return" });
+
+    expect(app.input).toBe("/brief start --latest");
+    expect(app.executeInput).not.toHaveBeenCalled();
+  });
+
+  it("describes /brief as starting research instead of echoing the slash command", () => {
+    const app = makeApp();
+
+    expect(app.describeBusyLabelForSlash("brief", [])).toBe("Starting research...");
+  });
+
+  it("does not fall back to the previous run when the active run is missing from the run index", () => {
+    const app = makeApp();
+    app.runIndex = [makeRun("run-1")];
+    app.activeRunId = "run-2";
+
+    expect(app.getActiveIndexedRun()).toBeUndefined();
+    expect(app.getRenderableRun()).toBeUndefined();
+  });
+
+  it("inserts a newline on shift+enter instead of submitting", async () => {
+    const app = makeApp();
+    app.input = "first line";
+    app.cursorIndex = app.input.length;
+    app.executeInput = vi.fn();
+
+    await app.handleKeypress("", { name: "return", shift: true });
+
+    expect(app.input).toBe("first line\n");
+    expect(app.executeInput).not.toHaveBeenCalled();
+  });
+
+  it("inserts a newline when the terminal reports the enhanced Shift+Enter sequence", async () => {
+    const app = makeApp();
+    app.input = "first line";
+    app.cursorIndex = app.input.length;
+    app.executeInput = vi.fn();
+
+    await app.handleKeypress("", { sequence: "\x1b[13;2u", code: "[13;2u" });
+
+    expect(app.input).toBe("first line\n");
+    expect(app.executeInput).not.toHaveBeenCalled();
+  });
+
+  it("inserts a newline on ctrl+j instead of submitting", async () => {
+    const app = makeApp();
+    app.input = "first line";
+    app.cursorIndex = app.input.length;
+    app.executeInput = vi.fn();
+
+    await app.handleKeypress("\n", { name: "j", ctrl: true });
+
+    expect(app.input).toBe("first line\n");
+    expect(app.executeInput).not.toHaveBeenCalled();
+  });
+
+  it("inserts a newline from the raw enhanced Shift+Enter sequence before keypress parsing", () => {
+    const app = makeApp();
+    app.input = "first line";
+    app.cursorIndex = app.input.length;
+
+    app.handleRawKeyboardData(Buffer.from("\x1b[13;2u", "utf8"));
+
+    expect(app.input).toBe("first line\n");
+  });
+
+  it("inserts a newline when the raw Shift+Enter escape sequence arrives across multiple chunks", () => {
+    const app = makeApp();
+    app.input = "first line";
+    app.cursorIndex = app.input.length;
+
+    app.handleRawKeyboardData(Buffer.from("\x1b[13;", "utf8"));
+    expect(app.input).toBe("first line");
+
+    app.handleRawKeyboardData(Buffer.from("2u", "utf8"));
+    expect(app.input).toBe("first line\n");
+  });
+
+  it("renders with screen clear instead of terminal reset so keyboard enhancement survives", () => {
+    const app = makeApp();
+    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    process.env.COLUMNS = "80";
+    process.env.LINES = "24";
+
+    try {
+      (TerminalApp.prototype as any).render.call(app);
+      const output = writeSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(output).toContain("\x1b[2J\x1b[H");
+      expect(output).not.toContain("\x1Bc");
+    } finally {
+      writeSpy.mockRestore();
+      delete process.env.COLUMNS;
+      delete process.env.LINES;
+    }
+  });
+
+  it("switches the newline hint to ctrl+j when enhanced keys are not available", () => {
+    const app = makeApp();
+    app.enhancedNewlineSupported = false;
+    expect(app.resolveNewlineHintLabel()).toBe("Ctrl+J newline");
+
+    app.enhancedNewlineSupported = true;
+    expect(app.resolveNewlineHintLabel()).toBe("Shift+Enter newline");
+  });
+
+  it("hides slash suggestions once the draft becomes multiline", () => {
+    const app = makeApp();
+    app.input = "/brief\nextra";
+    app.cursorIndex = app.input.length;
+
+    app.updateSuggestions();
+
+    expect(app.suggestions).toEqual([]);
+  });
+
+  it("scrolls transcript with pageup and pagedown", async () => {
+    const app = makeApp();
+    app.lastRenderedFrame = {
+      lines: [],
+      inputLineIndex: 1,
+      inputColumn: 1,
+      totalTranscriptLines: 80,
+      maxTranscriptScrollOffset: 60,
+      transcriptHiddenLineCountAbove: 20,
+      transcriptHiddenLineCountBelow: 0,
+      appliedTranscriptScrollOffset: 0
+    };
+    process.env.LINES = "20";
+
+    await app.handleKeypress("", { name: "pageup" });
+    expect(app.transcriptScrollOffset).toBe(10);
+
+    await app.handleKeypress("", { name: "pagedown" });
+    expect(app.transcriptScrollOffset).toBe(0);
+
+    delete process.env.LINES;
+  });
+
+  it("suppresses collect progress transcript lines while thinking is active", () => {
+    const app = makeApp();
+    const run = makeRun("run-collect");
+    run.currentNode = "collect_papers";
+    run.graph.currentNode = "collect_papers";
+    run.graph.nodeStates.collect_papers.status = "running";
+    app.busy = true;
+    app.thinking = true;
+    app.collectProgress = {
+      phase: "collecting",
+      processed: 25,
+      total: 100
+    };
+
+    const logs = app.getRenderableLogs(run);
+
+    expect(logs.some((line: string) => line.includes("Collecting..."))).toBe(false);
+  });
+
+  it("suppresses synthesized status lines while thinking is active", () => {
+    const app = makeApp();
+    const run = makeRun("run-status");
+    run.status = "paused";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.analyze_papers.status = "pending";
+    run.graph.nodeStates.analyze_papers.note = "Canceled by user";
+    run.graph.retryCounters.analyze_papers = 1;
+    app.thinking = true;
+
+    expect(app.getRenderableLogs(run)).toEqual([]);
   });
 
   it("cancels an active selection menu on ctrl+c without shutting down", async () => {
@@ -810,6 +1048,50 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(completionLog).toContain(tailMarker);
   });
 
+  it("logs the downstream failed node when the failure message names a different node", async () => {
+    const app = makeApp();
+    const run = makeRun("run-downstream-failure-log");
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.analyze_papers.status = "pending";
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.setActiveRunId = vi.fn();
+    app.refreshRunIndex = vi.fn();
+    app.orchestrator = { jumpToNode: vi.fn() };
+    app.continueSupervisedRun = vi.fn().mockResolvedValue({
+      ...run,
+      status: "failed",
+      updatedAt: "2026-03-12T12:00:30.000Z",
+      currentNode: "analyze_papers",
+      graph: {
+        ...run.graph,
+        currentNode: "analyze_papers",
+        nodeStates: {
+          ...run.graph.nodeStates,
+          analyze_papers: {
+            ...run.graph.nodeStates.analyze_papers,
+            status: "failed",
+            updatedAt: "2026-03-12T12:00:10.000Z",
+            lastError: "generate_hypotheses requires at least one evidence item from analyze_papers."
+          },
+          generate_hypotheses: {
+            ...run.graph.nodeStates.generate_hypotheses,
+            status: "failed",
+            updatedAt: "2026-03-12T12:00:20.000Z",
+            lastError: "generate_hypotheses requires at least one evidence item from analyze_papers."
+          }
+        }
+      }
+    });
+
+    const result = await app.handleAgent(["run", "analyze_papers"], new AbortController().signal);
+
+    expect(result.ok).toBe(false);
+    expect(app.logs).toContain(
+      "Node generate_hypotheses failed: generate_hypotheses requires at least one evidence item from analyze_papers."
+    );
+  });
+
   it("executes one pending plan step at a time and re-arms the remaining steps", async () => {
     const app = makeApp();
     app.pendingNaturalCommand = {
@@ -826,7 +1108,7 @@ describe("TerminalApp pending natural plan execution", () => {
     await app.handlePendingNaturalConfirmation("y");
 
     expect(app.executeParsedSlash).toHaveBeenCalledTimes(1);
-    expect(app.logs).toContain("Confirmed. Running step 1/3: /help");
+    expect(app.logs).toContain("Confirmed. Running step 1/3.");
     expect(app.logs).toContain("Step 1/3 completed.");
     expect(app.pendingNaturalCommand?.commands).toEqual([
       "/agent collect --limit nope",
@@ -867,7 +1149,7 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.pendingNaturalCommand?.commands).toEqual(["/agent collect --limit 20 --run run-1"]);
   });
 
-  it("runs all remaining plan steps when confirmed with 'a'", async () => {
+  it("advances multi-step plans one step at a time", async () => {
     const app = makeApp();
     app.pendingNaturalCommand = {
       command: "/help",
@@ -884,15 +1166,13 @@ describe("TerminalApp pending natural plan execution", () => {
       .mockResolvedValueOnce({ ok: true })
       .mockResolvedValueOnce({ ok: true });
 
-    await app.handlePendingNaturalConfirmation("a");
+    await app.handlePendingNaturalConfirmation("y");
 
-    expect(app.executeParsedSlash).toHaveBeenCalledTimes(3);
-    expect(app.logs).toContain("Confirmed. Running all remaining steps from 1/3.");
+    expect(app.executeParsedSlash).toHaveBeenCalledTimes(1);
+    expect(app.logs).toContain("Confirmed. Running step 1/3.");
     expect(app.logs).toContain("Step 1/3 completed.");
-    expect(app.logs).toContain("Step 2/3: /doctor");
-    expect(app.logs).toContain('Step 3/3: /title "done" --run run-1');
-    expect(app.logs).toContain("Plan completed after 3 step(s).");
-    expect(app.pendingNaturalCommand).toBeUndefined();
+    expect(app.logs).toContain("Remaining plan steps (2-3/3):");
+    expect(app.pendingNaturalCommand?.commands).toEqual(["/doctor", '/title "done" --run run-1']);
   });
 
   it("does not re-arm the same failed plan during automatic replan", async () => {
@@ -1078,6 +1358,59 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(lines[1]).toContain("Ignoring stale top-level summary");
   });
 
+  it("refreshes a live run from the store so stale top-level summaries disappear after persisted analyze progress", async () => {
+    const app = makeApp();
+    const staleRun = makeRun("run-live-refresh");
+    staleRun.status = "running";
+    staleRun.currentNode = "analyze_papers";
+    staleRun.graph.currentNode = "analyze_papers";
+    staleRun.updatedAt = "2026-03-12T12:37:36.434Z";
+    staleRun.latestSummary = 'Semantic Scholar stored 200 papers for "topic". Deferred enrichment scheduled in background for 171 paper(s).';
+    staleRun.graph.nodeStates.collect_papers.status = "completed";
+    staleRun.graph.nodeStates.collect_papers.note = staleRun.latestSummary;
+    staleRun.graph.nodeStates.collect_papers.updatedAt = "2026-03-12T12:37:36.434Z";
+    staleRun.graph.nodeStates.analyze_papers.status = "running";
+    staleRun.graph.nodeStates.analyze_papers.updatedAt = "2026-03-12T12:37:36.434Z";
+
+    app.runIndex = [staleRun];
+    app.runProjectionHints.set(staleRun.id, {
+      analyze: {
+        selectedCount: 30,
+        totalCandidates: 200,
+        summaryCount: 3,
+        evidenceCount: 12
+      }
+    });
+
+    expect(app.getRenderableLogs(staleRun).join(" ")).toContain("Ignoring stale top-level summary");
+
+    const freshRun = makeRun("run-live-refresh");
+    freshRun.status = "running";
+    freshRun.currentNode = "analyze_papers";
+    freshRun.graph.currentNode = "analyze_papers";
+    freshRun.updatedAt = "2026-03-12T12:40:23.186Z";
+    freshRun.latestSummary =
+      "Analyzed top 30/200 ranked papers into 12 evidence item(s); 0 full-text and 3 abstract fallback (mode=codex_text_image_hybrid).";
+    freshRun.graph.nodeStates.collect_papers.status = "completed";
+    freshRun.graph.nodeStates.collect_papers.note =
+      'Semantic Scholar stored 200 papers for "topic". Deferred enrichment scheduled in background for 171 paper(s).';
+    freshRun.graph.nodeStates.collect_papers.updatedAt = "2026-03-12T12:39:54.428Z";
+    freshRun.graph.nodeStates.analyze_papers.status = "running";
+    freshRun.graph.nodeStates.analyze_papers.updatedAt = "2026-03-12T12:40:23.180Z";
+    freshRun.graph.nodeStates.analyze_papers.note = freshRun.latestSummary;
+
+    app.runStore = {
+      getRun: vi.fn().mockResolvedValue(freshRun)
+    } as any;
+
+    await app.refreshRunFromStore(staleRun.id);
+
+    expect(app.runIndex[0].latestSummary).toBe(freshRun.latestSummary);
+    expect(app.runIndex[0].graph.nodeStates.analyze_papers.note).toBe(freshRun.latestSummary);
+    expect(app.getRenderableLogs(app.runIndex[0]).join(" ")).not.toContain("Ignoring stale top-level summary");
+    expect(app.getRenderableLogs(app.runIndex[0])[0]).toContain("Analyzed top 30/200 ranked papers into 12 evidence item(s)");
+  });
+
   it("renders rollback recovery status without borrowing analyze evidence counts", () => {
     const app = makeApp();
     const run = makeRun("run-rollback");
@@ -1224,7 +1557,7 @@ describe("TerminalApp pending natural plan execution", () => {
           "## Constraints",
           "",
           "- recent papers",
-          "- 6 hour budget",
+          "- 6 hour time limit",
           "",
           "## Plan",
           "",
@@ -1248,6 +1581,168 @@ describe("TerminalApp pending natural plan execution", () => {
       const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
       expect(await runContext.get("run_brief.source_path")).toBe(await realpath(briefPath));
       expect(await runContext.get("run_brief.snapshot_path")).toBe(`.autolabos/runs/${run.id}/brief/source_brief.md`);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("starts the latest research brief from typed slash input while another run is active", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-keypress-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const runStore = new RunStore(paths);
+      const existingRun = await runStore.createRun({
+        title: "Existing run",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      existingRun.status = "paused";
+      existingRun.currentNode = "collect_papers";
+      existingRun.graph.currentNode = "collect_papers";
+      existingRun.graph.nodeStates.collect_papers.status = "pending";
+      await runStore.updateRun(existingRun);
+
+      const orchestrator = {
+        runCurrentAgentWithOptions: vi.fn(async (runId: string) => {
+          const run = await runStore.getRun(runId);
+          if (!run) {
+            throw new Error("expected run to exist");
+          }
+          run.status = "paused";
+          run.latestSummary = "collect_papers started";
+          run.graph.nodeStates.collect_papers = {
+            status: "running",
+            updatedAt: new Date().toISOString(),
+            note: "Collecting papers."
+          };
+          await runStore.updateRun(run);
+          return {
+            run,
+            result: {
+              status: "success" as const,
+              summary: "collect_papers started"
+            }
+          };
+        })
+      };
+
+      const app = new TerminalApp({
+        config: {
+          papers: { max_results: 100 },
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: {
+              model: "gpt-5.3-codex",
+              chat_model: "gpt-5.3-codex",
+              reasoning_effort: "medium",
+              chat_reasoning_effort: "medium",
+              fast_mode: false,
+              chat_fast_mode: false
+            },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          },
+          analysis: {
+            pdf_mode: "codex_text_image_hybrid",
+            responses_model: "gpt-5.4"
+          },
+          research: {
+            default_topic: "Multi-agent collaboration",
+            default_constraints: ["recent papers"],
+            default_objective_metric: "reproducibility"
+          }
+        } as any,
+        runStore,
+        titleGenerator: {
+          generateTitle: vi.fn().mockResolvedValue("Brief-driven run")
+        } as any,
+        codex: {
+          runTurnStream: vi.fn(async () => {
+            throw new Error("llm unavailable");
+          })
+        } as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: orchestrator as any,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+      app.render = () => {};
+      app.updateSuggestions = () => {};
+      app.drainQueuedInputs = async () => {};
+      const originalSetActiveRunId = app.setActiveRunId.bind(app);
+      const activationSnapshots: Array<{ runId?: string; visibleInRunIndex: boolean }> = [];
+      app.setActiveRunId = vi.fn(async (runId?: string) => {
+        activationSnapshots.push({
+          runId,
+          visibleInRunIndex:
+            typeof runId === "string" ? app.runIndex.some((candidate: { id: string }) => candidate.id === runId) : false
+        });
+        return originalSetActiveRunId(runId);
+      });
+
+      const briefDir = path.join(cwd, ".autolabos", "briefs");
+      await mkdir(briefDir, { recursive: true });
+      const briefPath = path.join(briefDir, "20260313-190000-agent-study.md");
+      await writeFile(
+        briefPath,
+        [
+          "# Research Brief",
+          "",
+          "## Topic",
+          "",
+          "Multi-agent code repair on SWE-bench",
+          "",
+          "## Objective Metric",
+          "",
+          "pass@1 >= 0.4",
+          "",
+          "## Constraints",
+          "",
+          "- recent papers",
+          "- 6 hour time limit",
+          "",
+          "## Plan",
+          "",
+          "Run baseline, ablation, and confirmatory evaluations."
+        ].join("\n"),
+        "utf8"
+      );
+
+      await app.refreshRunIndex();
+      await app.setActiveRunId(existingRun.id);
+
+      for (const char of "/brief start --latest") {
+        await app.handleKeypress(char, { sequence: char, name: char === " " ? "space" : undefined });
+      }
+
+      expect(app.input).toBe("/brief start --latest");
+
+      await app.handleKeypress("", { name: "return" });
+
+      const runs = await runStore.listRuns();
+      expect(runs).toHaveLength(2);
+      const run = runs.find((candidate) => candidate.id !== existingRun.id);
+      expect(run?.title).toBe("Brief-driven run");
+      expect(activationSnapshots.filter((snapshot) => snapshot.runId === run?.id)[0]).toEqual({
+        runId: run?.id,
+        visibleInRunIndex: true
+      });
+      expect(orchestrator.runCurrentAgentWithOptions).toHaveBeenCalledWith(
+        run?.id,
+        expect.objectContaining({ abortSignal: expect.any(AbortSignal) })
+      );
+      expect(app.activeRunId).toBe(run?.id);
+      const snapshot = await readFile(path.join(cwd, ".autolabos", "runs", run!.id, "brief", "source_brief.md"), "utf8");
+      expect(snapshot).toContain("Multi-agent code repair on SWE-bench");
+      expect(app.logs.some((line: string) => line.includes(`Created run ${run?.id}`))).toBe(true);
+      expect(app.logs.some((line: string) => line.includes("Auto-starting research"))).toBe(true);
+      const runContext = new RunContextMemory(path.join(cwd, run!.memoryRefs.runContextPath));
+      expect(await runContext.get("run_brief.source_path")).toBe(await realpath(briefPath));
     } finally {
       process.chdir(originalCwd);
       await rm(cwd, { recursive: true, force: true });

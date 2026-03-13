@@ -31,7 +31,6 @@ const AGENT_SUBCOMMANDS = [
   "resume",
   "retry",
   "jump",
-  "budget",
   "transition",
   "apply",
   "overnight"
@@ -46,11 +45,11 @@ export function buildSuggestions(ctx: SuggestionContext): SuggestionItem[] {
   const parsed = parseSlashInput(raw);
 
   if (!parsed.commandName) {
-    return commandSuggestions(parsed.commandQuery, ctx);
+    return limitSuggestions(commandSuggestions(parsed.commandQuery, ctx));
   }
 
   if (!knownCommand(parsed.commandName)) {
-    return commandSuggestions(parsed.commandQuery, ctx);
+    return limitSuggestions(commandSuggestions(parsed.commandQuery, ctx));
   }
 
   if (parsed.commandName === "run" || parsed.commandName === "resume") {
@@ -69,6 +68,10 @@ export function buildSuggestions(ctx: SuggestionContext): SuggestionItem[] {
     return titleSuggestions(parsed, ctx);
   }
 
+  if (parsed.commandName === "brief") {
+    return briefSuggestions(parsed);
+  }
+
   return commandSuggestions(parsed.commandName, ctx);
 }
 
@@ -77,10 +80,23 @@ function knownCommand(name: string): boolean {
 }
 
 function commandSuggestions(query: string, ctx: SuggestionContext): SuggestionItem[] {
+  const normalizedQuery = query.trim().toLowerCase();
   return SLASH_COMMANDS
-    .map((cmd) => {
-      const score = fuzzyScore(query, cmd.name);
-      if (score === null) {
+    .filter((cmd) => cmd.visible)
+    .map((cmd, index) => {
+      const score = fuzzyScore(query, cmd.name) ?? 0;
+      const lowerName = cmd.name.toLowerCase();
+      const rank =
+        normalizedQuery.length === 0
+          ? 0
+          : lowerName === normalizedQuery
+            ? 0
+            : lowerName.startsWith(normalizedQuery)
+              ? 1
+              : fuzzyScore(query, cmd.name) === null
+                ? null
+                : 2;
+      if (rank === null) {
         return null;
       }
       const description = describeCommand(cmd.name, cmd.description, ctx);
@@ -88,13 +104,84 @@ function commandSuggestions(query: string, ctx: SuggestionContext): SuggestionIt
         key: `cmd:${cmd.name}`,
         label: cmd.usage,
         description,
-        applyValue: `/${cmd.name} `,
-        score
+        applyValue: defaultApplyValueForCommand(cmd.name),
+        score,
+        rank,
+        index
       };
     })
-    .filter((x): x is SuggestionItem & { score: number } => Boolean(x))
-    .sort((a, b) => b.score - a.score)
-    .map(({ score: _score, ...item }) => item);
+    .filter((x): x is SuggestionItem & { score: number; rank: number; index: number } => Boolean(x))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index || b.score - a.score)
+    .map(({ score: _score, rank: _rank, index: _index, ...item }) => item);
+}
+
+function defaultApplyValueForCommand(name: string): string {
+  if (name === "brief") {
+    return "/brief start --latest";
+  }
+  return `/${name} `;
+}
+
+function limitSuggestions(items: SuggestionItem[]): SuggestionItem[] {
+  return items.slice(0, 8);
+}
+
+function briefSuggestions(parsed: ParsedInput): SuggestionItem[] {
+  const arg0 = (parsed.args[0] || "").toLowerCase();
+  const topLevelPartial = parsed.argIndex <= 0 ? parsed.argPartial : arg0;
+  const startScore = fuzzyScore(topLevelPartial, "start");
+
+  if (startScore === null && topLevelPartial) {
+    return [];
+  }
+
+  const suggestions: Array<SuggestionItem & { score: number; rank: number; index: number }> = [
+    {
+      key: "brief:start-latest",
+      label: "/brief start --latest",
+      description: "Start research from the latest Research Brief",
+      applyValue: "/brief start --latest",
+      score: Math.max(0, startScore ?? 0) + 1,
+      rank: 0,
+      index: 0
+    },
+    {
+      key: "brief:start-path",
+      label: "/brief start <path>",
+      description: "Start research from a specific brief file",
+      applyValue: "/brief start ",
+      score: Math.max(0, startScore ?? 0),
+      rank: 1,
+      index: 1
+    }
+  ];
+
+  if (parsed.argIndex <= 0) {
+    return suggestions
+      .sort((a, b) => a.rank - b.rank || a.index - b.index || b.score - a.score)
+      .map(({ score: _score, rank: _rank, index: _index, ...item }) => item);
+  }
+
+  if (arg0 !== "start") {
+    return [];
+  }
+
+  if (parsed.argIndex === 1) {
+    const optionPartial = parsed.argPartial.toLowerCase();
+    const optionScore = fuzzyScore(optionPartial, "--latest");
+    if (optionScore !== null || optionPartial.length === 0) {
+      return [
+        {
+          key: "brief:start-latest",
+          label: "/brief start --latest",
+          description: "Start research from the latest Research Brief",
+          applyValue: "/brief start --latest"
+        }
+      ];
+    }
+  }
+
+  return [];
 }
 
 function titleSuggestions(parsed: ParsedInput, ctx: SuggestionContext): SuggestionItem[] {
@@ -217,7 +304,7 @@ function agentCommandSuggestions(parsed: ParsedInput, runs: SlashContextRun[]): 
     }
   }
 
-  if (sub === "status" || sub === "graph" || sub === "budget") {
+  if (sub === "status" || sub === "graph") {
     if (parsed.argIndex === 1) {
       return runSuggestions(`agent ${sub}`, parsed.argPartial, runs);
     }

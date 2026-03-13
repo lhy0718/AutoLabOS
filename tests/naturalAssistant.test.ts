@@ -38,18 +38,19 @@ describe("buildNaturalAssistantResponse", () => {
     expect(matchesNaturalAssistantIntent("논문 제목 하나 알려줘")).toBe(false);
   });
 
-  it("explains workflow and next step when no runs exist", () => {
+  it("explains the workflow and brief-first flow when no runs exist", () => {
     const response = buildNaturalAssistantResponse({
       input: "파이프라인 구조 알려줘",
       runs: [],
       activeRunId: undefined
     });
 
-    expect(response.lines.some((line) => line.includes("워크플로:"))).toBe(true);
-    expect(response.lines).toContain("다음 단계: /new");
+    expect(response.lines.some((line) => line.includes("Workflow:"))).toBe(true);
+    expect(response.lines).toContain("Next action: new brief");
+    expect(response.lines).toContain("Create a Research Brief with /new and start it with /brief start --latest.");
   });
 
-  it("recommends /approve when current node needs approval", () => {
+  it("recommends approve when the current node needs approval", () => {
     const run = makeRun({
       id: "run-approve",
       status: "paused"
@@ -63,11 +64,11 @@ describe("buildNaturalAssistantResponse", () => {
     });
 
     expect(response.targetRunId).toBe(run.id);
-    expect(response.lines).toContain("다음 단계: /approve");
+    expect(response.lines).toContain("Next action: approve");
     expect(response.pendingCommand).toBeUndefined();
   });
 
-  it("recommends running current node when run is active", () => {
+  it("recommends run when the current node is active", () => {
     const run = makeRun({
       id: "run-exec",
       status: "running"
@@ -80,14 +81,15 @@ describe("buildNaturalAssistantResponse", () => {
       activeRunId: run.id
     });
 
-    expect(response.lines).toContain(`Next step: /agent run ${run.currentNode} ${run.id}`);
+    expect(response.lines).toContain("Next action: run");
+    expect(response.lines).toContain(`This continues ${run.currentNode}.`);
     expect(response.pendingCommand).toBeUndefined();
   });
 
-  it("recommends budget inspection for failed_budget runs", () => {
+  it("keeps failed guidance on run while pointing to the retry behavior", () => {
     const run = makeRun({
-      id: "run-budget",
-      status: "failed_budget",
+      id: "run-failed",
+      status: "failed",
       currentNode: "analyze_results"
     });
     run.graph.currentNode = "analyze_results";
@@ -99,12 +101,12 @@ describe("buildNaturalAssistantResponse", () => {
       activeRunId: run.id
     });
 
-    expect(response.lines).toContain(`Next step: /agent budget ${run.id}`);
-    expect(response.lines).toContain(`Then retry: /agent retry ${run.currentNode} ${run.id}`);
+    expect(response.lines).toContain("Next action: run");
+    expect(response.lines).toContain("This retries analyze_results.");
     expect(response.pendingCommand).toBeUndefined();
   });
 
-  it("returns pending command when execution intent is present", () => {
+  it("returns the underlying run command when execution intent is present", () => {
     const run = makeRun({
       id: "run-execute",
       status: "running"
@@ -120,7 +122,7 @@ describe("buildNaturalAssistantResponse", () => {
     expect(response.pendingCommand).toBe(`/agent run ${run.currentNode} ${run.id}`);
   });
 
-  it("returns /new as pending command when execution intent has no run", () => {
+  it("returns /new as the pending command when execution intent has no run", () => {
     const response = buildNaturalAssistantResponse({
       input: "시작해줘",
       runs: [],

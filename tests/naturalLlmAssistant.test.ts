@@ -89,7 +89,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       }
     });
 
-    expect(response.lines[0]).toContain("모델 응답");
+    expect(response.lines[0]).toContain("model response");
     expect(response.targetRunId).toBe(run.id);
   });
 

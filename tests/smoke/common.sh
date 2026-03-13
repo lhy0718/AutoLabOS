@@ -121,16 +121,6 @@ const runsFile = {
         nodeStates,
         retryCounters: {},
         rollbackCounters: {},
-        budget: {
-          toolCallsUsed: 0,
-          wallClockMsUsed: 0,
-          policy: {
-            maxToolCalls: 150,
-            maxWallClockMinutes: 240,
-            maxUsd: 15
-          },
-          usdUsed: 0
-        },
         checkpointSeq: 0,
         retryPolicy: {
           maxAttemptsPerNode: 3,

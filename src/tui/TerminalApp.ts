@@ -31,6 +31,7 @@ import {
   supportsOpenAiResponsesReasoning
 } from "../integrations/openai/modelCatalog.js";
 import { buildSuggestions } from "./commandPalette/suggest.js";
+import { SLASH_COMMANDS } from "./commandPalette/commands.js";
 import { parseSlashCommand, tokenizeShellLike } from "../core/commands/parseSlash.js";
 import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../core/commands/naturalAssistant.js";
 import { buildNaturalAssistantResponseWithLlm } from "../core/commands/naturalLlmAssistant.js";
@@ -194,6 +195,18 @@ interface SlashExecutionResult {
   reason?: string;
 }
 
+const ENABLE_KEYBOARD_ENHANCEMENT = "\x1b[>7u";
+const DISABLE_KEYBOARD_ENHANCEMENT = "\x1b[<u";
+const ENABLE_MODIFY_OTHER_KEYS = "\x1b[>4;1m";
+const DISABLE_MODIFY_OTHER_KEYS = "\x1b[>4;0m";
+const SHIFT_ENTER_SEQUENCES = new Set(["\x1b[13;2u", "\x1b[27;2;13~", "\x1b[27;13;2~"]);
+const SHIFT_ENTER_CODES = new Set(["[13;2u", "[27;2;13~", "[27;13;2~"]);
+const SHIFT_ENTER_SEQUENCE_LIST = [...SHIFT_ENTER_SEQUENCES];
+const MAX_SHIFT_ENTER_SEQUENCE_LENGTH = SHIFT_ENTER_SEQUENCE_LIST.reduce(
+  (max, sequence) => Math.max(max, sequence.length),
+  0
+);
+
 export class TerminalApp {
   private readonly config: AppConfig;
   private readonly runStore: RunStore;
@@ -218,6 +231,7 @@ export class TerminalApp {
   private logs: string[] = [];
   private suggestions: SuggestionItem[] = [];
   private selectedSuggestion = 0;
+  private transcriptScrollOffset = 0;
   private runIndex: RunRecord[] = [];
   private activeRunId?: string;
   private activeRunInsight?: RunInsightCard;
@@ -244,9 +258,16 @@ export class TerminalApp {
   private pendingHumanIntervention?: PendingHumanInterventionState;
   private announcedHumanInterventionId?: string;
   private guidanceLanguage: GuidanceLanguage = detectInitialGuidanceLanguage();
+  private enhancedNewlineSupported = detectLikelyEnhancedNewlineSupport();
+  private suppressEnhancedEnterUntil = 0;
+  private rawKeyboardSequenceBuffer = "";
 
   private readonly keypressHandler = (str: string, key: readline.Key) => {
     void this.handleKeypress(str, key);
+  };
+
+  private readonly rawInputHandler = (chunk: Buffer) => {
+    this.handleRawKeyboardData(chunk);
   };
 
   constructor(deps: TerminalAppDeps) {
@@ -271,11 +292,14 @@ export class TerminalApp {
     }
     this.unsubscribeEvents = this.eventStream.subscribe((event) => {
       this.applyProjectedRunEvent(event);
-      void this.refreshRunProjectionHints(event.runId).then(() => {
-        if (this.activeRunId === event.runId) {
-          this.render();
-        }
-      });
+      void this.refreshRunFromStore(event.runId)
+        .then(() => this.refreshRunProjectionHints(event.runId))
+        .then(() => {
+          if (this.activeRunId === event.runId) {
+            this.render();
+          }
+        })
+        .catch(() => undefined);
       const line = formatEventLog(event);
       if (!line) {
         return;
@@ -283,10 +307,6 @@ export class TerminalApp {
       this.pushLog(line);
       this.render();
     });
-    this.pushLog("Slash command palette is ready. Type /help to see commands.");
-    if (this.runIndex.length === 0) {
-      this.pushLog("Use /new to create a research brief file in .autolabos/briefs.");
-    }
     this.attachKeyboard();
     this.render();
 
@@ -301,18 +321,174 @@ export class TerminalApp {
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
     }
+    if (process.stdout.isTTY) {
+      process.stdout.write(ENABLE_KEYBOARD_ENHANCEMENT);
+      process.stdout.write(ENABLE_MODIFY_OTHER_KEYS);
+    }
+    process.stdin.prependListener("data", this.rawInputHandler);
     process.stdin.on("keypress", this.keypressHandler);
   }
 
   private detachKeyboard(): void {
     process.stdin.off("keypress", this.keypressHandler);
+    process.stdin.off("data", this.rawInputHandler);
+    if (process.stdout.isTTY) {
+      process.stdout.write(DISABLE_MODIFY_OTHER_KEYS);
+      process.stdout.write(DISABLE_KEYBOARD_ENHANCEMENT);
+    }
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }
+    this.rawKeyboardSequenceBuffer = "";
+  }
+
+  private isReturnKey(key: readline.Key): boolean {
+    return key.name === "return" || key.name === "enter";
+  }
+
+  private isShiftEnterSequence(str: string, key: readline.Key): boolean {
+    const maybeSequence = typeof (key as readline.Key & { sequence?: string }).sequence === "string"
+      ? (key as readline.Key & { sequence?: string }).sequence!
+      : str;
+    const maybeCode = typeof (key as readline.Key & { code?: string }).code === "string"
+      ? (key as readline.Key & { code?: string }).code!
+      : "";
+    return SHIFT_ENTER_SEQUENCES.has(maybeSequence) || SHIFT_ENTER_CODES.has(maybeCode);
+  }
+
+  private shouldIgnoreEnhancedEnterEcho(key: readline.Key): boolean {
+    if (!this.isReturnKey(key)) {
+      return false;
+    }
+    if (Date.now() > this.suppressEnhancedEnterUntil) {
+      return false;
+    }
+    this.suppressEnhancedEnterUntil = 0;
+    return true;
+  }
+
+  private handleRawKeyboardData(chunk: Buffer): void {
+    if (this.stopped) {
+      return;
+    }
+
+    const text = chunk.toString("utf8");
+    if (!text) {
+      return;
+    }
+
+    this.rawKeyboardSequenceBuffer = `${this.rawKeyboardSequenceBuffer}${text}`.slice(
+      -MAX_SHIFT_ENTER_SEQUENCE_LENGTH * 2
+    );
+
+    let detected = false;
+    while (true) {
+      const match = findShiftEnterSequenceRange(this.rawKeyboardSequenceBuffer);
+      if (!match) {
+        break;
+      }
+
+      detected = true;
+      this.rawKeyboardSequenceBuffer = `${this.rawKeyboardSequenceBuffer.slice(0, match.start)}${this.rawKeyboardSequenceBuffer.slice(match.end)}`;
+    }
+
+    if (detected) {
+      this.enhancedNewlineSupported = true;
+      this.suppressEnhancedEnterUntil = Date.now() + 120;
+      this.insertComposerNewline();
+      this.rawKeyboardSequenceBuffer = retainRawKeyboardSequenceSuffix(this.rawKeyboardSequenceBuffer);
+      return;
+    }
+
+    this.rawKeyboardSequenceBuffer = retainRawKeyboardSequenceSuffix(this.rawKeyboardSequenceBuffer);
+  }
+
+  private isCtrlNewlineKey(str: string, key: readline.Key): boolean {
+    if (key.ctrl && (key.name === "j" || key.name === "m")) {
+      return true;
+    }
+    return str === "\n";
+  }
+
+  private insertComposerNewline(): void {
+    this.exitHistoryBrowsing();
+    const next = insertAtCursor(this.input, this.cursorIndex, "\n");
+    this.input = next.input;
+    this.cursorIndex = next.cursor;
+    this.updateSuggestions();
+    this.render();
+  }
+
+  private isComposerNewlineKey(str: string, key: readline.Key): boolean {
+    return (this.isReturnKey(key) && key.shift) || this.isShiftEnterSequence(str, key) || this.isCtrlNewlineKey(str, key);
+  }
+
+  private getSelectedSuggestionCommandForEnter(): string | undefined {
+    if (this.suggestions.length === 0) {
+      return undefined;
+    }
+
+    const selected = this.suggestions[this.selectedSuggestion];
+    if (!selected) {
+      return undefined;
+    }
+
+    const command = normalizeSlashPrefix(selected.applyValue).trim();
+    if (!isSlashPrefixed(command)) {
+      return undefined;
+    }
+
+    const commandName = command.replace(/^\//u, "");
+    const commandDef = SLASH_COMMANDS.find((slashCommand) => slashCommand.name === commandName);
+    if (!commandDef || /[<[].+[>\]]/u.test(commandDef.usage)) {
+      return undefined;
+    }
+
+    return command;
+  }
+
+  private async submitInputText(text: string): Promise<void> {
+    this.transcriptScrollOffset = 0;
+    this.input = "";
+    this.cursorIndex = 0;
+    this.suggestions = [];
+    this.selectedSuggestion = 0;
+    this.render();
+
+    if (!text) {
+      return;
+    }
+
+    this.updateGuidanceLanguage(text);
+
+    if (!(this.pendingNaturalCommand && !isSlashPrefixed(text) && isConfirmationInput(text))) {
+      await this.recordHistory(text);
+    }
+
+    if (this.busy) {
+      if (this.activeNaturalRequest && !isSlashPrefixed(text)) {
+        const steering = normalizeSteeringInput(text);
+        if (!steering) {
+          return;
+        }
+        this.applySteeringInput(steering);
+        return;
+      }
+      this.queuedInputs.push(text);
+      this.pushLog(`Queued turn: ${oneLine(text)}`);
+      this.render();
+      return;
+    }
+
+    await this.executeInput(text);
   }
 
   private async handleKeypress(str: string, key: readline.Key): Promise<void> {
     if (this.stopped) {
+      return;
+    }
+
+    if (this.shouldIgnoreEnhancedEnterEcho(key)) {
       return;
     }
 
@@ -321,15 +497,15 @@ export class TerminalApp {
         this.cancelSelectionMenu();
         return;
       }
-      if (key.name === "up") {
+      if (key.name === "up" || (key.ctrl && key.name === "p")) {
         this.moveSelectionMenu(-1);
         return;
       }
-      if (key.name === "down") {
+      if (key.name === "down" || (key.ctrl && key.name === "n")) {
         this.moveSelectionMenu(1);
         return;
       }
-      if (key.name === "return") {
+      if (this.isReturnKey(key)) {
         this.commitSelectionMenu();
         return;
       }
@@ -341,16 +517,36 @@ export class TerminalApp {
     }
 
     if (key.ctrl && key.name === "c") {
-      if (this.busy) {
-        this.cancelCurrentBusyOperation();
-        return;
-      }
-      await this.shutdown();
+      await this.shutdown({ abortActive: true });
       return;
     }
 
-    if (key.name === "return") {
+    if (this.isComposerNewlineKey(str, key)) {
+      if ((this.isReturnKey(key) && key.shift) || this.isShiftEnterSequence(str, key)) {
+        this.enhancedNewlineSupported = true;
+        this.suppressEnhancedEnterUntil = Date.now() + 120;
+      }
+      this.insertComposerNewline();
+      return;
+    }
+
+    if (this.isReturnKey(key)) {
       await this.handleEnter();
+      return;
+    }
+
+    if (key.name === "pageup") {
+      this.scrollTranscriptBy(this.resolveTranscriptScrollDelta());
+      return;
+    }
+
+    if (key.name === "pagedown") {
+      this.scrollTranscriptBy(-this.resolveTranscriptScrollDelta());
+      return;
+    }
+
+    if (key.name === "end") {
+      this.scrollTranscriptToLatest();
       return;
     }
 
@@ -429,7 +625,7 @@ export class TerminalApp {
       return;
     }
 
-    if (key.name === "up") {
+    if (key.name === "up" || (key.ctrl && key.name === "p")) {
       if (this.historyCursor !== -1) {
         if (this.recallPreviousHistory()) {
           this.render();
@@ -438,7 +634,6 @@ export class TerminalApp {
         this.exitHistoryBrowsing();
         this.selectedSuggestion =
           (this.selectedSuggestion - 1 + this.suggestions.length) % this.suggestions.length;
-        this.previewSelectedSuggestion();
         this.render();
       } else if (this.recallPreviousHistory()) {
         this.render();
@@ -446,7 +641,7 @@ export class TerminalApp {
       return;
     }
 
-    if (key.name === "down") {
+    if (key.name === "down" || (key.ctrl && key.name === "n")) {
       if (this.historyCursor !== -1) {
         if (this.recallNextHistory()) {
           this.render();
@@ -454,7 +649,6 @@ export class TerminalApp {
       } else if (this.suggestions.length > 0) {
         this.exitHistoryBrowsing();
         this.selectedSuggestion = (this.selectedSuggestion + 1) % this.suggestions.length;
-        this.previewSelectedSuggestion();
         this.render();
       } else if (this.recallNextHistory()) {
         this.render();
@@ -484,7 +678,7 @@ export class TerminalApp {
   }
 
   private updateSuggestions(): void {
-    if (!isSlashPrefixed(this.input)) {
+    if (!isSlashPrefixed(this.input) || this.input.includes("\n") || !this.isCursorInsideFirstLineSlashToken()) {
       this.suggestions = [];
       this.selectedSuggestion = 0;
       return;
@@ -505,6 +699,18 @@ export class TerminalApp {
     if (this.selectedSuggestion >= this.suggestions.length) {
       this.selectedSuggestion = 0;
     }
+  }
+
+  private isCursorInsideFirstLineSlashToken(): boolean {
+    const firstLine = this.input.split("\n")[0] ?? "";
+    const firstSpaceIndex = firstLine.search(/\s/u);
+    const token = firstSpaceIndex === -1 ? firstLine : firstLine.slice(0, firstSpaceIndex);
+    const tokenLength = Array.from(token).length;
+    const beforeCursor = Array.from(this.input).slice(0, Math.max(0, this.cursorIndex)).join("");
+    if (beforeCursor.includes("\n")) {
+      return false;
+    }
+    return this.cursorIndex <= tokenLength;
   }
 
   private autocompleteSelectedSuggestion(): void {
@@ -529,13 +735,54 @@ export class TerminalApp {
     this.updateSuggestions();
   }
 
-  private previewSelectedSuggestion(): void {
-    if (this.suggestions.length === 0) {
+  private scrollTranscriptBy(delta: number): void {
+    const maxOffset = this.lastRenderedFrame?.maxTranscriptScrollOffset ?? 0;
+    if (maxOffset <= 0 && delta >= 0) {
       return;
     }
+    this.transcriptScrollOffset = Math.min(maxOffset, Math.max(0, this.transcriptScrollOffset + delta));
+    this.render();
+  }
+
+  private scrollTranscriptToLatest(): void {
+    if (this.transcriptScrollOffset === 0) {
+      return;
+    }
+    this.transcriptScrollOffset = 0;
+    this.render();
+  }
+
+  private resolveTranscriptScrollDelta(): number {
+    return Math.max(3, Math.floor(this.resolveTerminalHeight() * 0.5));
+  }
+
+  private resolveNewlineHintLabel(): string {
+    return this.enhancedNewlineSupported ? "Shift+Enter newline" : "Ctrl+J newline";
+  }
+
+  private shouldCompleteSuggestionOnEnter(text: string): boolean {
+    if (this.suggestions.length === 0 || !isSlashPrefixed(text)) {
+      return false;
+    }
+
+    const trimmed = text.trim();
+    if (!trimmed || /\s/u.test(trimmed)) {
+      return false;
+    }
+
     const selected = this.suggestions[this.selectedSuggestion];
-    this.input = selected.applyValue;
-    this.cursorIndex = Array.from(this.input).length;
+    if (!selected) {
+      return false;
+    }
+
+    const selectedCommand = selected.applyValue.trim();
+    if (trimmed !== selectedCommand) {
+      return true;
+    }
+
+    const commandName = trimmed.replace(/^\//u, "");
+    const commandDef = SLASH_COMMANDS.find((command) => command.name === commandName);
+    return Boolean(commandDef && /[<[].+[>\]]/u.test(commandDef.usage));
   }
 
   private moveSelectionMenu(step: number): void {
@@ -571,39 +818,20 @@ export class TerminalApp {
   }
 
   private async handleEnter(): Promise<void> {
-    const text = normalizeSlashPrefix(this.input).trim();
-    this.input = "";
-    this.cursorIndex = 0;
-    this.suggestions = [];
-    this.selectedSuggestion = 0;
-    this.render();
-
-    if (!text) {
+    const normalizedInput = normalizeSlashPrefix(this.input);
+    const selectedSuggestionCommand = this.getSelectedSuggestionCommandForEnter();
+    if (selectedSuggestionCommand) {
+      await this.submitInputText(selectedSuggestionCommand);
       return;
     }
 
-    this.updateGuidanceLanguage(text);
-
-    if (!(this.pendingNaturalCommand && !isSlashPrefixed(text) && isConfirmationInput(text))) {
-      await this.recordHistory(text);
-    }
-
-    if (this.busy) {
-      if (this.activeNaturalRequest) {
-        const steering = normalizeSteeringInput(text);
-        if (!steering) {
-          return;
-        }
-        this.applySteeringInput(steering);
-        return;
-      }
-      this.queuedInputs.push(text);
-      this.pushLog(`Queued turn: ${oneLine(text)}`);
+    if (this.shouldCompleteSuggestionOnEnter(normalizedInput)) {
+      this.autocompleteSelectedSuggestion();
       this.render();
       return;
     }
 
-    await this.executeInput(text);
+    await this.submitInputText(normalizedInput.trim());
   }
 
   private async executeInput(text: string): Promise<void> {
@@ -749,9 +977,8 @@ export class TerminalApp {
     }
 
     const normalized = text.trim().toLowerCase();
-    const runAllRemaining = isRunAllRemainingInput(normalized) && pending.totalSteps > 1;
     const displayCommands = this.resolvePendingDisplayCommands(pending);
-    if (isAffirmative(normalized) || runAllRemaining) {
+    if (isAffirmative(normalized)) {
       this.pendingNaturalCommand = undefined;
       await this.runBusyAction(async (abortSignal) => {
         if (abortSignal.aborted) {
@@ -759,15 +986,9 @@ export class TerminalApp {
         }
         const stepNumber = pending.stepIndex + 1;
         if (pending.totalSteps === 1) {
-          this.pushLog(`Confirmed. Running: ${displayCommands[0] ?? pending.command}`);
-        } else if (runAllRemaining) {
-          this.pushLog(
-            `Confirmed. Running all remaining steps from ${stepNumber}/${pending.totalSteps}.`
-          );
+          this.pushLog("Confirmed. Running the pending step.");
         } else {
-          this.pushLog(
-            `Confirmed. Running step ${stepNumber}/${pending.totalSteps}: ${displayCommands[0] ?? pending.command}`
-          );
+          this.pushLog(`Confirmed. Running step ${stepNumber}/${pending.totalSteps}.`);
         }
 
         for (let offset = 0; offset < pending.commands.length; offset += 1) {
@@ -784,7 +1005,7 @@ export class TerminalApp {
           this.activeBusyLabel = this.describeBusyLabelForSlash(parsed.command, parsed.args);
           this.render();
 
-          if (pending.totalSteps > 1 && (offset > 0 || runAllRemaining)) {
+          if (pending.totalSteps > 1 && offset > 0) {
             this.pushLog(`Step ${currentStepNumber}/${pending.totalSteps}: ${displayCommand}`);
           }
 
@@ -807,16 +1028,14 @@ export class TerminalApp {
 
           if (pending.totalSteps > 1 && currentStepNumber < pending.totalSteps) {
             this.pushLog(`Step ${currentStepNumber}/${pending.totalSteps} completed.`);
-            if (!runAllRemaining) {
-              this.armPendingNaturalCommands(pending.sourceInput, pending.commands.slice(offset + 1), {
-                stepIndex: currentStepIndex + 1,
-                totalSteps: pending.totalSteps,
-                continuation: true,
-                presentation: pending.presentation,
-                displayCommands: pending.displayCommands?.slice(offset + 1)
-              });
-              return;
-            }
+            this.armPendingNaturalCommands(pending.sourceInput, pending.commands.slice(offset + 1), {
+              stepIndex: currentStepIndex + 1,
+              totalSteps: pending.totalSteps,
+              continuation: true,
+              presentation: pending.presentation,
+              displayCommands: pending.displayCommands?.slice(offset + 1)
+            });
+            return;
           }
         }
 
@@ -841,13 +1060,11 @@ export class TerminalApp {
     }
 
     if (pending.totalSteps === 1) {
-      this.pushLog(`Pending command: ${displayCommands[0] ?? pending.command}`);
+      this.pushLog("A pending step is ready.");
       this.pushLog("Type 'y' to run it, or 'n' to cancel.");
     } else {
       this.pushLog(this.buildPendingPlanReminderLine(pending));
-      this.pushLog(
-        `Type 'y' to run step ${pending.stepIndex + 1}/${pending.totalSteps}, 'a' to run all remaining steps, or 'n' to cancel the remaining plan.`
-      );
+      this.pushLog(`Type 'y' to run step ${pending.stepIndex + 1}/${pending.totalSteps}, or 'n' to cancel the remaining plan.`);
     }
     this.render();
   }
@@ -880,7 +1097,9 @@ export class TerminalApp {
       this.stopStatusAnimationIfIdle();
       this.updateSuggestions();
       this.render();
-      void this.drainQueuedInputs();
+      if (!this.stopped) {
+        void this.drainQueuedInputs();
+      }
     }
   }
 
@@ -889,18 +1108,13 @@ export class TerminalApp {
       return true;
     }
 
-    const language = detectQueryLanguage(text);
     if (looksLikeRunBriefRequest(text)) {
       const run = await this.createRunFromBrief({
         brief: text,
         autoStart: true,
         abortSignal
       });
-      this.pushLog(
-        language === "ko"
-          ? `자연어 brief로 run ${run.id}을 만들고 연구를 시작했습니다.`
-          : `Created run ${run.id} from the natural-language brief and started research.`
-      );
+      this.pushLog(`Created run ${run.id} from the natural-language brief and started research.`);
       return true;
     }
 
@@ -911,24 +1125,16 @@ export class TerminalApp {
         return true;
       }
       const command = buildTitleCommand(titleChange.title, run.id);
-      this.pushLog(
-        language === "ko"
-          ? `run title을 "${titleChange.title}"로 변경합니다.`
-          : `I can rename the run title to "${titleChange.title}".`
-      );
+      this.pushLog(`I can rename the run title to "${titleChange.title}".`);
       this.armPendingNaturalCommands(text, [command]);
       return true;
     }
 
     if (isSupportedNaturalInputsQuery(text)) {
-      for (const line of formatSupportedNaturalInputLines(language)) {
+      for (const line of formatSupportedNaturalInputLines("en")) {
         this.pushLog(line);
       }
-      this.pushLog(
-        language === "ko"
-          ? "이 목록 밖의 질문은 workspace 기반 LLM 응답으로 계속 처리합니다."
-          : "Questions outside this list continue to use the workspace-grounded LLM fallback."
-      );
+      this.pushLog("Questions outside this list continue to use the workspace-grounded LLM fallback.");
       return true;
     }
 
@@ -937,31 +1143,19 @@ export class TerminalApp {
       const hypothesisInsights = await this.readHypothesisInsights(run.id);
 
       if (isHypothesisCountIntent(text)) {
-        this.pushLog(
-          language === "ko"
-            ? `현재 저장된 가설은 ${hypothesisInsights.totalHypotheses}개입니다.`
-            : `There are ${hypothesisInsights.totalHypotheses} saved hypotheses in the current run.`
-        );
+        this.pushLog(`There are ${hypothesisInsights.totalHypotheses} saved hypotheses in the current run.`);
         return true;
       }
 
       if (isHypothesisListIntent(text)) {
         if (hypothesisInsights.totalHypotheses === 0) {
-          this.pushLog(
-            language === "ko"
-              ? "현재 run에 저장된 가설이 없습니다."
-              : "No saved hypotheses were found in the current run."
-          );
+          this.pushLog("No saved hypotheses were found in the current run.");
           return true;
         }
 
         const limit = extractRequestedHypothesisCount(text);
         const texts = hypothesisInsights.texts.slice(0, limit);
-        this.pushLog(
-          language === "ko"
-            ? `현재 저장된 가설 ${hypothesisInsights.totalHypotheses}개 중 ${texts.length}개를 보여드립니다.`
-            : `Showing ${texts.length} of ${hypothesisInsights.totalHypotheses} saved hypotheses.`
-        );
+        this.pushLog(`Showing ${texts.length} of ${hypothesisInsights.totalHypotheses} saved hypotheses.`);
         texts.forEach((item, idx) => {
           this.pushLog(`${idx + 1}. ${item}`);
         });
@@ -972,52 +1166,28 @@ export class TerminalApp {
 
       if (isMissingPdfCountIntent(text)) {
         if (insights.totalPapers === 0) {
-          this.pushLog(
-            language === "ko"
-              ? "현재 run에 수집된 논문이 없습니다."
-              : "No collected papers were found in the current run."
-          );
+          this.pushLog("No collected papers were found in the current run.");
           return true;
         }
-        this.pushLog(
-          language === "ko"
-            ? `PDF 경로가 없는 논문은 ${insights.missingPdfCount}편입니다. (총 ${insights.totalPapers}편)`
-            : `Papers without a PDF path: ${insights.missingPdfCount} (out of ${insights.totalPapers}).`
-        );
+        this.pushLog(`Papers without a PDF path: ${insights.missingPdfCount} (out of ${insights.totalPapers}).`);
         return true;
       }
 
       if (isTopCitationIntent(text)) {
         if (insights.totalPapers === 0) {
-          this.pushLog(
-            language === "ko"
-              ? "현재 run에 수집된 논문이 없습니다."
-              : "No collected papers were found in the current run."
-          );
+          this.pushLog("No collected papers were found in the current run.");
           return true;
         }
         if (!insights.topCitation) {
-          this.pushLog(
-            language === "ko"
-              ? "수집된 논문에 citation 정보가 없어 최고 citation 논문을 계산할 수 없습니다."
-              : "Citation metadata is missing, so I cannot compute the top-cited paper."
-          );
+          this.pushLog("Citation metadata is missing, so I cannot compute the top-cited paper.");
           return true;
         }
-        this.pushLog(
-          language === "ko"
-            ? `citation이 가장 높은 논문은 "${insights.topCitation.title}"이며 citation_count는 ${insights.topCitation.citationCount}회입니다.`
-            : `The top-cited paper is "${insights.topCitation.title}" with ${insights.topCitation.citationCount} citations.`
-        );
+        this.pushLog(`The top-cited paper is "${insights.topCitation.title}" with ${insights.topCitation.citationCount} citations.`);
         return true;
       }
 
       if (isPaperCountIntent(text)) {
-        this.pushLog(
-          language === "ko"
-            ? `현재 수집된 논문은 ${insights.totalPapers}편입니다.`
-            : `The current run has ${insights.totalPapers} collected papers.`
-        );
+        this.pushLog(`The current run has ${insights.totalPapers} collected papers.`);
         return true;
       }
 
@@ -1025,19 +1195,11 @@ export class TerminalApp {
         const limit = extractRequestedTitleCount(text);
         const titles = insights.titles.slice(0, limit);
         if (titles.length === 0) {
-          this.pushLog(
-            language === "ko"
-              ? "현재 run에 수집된 논문 제목이 없습니다."
-              : "No collected paper titles were found in the current run."
-          );
+          this.pushLog("No collected paper titles were found in the current run.");
           return true;
         }
 
-        this.pushLog(
-          language === "ko"
-            ? `논문 제목 ${titles.length}개입니다.`
-            : `Here are ${titles.length} paper title(s).`
-        );
+        this.pushLog(`Here are ${titles.length} paper title(s).`);
         titles.forEach((title, idx) => {
           this.pushLog(`${idx + 1}. ${title}`);
         });
@@ -1511,32 +1673,19 @@ export class TerminalApp {
   private printHelp(): void {
     this.pushLog("Help");
     this.pushLog("");
-    this.pushLog("Core:");
-    this.pushLog("/help | /new | /brief start <path|--latest> | /runs | /run <run> | /resume <run> | /title <new title>");
-    this.pushLog("/doctor | /model | /settings | /quit");
+    this.pushLog("Flow:");
+    this.pushLog("/new");
+    this.pushLog("/brief start <path|--latest>");
+    this.pushLog("/approve");
     this.pushLog("");
-    this.pushLog("Workflow:");
-    this.pushLog("/approve | /retry");
-    this.pushLog("/agent list | /agent status [run] | /agent graph [run] | /agent budget [run]");
-    this.pushLog("/agent review [run] | /agent transition [run] | /agent apply [run] | /agent overnight [run]");
-    this.pushLog(
-      "/agent run <node> [run] [--top-n <n> | --top-k <n> --branch-count <n>] | /agent retry [node] [run] | /agent jump <node> [run] [--force]"
-    );
-    this.pushLog("/agent focus <node> | /agent resume [run] [checkpoint]");
+    this.pushLog("Controls:");
+    this.pushLog("Press Tab when the input is empty to insert the suggested next step.");
+    this.pushLog("Use /approve when the run pauses for review.");
+    this.pushLog("Add steering at any time to redirect the current plan.");
     this.pushLog("");
-    this.pushLog("Collection:");
-    this.pushLog("/agent collect [query] [options] | /agent recollect <n> [run]");
-    this.pushLog("/agent clear <node> [run] | /agent count <node> [run] | /agent clear_papers [run]");
-    this.pushLog("Collect options: --run --limit --additional --last-years --year --date-range --sort --order --field --venue --type --min-citations --open-access --bibtex --dry-run");
-    this.pushLog("");
-    this.pushLog("Natural language:");
-    this.pushLog("Ask 'what natural inputs are supported?' to list the live intent catalog.");
-    this.pushLog("Examples: What should I do next? | Show current status | Collect 100 papers from the last 5 years by relevance");
-    this.pushLog("Examples: Show artifact count for the analyze_results node | Change the run title to Multi-agent collaboration");
-    this.pushLog("Use /new to create a Markdown research brief, then /brief start --latest to launch it.");
-    this.pushLog("Execution requests require 'y' to run or 'n' to cancel.");
-    this.pushLog("Multi-step plans: 'y' runs the next step, 'a' runs all remaining steps, 'n' cancels the rest.");
-    this.pushLog("While thinking, any new input is treated as steering.");
+    this.pushLog("Notes:");
+    this.pushLog("Create a Markdown Research Brief first. The UI then keeps the main loop to run, approve, and steering.");
+    this.pushLog("Advanced slash commands still exist, but they are intentionally out of the main path.");
   }
 
   private async handleNewRun(): Promise<void> {
@@ -1545,7 +1694,7 @@ export class TerminalApp {
 
     const openedInEditor = await this.openResearchBriefInEditor(filePath);
     if (!openedInEditor) {
-      this.pushLog("Edit the brief, then run /brief start --latest or /brief start <path> to begin research.");
+      this.pushLog("Edit the brief, then start it with /brief start --latest or /brief start <path>.");
       return;
     }
 
@@ -1554,7 +1703,7 @@ export class TerminalApp {
       this.pushLog(line);
     }
     if (validation.errors.length > 0) {
-      this.pushLog("Research brief is not ready yet. Update the missing sections and start it with /brief start.");
+      this.pushLog("The Research Brief is not ready yet. Update the missing sections, then start it with /brief start.");
       return;
     }
 
@@ -1616,10 +1765,12 @@ export class TerminalApp {
       );
     }
 
+    await this.refreshRunIndex();
     await this.setActiveRunId(run.id);
     this.pushLog(`Created run ${run.id}`);
     this.pushLog(`Title: ${run.title}`);
-    await this.refreshRunIndex();
+    this.updateSuggestions();
+    this.render();
     if (input.autoStart) {
       await this.startRun(run.id, input.abortSignal);
     }
@@ -1629,6 +1780,7 @@ export class TerminalApp {
   private async startRun(runId: string, abortSignal?: AbortSignal): Promise<RunRecord> {
     await this.setActiveRunId(runId);
     this.pushLog(`Auto-starting research for ${runId} from collect_papers...`);
+    this.render();
     return this.continueSupervisedRun(runId, abortSignal);
   }
 
@@ -1704,7 +1856,7 @@ export class TerminalApp {
           this.pushLog(`Evidence: ${oneLine(recommendation.evidence[0], 220)}`);
         }
       }
-      this.pushLog("Manual slash commands are still available: /approve, /retry, /agent transition, /agent jump.");
+      this.pushLog("Use /approve to continue, or add steering to revise the next move.");
       return outcome.run;
     }
 
@@ -1962,18 +2114,21 @@ export class TerminalApp {
         throw new Error("Operation aborted by user");
       }
 
-      if (["failed", "failed_budget"].includes(updatedRun.status)) {
-        const failedNode =
-          updatedRun.graph.nodeStates[updatedRun.currentNode]?.status === "failed"
-            ? updatedRun.currentNode
-            : resolveFailedNode(updatedRun);
+      if (updatedRun.status === "failed") {
+        const failedNode = resolveFailedNode(updatedRun);
         const failedState = updatedRun.graph.nodeStates[failedNode];
-        const failure =
+        const fallbackFailure =
           failedState.lastError ||
           failedState.note ||
           updatedRun.latestSummary ||
           `${failedNode} failed`;
-        this.pushLog(`Node ${failedNode} failed: ${failure}`);
+        const loggedFailureNode = resolveFailureLogNode(updatedRun, failedNode, fallbackFailure);
+        const loggedFailureState = updatedRun.graph.nodeStates[loggedFailureNode];
+        const failure =
+          loggedFailureState.lastError ||
+          loggedFailureState.note ||
+          fallbackFailure;
+        this.pushLog(`Node ${loggedFailureNode} failed: ${failure}`);
         return { ok: false, reason: failure };
       }
 
@@ -2175,20 +2330,6 @@ export class TerminalApp {
       return { ok: true };
     }
 
-    if (sub === "budget") {
-      const runQuery = args.slice(1).join(" ").trim() || undefined;
-      const run = await this.resolveTargetRun(runQuery);
-      if (!run) {
-        return { ok: false, reason: "target run not found" };
-      }
-
-      const budget = await this.orchestrator.getBudgetStatus(run.id);
-      this.pushLog(
-        `Budget: tools ${budget.toolCallsUsed}/${budget.policy.maxToolCalls}, time ${(budget.wallClockMsUsed / 60000).toFixed(1)}m/${budget.policy.maxWallClockMinutes}m, usd ${budget.usdUsed ?? 0}/${budget.policy.maxUsd}`
-      );
-      return { ok: true };
-    }
-
     if (sub === "transition") {
       const runQuery = args.slice(1).join(" ").trim() || undefined;
       const run = await this.resolveTargetRun(runQuery);
@@ -2246,7 +2387,7 @@ export class TerminalApp {
     }
 
     this.pushLog(
-      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | budget | transition | apply | overnight"
+      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | transition | apply | overnight"
     );
     return { ok: false, reason: `unknown /agent subcommand ${sub}` };
   }
@@ -2361,7 +2502,7 @@ export class TerminalApp {
       updated.graph.nodeStates.review.status === "needs_approval" &&
       updated.graph.pendingTransition?.action === "pause_for_human"
     ) {
-      this.pushLog("Review remains blocked. Use /agent transition or follow the suggested jump command.");
+      this.pushLog("Review remains blocked. Retry the next run step or add steering to revise the plan.");
     } else if (updated.status === "completed") {
       this.pushLog("Run completed.");
     } else {
@@ -3390,7 +3531,7 @@ export class TerminalApp {
     }
 
     if (!this.activeRunId) {
-      this.pushLog("No active run. Use /new or /run <run>.");
+      this.pushLog("No active run. Create a Research Brief with /new, then start it with /brief start --latest.");
       return undefined;
     }
 
@@ -3409,6 +3550,7 @@ export class TerminalApp {
       if (active) {
         return active;
       }
+      return undefined;
     }
     return this.runIndex[0];
   }
@@ -3430,6 +3572,34 @@ export class TerminalApp {
       return undefined;
     }
     return projectRunForDisplay(run, this.getRunProjectionHints(run));
+  }
+
+  private async refreshRunFromStore(runId = this.activeRunId): Promise<void> {
+    if (!runId) {
+      return;
+    }
+
+    const refreshed = await this.runStore.getRun(runId);
+    if (!refreshed) {
+      return;
+    }
+
+    const index = this.runIndex.findIndex((item) => item.id === runId);
+    if (index === -1) {
+      this.runIndex = [...this.runIndex, refreshed].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+      return;
+    }
+
+    const merged = mergeProjectedRunState(refreshed, this.runIndex[index]);
+    if (merged === this.runIndex[index]) {
+      return;
+    }
+
+    this.runIndex = [
+      ...this.runIndex.slice(0, index),
+      merged,
+      ...this.runIndex.slice(index + 1)
+    ];
   }
 
   private async refreshRunProjectionHints(runId = this.activeRunId): Promise<void> {
@@ -3510,10 +3680,7 @@ export class TerminalApp {
     const displayCommands = this.resolvePendingDisplayCommands(pendingState);
 
     if (totalSteps === 1) {
-      if (displayCommands[0] && displayCommands[0] !== pendingState.command) {
-        this.pushLog(`Resolved slash command: ${pendingState.command}`);
-      }
-      this.pushLog(`Execution intent detected. Pending command: ${displayCommands[0]}`);
+      this.pushLog(`Next step ready: ${displayCommands[0]}.`);
       this.pushLog("Type 'y' to run now, or 'n' to cancel.");
       return;
     }
@@ -3529,9 +3696,7 @@ export class TerminalApp {
           this.pushLog(`- [${stepIndex + index + 1}/${totalSteps}] ${command}`);
         });
       }
-      this.pushLog(
-        `Type 'y' to run step ${stepIndex + 1}/${totalSteps}, 'a' to run all remaining steps, or 'n' to cancel the remaining plan.`
-      );
+      this.pushLog(`Type 'y' to run step ${stepIndex + 1}/${totalSteps}, or 'n' to cancel the remaining plan.`);
       return;
     }
 
@@ -3543,9 +3708,7 @@ export class TerminalApp {
         this.pushLog(`- [${stepIndex + index + 1}/${totalSteps}] ${command}`);
       });
     }
-    this.pushLog(
-      `Type 'y' to run step ${stepIndex + 1}/${totalSteps}, 'a' to run all remaining steps, or 'n' to cancel the plan.`
-    );
+    this.pushLog(`Type 'y' to run step ${stepIndex + 1}/${totalSteps}, or 'n' to cancel the plan.`);
   }
 
   private buildPendingPlanReminderLine(pending: PendingNaturalCommandState): string {
@@ -3567,7 +3730,7 @@ export class TerminalApp {
   }
 
   private resolvePendingDisplayCommands(pending: Pick<PendingNaturalCommandState, "commands" | "displayCommands">): string[] {
-    return pending.commands.map((command, index) => pending.displayCommands?.[index] ?? command);
+    return pending.commands.map((command, index) => pending.displayCommands?.[index] ?? describePendingSurfaceCommand(command));
   }
 
   private async setActiveRunId(runId?: string): Promise<void> {
@@ -3703,8 +3866,8 @@ export class TerminalApp {
       return;
     }
     this.logs.push(line);
-    if (this.logs.length > 200) {
-      this.logs = this.logs.slice(-200);
+    if (this.logs.length > 1000) {
+      this.logs = this.logs.slice(-1000);
     }
   }
 
@@ -3732,13 +3895,19 @@ export class TerminalApp {
       this.input.trim().length === 0 && this.suggestions.length === 0 && !this.activeSelectionMenu
         ? this.getContextualGuidance(run)
         : undefined;
-    const frame = buildFrame({
+    const terminalWidth = this.resolveTerminalWidth();
+    const terminalHeight = this.resolveTerminalHeight();
+    const previousTranscriptLines = this.lastRenderedFrame?.totalTranscriptLines ?? 0;
+    let requestedScrollOffset = this.transcriptScrollOffset;
+
+    let frame = buildFrame({
       appVersion: this.appVersion,
       busy: this.busy,
       activityLabel: this.getActivityLabel(run),
       thinking: this.thinking,
       thinkingFrame: this.thinkingFrame,
-      terminalWidth: this.resolveTerminalWidth(),
+      terminalWidth,
+      terminalHeight,
       modelLabel: this.getCurrentSlotPreset("chat"),
       workspaceLabel: this.getWorkspaceLabel(),
       footerItems: this.buildFooterItems(run),
@@ -3747,9 +3916,11 @@ export class TerminalApp {
       logs: this.getRenderableLogs(run),
       input: this.input,
       inputCursor: this.cursorIndex,
+      newlineHintLabel: this.resolveNewlineHintLabel(),
       suggestions: this.suggestions,
       selectedSuggestion: this.selectedSuggestion,
       colorEnabled: this.colorEnabled,
+      transcriptScrollOffset: requestedScrollOffset,
       guidance,
       selectionMenu: this.activeSelectionMenu
         ? {
@@ -3759,9 +3930,45 @@ export class TerminalApp {
           }
         : undefined
     });
+
+    if (requestedScrollOffset > 0 && previousTranscriptLines > 0 && frame.totalTranscriptLines > previousTranscriptLines) {
+      requestedScrollOffset += frame.totalTranscriptLines - previousTranscriptLines;
+      frame = buildFrame({
+        appVersion: this.appVersion,
+        busy: this.busy,
+        activityLabel: this.getActivityLabel(run),
+        thinking: this.thinking,
+        thinkingFrame: this.thinkingFrame,
+        terminalWidth,
+        terminalHeight,
+        modelLabel: this.getCurrentSlotPreset("chat"),
+        workspaceLabel: this.getWorkspaceLabel(),
+        footerItems: this.buildFooterItems(run),
+        run,
+        runInsight: this.activeRunInsight,
+        logs: this.getRenderableLogs(run),
+        input: this.input,
+        inputCursor: this.cursorIndex,
+        newlineHintLabel: this.resolveNewlineHintLabel(),
+        suggestions: this.suggestions,
+        selectedSuggestion: this.selectedSuggestion,
+        colorEnabled: this.colorEnabled,
+        transcriptScrollOffset: requestedScrollOffset,
+        guidance,
+        selectionMenu: this.activeSelectionMenu
+          ? {
+              title: this.activeSelectionMenu.title,
+              options: this.activeSelectionMenu.options,
+              selectedIndex: this.activeSelectionMenu.selectedIndex
+            }
+          : undefined
+      });
+    }
+
+    this.transcriptScrollOffset = frame.appliedTranscriptScrollOffset;
     this.lastRenderedFrame = frame;
 
-    process.stdout.write("\x1Bc");
+    process.stdout.write("\x1b[2J\x1b[H");
     process.stdout.write(frame.lines.join("\n"));
 
     const up = frame.lines.length - frame.inputLineIndex;
@@ -3804,33 +4011,37 @@ export class TerminalApp {
     return process.stdout.columns ?? 120;
   }
 
+  private resolveTerminalHeight(): number {
+    const envHeight = Number.parseInt(process.env.LINES ?? "", 10);
+    if (Number.isFinite(envHeight) && envHeight >= 10) {
+      return envHeight;
+    }
+    return process.stdout.rows ?? 40;
+  }
+
   private getWorkspaceLabel(): string {
     return process.cwd();
   }
 
   private buildFooterItems(run?: RunRecord): string[] {
-    const items = [this.getCurrentSlotPreset("chat")];
+    const items: string[] = [];
 
     if (run) {
       const nodeStatus = run.graph.nodeStates[run.currentNode]?.status || run.status;
       items.push(`${run.currentNode} ${nodeStatus}`);
-      items.push(run.id);
     } else {
-      items.push("no active run");
+      items.push("idle");
     }
 
     if (this.pendingHumanIntervention) {
-      items.push("awaiting approval");
+      items.unshift("awaiting approval");
     } else if (this.pendingNaturalCommand) {
-      items.push(`plan ${this.pendingNaturalCommand.stepIndex + 1}/${this.pendingNaturalCommand.totalSteps}`);
+      items.unshift(`plan ${this.pendingNaturalCommand.stepIndex + 1}/${this.pendingNaturalCommand.totalSteps}`);
     } else if (this.thinking) {
-      items.push("thinking");
+      items.unshift("thinking");
     } else if (this.busy) {
-      items.push("running");
+      items.unshift("running");
     }
-
-    items.push(this.getWorkspaceLabel());
-    items.push(`v${this.appVersion}`);
     return items;
   }
 
@@ -3859,13 +4070,16 @@ export class TerminalApp {
   }
 
   private getRenderableLogs(run?: RunRecord): string[] {
+    if (this.thinking) {
+      return this.logs;
+    }
+
     const progressLine = this.getTransientProgressLog(run);
     const statusLines = this.buildProjectedStatusLines(run);
     if (!progressLine && statusLines.length === 0) {
       return this.logs;
     }
-    const maxHistory = Math.max(0, 12 - statusLines.length - (progressLine ? 1 : 0));
-    const baseLogs = this.logs.slice(-maxHistory);
+    const baseLogs = [...this.logs];
     return [...baseLogs, ...statusLines, ...(progressLine ? [progressLine] : [])];
   }
 
@@ -3897,7 +4111,7 @@ export class TerminalApp {
   }
 
   private getTransientProgressLog(run?: RunRecord): string | undefined {
-    if (!this.busy) {
+    if (!this.busy || this.thinking) {
       return undefined;
     }
 
@@ -4103,9 +4317,6 @@ export class TerminalApp {
     run.graph.currentNode = node;
     run.status = "paused";
     run.latestSummary = `Artifacts cleared for ${node}; ready to rerun.`;
-    run.graph.budget.toolCallsUsed = 0;
-    run.graph.budget.wallClockMsUsed = 0;
-    run.graph.budget.usdUsed = 0;
     for (let idx = targetIdx; idx < AGENT_ORDER.length; idx += 1) {
       const nodeId = AGENT_ORDER[idx];
       run.graph.nodeStates[nodeId] = {
@@ -4207,11 +4418,18 @@ export class TerminalApp {
     }
   }
 
-  private async shutdown(): Promise<void> {
+  private async shutdown(options?: { abortActive?: boolean }): Promise<void> {
     if (this.stopped) {
       return;
     }
     this.stopped = true;
+    this.queuedInputs = [];
+    this.pendingNaturalCommand = undefined;
+    this.steeringBufferDuringThinking = [];
+    if (options?.abortActive) {
+      this.activeNaturalRequest?.abortController.abort();
+      this.activeBusyAbortController?.abort();
+    }
     if (this.activeSelectionMenu) {
       const resolve = this.activeSelectionMenu.resolve;
       this.activeSelectionMenu = undefined;
@@ -4250,6 +4468,9 @@ export class TerminalApp {
 
   private describeBusyLabelForSlash(command: string, args: string[]): string {
     const normalized = command.toLowerCase();
+    if (normalized === "brief") {
+      return "Starting research...";
+    }
     if (normalized === "agent") {
       const sub = (args[0] || "").toLowerCase();
       if (sub === "collect" || sub === "recollect") {
@@ -4293,7 +4514,7 @@ export class TerminalApp {
         return;
       }
       this.thinkingFrame = (this.thinkingFrame + 1) % 10_000;
-      this.renderThinkingLineOnly();
+      this.render();
     }, 120);
   }
 
@@ -4333,12 +4554,86 @@ function normalizeSlashPrefix(text: string): string {
   return text;
 }
 
+function findShiftEnterSequenceRange(
+  input: string
+): { start: number; end: number } | undefined {
+  for (const sequence of SHIFT_ENTER_SEQUENCE_LIST) {
+    const start = input.indexOf(sequence);
+    if (start >= 0) {
+      return {
+        start,
+        end: start + sequence.length
+      };
+    }
+  }
+  return undefined;
+}
+
+function retainRawKeyboardSequenceSuffix(input: string): string {
+  if (!input) {
+    return "";
+  }
+
+  const maxSuffixLength = Math.max(0, MAX_SHIFT_ENTER_SEQUENCE_LENGTH - 1);
+  for (let length = Math.min(maxSuffixLength, input.length); length > 0; length -= 1) {
+    const suffix = input.slice(-length);
+    if (SHIFT_ENTER_SEQUENCE_LIST.some((sequence) => sequence.startsWith(suffix))) {
+      return suffix;
+    }
+  }
+
+  return "";
+}
+
+function detectLikelyEnhancedNewlineSupport(): boolean {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return false;
+  }
+
+  const term = (process.env.TERM ?? "").toLowerCase();
+  const termProgram = (process.env.TERM_PROGRAM ?? "").toLowerCase();
+
+  if (process.env.TMUX || termProgram === "tmux" || term.startsWith("screen")) {
+    return false;
+  }
+
+  if (process.env.KITTY_WINDOW_ID || process.env.ITERM_SESSION_ID || process.env.WT_SESSION) {
+    return true;
+  }
+
+  return (
+    term.includes("kitty") ||
+    term.includes("wezterm") ||
+    term.includes("ghostty") ||
+    term.includes("foot") ||
+    termProgram.includes("wezterm") ||
+    termProgram.includes("ghostty") ||
+    termProgram.includes("iterm")
+  );
+}
+
 function normalizeSteeringInput(text: string): string | undefined {
   const trimmed = text.trim();
   if (!trimmed) {
     return undefined;
   }
   return trimmed;
+}
+
+function resolveFailureLogNode(run: RunRecord, fallbackNode: GraphNodeId, failure: string): GraphNodeId {
+  const leadingNode = extractLeadingFailureNode(failure);
+  if (!leadingNode) {
+    return fallbackNode;
+  }
+  return run.graph.nodeStates[leadingNode]?.status === "failed" ? leadingNode : fallbackNode;
+}
+
+function extractLeadingFailureNode(failure: string): GraphNodeId | undefined {
+  const match = failure.trim().match(/^([a-z_]+)\b/u);
+  if (!match?.[1]) {
+    return undefined;
+  }
+  return AGENT_ORDER.includes(match[1] as GraphNodeId) ? (match[1] as GraphNodeId) : undefined;
 }
 
 function formatEventLog(event: AutoLabOSEvent): string | undefined {
@@ -4375,8 +4670,6 @@ function formatEventLog(event: AutoLabOSEvent): string | undefined {
       return `Transition recommended: ${oneLine(String(event.payload.action || "unknown"))} -> ${oneLine(String(event.payload.targetNode || "stay"))}`;
     case "TRANSITION_APPLIED":
       return `Transition applied: ${oneLine(String(event.payload.action || "unknown"))} -> ${oneLine(String(event.payload.targetNode || "advance"))}`;
-    case "BUDGET_EXCEEDED":
-      return `Budget exceeded: ${oneLine(String(event.payload.reason || "budget limit reached"))}`;
     default:
       return undefined;
   }
@@ -4384,7 +4677,7 @@ function formatEventLog(event: AutoLabOSEvent): string | undefined {
 
 function isConfirmationInput(text: string): boolean {
   const normalized = text.trim().toLowerCase();
-  return isAffirmative(normalized) || isRunAllRemainingInput(normalized) || isNegative(normalized);
+  return isAffirmative(normalized) || isNegative(normalized);
 }
 
 export function extractTitleChangeIntent(text: string): { title: string } | undefined {
@@ -4559,10 +4852,6 @@ function extractRequestedTitleCount(text: string): number {
   return 5;
 }
 
-function detectQueryLanguage(text: string): "ko" | "en" {
-  return /[\p{Script=Hangul}]/u.test(text) ? "ko" : "en";
-}
-
 function isGraphNodeId(value: string | undefined): value is GraphNodeId {
   if (!value) {
     return false;
@@ -4598,6 +4887,23 @@ function samePendingPlan(left: string[], right: string[]): boolean {
     return false;
   }
   return left.every((command, index) => command.trim() === (right[index] || "").trim());
+}
+
+function describePendingSurfaceCommand(command: string): string {
+  const normalized = command.trim().toLowerCase();
+  if (normalized === "/new") {
+    return "new brief";
+  }
+  if (normalized.startsWith("/brief start")) {
+    return "start brief";
+  }
+  if (normalized.startsWith("/approve")) {
+    return "approve";
+  }
+  if (normalized.startsWith("/agent run") || normalized.startsWith("/agent retry")) {
+    return "run";
+  }
+  return command;
 }
 
 function parseTitleCommandArgs(args: string[]): { title: string; runQuery?: string; error?: string } {
@@ -4834,10 +5140,6 @@ function looksLikePdfUrl(url: string | undefined): boolean {
 
 function isAffirmative(text: string): boolean {
   return ["y", "yes", "ok", "okay", "ㅇ", "네", "예", "응"].includes(text);
-}
-
-function isRunAllRemainingInput(text: string): boolean {
-  return ["a", "all", "run all", "remaining"].includes(text);
 }
 
 function isNegative(text: string): boolean {
@@ -5371,11 +5673,5 @@ function readCheckpointPhase(value: unknown): NonNullable<RunProjectionHints["ch
 }
 
 function detectInitialGuidanceLanguage(): GuidanceLanguage {
-  const locale =
-    process.env.LC_ALL ||
-    process.env.LC_MESSAGES ||
-    process.env.LANG ||
-    process.env.LANGUAGE ||
-    "";
-  return /\bko(?:_|-|\.)?/i.test(locale) ? "ko" : "en";
+  return "en";
 }

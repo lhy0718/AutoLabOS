@@ -118,4 +118,72 @@ describe("ImplementationLocalizer", () => {
       process.env.PATH = originalPath;
     }
   });
+
+  it("prefers the active run output tree over sibling run outputs when failure context names the current artifact path", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-localizer-sibling-"));
+    tempDirs.push(workspace);
+
+    const currentOutput = path.join(workspace, "outputs", "tabular-baselines-f86bfc2a", "experiment");
+    const siblingOutput = path.join(workspace, "outputs", "tabular-baselines-b1b6b29d", "experiment");
+    mkdirSync(currentOutput, { recursive: true });
+    mkdirSync(siblingOutput, { recursive: true });
+
+    writeFileSync(path.join(currentOutput, "experiment_plan.yaml"), "topic: current\n", "utf8");
+    writeFileSync(path.join(currentOutput, "run_tabular_baselines.py"), "print('current')\n", "utf8");
+    writeFileSync(path.join(siblingOutput, "experiment_plan.yaml"), "topic: sibling\n", "utf8");
+    writeFileSync(path.join(siblingOutput, "run_tabular_baselines.py"), "print('sibling')\n", "utf8");
+
+    const localizer = new ImplementationLocalizer(new LocalAciAdapter());
+    const result = await localizer.localize({
+      workspaceRoot: workspace,
+      goal: "Implement a runnable experiment and produce macro-F1 metrics.",
+      topic: "Classical machine learning baselines for tabular classification on small public datasets.",
+      objectiveMetric: "Improve macro-F1 over a logistic regression baseline while preserving reproducible CPU-only local execution.",
+      constraints: [],
+      planExcerpt: "run_id: f86bfc2a-475f-4ca0-a340-14a497ab7719",
+      hypothesesExcerpt: "Use a lightweight sklearn runner.",
+      previousFailureSummary:
+        `Local verification could not start because required artifact(s) were not materialized for python3 -m py_compile ` +
+        `${path.join(currentOutput, "run_tabular_baselines.py")}: outputs/tabular-baselines-f86bfc2a/experiment/run_tabular_baselines.py`,
+      existingChangedFiles: []
+    });
+
+    expect(result.selected_files).toContain(path.join(currentOutput, "run_tabular_baselines.py"));
+    expect(result.selected_files.some((filePath) => filePath.includes("tabular-baselines-b1b6b29d"))).toBe(false);
+    expect(result.candidates[0]?.path).toContain("tabular-baselines-f86bfc2a");
+  });
+
+  it("uses run-id and output hints from the plan excerpt to keep sibling outputs out of the top selection", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-localizer-planhint-"));
+    tempDirs.push(workspace);
+
+    const currentOutput = path.join(workspace, "outputs", "cpu-only-classical-tabular-classification-baseli-f86bfc2a");
+    const siblingOutput = path.join(workspace, "outputs", "classical-tabular-classification-baselines-on-sm-b1b6b29d");
+    mkdirSync(path.join(currentOutput, "experiment"), { recursive: true });
+    mkdirSync(path.join(siblingOutput, "experiment"), { recursive: true });
+
+    writeFileSync(path.join(currentOutput, "manifest.json"), "{\"current\":true}\n", "utf8");
+    writeFileSync(path.join(currentOutput, "experiment", "experiment_plan.yaml"), "topic: current\n", "utf8");
+    writeFileSync(path.join(siblingOutput, "manifest.json"), "{\"sibling\":true}\n", "utf8");
+    writeFileSync(path.join(siblingOutput, "experiment", "experiment_plan.yaml"), "topic: sibling\n", "utf8");
+
+    const localizer = new ImplementationLocalizer(new LocalAciAdapter());
+    const result = await localizer.localize({
+      workspaceRoot: workspace,
+      goal: "Implement a runnable experiment.",
+      topic: "Classical machine learning baselines for tabular classification on small public datasets.",
+      objectiveMetric: "macro-F1",
+      constraints: [],
+      planExcerpt: [
+        "run_id: f86bfc2a-475f-4ca0-a340-14a497ab7719",
+        `public_outputs: outputs/${path.basename(currentOutput)}`,
+        "selected_design: current"
+      ].join("\n"),
+      hypothesesExcerpt: "Focus on the selected design only.",
+      existingChangedFiles: []
+    });
+
+    expect(result.selected_files.some((filePath) => filePath.includes(path.basename(currentOutput)))).toBe(true);
+    expect(result.selected_files.some((filePath) => filePath.includes(path.basename(siblingOutput)))).toBe(false);
+  });
 });

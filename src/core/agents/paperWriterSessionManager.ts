@@ -765,6 +765,7 @@ function buildReviewPrompt(input: {
     "}",
     "",
     "Flag any section that relies on log-speak, repeated template phrasing, inline evidence IDs, internal paths, or debug-style headings.",
+    "Flag Related Work when it lists paper titles without comparing strands, baselines, or gaps.",
     "The final manuscript should not use the headings Research Context, Writing Constraints, Results Overview, or Claim Trace.",
     "",
     `Topic: ${input.bundle.topic}`,

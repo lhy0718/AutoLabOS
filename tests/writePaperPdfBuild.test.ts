@@ -508,7 +508,8 @@ describe("writePaper PDF build", () => {
             venue: paperIndex === 1 ? "EMNLP" : "NAACL",
             authors: ["Sam Scout"],
             citationCount: 17 + paperIndex,
-            url: `https://example.org/scout-results-${paperIndex}`
+            url: `https://example.org/scout-results-${paperIndex}`,
+            openAccessPdfUrl: `https://example.org/scout-results-${paperIndex}.pdf`
           }
         ];
       }
@@ -518,14 +519,46 @@ describe("writePaper PDF build", () => {
       config: {
         paper: {
           build_pdf: false
+        },
+        analysis: {
+          pdf_mode: "responses_api_pdf",
+          responses_model: "gpt-5.4"
         }
       } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
       llm: new SequencedLLMClient(buildRelatedWorkScoutResponses()),
+      pdfTextLlm: {} as any,
       codex: {} as any,
       aci: {} as any,
-      semanticScholar: semanticScholar as any
+      semanticScholar: semanticScholar as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async ({ pdfUrl }: { pdfUrl: string }) => ({
+          text: JSON.stringify({
+            summary: `Full-text summary for ${pdfUrl}.`,
+            key_findings: ["Full-text related-work analysis recovered a grounded positioning signal."],
+            limitations: ["The PDF analysis focuses on related-work positioning rather than experimental reproduction."],
+            datasets: ["AgentBench-mini"],
+            metrics: ["reproducibility_score"],
+            novelty: "Full-text scout enrichment for related work",
+            reproducibility_notes: ["The PDF source was read directly during write_paper."],
+            evidence_items: [
+              {
+                claim: "The paper frames revision stability as a coordination problem.",
+                method_slot: "related-work framing",
+                result_slot: "positioning evidence",
+                limitation_slot: "bounded enrichment",
+                dataset_slot: "AgentBench-mini",
+                metric_slot: "reproducibility_score",
+                evidence_span: "The full paper highlights revision stability and coordination tradeoffs.",
+                confidence: 0.78,
+                confidence_reason: "The enrichment is grounded in the full PDF input."
+              }
+            ]
+          })
+        })
+      } as any
     } as any);
 
     const result = await node.execute({ run, graph: run.graph });
@@ -564,12 +597,35 @@ describe("writePaper PDF build", () => {
 
     expect(await exists(path.join(runDir, "paper", "related_work_scout", "corpus.jsonl"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "related_work_scout", "bibtex.bib"))).toBe(true);
+    const enrichmentResult = JSON.parse(
+      await readFile(path.join(runDir, "paper", "related_work_scout", "enrichment_result.json"), "utf8")
+    ) as { status: string; analyzed_paper_count: number; full_text_count: number };
+    expect(enrichmentResult).toMatchObject({
+      status: "completed",
+      analyzed_paper_count: 2,
+      full_text_count: 2
+    });
+    const enrichmentSummaries = await readFile(
+      path.join(runDir, "paper", "related_work_scout", "enrichment_summaries.jsonl"),
+      "utf8"
+    );
+    expect(enrichmentSummaries).toContain('"paper_id":"paper_scout_1"');
+    expect(enrichmentSummaries).toContain('"source_type":"full_text"');
+
+    const relatedWorkNotes = JSON.parse(
+      await readFile(path.join(runDir, "paper", "related_work_notes.json"), "utf8")
+    ) as { note_count: number; comparison_axes: string[]; paragraph_plan: Array<{ role: string }> };
+    expect(relatedWorkNotes.note_count).toBeGreaterThanOrEqual(3);
+    expect(relatedWorkNotes.comparison_axes.length).toBeGreaterThan(0);
+    expect(relatedWorkNotes.paragraph_plan).toHaveLength(2);
 
     const draft = JSON.parse(await readFile(path.join(runDir, "paper", "draft.json"), "utf8")) as {
-      sections: Array<{ heading: string; citation_paper_ids: string[] }>;
+      sections: Array<{ heading: string; paragraphs: Array<{ text: string }>; citation_paper_ids: string[] }>;
     };
     const relatedWorkSection = draft.sections.find((section) => section.heading === "Related Work");
     expect(relatedWorkSection?.citation_paper_ids).toContain("paper_scout_1");
+    expect(relatedWorkSection?.paragraphs.length).toBe(2);
+    expect(relatedWorkSection?.paragraphs[1]?.text).toMatch(/current study|present study/i);
 
     const references = await readFile(path.join(runDir, "paper", "references.bib"), "utf8");
     expect(references).toContain("Scout Results for Related Work");
@@ -583,6 +639,13 @@ describe("writePaper PDF build", () => {
       planned_query_count: 3,
       executed_query_count: 2,
       coverage_status: "sufficient"
+    });
+    expect(await memory.get("write_paper.related_work_notes")).toMatchObject({
+      note_count: 3
+    });
+    expect(await memory.get("write_paper.related_work_enrichment")).toMatchObject({
+      analyzed_paper_count: 2,
+      full_text_count: 2
     });
   });
 

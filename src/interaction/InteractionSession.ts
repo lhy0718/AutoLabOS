@@ -608,18 +608,13 @@ export class InteractionSession {
       return true;
     }
 
-    const language = detectQueryLanguage(text);
     if (looksLikeRunBriefRequest(text)) {
       const run = await this.createRunFromBrief({
         brief: text,
         autoStart: true,
         abortSignal
       });
-      this.pushLog(
-        language === "ko"
-          ? `자연어 brief로 run ${run.id}을 만들고 연구를 시작했습니다.`
-          : `Created run ${run.id} from the natural-language brief and started research.`
-      );
+      this.pushLog(`Created run ${run.id} from the natural-language brief and started research.`);
       return true;
     }
 
@@ -630,24 +625,16 @@ export class InteractionSession {
         return true;
       }
       const command = buildTitleCommand(titleChange.title, run.id);
-      this.pushLog(
-        language === "ko"
-          ? `run title을 "${titleChange.title}"로 변경합니다.`
-          : `I can rename the run title to "${titleChange.title}".`
-      );
+      this.pushLog(`I can rename the run title to "${titleChange.title}".`);
       this.armPendingNaturalCommands(text, [command]);
       return true;
     }
 
     if (isSupportedNaturalInputsQuery(text)) {
-      for (const line of formatSupportedNaturalInputLines(language)) {
+      for (const line of formatSupportedNaturalInputLines("en")) {
         this.pushLog(line);
       }
-      this.pushLog(
-        language === "ko"
-          ? "이 목록 밖의 질문은 workspace 기반 LLM 응답으로 계속 처리합니다."
-          : "Questions outside this list continue to use the workspace-grounded LLM fallback."
-      );
+      this.pushLog("Questions outside this list continue to use the workspace-grounded LLM fallback.");
       return true;
     }
 
@@ -695,55 +682,35 @@ export class InteractionSession {
       if (isMissingPdfCountIntent(text)) {
         this.pushLog(
           insights.totalPapers === 0
-            ? language === "ko"
-              ? "현재 run에 수집된 논문이 없습니다."
-              : "No collected papers were found in the current run."
-            : language === "ko"
-              ? `PDF 경로가 없는 논문은 ${insights.missingPdfCount}편입니다. (총 ${insights.totalPapers}편)`
-              : `Papers without a PDF path: ${insights.missingPdfCount} (out of ${insights.totalPapers}).`
+            ? "No collected papers were found in the current run."
+            : `Papers without a PDF path: ${insights.missingPdfCount} (out of ${insights.totalPapers}).`
         );
         return true;
       }
       if (isTopCitationIntent(text)) {
         if (insights.totalPapers === 0) {
-          this.pushLog(language === "ko" ? "현재 run에 수집된 논문이 없습니다." : "No collected papers were found in the current run.");
+          this.pushLog("No collected papers were found in the current run.");
           return true;
         }
         if (!insights.topCitation) {
-          this.pushLog(
-            language === "ko"
-              ? "수집된 논문에 citation 정보가 없어 최고 citation 논문을 계산할 수 없습니다."
-              : "Citation metadata is missing, so I cannot compute the top-cited paper."
-          );
+          this.pushLog("Citation metadata is missing, so I cannot compute the top-cited paper.");
           return true;
         }
-        this.pushLog(
-          language === "ko"
-            ? `citation이 가장 높은 논문은 "${insights.topCitation.title}"이며 citation_count는 ${insights.topCitation.citationCount}회입니다.`
-            : `The top-cited paper is "${insights.topCitation.title}" with ${insights.topCitation.citationCount} citations.`
-        );
+        this.pushLog(`The top-cited paper is "${insights.topCitation.title}" with ${insights.topCitation.citationCount} citations.`);
         return true;
       }
       if (isPaperCountIntent(text)) {
-        this.pushLog(
-          language === "ko"
-            ? `현재 수집된 논문은 ${insights.totalPapers}편입니다.`
-            : `The current run has ${insights.totalPapers} collected papers.`
-        );
+        this.pushLog(`The current run has ${insights.totalPapers} collected papers.`);
         return true;
       }
       if (isPaperTitleIntent(text)) {
         const limit = extractRequestedTitleCount(text);
         const titles = insights.titles.slice(0, limit);
         if (titles.length === 0) {
-          this.pushLog(
-            language === "ko"
-              ? "현재 run에 수집된 논문 제목이 없습니다."
-              : "No collected paper titles were found in the current run."
-          );
+          this.pushLog("No collected paper titles were found in the current run.");
           return true;
         }
-        this.pushLog(language === "ko" ? `논문 제목 ${titles.length}개입니다.` : `Here are ${titles.length} paper title(s).`);
+        this.pushLog(`Here are ${titles.length} paper title(s).`);
         titles.forEach((title, index) => {
           this.pushLog(`${index + 1}. ${title}`);
         });
@@ -1065,7 +1032,7 @@ export class InteractionSession {
     this.pushLog("Web composer commands:");
     this.pushLog("/help | /runs | /run <run> | /resume <run> | /title <new title>");
     this.pushLog("/doctor | /approve | /retry");
-    this.pushLog("/agent list | /agent status [run] | /agent graph [run] | /agent budget [run]");
+    this.pushLog("/agent list | /agent status [run] | /agent graph [run]");
     this.pushLog("/agent review [run] | /agent transition [run] | /agent apply [run] | /agent overnight [run]");
     this.pushLog("/agent run <node> [run] [--top-n <n> | --top-k <n> --branch-count <n>]");
     this.pushLog("/agent collect [query] [options] | /agent jump <node> [run] [--force]");
@@ -1368,18 +1335,6 @@ export class InteractionSession {
       return { ok: true };
     }
 
-    if (sub === "budget") {
-      const run = await this.resolveTargetRun(args.slice(1).join(" ").trim() || undefined);
-      if (!run) {
-        return { ok: false, reason: "target run not found" };
-      }
-      const budget = await this.orchestrator.getBudgetStatus(run.id);
-      this.pushLog(
-        `Budget: tools ${budget.toolCallsUsed}/${budget.policy.maxToolCalls}, time ${(budget.wallClockMsUsed / 60000).toFixed(1)}m/${budget.policy.maxWallClockMinutes}m, usd ${budget.usdUsed ?? 0}/${budget.policy.maxUsd}`
-      );
-      return { ok: true };
-    }
-
     if (sub === "transition") {
       const run = await this.resolveTargetRun(args.slice(1).join(" ").trim() || undefined);
       if (!run) {
@@ -1434,7 +1389,7 @@ export class InteractionSession {
     }
 
     this.pushLog(
-      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | budget | transition | apply | overnight"
+      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | transition | apply | overnight"
     );
     return { ok: false, reason: `unknown /agent subcommand ${sub}` };
   }
@@ -1965,9 +1920,6 @@ export class InteractionSession {
     run.graph.currentNode = node;
     run.status = "paused";
     run.latestSummary = `Artifacts cleared for ${node}; ready to rerun.`;
-    run.graph.budget.toolCallsUsed = 0;
-    run.graph.budget.wallClockMsUsed = 0;
-    run.graph.budget.usdUsed = 0;
     for (let index = targetIdx; index < AGENT_ORDER.length; index += 1) {
       const nodeId = AGENT_ORDER[index];
       run.graph.nodeStates[nodeId] = {
@@ -2088,10 +2040,6 @@ function formatEventLog(event: AutoLabOSEvent): string | undefined {
     default:
       return undefined;
   }
-}
-
-function detectQueryLanguage(text: string): "ko" | "en" {
-  return /[\p{Script=Hangul}]/u.test(text) ? "ko" : "en";
 }
 
 function isGraphNodeId(value: string | undefined): value is GraphNodeId {

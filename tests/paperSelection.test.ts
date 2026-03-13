@@ -299,6 +299,275 @@ describe("paperSelection", () => {
     expect(selection.deterministicRankingPreview[0]?.paper_id).toBe("relevant");
   });
 
+  it("keeps multi-paper tabular baseline selections ahead of high-citation off-topic classification papers", async () => {
+    const selection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm("not-json"),
+      runTitle: "Classical machine learning baselines for tabular classification",
+      runTopic: "Classical machine learning baselines for tabular classification",
+      request: normalizeAnalysisSelectionRequest(2),
+      corpusRows: [
+        {
+          paper_id: "off_topic_quantum",
+          title: "Quantum kernel benchmarking for financial classification",
+          abstract: "Quantum kernels for stock-market classification with machine learning preprocessing on finance tabular features.",
+          authors: [],
+          citation_count: 450,
+          year: 2025,
+          pdf_url: "https://example.com/quantum.pdf"
+        },
+        {
+          paper_id: "off_topic_music",
+          title: "Music genre classification using machine learning pipelines",
+          abstract: "Genre classification with classical and neural models.",
+          authors: [],
+          citation_count: 420,
+          year: 2025,
+          pdf_url: "https://example.com/music.pdf"
+        },
+        {
+          paper_id: "relevant_title",
+          title: "Classical baselines for tabular classification on public datasets",
+          abstract: "We compare logistic regression, random forests, and gradient boosting for tabular classification.",
+          authors: [],
+          citation_count: 35,
+          year: 2024
+        },
+        {
+          paper_id: "relevant_abstract",
+          title: "Benchmarking gradient boosting and logistic regression on UCI datasets",
+          abstract: "Structured tabular classification benchmarks covering small public datasets and classical baselines.",
+          authors: [],
+          citation_count: 28,
+          year: 2023
+        }
+      ]
+    });
+
+    expect(selection.selectedPaperIds).toEqual(["relevant_title", "relevant_abstract"]);
+    expect(selection.deterministicRankingPreview.slice(0, 2).map((row) => row.paper_id)).toEqual([
+      "relevant_title",
+      "relevant_abstract"
+    ]);
+  });
+
+  it("pushes secret, music, and sentiment papers below stronger tabular-baseline candidates in a tiny pool", async () => {
+    const selection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm("not-json"),
+      runTitle: "Classical machine learning baselines for tabular classification on small public datasets",
+      runTopic: "Classical machine learning baselines for tabular classification on small public datasets",
+      request: normalizeAnalysisSelectionRequest(3),
+      corpusRows: [
+        {
+          paper_id: "relevant_svm",
+          title: "Cross-Dataset Evaluation of Support Vector Machines: A Reproducible, Calibration-Aware Baseline for Tabular Classification",
+          abstract:
+            "A calibration-aware benchmark compares SVM, logistic regression, decision tree, and random forest on small tabular datasets.",
+          authors: [],
+          citation_count: 5,
+          year: 2025
+        },
+        {
+          paper_id: "relevant_pmlb",
+          title: "PMLBmini: A Tabular Classification Benchmark Suite for Data-Scarce Applications",
+          abstract:
+            "A benchmark suite for small tabular classification tasks compares classical linear baselines, AutoML, and tabular deep learning.",
+          authors: [],
+          citation_count: 120,
+          year: 2024
+        },
+        {
+          paper_id: "relevant_benchmark",
+          title: "Benchmarking classical baselines on structured datasets",
+          abstract:
+            "We compare logistic regression, random forests, and gradient boosting for tabular classification across small public benchmarks.",
+          authors: [],
+          citation_count: 30,
+          year: 2024
+        },
+        {
+          paper_id: "off_topic_secret",
+          title: "Secret Breach Prevention in Software Issue Reports",
+          abstract:
+            "We evaluate entropy heuristics, classical machine learning, deep learning, and LLM-based methods for secret detection.",
+          authors: [],
+          citation_count: 200,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_music",
+          title: "Emotional response to music: the Emotify + dataset",
+          abstract: "Abstract unavailable.",
+          authors: [],
+          citation_count: 100,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_sentiment",
+          title: "Application of Sentiment Analysis to Labeling Characters as Good or Evil",
+          abstract: "Abstract unavailable.",
+          authors: [],
+          citation_count: 0,
+          year: 2025
+        }
+      ]
+    });
+
+    expect(new Set(selection.selectedPaperIds)).toEqual(new Set(["relevant_svm", "relevant_pmlb", "relevant_benchmark"]));
+    expect(new Set(selection.deterministicRankingPreview.slice(0, 3).map((row) => row.paper_id))).toEqual(
+      new Set(["relevant_svm", "relevant_pmlb", "relevant_benchmark"])
+    );
+    expect(selection.deterministicRankingPreview.slice(3).map((row) => row.paper_id)).toEqual([
+      "off_topic_secret",
+      "off_topic_music",
+      "off_topic_sentiment"
+    ]);
+  });
+
+  it("drops obviously off-topic tail papers even when lightweight analysis runs in all-mode", async () => {
+    const selection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm("not-json"),
+      runTitle: "Classical machine learning baselines for tabular classification on small public datasets",
+      runTopic: "Classical machine learning baselines for tabular classification on small public datasets",
+      request: normalizeAnalysisSelectionRequest(null),
+      corpusRows: [
+        {
+          paper_id: "relevant_pmlb",
+          title: "PMLBmini: A Tabular Classification Benchmark Suite for Data-Scarce Applications",
+          abstract:
+            "A benchmark suite for small tabular classification tasks compares classical linear baselines, AutoML, and tabular deep learning.",
+          authors: [],
+          citation_count: 120,
+          year: 2024
+        },
+        {
+          paper_id: "relevant_svm",
+          title: "Cross-Dataset Evaluation of Support Vector Machines: A Reproducible, Calibration-Aware Baseline for Tabular Classification",
+          abstract:
+            "A calibration-aware benchmark compares SVM, logistic regression, decision tree, and random forest on small tabular datasets.",
+          authors: [],
+          citation_count: 5,
+          year: 2025
+        },
+        {
+          paper_id: "relevant_benchmark",
+          title: "Benchmarking classical baselines on structured datasets",
+          abstract:
+            "We compare logistic regression, random forests, and gradient boosting for tabular classification across small public benchmarks.",
+          authors: [],
+          citation_count: 30,
+          year: 2024
+        },
+        {
+          paper_id: "relevant_clinical",
+          title: "Residual GRU+MHSA: A Lightweight Hybrid Recurrent Attention Model for Cardiovascular Disease Detection",
+          abstract:
+            "The abstract presents a compact model for tabular clinical records using the UCI Heart-Disease dataset.",
+          authors: [],
+          citation_count: 0,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_secret",
+          title: "Secret Breach Prevention in Software Issue Reports",
+          abstract:
+            "We evaluate entropy heuristics, classical machine learning, deep learning, and LLM-based methods for secret detection.",
+          authors: [],
+          citation_count: 200,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_raman",
+          title:
+            "DeepRaman: Implementing surface-enhanced Raman scattering together with cutting-edge machine learning for the differentiation and classification of bacterial endotoxins",
+          abstract:
+            "A classification pipeline for bacterial endotoxin differentiation using Raman scattering and machine learning.",
+          authors: [],
+          citation_count: 230,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_music",
+          title: "Emotional response to music: the Emotify + dataset",
+          abstract: "Abstract unavailable.",
+          authors: [],
+          citation_count: 100,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_sentiment",
+          title: "Application of Sentiment Analysis to Labeling Characters as Good or Evil",
+          abstract: "Abstract unavailable.",
+          authors: [],
+          citation_count: 0,
+          year: 2025
+        }
+      ]
+    });
+
+    expect(selection.request.selectionMode).toBe("all");
+    expect(new Set(selection.selectedPaperIds)).toEqual(
+      new Set(["relevant_pmlb", "relevant_svm", "relevant_benchmark"])
+    );
+    expect(selection.selectedPaperIds).not.toContain("off_topic_secret");
+    expect(selection.selectedPaperIds).not.toContain("off_topic_music");
+    expect(selection.selectedPaperIds).not.toContain("off_topic_sentiment");
+    expect(selection.selectedPaperIds).not.toContain("off_topic_raman");
+  });
+
+  it("keeps a live DeepRaman-style abstract below tabular small-model papers in all-mode", async () => {
+    const selection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm("not-json"),
+      runTitle: "CPU-Only Classical Tabular Classification Baselines on Small Public Datasets",
+      runTopic: "Classical machine learning baselines for tabular classification on small public datasets.",
+      request: normalizeAnalysisSelectionRequest(null),
+      corpusRows: [
+        {
+          paper_id: "relevant_svm",
+          title: "Cross-Dataset Evaluation of Support Vector Machines: A Reproducible, Calibration-Aware Baseline for Tabular Classification",
+          abstract:
+            "Support Vector Machines remain competitive for small and medium-sized tabular classification problems under leakage-safe pipelines.",
+          authors: [],
+          citation_count: 0,
+          year: 2025
+        },
+        {
+          paper_id: "relevant_pmlb",
+          title: "PMLBmini: A Tabular Classification Benchmark Suite for Data-Scarce Applications",
+          abstract:
+            "We introduce a tabular benchmark suite of binary classification datasets with small sample sizes and compare classical linear models.",
+          authors: [],
+          citation_count: 3,
+          year: 2024
+        },
+        {
+          paper_id: "relevant_rax_chf",
+          title: "RaX-CHF: A Resource-Efficient and Explainable Small-Model Pipeline for Congestive Heart Failure Prediction from ICU-Scale Tabular Data",
+          abstract:
+            "We compare classical machine learning baselines against a small language model on structured tabular ICU features for disease classification.",
+          authors: [],
+          citation_count: 0,
+          year: 2026
+        },
+        {
+          paper_id: "off_topic_raman",
+          title:
+            "DeepRaman: Implementing surface-enhanced Raman scattering together with cutting-edge machine learning for the differentiation and classification of bacterial endotoxins",
+          abstract:
+            "Unlike standard machine learning approaches such as PCA, LDA, SVM, RF, GBM etc, DeepRaman functions independently, requiring no human interaction, and can be used with much smaller datasets than traditional CNNs. Performance on a public dataset achieved extraordinary accuracy. This study utilized various classical machine learning techniques, such as support vector machines, k-nearest neighbors, and random forests, to distinguish bacterial endotoxins.",
+          authors: [],
+          citation_count: 4,
+          year: 2025
+        }
+      ]
+    });
+
+    expect(selection.request.selectionMode).toBe("all");
+    expect(new Set(selection.selectedPaperIds)).toEqual(
+      new Set(["relevant_svm", "relevant_pmlb", "relevant_rax_chf"])
+    );
+    expect(selection.selectedPaperIds).not.toContain("off_topic_raman");
+  });
+
   it("propagates abort instead of falling back when rerank is canceled", async () => {
     const controller = new AbortController();
     const llm = {

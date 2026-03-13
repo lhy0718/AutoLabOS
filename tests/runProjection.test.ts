@@ -275,6 +275,27 @@ describe("runProjection", () => {
     expect(resolveFailedNode(run)).toBe("generate_hypotheses");
   });
 
+  it("normalizes a stale failed run to the latest failed node when the current node is no longer failed", () => {
+    const run = makeRun({
+      status: "failed",
+      currentNode: "analyze_papers"
+    });
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.analyze_papers.status = "pending";
+    run.graph.nodeStates.analyze_papers.updatedAt = "2026-03-12T07:00:30.000Z";
+    run.graph.nodeStates.generate_hypotheses.status = "failed";
+    run.graph.nodeStates.generate_hypotheses.updatedAt = "2026-03-12T07:00:40.000Z";
+    run.graph.nodeStates.generate_hypotheses.lastError =
+      "generate_hypotheses requires at least one evidence item from analyze_papers.";
+
+    expect(resolveFailedNode(run)).toBe("generate_hypotheses");
+
+    const normalized = normalizeRunForDisplay(run);
+    expect(normalized.currentNode).toBe("generate_hypotheses");
+    expect(normalized.graph.currentNode).toBe("generate_hypotheses");
+    expect(normalized.status).toBe("failed");
+  });
+
   it("prefers paused analyze failure details over a stale collect summary", () => {
     const run = makeRun({
       status: "paused",

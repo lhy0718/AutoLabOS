@@ -87,6 +87,15 @@ const GENERIC_REFERENCE_TOKENS = new Set([
   "studies"
 ]);
 
+const LOW_SIGNAL_REFERENCE_TOKENS = new Set([
+  "baseline",
+  "baselines",
+  "dataset",
+  "datasets",
+  "public",
+  "small"
+]);
+
 const RERANK_MAX_ATTEMPTS = 2;
 
 const BENIGN_RERANK_WARNING_PATTERNS = [
@@ -144,15 +153,23 @@ export async function selectPapersForAnalysis(args: {
   args.onProgress?.(
     `Deterministic pre-rank started for ${args.corpusRows.length} paper(s) using title/topic similarity, citation count, recency, and PDF availability.`
   );
-  const ranked = rankPapersDeterministically(args.runTitle || args.runTopic, args.corpusRows);
+  const referenceTitle = args.runTitle || args.runTopic;
+  const ranked = rankPapersDeterministically(referenceTitle, args.corpusRows);
   const totalCandidates = ranked.length;
   args.onProgress?.(`Deterministic pre-rank completed for ${totalCandidates} candidate(s).`);
   if (args.request.selectionMode === "all" || !args.request.topN || args.request.topN >= totalCandidates) {
-    const selectedPaperIds = ranked.map((candidate) => candidate.paper.paper_id);
-    const rankedCandidates = ranked.map((candidate, index) => ({
+    const selectedCandidates = filterAllModeCandidates(referenceTitle, ranked);
+    if (selectedCandidates.length < ranked.length) {
+      args.onProgress?.(
+        `All-mode relevance guard filtered ${ranked.length - selectedCandidates.length} low-signal candidate(s); keeping ${selectedCandidates.length} anchored paper(s).`
+      );
+    }
+    const selectedPaperIds = selectedCandidates.map((candidate) => candidate.paper.paper_id);
+    const selectedSet = new Set(selectedPaperIds);
+    const rankedCandidates = ranked.map((candidate) => ({
       ...candidate,
-      selected: true,
-      rank: index + 1,
+      selected: selectedSet.has(candidate.paper.paper_id),
+      rank: selectedSet.has(candidate.paper.paper_id) ? selectedPaperIds.indexOf(candidate.paper.paper_id) + 1 : undefined,
       selectionScore: candidate.deterministicScore
     }));
     return {
@@ -246,6 +263,42 @@ export function buildSelectionFingerprint(
   return createHash("sha256").update(payload).digest("hex");
 }
 
+function filterAllModeCandidates(referenceTitle: string, ranked: RankedPaperCandidate[]): RankedPaperCandidate[] {
+  if (ranked.length <= 3) {
+    return ranked;
+  }
+
+  const referenceTokens = Array.from(new Set(tokenizeTitle(referenceTitle)));
+  if (referenceTokens.length === 0) {
+    return ranked;
+  }
+
+  const thematicTokens = buildThematicTokens(referenceTokens);
+  if (thematicTokens.length === 0) {
+    return ranked;
+  }
+
+  const anchored = ranked.filter((candidate) => {
+    const titleTokens = new Set(tokenizeTitle(candidate.paper.title));
+    const abstractTokens = new Set(tokenizeTitle(candidate.paper.abstract || ""));
+    return thematicTokens.some((token) => titleTokens.has(token) || abstractTokens.has(token));
+  });
+
+  const topScore = ranked[0]?.deterministicScore ?? 0;
+  const relevanceFloor = Math.max(0.18, Number((topScore * 0.5).toFixed(6)));
+  const filtered = anchored.filter((candidate) => candidate.deterministicScore >= relevanceFloor);
+
+  if (filtered.length >= 2 && filtered.length < ranked.length) {
+    return filtered;
+  }
+
+  if (anchored.length >= 2 && anchored.length < ranked.length) {
+    return anchored;
+  }
+
+  return ranked;
+}
+
 function rankPapersDeterministically(referenceTitle: string, corpusRows: AnalysisCorpusRow[]): RankedPaperCandidate[] {
   const maxCitation = corpusRows.reduce((max, row) => Math.max(max, row.citation_count ?? 0), 0);
   const maxLogCitation = maxCitation > 0 ? Math.log1p(maxCitation) : 0;
@@ -261,6 +314,11 @@ function rankPapersDeterministically(referenceTitle: string, corpusRows: Analysi
         paper.title,
         paper.abstract
       );
+      const topicCoverageMultiplier = computeTopicCoverageMultiplier(
+        referenceTokens,
+        paper.title,
+        paper.abstract
+      );
       const citationScore =
         maxLogCitation > 0 && (paper.citation_count ?? 0) > 0
           ? Math.log1p(paper.citation_count ?? 0) / maxLogCitation
@@ -269,10 +327,12 @@ function rankPapersDeterministically(referenceTitle: string, corpusRows: Analysi
       const pdfAvailabilityScore = resolvePaperPdfUrl(paper) ? 1 : 0;
       const deterministicScore = Number(
         (
-          titleSimilarityScore * 0.65 +
-          citationScore * 0.2 +
-          recencyScore * 0.08 +
-          pdfAvailabilityScore * 0.07
+          (
+            titleSimilarityScore * 0.78 +
+            citationScore * 0.1 +
+            recencyScore * 0.07 +
+            pdfAvailabilityScore * 0.05
+          ) * topicCoverageMultiplier
         ).toFixed(6)
       );
       return {
@@ -539,11 +599,15 @@ function computeTitleSimilarityScore(
       continue;
     }
     if (paperAbstractTokenSet.has(token)) {
-      matchedWeight += weight * 0.35;
+      matchedWeight += weight * resolveAbstractMatchWeight(token);
     }
   }
 
-  const anchorTokens = selectAnchorTokens(uniqueReferenceTokens, referenceTokenWeights);
+  const thematicAnchorTokens = buildThematicTokens(uniqueReferenceTokens);
+  const anchorTokens =
+    thematicAnchorTokens.length > 0
+      ? thematicAnchorTokens
+      : selectAnchorTokens(uniqueReferenceTokens, referenceTokenWeights);
   const anchorTitleHits = anchorTokens.filter((token) => paperTitleTokenSet.has(token)).length;
   const anchorAbstractHits = anchorTokens.filter((token) => paperAbstractTokenSet.has(token)).length;
   const weightedOverlap = matchedWeight / totalWeight;
@@ -552,11 +616,17 @@ function computeTitleSimilarityScore(
   let score = weightedOverlap * 0.8 + bigramDice * 0.2;
   if (anchorTokens.length > 0 && anchorTitleHits === 0 && anchorAbstractHits === 0) {
     score *= 0.35;
-  } else if (anchorTokens.length > 0 && anchorTitleHits === 0 && anchorAbstractHits > 0) {
-    score *= 0.85;
+  } else if (anchorTokens.length > 0 && anchorTitleHits === 0 && anchorAbstractHits === 1) {
+    score *= 0.55;
+  } else if (anchorTokens.length > 0 && anchorTitleHits === 0 && anchorAbstractHits > 1) {
+    score *= 0.9;
   }
 
   return Number(Math.max(0, Math.min(1, score)).toFixed(6));
+}
+
+function resolveAbstractMatchWeight(token: string): number {
+  return GENERIC_REFERENCE_TOKENS.has(token) ? 0.2 : 0.55;
 }
 
 function selectAnchorTokens(referenceTokens: string[], referenceTokenWeights: Map<string, number>): string[] {
@@ -576,6 +646,39 @@ function selectAnchorTokens(referenceTokens: string[], referenceTokenWeights: Ma
   return weightedTokens
     .filter((item, index) => item.weight >= averageWeight || index < Math.min(2, weightedTokens.length))
     .map((item) => item.token);
+}
+
+function computeTopicCoverageMultiplier(
+  referenceTokens: string[],
+  paperTitle: string,
+  paperAbstract?: string
+): number {
+  const thematicTokens = buildThematicTokens(referenceTokens);
+  if (thematicTokens.length === 0) {
+    return 1;
+  }
+
+  const titleTokens = new Set(tokenizeTitle(paperTitle));
+  const abstractTokens = new Set(tokenizeTitle(paperAbstract || ""));
+  const titleHits = thematicTokens.filter((token) => titleTokens.has(token)).length;
+  const abstractHits = thematicTokens.filter((token) => abstractTokens.has(token)).length;
+
+  if (titleHits > 0) {
+    return 1;
+  }
+  if (abstractHits >= 2) {
+    return 0.95;
+  }
+  if (abstractHits === 1) {
+    return 0.72;
+  }
+  return 0.45;
+}
+
+function buildThematicTokens(referenceTokens: string[]): string[] {
+  return Array.from(new Set(referenceTokens)).filter(
+    (token) => token.length >= 5 && !GENERIC_REFERENCE_TOKENS.has(token) && !LOW_SIGNAL_REFERENCE_TOKENS.has(token)
+  );
 }
 
 function tokenizeTitle(text: string): string[] {

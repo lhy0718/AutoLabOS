@@ -40,7 +40,7 @@ export interface AnalysisSelectedDesign {
   baselines: string[];
   evaluation_steps: string[];
   risks: string[];
-  budget_notes: string[];
+  resource_notes: string[];
 }
 
 export interface AnalysisPlanContext {
@@ -453,9 +453,9 @@ function parseExperimentPlan(raw: string): AnalysisPlanContext {
             ...asStringList(selectedDesignRaw.risks),
             ...asStringList(confirmatory.risks)
           ]),
-          budget_notes: uniqueStrings([
-            ...asStringList(selectedDesignRaw.budget_notes),
-            ...asStringList(confirmatory.budget_notes)
+          resource_notes: uniqueStrings([
+            ...asStringList(selectedDesignRaw.resource_notes),
+            ...asStringList(confirmatory.resource_notes)
           ])
         }
       : undefined;
@@ -621,10 +621,10 @@ function buildWarnings(args: {
 
 function buildLimitations(planContext: AnalysisPlanContext, warnings: string[]): string[] {
   const designRisks = planContext.selected_design?.risks || [];
-  const budgetNotes = planContext.selected_design?.budget_notes || [];
+  const resourceNotes = planContext.selected_design?.resource_notes || [];
   return uniqueStrings([
     ...designRisks,
-    ...budgetNotes,
+    ...resourceNotes,
     ...planContext.assumptions,
     ...warnings
   ]).slice(0, 6);
@@ -1009,7 +1009,7 @@ function buildFailureTaxonomy(args: {
       category: "evidence_gap",
       severity: "medium",
       status: "risk",
-      summary: "Supplemental confirmatory and quick-check runs are missing, so robustness across sampling budgets is still unverified.",
+      summary: "Supplemental confirmatory and quick-check runs are missing, so robustness across sampling profiles is still unverified.",
       evidence: ["warnings"],
       recommended_action: "Run confirmatory and quick-check profiles to validate stability."
     });
@@ -1029,7 +1029,7 @@ function buildFailureTaxonomy(args: {
 
   const scopeRisk =
     args.planContext.selected_design?.risks[0] ||
-    args.planContext.selected_design?.budget_notes[0] ||
+    args.planContext.selected_design?.resource_notes[0] ||
     args.planContext.assumptions[0];
   if (scopeRisk) {
     categories.push({
@@ -1040,7 +1040,7 @@ function buildFailureTaxonomy(args: {
       summary: `Scope limitation: ${scopeRisk}`,
       evidence: [
         "plan_context.selected_design.risks",
-        "plan_context.selected_design.budget_notes",
+        "plan_context.selected_design.resource_notes",
         "plan_context.assumptions"
       ],
       recommended_action: "Expand the evaluation scope or document the limitation explicitly in the discussion."

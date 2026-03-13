@@ -20,7 +20,7 @@ export const OPENAI_RESPONSES_REASONING_OPTIONS: OpenAiResponsesReasoningOption[
   {
     value: "minimal",
     label: "minimal",
-    description: "Lowest reasoning budget for the fastest GPT-5 API turns."
+    description: "Lowest reasoning effort for the fastest GPT-5 API turns."
   },
   {
     value: "low",

@@ -643,10 +643,6 @@ export function App() {
                   <span className="stat-label">Checkpoint</span>
                   <strong>#{selectedRun.graph.checkpointSeq}</strong>
                 </article>
-                <article className="stat-card">
-                  <span className="stat-label">Budget</span>
-                  <strong>{selectedRun.graph.budget.toolCallsUsed} / {selectedRun.graph.budget.policy.maxToolCalls}</strong>
-                </article>
               </div>
 
               {selectedRun.constraints.length > 0 ? (
@@ -1094,9 +1090,6 @@ export function App() {
               <article className="meta-row"><span>Status</span><strong>{formatStatusLabel(selectedRun.status)}</strong></article>
               <article className="meta-row"><span>Objective</span><strong>{selectedRun.objectiveMetric}</strong></article>
               <article className="meta-row"><span>Constraints</span><strong>{selectedRun.constraints.join(", ") || "None"}</strong></article>
-              <article className="meta-row"><span>Budget</span><strong>{selectedRun.graph.budget.toolCallsUsed}/{selectedRun.graph.budget.policy.maxToolCalls} tool calls</strong></article>
-              <article className="meta-row"><span>Wall clock</span><strong>{(selectedRun.graph.budget.wallClockMsUsed / 60000).toFixed(1)} / {selectedRun.graph.budget.policy.maxWallClockMinutes} min</strong></article>
-              <article className="meta-row"><span>USD</span><strong>{selectedRun.graph.budget.usdUsed || 0} / {selectedRun.graph.budget.policy.maxUsd}</strong></article>
             </div>
           ) : null}
 

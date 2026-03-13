@@ -475,25 +475,6 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(applied.graph.transitionHistory.at(-1)?.action).toBe("backtrack_to_design");
   });
 
-  it("fails with failed_budget when budget is exceeded", async () => {
-    const { store, orchestrator } = await setup(new DeterministicRegistry({}));
-    const run = await store.createRun({
-      title: "Run",
-      topic: "topic",
-      constraints: [],
-      objectiveMetric: "metric"
-    });
-
-    run.graph.budget.policy.maxToolCalls = 0;
-    await store.updateRun(run);
-
-    const outcome = await orchestrator.runAgent(run.id, "collect_papers");
-    expect(outcome.result.status).toBe("failure");
-
-    const latest = await store.getRun(run.id);
-    expect(latest?.status).toBe("failed_budget");
-  });
-
   it("can resume from saved checkpoints", async () => {
     const { store, orchestrator } = await setup(new DeterministicRegistry({}));
     const run = await store.createRun({

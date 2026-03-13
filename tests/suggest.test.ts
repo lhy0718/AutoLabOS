@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { buildSuggestions } from "../src/tui/commandPalette/suggest.js";
 import { SLASH_COMMANDS } from "../src/tui/commandPalette/commands.js";
 
+function expectedApplyValue(commandName: string): string {
+  return commandName === "brief" ? "/brief start --latest" : `/${commandName} `;
+}
+
 const runs = [
   {
     id: "run-alpha-123",
@@ -26,20 +30,34 @@ describe("buildSuggestions", () => {
     expect(suggestions.length).toBeGreaterThan(0);
     expect(suggestions[0].applyValue.startsWith("/")).toBe(true);
     expect(
-      SLASH_COMMANDS.every((command) =>
-        suggestions.some((suggestion) => suggestion.applyValue === `/${command.name} `)
+      SLASH_COMMANDS.filter((command) => command.visible).every((command) =>
+        suggestions.some((suggestion) => suggestion.applyValue === expectedApplyValue(command.name))
       )
     ).toBe(true);
+    expect(suggestions.some((suggestion) => suggestion.applyValue === "/model ")).toBe(false);
   });
 
   it("filters commands fuzzily", () => {
-    const suggestions = buildSuggestions({ input: "/res", runs, activeRunId: "run-alpha-123" });
-    expect(suggestions.some((s) => s.applyValue.startsWith("/resume"))).toBe(true);
+    const suggestions = buildSuggestions({ input: "/app", runs, activeRunId: "run-alpha-123" });
+    expect(suggestions.some((s) => s.applyValue.startsWith("/approve"))).toBe(true);
   });
 
   it("suggests run ids for /run", () => {
     const suggestions = buildSuggestions({ input: "/run alp", runs, activeRunId: "run-alpha-123" });
     expect(suggestions.some((s) => s.applyValue === "/run run-alpha-123")).toBe(true);
+  });
+
+  it("defaults /brief suggestions to the latest brief start flow", () => {
+    const rootSuggestions = buildSuggestions({ input: "/brief", runs, activeRunId: "run-alpha-123" });
+    expect(rootSuggestions.some((s) => s.applyValue === "/brief start --latest")).toBe(true);
+
+    const argSuggestions = buildSuggestions({ input: "/brief ", runs, activeRunId: "run-alpha-123" });
+    expect(argSuggestions.some((s) => s.applyValue === "/brief start --latest")).toBe(true);
+    expect(argSuggestions.some((s) => s.applyValue === "/brief start ")).toBe(true);
+
+    const latestSuggestions = buildSuggestions({ input: "/brief start --l", runs, activeRunId: "run-alpha-123" });
+    expect(latestSuggestions.some((s) => s.applyValue === "/brief start --latest")).toBe(true);
+    expect(latestSuggestions.some((s) => s.applyValue === "/brief ")).toBe(false);
   });
 
   it("suggests node ids for /agent run", () => {
@@ -109,9 +127,9 @@ describe("buildSuggestions", () => {
     expect(enumSuggestions.some((s) => s.applyValue === "/agent collect --sort citationCount ")).toBe(true);
   });
 
-  it("suggests /model command only", () => {
+  it("keeps hidden commands out of root suggestions while still supporting direct /model editing", () => {
     const rootSuggestions = buildSuggestions({ input: "/mod", runs, activeRunId: "run-alpha-123" });
-    expect(rootSuggestions.some((s) => s.applyValue.startsWith("/model"))).toBe(true);
+    expect(rootSuggestions.some((s) => s.applyValue.startsWith("/model"))).toBe(false);
 
     const selectorSuggestions = buildSuggestions({ input: "/model effort x", runs, activeRunId: "run-alpha-123" });
     expect(selectorSuggestions.some((s) => s.applyValue === "/model ")).toBe(true);
@@ -120,7 +138,7 @@ describe("buildSuggestions", () => {
 
   it("shows current run title in /title suggestions", () => {
     const rootSuggestions = buildSuggestions({ input: "/tit", runs, activeRunId: "run-alpha-123" });
-    expect(rootSuggestions.some((s) => s.applyValue === "/title " && s.description.includes("Agentic Retrieval Benchmark Run"))).toBe(true);
+    expect(rootSuggestions).toEqual([]);
 
     const titleSuggestions = buildSuggestions({ input: "/title ", runs, activeRunId: "run-alpha-123" });
     expect(titleSuggestions.some((s) => s.applyValue === "/title " && s.description.includes("Agentic Retrieval Benchmark Run"))).toBe(true);
@@ -177,7 +195,6 @@ describe("buildSuggestions", () => {
       "resume",
       "retry",
       "jump",
-      "budget",
       "transition",
       "apply",
       "overnight"

@@ -25,7 +25,7 @@ export function buildResearchBriefTemplate(): string {
     "",
     "## Constraints",
     "",
-    "- List practical limits, required datasets, budgets, or tools here.",
+    "- List practical limits, required datasets, costs, or tools here.",
     "",
     "## Plan",
     "",

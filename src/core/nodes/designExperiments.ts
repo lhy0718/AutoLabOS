@@ -349,9 +349,7 @@ function buildPlanYaml(args: {
     ...renderShortlistedDesigns(args.candidates),
     "execution:",
     "  container: local",
-    "  timeout_sec: 1800",
-    "  budget:",
-    "    max_tool_calls: 150"
+    "  timeout_sec: 1800"
   ].join("\n");
 }
 
@@ -427,8 +425,8 @@ function renderManagedExecutableDesignSection(selected: ExperimentDesignCandidat
     ...renderYamlStringList(uniqueStrings(selected.evaluation_steps), 3),
     "    risks:",
     ...renderYamlStringList(uniqueStrings(selected.risks), 3),
-    "    budget_notes:",
-    ...renderYamlStringList(uniqueStrings(selected.budget_notes), 3)
+    "    resource_notes:",
+    ...renderYamlStringList(uniqueStrings(selected.resource_notes), 3)
   ];
 }
 
@@ -446,8 +444,8 @@ function renderLegacySelectedDesignSection(selected: ExperimentDesignCandidate):
     ...renderYamlStringList(selected.evaluation_steps, 2),
     "  risks:",
     ...renderYamlStringList(selected.risks, 2),
-    "  budget_notes:",
-    ...renderYamlStringList(selected.budget_notes, 2)
+    "  resource_notes:",
+    ...renderYamlStringList(selected.resource_notes, 2)
   ];
 }
 

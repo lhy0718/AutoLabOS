@@ -69,6 +69,34 @@ export interface RelatedWorkScoutArtifact {
   papers: RelatedWorkScoutPaperArtifact[];
 }
 
+export interface RelatedWorkNoteArtifact {
+  paper_id: string;
+  title: string;
+  source_type: "analyzed_paper" | "semantic_scholar_scout";
+  comparison_role: "closest" | "supporting" | "background";
+  method_family: string;
+  problem_focus: string;
+  setting_focus: string;
+  contribution_focus: string;
+  limitation_or_caveat: string;
+  relation_to_study: string;
+  year?: number;
+  venue?: string;
+  citation_count?: number;
+}
+
+export interface RelatedWorkParagraphPlanArtifact {
+  role: "taxonomy" | "comparison" | "positioning";
+  focus: string;
+  citation_paper_ids: string[];
+}
+
+export interface RelatedWorkBriefArtifact {
+  comparison_axes: string[];
+  notes: RelatedWorkNoteArtifact[];
+  paragraph_plan: RelatedWorkParagraphPlanArtifact[];
+}
+
 export interface PaperWritingBundle {
   runTitle: string;
   topic: string;
@@ -81,6 +109,7 @@ export interface PaperWritingBundle {
   experimentPlan?: ExperimentPlanArtifact;
   resultAnalysis?: ResultAnalysisArtifact;
   relatedWorkScout?: RelatedWorkScoutArtifact;
+  relatedWorkNotes?: RelatedWorkNoteArtifact[];
   reviewContext?: {
     outcome: string;
     summary: string;
@@ -195,6 +224,7 @@ export function buildPaperWriterPrompt(input: {
 }): string {
   const allowedEvidenceIds = input.bundle.evidenceRows.map((item) => item.evidence_id);
   const allowedPaperIds = input.bundle.corpus.map((item) => item.paper_id);
+  const relatedWorkBrief = buildRelatedWorkBrief(input.bundle);
   const promptPayload = {
     run: {
       title: input.bundle.runTitle,
@@ -256,6 +286,28 @@ export function buildPaperWriterPrompt(input: {
           }))
         }
       : undefined,
+    related_work_brief:
+      relatedWorkBrief.notes.length > 0
+        ? {
+            comparison_axes: relatedWorkBrief.comparison_axes,
+            paragraph_plan: relatedWorkBrief.paragraph_plan,
+            notes: relatedWorkBrief.notes.slice(0, 8).map((item) => ({
+              paper_id: item.paper_id,
+              title: item.title,
+              source_type: item.source_type,
+              comparison_role: item.comparison_role,
+              method_family: item.method_family,
+              problem_focus: item.problem_focus,
+              setting_focus: item.setting_focus,
+              contribution_focus: item.contribution_focus,
+              limitation_or_caveat: item.limitation_or_caveat,
+              relation_to_study: item.relation_to_study,
+              year: item.year,
+              venue: item.venue,
+              citation_count: item.citation_count
+            }))
+          }
+        : undefined,
     analyzed_papers: input.bundle.paperSummaries.slice(0, 6).map((item) => ({
       paper_id: item.paper_id,
       title: item.title,
@@ -330,10 +382,14 @@ export function buildPaperWriterPrompt(input: {
     "- Prefer a title centered on the selected design, method, comparison, or study framing when available.",
     "- Write 4 to 6 sections in this general order: Introduction, Related Work, Method, Results, Conclusion.",
     "- Each section should have 1 to 2 concise paragraphs.",
-    "- Each paragraph must carry the evidence_ids and citation_paper_ids that support that paragraph.",
+    "- Each paragraph must carry the evidence_ids and/or citation_paper_ids that support that paragraph.",
     "- Section-level evidence_ids and citation_paper_ids should summarize the union of the paragraph-level grounding.",
     "- Results must mention the objective metric and the observed outcome when available.",
     "- Use only provided paper_ids and evidence_ids.",
+    "- When related_work_brief has at least 3 notes, write Related Work as two paragraphs: one taxonomy/comparison paragraph and one positioning paragraph.",
+    "- Use the related_work_brief comparison axes to compare strands of prior work instead of listing paper titles one by one.",
+    "- Each Related Work paragraph should cite at least 2 papers when that many relevant notes are available.",
+    "- The last Related Work paragraph should explicitly position the current study against the closest prior work or gaps.",
     "- Related-work scout papers may be cited conservatively for broad literature framing, especially in Related Work.",
     "- Do not treat related-work scout papers as direct experimental evidence unless they also appear in analyzed_papers or the evidence bank.",
     "- Keep claims aligned with cited papers and evidence IDs.",
@@ -392,7 +448,7 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
     .slice()
     .sort((left, right) => right.confidence - left.confidence)
     .slice(0, 4);
-  const scoutPaperIds = bundle.relatedWorkScout?.papers.slice(0, 3).map((item) => item.paper_id) || [];
+  const relatedWorkBrief = buildRelatedWorkBrief(bundle);
   const citedPaperIds = uniqueStrings(
     [
       ...bundle.paperSummaries.slice(0, 4).map((item) => item.paper_id),
@@ -408,26 +464,11 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
       ? `The writing is scoped by these constraints: ${bundle.constraints.join(", ")}.`
       : ""
   ].filter(Boolean).join(" ");
-  const relatedWorkParagraph =
-    bundle.paperSummaries.length > 0 || bundle.relatedWorkScout?.papers.length
-      ? [
-          bundle.paperSummaries.length > 0
-            ? `Prior work emphasizes ${bundle.paperSummaries.slice(0, 3).map((item) => item.novelty || item.title).join("; ")}.`
-            : "",
-          bundle.relatedWorkScout?.papers.length
-            ? `A related-work scout additionally surfaced ${bundle.relatedWorkScout.papers
-                .slice(0, 3)
-                .map((item) => item.title)
-                .join("; ")}.`
-            : ""
-        ]
-          .filter(Boolean)
-          .join(" ")
-      : "Related work will need to be expanded once more literature summaries are available.";
-  const relatedWorkCitationIds = uniqueStrings([
-    ...citedPaperIds.slice(0, 3),
-    ...scoutPaperIds
-  ]).slice(0, 4);
+  const fallbackRelatedWorkSection = buildFallbackRelatedWorkSection(
+    bundle,
+    relatedWorkBrief,
+    topEvidence.slice(0, 2).map((item) => item.evidence_id)
+  );
   const methodParagraph = [
     bundle.experimentPlan?.selectedSummary
       ? `The selected experimental design is ${bundle.experimentPlan.selectedTitle || "the current plan"}: ${bundle.experimentPlan.selectedSummary}.`
@@ -462,15 +503,9 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
     },
     {
       heading: "Related Work",
-      paragraphs: [
-        buildDraftParagraph(
-          relatedWorkParagraph,
-          topEvidence.slice(0, 2).map((item) => item.evidence_id),
-          relatedWorkCitationIds
-        )
-      ],
-      evidence_ids: topEvidence.slice(0, 2).map((item) => item.evidence_id),
-      citation_paper_ids: relatedWorkCitationIds
+      paragraphs: fallbackRelatedWorkSection.paragraphs,
+      evidence_ids: fallbackRelatedWorkSection.evidence_ids,
+      citation_paper_ids: fallbackRelatedWorkSection.citation_paper_ids
     },
     {
       heading: "Method",
@@ -551,7 +586,7 @@ export function validatePaperDraft(input: {
   const validPaperIds = new Set(input.bundle.corpus.map((item) => item.paper_id));
   const issues: PaperDraftValidationIssue[] = [];
 
-  const sections = input.draft.sections.map((section) => {
+  const normalizedSections = input.draft.sections.map((section) => {
     const sectionEvidenceIds = uniqueStrings(section.evidence_ids.filter((item) => evidenceById.has(item))).slice(0, 6);
     const sectionExplicitCitations = uniqueStrings(
       section.citation_paper_ids.filter((item) => validPaperIds.has(item))
@@ -655,6 +690,12 @@ export function validatePaperDraft(input: {
       evidence_ids: evidenceIds,
       citation_paper_ids: citationPaperIds
     };
+  });
+
+  const sections = applyRelatedWorkQualityControls({
+    sections: normalizedSections,
+    bundle: input.bundle,
+    issues
   });
 
   const sectionByHeading = new Map(
@@ -778,6 +819,579 @@ export function buildPaperEvidenceMap(draft: PaperDraft): {
       citation_paper_ids: item.citation_paper_ids
     }))
   };
+}
+
+export function buildRelatedWorkNotes(bundle: PaperWritingBundle): RelatedWorkNoteArtifact[] {
+  if (bundle.relatedWorkNotes && bundle.relatedWorkNotes.length > 0) {
+    return uniqueRelatedWorkNotes(bundle.relatedWorkNotes).slice(0, 8);
+  }
+
+  const corpusById = new Map(bundle.corpus.map((item) => [item.paper_id, item] as const));
+  const studyKeywords = extractRelatedWorkKeywords([
+    bundle.topic,
+    bundle.objectiveMetric,
+    bundle.experimentPlan?.selectedTitle,
+    bundle.experimentPlan?.selectedSummary,
+    ...bundle.hypotheses.slice(0, 3).map((item) => item.text),
+    ...bundle.hypotheses.slice(0, 3).map((item) => item.measurement_hint || "")
+  ]);
+  const ranked: Array<RelatedWorkNoteArtifact & { _score: number; _sourceRank: number }> = [];
+
+  for (const summary of bundle.paperSummaries) {
+    const corpusRow = corpusById.get(summary.paper_id);
+    const combinedText = [
+      summary.title,
+      summary.summary,
+      summary.novelty,
+      ...summary.key_findings,
+      ...summary.datasets,
+      ...summary.metrics
+    ].join(" ");
+    const score = scoreRelatedWorkMatch(studyKeywords, combinedText);
+    ranked.push({
+      paper_id: summary.paper_id,
+      title: summary.title,
+      source_type: "analyzed_paper",
+      comparison_role: classifyRelatedWorkRole(score, true),
+      method_family: inferMethodFamily(combinedText),
+      problem_focus: truncateText(firstSentence(summary.summary) || summary.title, 180),
+      setting_focus: buildSettingFocus(summary.datasets, summary.metrics, corpusRow),
+      contribution_focus: truncateText(
+        summary.novelty || summary.key_findings[0] || firstSentence(summary.summary) || summary.title,
+        180
+      ),
+      limitation_or_caveat: truncateText(
+        summary.limitations[0]
+          || summary.reproducibility_notes[0]
+          || "The available summary exposes only part of the experimental scope.",
+        180
+      ),
+      relation_to_study: describeRelationToStudy(score, true),
+      year: corpusRow?.year,
+      venue: cleanString(corpusRow?.venue),
+      citation_count: corpusRow?.citation_count,
+      _score: score,
+      _sourceRank: 0
+    });
+  }
+
+  for (const scout of bundle.relatedWorkScout?.papers || []) {
+    const combinedText = [scout.title, scout.summary].join(" ");
+    const score = scoreRelatedWorkMatch(studyKeywords, combinedText);
+    ranked.push({
+      paper_id: scout.paper_id,
+      title: scout.title,
+      source_type: "semantic_scholar_scout",
+      comparison_role: classifyRelatedWorkRole(score, false),
+      method_family: inferMethodFamily(combinedText),
+      problem_focus: truncateText(firstSentence(scout.summary) || scout.title, 180),
+      setting_focus: buildSettingFocus([], [], {
+        paper_id: scout.paper_id,
+        title: scout.title,
+        venue: scout.venue,
+        year: scout.year
+      } as StoredCorpusRow),
+      contribution_focus: truncateText(firstSentence(scout.summary) || scout.title, 180),
+      limitation_or_caveat:
+        "Only scout-level metadata is available, so this paper should provide broad framing rather than detailed claim matching.",
+      relation_to_study: describeRelationToStudy(score, false),
+      year: scout.year,
+      venue: scout.venue,
+      citation_count: scout.citation_count,
+      _score: score,
+      _sourceRank: 1
+    });
+  }
+
+  return uniqueRelatedWorkNotes(
+    ranked
+      .sort((left, right) => {
+        if (left._score !== right._score) {
+          return right._score - left._score;
+        }
+        if (left.comparison_role !== right.comparison_role) {
+          return compareRelatedWorkRole(left.comparison_role, right.comparison_role);
+        }
+        if (left._sourceRank !== right._sourceRank) {
+          return left._sourceRank - right._sourceRank;
+        }
+        if ((left.citation_count || 0) !== (right.citation_count || 0)) {
+          return (right.citation_count || 0) - (left.citation_count || 0);
+        }
+        return (right.year || 0) - (left.year || 0);
+      })
+      .map(({ _score: _ignoredScore, _sourceRank: _ignoredSourceRank, ...note }) => note)
+  ).slice(0, 8);
+}
+
+export function buildRelatedWorkBrief(bundle: PaperWritingBundle): RelatedWorkBriefArtifact {
+  const notes = buildRelatedWorkNotes(bundle);
+  const methodFamilies = uniqueStrings(notes.map((item) => item.method_family)).slice(0, 3);
+  const settingFocuses = uniqueStrings(
+    notes
+      .map((item) => item.setting_focus)
+      .filter((item) => item && !/^venue context/i.test(item))
+  ).slice(0, 3);
+  const comparisonAxes = uniqueStrings(
+    [
+      methodFamilies.length > 1 ? `method families such as ${joinHumanList(methodFamilies)}` : "",
+      settingFocuses.length > 1 ? `evaluation settings such as ${joinHumanList(settingFocuses)}` : "",
+      notes.some((item) => item.comparison_role === "closest")
+        ? "closest baselines versus broader framing papers"
+        : "",
+      notes.some((item) => item.limitation_or_caveat)
+        ? "reported limitations and remaining coverage gaps"
+        : ""
+    ].filter(Boolean)
+  ).slice(0, 3);
+
+  const taxonomyCitations = notes
+    .filter((item) => item.comparison_role !== "background")
+    .slice(0, 4)
+    .map((item) => item.paper_id);
+  const positioningNotes = selectPositioningNotes(notes).slice(0, 3);
+  const paragraphPlan: RelatedWorkParagraphPlanArtifact[] = [];
+  if (notes.length > 0) {
+    paragraphPlan.push({
+      role: "taxonomy",
+      focus:
+        comparisonAxes[0]
+        || `Organize prior work around ${joinHumanList(methodFamilies.length > 0 ? methodFamilies : notes.slice(0, 2).map((item) => item.method_family))}.`,
+      citation_paper_ids: taxonomyCitations.length > 0 ? taxonomyCitations : notes.slice(0, 3).map((item) => item.paper_id)
+    });
+  }
+  if (notes.length >= 3) {
+    paragraphPlan.push({
+      role: "positioning",
+      focus:
+        positioningNotes.length > 0
+          ? `Position the current study against ${joinHumanList(positioningNotes.map((item) => item.title))}.`
+          : "Explain how the current study differs from the closest prior work.",
+      citation_paper_ids:
+        positioningNotes.length > 0
+          ? positioningNotes.map((item) => item.paper_id)
+          : notes.slice(0, 3).map((item) => item.paper_id)
+    });
+  }
+
+  return {
+    comparison_axes: comparisonAxes.length > 0 ? comparisonAxes : ["problem framing and evaluation scope"],
+    notes,
+    paragraph_plan: paragraphPlan
+  };
+}
+
+function applyRelatedWorkQualityControls(input: {
+  sections: PaperDraftSection[];
+  bundle: PaperWritingBundle;
+  issues: PaperDraftValidationIssue[];
+}): PaperDraftSection[] {
+  const brief = buildRelatedWorkBrief(input.bundle);
+  if (brief.notes.length < 3) {
+    return input.sections;
+  }
+
+  const fallbackSection = buildFallbackRelatedWorkSection(
+    input.bundle,
+    brief,
+    input.bundle.evidenceRows
+      .slice()
+      .sort((left, right) => right.confidence - left.confidence)
+      .slice(0, 2)
+      .map((item) => item.evidence_id)
+  );
+  const relatedIndex = input.sections.findIndex((section) => isRelatedWorkHeading(section.heading));
+  if (relatedIndex < 0) {
+    input.issues.push({
+      kind: "section",
+      severity: "warning",
+      message: "Related Work section was reconstructed from related-work notes because the draft omitted it.",
+      section_heading: fallbackSection.heading,
+      evidence_ids: fallbackSection.evidence_ids,
+      citation_paper_ids: fallbackSection.citation_paper_ids
+    });
+    return [...input.sections, fallbackSection];
+  }
+
+  const sections = [...input.sections];
+  const relatedSection = sections[relatedIndex];
+  let paragraphs = relatedSection.paragraphs.map((item) => ({ ...item }));
+  if (paragraphs.length === 0) {
+    paragraphs = fallbackSection.paragraphs;
+    input.issues.push({
+      kind: "section",
+      severity: "warning",
+      message: "Related Work section was rebuilt from related-work notes because it had no usable paragraphs.",
+      section_heading: relatedSection.heading,
+      evidence_ids: fallbackSection.evidence_ids,
+      citation_paper_ids: fallbackSection.citation_paper_ids
+    });
+  } else if (paragraphs.length < fallbackSection.paragraphs.length) {
+    paragraphs = [...paragraphs, ...fallbackSection.paragraphs.slice(paragraphs.length)];
+    input.issues.push({
+      kind: "section",
+      severity: "warning",
+      message: "Related Work gained a positioning paragraph because enough literature was available to compare strands and position the current study.",
+      section_heading: relatedSection.heading,
+      evidence_ids: relatedSection.evidence_ids,
+      citation_paper_ids: fallbackSection.citation_paper_ids
+    });
+  }
+
+  const fallbackCitationIds = fallbackSection.citation_paper_ids;
+  paragraphs = paragraphs.map((paragraph, index) => {
+    let text = cleanString(paragraph.text);
+    let citationPaperIds = uniqueStrings(paragraph.citation_paper_ids);
+    if (fallbackCitationIds.length >= 2 && citationPaperIds.length < 2) {
+      citationPaperIds = uniqueStrings([
+        ...citationPaperIds,
+        ...(index === paragraphs.length - 1 && fallbackSection.paragraphs[index]
+          ? fallbackSection.paragraphs[index].citation_paper_ids
+          : fallbackCitationIds)
+      ]).slice(0, 4);
+      input.issues.push({
+        kind: "paragraph",
+        severity: "warning",
+        message: "Related Work paragraph citations were expanded to support comparison instead of a single-paper mention.",
+        section_heading: relatedSection.heading,
+        paragraph_index: index,
+        evidence_ids: paragraph.evidence_ids,
+        citation_paper_ids: citationPaperIds
+      });
+    }
+
+    if (!hasComparisonLanguage(text)) {
+      text = `${stripTrailingPunctuation(text)}. Across prior work, the clearest contrasts concern ${brief.comparison_axes[0]}.`;
+      input.issues.push({
+        kind: "paragraph",
+        severity: "warning",
+        message: "Related Work paragraph was sharpened with an explicit comparison axis.",
+        section_heading: relatedSection.heading,
+        paragraph_index: index,
+        evidence_ids: paragraph.evidence_ids,
+        citation_paper_ids: citationPaperIds
+      });
+    }
+
+    if (index === paragraphs.length - 1 && !hasPositioningLanguage(text)) {
+      text = `${stripTrailingPunctuation(text)}. The current study uses these baselines to position ${cleanString(input.bundle.topic) || "the present study"} around ${cleanString(input.bundle.objectiveMetric) || "its stated objective"}.`;
+      input.issues.push({
+        kind: "paragraph",
+        severity: "warning",
+        message: "Related Work paragraph was extended with explicit study positioning.",
+        section_heading: relatedSection.heading,
+        paragraph_index: index,
+        evidence_ids: paragraph.evidence_ids,
+        citation_paper_ids: citationPaperIds
+      });
+    }
+
+    return {
+      text,
+      evidence_ids: paragraph.evidence_ids.length > 0 ? paragraph.evidence_ids : fallbackSection.evidence_ids,
+      citation_paper_ids: citationPaperIds
+    };
+  });
+
+  sections[relatedIndex] = {
+    ...relatedSection,
+    paragraphs,
+    evidence_ids: uniqueStrings([
+      ...relatedSection.evidence_ids,
+      ...paragraphs.flatMap((item) => item.evidence_ids),
+      ...fallbackSection.evidence_ids
+    ]).slice(0, 6),
+    citation_paper_ids: uniqueStrings([
+      ...relatedSection.citation_paper_ids,
+      ...paragraphs.flatMap((item) => item.citation_paper_ids),
+      ...fallbackSection.citation_paper_ids
+    ]).slice(0, 6)
+  };
+  return sections;
+}
+
+function buildFallbackRelatedWorkSection(
+  bundle: PaperWritingBundle,
+  brief: RelatedWorkBriefArtifact,
+  defaultEvidenceIds: string[]
+): PaperDraftSection {
+  const notes = brief.notes;
+  if (notes.length === 0) {
+    const paragraph = buildDraftParagraph(
+      "Related work will need to be expanded once more literature summaries are available.",
+      defaultEvidenceIds,
+      []
+    );
+    return {
+      heading: "Related Work",
+      paragraphs: [paragraph],
+      evidence_ids: paragraph.evidence_ids,
+      citation_paper_ids: []
+    };
+  }
+
+  const taxonomyNotes = notes.slice(0, Math.min(4, notes.length));
+  const positioningNotes = selectPositioningNotes(notes).slice(0, Math.min(3, notes.length));
+  const methodFamilies = uniqueStrings(taxonomyNotes.map((item) => item.method_family)).slice(0, 3);
+  const problemFocuses = uniqueStrings(
+    taxonomyNotes.map((item) => lowercaseLeadingWord(stripTrailingPunctuation(item.problem_focus))).filter(Boolean)
+  ).slice(0, 2);
+  const taxonomyText = [
+    methodFamilies.length > 1
+      ? `Prior work in this area spans ${joinHumanList(methodFamilies)}.`
+      : `Prior work mainly clusters around ${methodFamilies[0] || "closely related empirical studies"}.`,
+    problemFocuses.length > 0
+      ? `Across these strands, studies focus on ${joinHumanList(problemFocuses)}.`
+      : "",
+    brief.comparison_axes[0]
+      ? `The main comparison axis is ${brief.comparison_axes[0]}.`
+      : ""
+  ].filter(Boolean).join(" ");
+  const taxonomyParagraph = buildDraftParagraph(
+    taxonomyText,
+    defaultEvidenceIds,
+    taxonomyNotes.map((item) => item.paper_id)
+  );
+
+  const paragraphs = [taxonomyParagraph];
+  if (notes.length >= 3) {
+    const contributionFocuses = uniqueStrings(
+      positioningNotes
+        .map((item) => lowercaseLeadingWord(stripTrailingPunctuation(item.contribution_focus)))
+        .filter(Boolean)
+    ).slice(0, 2);
+    const caveats = uniqueStrings(
+      positioningNotes
+        .map((item) => lowercaseLeadingWord(stripTrailingPunctuation(item.limitation_or_caveat)))
+        .filter(Boolean)
+    ).slice(0, 2);
+    const positioningText = [
+      contributionFocuses.length > 0
+        ? `The closest prior studies emphasize ${joinHumanList(contributionFocuses)}.`
+        : "The closest prior studies provide strong baselines for comparison.",
+      caveats.length > 0
+        ? `However, the available literature still leaves open ${joinHumanList(caveats)}.`
+        : "However, the surrounding literature still leaves open coverage and evaluation gaps.",
+      `The current study therefore positions itself around ${cleanString(bundle.topic) || "the present topic"} with emphasis on ${cleanString(bundle.objectiveMetric) || "its stated evaluation objective"}.`
+    ].join(" ");
+    paragraphs.push(
+      buildDraftParagraph(
+        positioningText,
+        defaultEvidenceIds,
+        positioningNotes.map((item) => item.paper_id)
+      )
+    );
+  }
+
+  return {
+    heading: "Related Work",
+    paragraphs,
+    evidence_ids: uniqueStrings([
+      ...defaultEvidenceIds,
+      ...paragraphs.flatMap((item) => item.evidence_ids)
+    ]).slice(0, 6),
+    citation_paper_ids: uniqueStrings(paragraphs.flatMap((item) => item.citation_paper_ids)).slice(0, 6)
+  };
+}
+
+function uniqueRelatedWorkNotes(notes: RelatedWorkNoteArtifact[]): RelatedWorkNoteArtifact[] {
+  const seen = new Set<string>();
+  const unique: RelatedWorkNoteArtifact[] = [];
+  for (const note of notes) {
+    if (!note.paper_id || seen.has(note.paper_id)) {
+      continue;
+    }
+    seen.add(note.paper_id);
+    unique.push(note);
+  }
+  return unique;
+}
+
+function compareRelatedWorkRole(
+  left: RelatedWorkNoteArtifact["comparison_role"],
+  right: RelatedWorkNoteArtifact["comparison_role"]
+): number {
+  const rank = { closest: 0, supporting: 1, background: 2 } as const;
+  return rank[left] - rank[right];
+}
+
+function classifyRelatedWorkRole(score: number, analyzed: boolean): RelatedWorkNoteArtifact["comparison_role"] {
+  if (score >= (analyzed ? 3 : 4)) {
+    return "closest";
+  }
+  if (score >= 2) {
+    return "supporting";
+  }
+  return "background";
+}
+
+function describeRelationToStudy(score: number, analyzed: boolean): string {
+  if (score >= (analyzed ? 3 : 4)) {
+    return analyzed
+      ? "Closest analyzed baseline for the current study framing."
+      : "Closest scout-level citation for framing the current study topic.";
+  }
+  if (score >= 2) {
+    return analyzed
+      ? "Provides a nearby comparison point for the current study objective."
+      : "Provides supporting context for nearby literature directions.";
+  }
+  return analyzed
+    ? "Offers broader background for the surrounding literature."
+    : "Offers broader scout-level background for the surrounding literature.";
+}
+
+function inferMethodFamily(text: string): string {
+  const lower = cleanString(text).toLowerCase();
+  if (/survey|review|overview/.test(lower)) {
+    return "survey and synthesis";
+  }
+  if (/benchmark|evaluation|empirical|reproduc|robust|stability/.test(lower)) {
+    return "evaluation and benchmarking";
+  }
+  if (/memory|state|session|thread|context/.test(lower)) {
+    return "stateful coordination";
+  }
+  if (/agent|multi-agent|coordination|collaboration|orchestration|workflow/.test(lower)) {
+    return "agent coordination workflows";
+  }
+  if (/retriev|search|discovery|collect|scout/.test(lower)) {
+    return "literature discovery and retrieval";
+  }
+  if (/prompt|instruction|policy/.test(lower)) {
+    return "prompting and control";
+  }
+  if (/plan|planner|decomposition/.test(lower)) {
+    return "planning and decomposition";
+  }
+  const keywords = extractRelatedWorkKeywords([text]).slice(0, 2);
+  return keywords.length > 0 ? `${joinHumanList(keywords)} methods` : "closely related methods";
+}
+
+function buildSettingFocus(
+  datasets: string[],
+  metrics: string[],
+  corpusRow?: Pick<StoredCorpusRow, "venue" | "year">
+): string {
+  const parts = uniqueStrings([
+    datasets[0] || "",
+    metrics[0] ? `${metrics[0]}-centric evaluation` : "",
+    cleanString(corpusRow?.venue),
+    typeof corpusRow?.year === "number" ? String(corpusRow.year) : ""
+  ]).filter(Boolean);
+  if (parts.length === 0) {
+    return "venue context not specified";
+  }
+  return parts.slice(0, 3).join(", ");
+}
+
+function extractRelatedWorkKeywords(values: Array<string | undefined>): string[] {
+  const stopwords = new Set([
+    "about",
+    "across",
+    "agent",
+    "agents",
+    "analysis",
+    "approach",
+    "approaches",
+    "around",
+    "based",
+    "between",
+    "current",
+    "empirical",
+    "evaluation",
+    "evidence",
+    "from",
+    "into",
+    "literature",
+    "method",
+    "methods",
+    "paper",
+    "papers",
+    "results",
+    "study",
+    "their",
+    "these",
+    "this",
+    "using",
+    "with",
+    "work",
+    "workflow"
+  ]);
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    for (const token of cleanString(value).toLowerCase().match(/[a-z0-9][a-z0-9-]{2,}/gu) || []) {
+      if (stopwords.has(token)) {
+        continue;
+      }
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((left, right) => {
+      if (left[1] !== right[1]) {
+        return right[1] - left[1];
+      }
+      return left[0].localeCompare(right[0]);
+    })
+    .map(([token]) => token)
+    .slice(0, 8);
+}
+
+function scoreRelatedWorkMatch(studyKeywords: string[], text: string): number {
+  if (studyKeywords.length === 0) {
+    return 0;
+  }
+  const textKeywords = new Set(extractRelatedWorkKeywords([text]));
+  let score = 0;
+  for (const keyword of studyKeywords) {
+    if (textKeywords.has(keyword)) {
+      score += 1;
+    }
+  }
+  return score;
+}
+
+function selectPositioningNotes(notes: RelatedWorkNoteArtifact[]): RelatedWorkNoteArtifact[] {
+  const closest = notes.filter((item) => item.comparison_role === "closest");
+  if (closest.length > 0) {
+    return closest;
+  }
+  const supporting = notes.filter((item) => item.comparison_role === "supporting");
+  if (supporting.length > 0) {
+    return supporting;
+  }
+  return notes;
+}
+
+function isRelatedWorkHeading(heading: string): boolean {
+  return /\brelated\b|\bprior work\b|\bbackground\b/iu.test(cleanString(heading));
+}
+
+function hasComparisonLanguage(text: string): boolean {
+  return /\bwhile\b|\bwhereas\b|\bhowever\b|\bcontrast\b|\bcompared?\b|\bdiffer\b|\bsimilar\b|\bboth\b|\bstrand\b/iu.test(
+    cleanString(text)
+  );
+}
+
+function hasPositioningLanguage(text: string): boolean {
+  return /\bcurrent study\b|\bour study\b|\bthis study\b|\bwe position\b|\bwe focus\b|\bthe present study\b/iu.test(
+    cleanString(text)
+  );
+}
+
+function joinHumanList(items: string[]): string {
+  const cleaned = uniqueStrings(items.map((item) => cleanString(item)).filter(Boolean));
+  if (cleaned.length === 0) {
+    return "";
+  }
+  if (cleaned.length === 1) {
+    return cleaned[0];
+  }
+  if (cleaned.length === 2) {
+    return `${cleaned[0]} and ${cleaned[1]}`;
+  }
+  return `${cleaned.slice(0, -1).join(", ")}, and ${cleaned[cleaned.length - 1]}`;
 }
 
 export function collectPaperCitationIds(

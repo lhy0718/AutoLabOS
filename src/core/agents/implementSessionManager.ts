@@ -334,7 +334,7 @@ export class ImplementSessionManager {
         systemPrompt: this.buildSystemPrompt(runDir, defaultPublicDir, metricsPath, experimentLlmProfile),
         sandboxMode: "workspace-write",
         approvalPolicy: "never",
-        workingDirectory: this.deps.workspaceRoot,
+        workingDirectory: toSandboxFriendlyWorkspaceRoot(this.deps.workspaceRoot),
         abortSignal,
         onEvent: (event) => {
           rawEvents.push(event);
@@ -662,14 +662,17 @@ export class ImplementSessionManager {
     metricsPath: string,
     experimentLlmProfile: ReturnType<typeof resolveExperimentLlmProfile>
   ): string {
+    const sandboxRunDir = rewriteWorkspacePathsForSandbox(runDir, this.deps.workspaceRoot);
+    const sandboxPublicDir = rewriteWorkspacePathsForSandbox(publicDir, this.deps.workspaceRoot);
+    const sandboxMetricsPath = rewriteWorkspacePathsForSandbox(metricsPath, this.deps.workspaceRoot);
     return [
       "You are the AutoLabOS implementer role.",
       "Work directly in the workspace using Codex tools.",
       "Prefer concrete, runnable changes over prose.",
       "Do not modify git history or perform destructive cleanup.",
-      `Private AutoLabOS run artifact directory: ${runDir}`,
-      `Preferred public experiment directory: ${publicDir}`,
-      `The experiment execution must produce JSON metrics at: ${metricsPath}`,
+      `Private AutoLabOS run artifact directory: ${sandboxRunDir}`,
+      `Preferred public experiment directory: ${sandboxPublicDir}`,
+      `The experiment execution must produce JSON metrics at: ${sandboxMetricsPath}`,
       `Configured real-execution LLM: provider=${experimentLlmProfile.provider}, model=${experimentLlmProfile.model}, reasoning=${experimentLlmProfile.reasoningEffort}, fast_mode=${experimentLlmProfile.fastMode ? "true" : "false"}`,
       "Put reusable code, configs, READMEs, and documentation in the public experiment directory whenever possible.",
       "Use the private run artifact directory only for AutoLabOS metadata, logs, and required metric outputs.",
@@ -702,12 +705,16 @@ export class ImplementSessionManager {
       (await runContext.get<RunVerifierReport>("run_experiments.feedback_for_implementer"));
     const cachedConstraintProfile = await runContext.get<CachedConstraintProfile>("constraints.profile");
     const repoListing = await topLevelWorkspaceListing(this.deps.workspaceRoot);
+    const sandboxWorkspaceRoot = toSandboxFriendlyWorkspaceRoot(this.deps.workspaceRoot);
+    const sandboxRunDir = rewriteWorkspacePathsForSandbox(runDir, this.deps.workspaceRoot);
+    const sandboxPublicDir = rewriteWorkspacePathsForSandbox(publicDir, this.deps.workspaceRoot);
+    const sandboxMetricsPath = rewriteWorkspacePathsForSandbox(metricsPath, this.deps.workspaceRoot);
 
     return {
       goal: `Implement a runnable experiment for "${run.topic}" and produce metrics for ${run.objectiveMetric}.`,
       acceptance_criteria: [
         "Return a runnable command for the experiment.",
-        `Ensure the workflow can write metrics JSON to ${metricsPath}.`,
+        `Ensure the workflow can write metrics JSON to ${sandboxMetricsPath}.`,
         "Keep reusable scripts, configs, and documentation in the public experiment directory.",
         "Prefer a real execution path over synthetic validation whenever the workspace supports it."
       ],
@@ -718,26 +725,26 @@ export class ImplementSessionManager {
       ],
       constraints: [
         ...run.constraints,
-        `required_metrics_path=${metricsPath}`
+        `required_metrics_path=${sandboxMetricsPath}`
       ],
       workspace: {
-        root: this.deps.workspaceRoot,
-        run_dir: runDir,
-        public_dir: publicDir,
-        metrics_path: metricsPath
+        root: sandboxWorkspaceRoot,
+        run_dir: sandboxRunDir,
+        public_dir: sandboxPublicDir,
+        metrics_path: sandboxMetricsPath
       },
       context: {
         topic: run.topic,
         objective_metric: run.objectiveMetric,
-        plan_excerpt: plan || "(missing)",
-        hypotheses_excerpt: hypotheses || "(missing)",
+        plan_excerpt: rewriteWorkspacePathsForSandbox(plan || "(missing)", this.deps.workspaceRoot),
+        hypotheses_excerpt: rewriteWorkspacePathsForSandbox(hypotheses || "(missing)", this.deps.workspaceRoot),
         repo_listing: repoListing,
-        previous_summary: previousSummary,
-        previous_run_command: previousRunCommand,
-        previous_script: previousScript,
-        long_term_memory: longTermMemory,
-        runner_feedback: runnerFeedback,
-        resolved_constraint_profile: cachedConstraintProfile?.profile
+        previous_summary: rewriteWorkspacePathsForSandbox(previousSummary, this.deps.workspaceRoot),
+        previous_run_command: rewriteWorkspacePathsForSandbox(previousRunCommand, this.deps.workspaceRoot),
+        previous_script: rewriteWorkspacePathsForSandbox(previousScript, this.deps.workspaceRoot),
+        long_term_memory: rewriteWorkspacePathsForSandbox(longTermMemory, this.deps.workspaceRoot),
+        runner_feedback: rewriteWorkspacePathsForSandbox(runnerFeedback, this.deps.workspaceRoot),
+        resolved_constraint_profile: rewriteWorkspacePathsForSandbox(cachedConstraintProfile?.profile, this.deps.workspaceRoot)
       }
     };
   }
@@ -751,10 +758,36 @@ export class ImplementSessionManager {
     previousAttempt?: AttemptRecord;
     existingChangedFiles: string[];
   }): string {
+    const sandboxTaskSpec = rewriteWorkspacePathsForSandbox(params.taskSpec, this.deps.workspaceRoot);
+    const sandboxSearchLocalization = rewriteWorkspacePathsForSandbox(params.searchLocalization, this.deps.workspaceRoot);
+    const sandboxBranchPlan = rewriteWorkspacePathsForSandbox(params.branchPlan, this.deps.workspaceRoot);
+    const sandboxRecentReflections = rewriteWorkspacePathsForSandbox(
+      params.recentReflections.map((item) => ({
+        attempt: item.attempt,
+        error_class: item.error_class,
+        lesson: item.lesson,
+        next_try_instruction: item.next_try_instruction
+      })),
+      this.deps.workspaceRoot
+    );
+    const sandboxExistingChangedFiles = rewriteWorkspacePathsForSandbox(
+      params.existingChangedFiles,
+      this.deps.workspaceRoot
+    );
+    const sandboxPreviousAttempt = params.previousAttempt
+      ? rewriteWorkspacePathsForSandbox(
+          {
+            verify_report: params.previousAttempt.verify_report,
+            localization: params.previousAttempt.localization,
+            summary: params.previousAttempt.summary
+          },
+          this.deps.workspaceRoot
+        )
+      : undefined;
     const lines = [
       `Implementation attempt ${params.attempt}/${MAX_IMPLEMENT_ATTEMPTS}.`,
       "Task spec:",
-      JSON.stringify(params.taskSpec, null, 2),
+      JSON.stringify(sandboxTaskSpec, null, 2),
       "",
       "Implementation protocol:",
       "1. Localize the smallest set of files you need to inspect or edit.",
@@ -770,59 +803,46 @@ export class ImplementSessionManager {
       "Reuse long-term implementation memory when it directly applies to the current branch focus."
     ];
 
-    lines.push("", "Search-backed localization hints:", JSON.stringify(params.searchLocalization, null, 2));
-    lines.push("", "Branch focus:", JSON.stringify(params.branchPlan, null, 2));
-    if (params.taskSpec.context.long_term_memory.retrieved.length > 0) {
+    lines.push("", "Search-backed localization hints:", JSON.stringify(sandboxSearchLocalization, null, 2));
+    lines.push("", "Branch focus:", JSON.stringify(sandboxBranchPlan, null, 2));
+    if (sandboxTaskSpec.context.long_term_memory.retrieved.length > 0) {
       lines.push(
         "",
         "Long-term implementation memory:",
-        JSON.stringify(params.taskSpec.context.long_term_memory, null, 2)
+        JSON.stringify(sandboxTaskSpec.context.long_term_memory, null, 2)
       );
     }
-    if (params.taskSpec.context.runner_feedback) {
+    if (sandboxTaskSpec.context.runner_feedback) {
       lines.push(
         "",
         "Runner feedback from run_experiments:",
-        JSON.stringify(params.taskSpec.context.runner_feedback, null, 2)
+        JSON.stringify(sandboxTaskSpec.context.runner_feedback, null, 2)
       );
     }
 
     if (params.recentReflections.length > 0) {
-      lines.push(
-        "",
-        "Recent failure reflections:",
-        JSON.stringify(
-          params.recentReflections.map((item) => ({
-            attempt: item.attempt,
-            error_class: item.error_class,
-            lesson: item.lesson,
-            next_try_instruction: item.next_try_instruction
-          })),
-          null,
-          2
-        )
-      );
+      lines.push("", "Recent failure reflections:", JSON.stringify(sandboxRecentReflections, null, 2));
     }
 
-    if (params.existingChangedFiles.length > 0) {
-      lines.push("", "Files already changed in this workspace:", params.existingChangedFiles.join("\n"));
+    if (sandboxExistingChangedFiles.length > 0) {
+      lines.push("", "Files already changed in this workspace:", sandboxExistingChangedFiles.join("\n"));
     }
 
-    if (params.previousAttempt) {
+    if (sandboxPreviousAttempt) {
       lines.push(
         "",
         "Previous local verification:",
-        JSON.stringify(params.previousAttempt.verify_report, null, 2),
+        JSON.stringify(sandboxPreviousAttempt.verify_report, null, 2),
         "",
         "Previous localization:",
-        JSON.stringify(params.previousAttempt.localization, null, 2),
+        JSON.stringify(sandboxPreviousAttempt.localization, null, 2),
         "",
         "Previous summary:",
-        params.previousAttempt.summary
+        sandboxPreviousAttempt.summary
       );
-      if (params.previousAttempt.verify_report.failure_type === "localization") {
+      if (sandboxPreviousAttempt.verify_report.failure_type === "localization") {
         lines.push("Revisit which files you edit before making another patch.");
-      } else if (params.previousAttempt.verify_report.failure_type === "implementation") {
+      } else if (sandboxPreviousAttempt.verify_report.failure_type === "implementation") {
         lines.push("Keep the fix focused and address the verification failure directly.");
       }
     }
@@ -979,8 +999,15 @@ export class ImplementSessionManager {
     const localization =
       normalizeLocalizationResult(parsed.localization, this.deps.workspaceRoot) ||
       emptyLocalizationResult();
-    runCommand = rewriteCommandScriptPath(runCommand, originalScriptPath, normalizedScriptPath);
-    testCommand = rewriteCommandScriptPath(testCommand || "", originalScriptPath, normalizedScriptPath) || undefined;
+    runCommand = rewriteWorkspacePathsToPrimary(
+      rewriteCommandScriptPath(runCommand, originalScriptPath, normalizedScriptPath),
+      this.deps.workspaceRoot
+    );
+    testCommand =
+      rewriteWorkspacePathsToPrimary(
+        rewriteCommandScriptPath(testCommand || "", originalScriptPath, normalizedScriptPath),
+        this.deps.workspaceRoot
+      ) || undefined;
     const verifyReport = !hasRunnableArtifact
       ? buildMissingArtifactVerifyReport(parsedResponse.isStructured)
       : {
@@ -1317,7 +1344,8 @@ function normalizeStoredPath(filePath: string | undefined, workspaceRoot: string
   if (!filePath) {
     return undefined;
   }
-  const resolved = path.resolve(workspaceRoot, filePath);
+  const candidate = mapAliasedWorkspacePathToPrimary(filePath, workspaceRoot);
+  const resolved = path.isAbsolute(candidate) ? candidate : path.resolve(workspaceRoot, candidate);
   if (!isPathInsideOrEqual(resolved, workspaceRoot)) {
     return undefined;
   }
@@ -1333,6 +1361,141 @@ function trimBlock(text: string, limit: number): string {
     return trimmed;
   }
   return `${trimmed.slice(0, limit)}\n...<truncated>`;
+}
+
+function toSandboxFriendlyWorkspaceRoot(workspaceRoot: string): string {
+  return resolveWorkspaceRootAliases(workspaceRoot)[0] || workspaceRoot;
+}
+
+function resolveWorkspaceRootAliases(workspaceRoot: string): string[] {
+  const aliases = new Set<string>();
+  const push = (value: string | undefined) => {
+    if (value) {
+      aliases.add(value);
+    }
+  };
+
+  push(preferSandboxAlias(workspaceRoot));
+  push(workspaceRoot);
+
+  if (workspaceRoot === "/private/tmp" || workspaceRoot.startsWith("/private/tmp/")) {
+    push(workspaceRoot.replace(/^\/private\/tmp(?=\/|$)/u, "/tmp"));
+  }
+  if (workspaceRoot === "/tmp" || workspaceRoot.startsWith("/tmp/")) {
+    push(workspaceRoot.replace(/^\/tmp(?=\/|$)/u, "/private/tmp"));
+  }
+  if (workspaceRoot === "/private/var/folders" || workspaceRoot.startsWith("/private/var/folders/")) {
+    push(workspaceRoot.replace(/^\/private\/var\/folders(?=\/|$)/u, "/var/folders"));
+  }
+  if (workspaceRoot === "/var/folders" || workspaceRoot.startsWith("/var/folders/")) {
+    push(workspaceRoot.replace(/^\/var\/folders(?=\/|$)/u, "/private/var/folders"));
+  }
+
+  return [...aliases];
+}
+
+function preferSandboxAlias(value: string): string {
+  if (value === "/private/tmp" || value.startsWith("/private/tmp/")) {
+    return value.replace(/^\/private\/tmp(?=\/|$)/u, "/tmp");
+  }
+  if (value === "/private/var/folders" || value.startsWith("/private/var/folders/")) {
+    return value.replace(/^\/private\/var\/folders(?=\/|$)/u, "/var/folders");
+  }
+  return value;
+}
+
+function rewriteWorkspacePathsForSandbox<T>(value: T, workspaceRoot: string): T {
+  if (typeof value === "string") {
+    return rewriteWorkspaceStringForSandbox(value, workspaceRoot) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteWorkspacePathsForSandbox(item, workspaceRoot)) as T;
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
+      key,
+      rewriteWorkspacePathsForSandbox(nested, workspaceRoot)
+    ])
+  ) as T;
+}
+
+function rewriteWorkspaceStringForSandbox(value: string | undefined, workspaceRoot: string): string | undefined {
+  if (!value) {
+    return value;
+  }
+  const primary = toSandboxFriendlyWorkspaceRoot(workspaceRoot);
+  const aliases = resolveWorkspaceRootAliases(workspaceRoot)
+    .filter((alias) => alias !== primary)
+    .sort((left, right) => right.length - left.length);
+
+  let rewritten = value;
+  for (const alias of aliases) {
+    rewritten = rewritten.replaceAll(alias, primary);
+  }
+  return rewritten;
+}
+
+function rewriteWorkspacePathsToPrimary<T>(value: T, workspaceRoot: string): T {
+  if (typeof value === "string") {
+    return rewriteWorkspaceStringToPrimary(value, workspaceRoot) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteWorkspacePathsToPrimary(item, workspaceRoot)) as T;
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
+      key,
+      rewriteWorkspacePathsToPrimary(nested, workspaceRoot)
+    ])
+  ) as T;
+}
+
+function rewriteWorkspaceStringToPrimary(value: string | undefined, workspaceRoot: string): string | undefined {
+  if (!value) {
+    return value;
+  }
+  const aliases = resolveWorkspaceRootAliases(workspaceRoot)
+    .filter((alias) => alias !== workspaceRoot)
+    .sort((left, right) => right.length - left.length);
+
+  let rewritten = value;
+  for (const alias of aliases) {
+    rewritten = replaceWorkspaceRootReference(rewritten, alias, workspaceRoot);
+  }
+  return rewritten;
+}
+
+function replaceWorkspaceRootReference(value: string, fromRoot: string, toRoot: string): string {
+  if (!value || fromRoot === toRoot) {
+    return value;
+  }
+  const escaped = escapeRegex(fromRoot);
+  const pattern = new RegExp(`(^|[\\s"'=:(\\[{,])${escaped}(?=$|[\\/\\s"'=)\\]};,])`, "g");
+  return value.replace(pattern, (_match, prefix: string) => `${prefix}${toRoot}`);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function mapAliasedWorkspacePathToPrimary(filePath: string, workspaceRoot: string): string {
+  if (!path.isAbsolute(filePath)) {
+    return filePath;
+  }
+  for (const alias of resolveWorkspaceRootAliases(workspaceRoot)) {
+    if (!isPathInsideOrEqual(filePath, alias)) {
+      continue;
+    }
+    const relative = path.relative(alias, filePath);
+    return relative ? path.join(workspaceRoot, relative) : workspaceRoot;
+  }
+  return filePath;
 }
 
 async function topLevelWorkspaceListing(workspaceRoot: string): Promise<string> {
@@ -2215,8 +2378,11 @@ function extractWorkspacePathsFromCommand(command: string, cwd: string, workspac
     if (!looksLikeWorkspacePath(normalized)) {
       continue;
     }
-    const resolved = path.isAbsolute(normalized) ? normalized : path.resolve(cwd, normalized);
-    if (isPathInsideOrEqual(resolved, workspaceRoot)) {
+    const resolved = normalizeStoredPath(
+      path.isAbsolute(normalized) ? normalized : path.resolve(cwd, normalized),
+      workspaceRoot
+    );
+    if (resolved) {
       paths.add(resolved);
     }
   }

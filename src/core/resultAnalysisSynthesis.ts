@@ -260,7 +260,7 @@ function buildFallbackAnalysisSynthesis(report: AnalysisReport): AnalysisSynthes
     followUpActions.push("Adjust the primary condition and rerun until the target metric is met.");
   }
   if (report.supplemental_runs.length === 0) {
-    followUpActions.push("Run confirmatory and quick-check profiles to measure stability across sampling budgets.");
+    followUpActions.push("Run confirmatory and quick-check profiles to measure stability across sampling profiles.");
   }
   if (report.statistical_summary.confidence_intervals.length === 0) {
     followUpActions.push("Add repeated-trial confidence intervals for the primary metrics.");

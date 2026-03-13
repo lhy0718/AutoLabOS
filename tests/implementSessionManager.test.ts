@@ -1729,6 +1729,94 @@ describe("ImplementSessionManager", () => {
     expect(existsSync(outsidePublicDir)).toBe(false);
   });
 
+  it("uses sandbox-friendly /tmp aliases for /private/tmp implementer sessions and remaps returned paths", async () => {
+    const workspaceReal = mkdtempSync(path.join("/tmp", "autolabos-implement-private-tmp-"));
+    tempDirs.push(workspaceReal);
+    const workspace = workspaceReal.replace(/^\/tmp(?=\/)/u, "/private/tmp");
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Tmp Alias Run",
+      topic: "tabular baselines",
+      constraints: ["cpu only"],
+      objectiveMetric: "macro_f1"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const sandboxRunDir = runDir.replace(/^\/private\/tmp(?=\/)/u, "/tmp");
+    const sandboxPublicDir = publicDir.replace(/^\/private\/tmp(?=\/)/u, "/tmp");
+    const sandboxScriptPath = path.join(sandboxPublicDir, "experiment.py");
+    const sandboxMetricsPath = path.join(sandboxRunDir, "metrics.json");
+
+    let capturedPrompt = "";
+    let capturedSystemPrompt = "";
+    let capturedWorkingDirectory = "";
+    const codex = {
+      runTurnStream: async ({
+        prompt,
+        systemPrompt,
+        workingDirectory
+      }: {
+        prompt?: string;
+        systemPrompt?: string;
+        workingDirectory?: string;
+      }) => {
+        capturedPrompt = prompt || "";
+        capturedSystemPrompt = systemPrompt || "";
+        capturedWorkingDirectory = workingDirectory || "";
+        mkdirSync(path.dirname(sandboxScriptPath), { recursive: true });
+        writeFileSync(sandboxScriptPath, "print('ok')\n", "utf8");
+        return {
+          threadId: "thread-impl-tmp-alias",
+          finalText: JSON.stringify({
+            summary: "Implemented the experiment in the sandbox-friendly tmp path.",
+            run_command: `python3 ${JSON.stringify(sandboxScriptPath)}`,
+            changed_files: [sandboxScriptPath],
+            artifacts: [sandboxScriptPath],
+            public_dir: sandboxPublicDir,
+            public_artifacts: [sandboxScriptPath],
+            script_path: sandboxScriptPath,
+            metrics_path: sandboxMetricsPath,
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(capturedWorkingDirectory).toMatch(/^\/tmp\//u);
+    expect(capturedWorkingDirectory).not.toContain("/private/tmp/");
+    expect(capturedPrompt).toContain(`"public_dir": "${sandboxPublicDir}"`);
+    expect(capturedPrompt).toContain(`"run_dir": "${sandboxRunDir}"`);
+    expect(capturedPrompt).not.toContain("/private/tmp/");
+    expect(capturedSystemPrompt).toContain(`Preferred public experiment directory: ${sandboxPublicDir}`);
+    expect(capturedSystemPrompt).toContain(`Private AutoLabOS run artifact directory: ${sandboxRunDir}`);
+    expect(capturedSystemPrompt).not.toContain("/private/tmp/");
+    expect(result.publicDir).toBe(publicDir);
+    expect(result.scriptPath).toBe(path.join(publicDir, "experiment.py"));
+    expect(result.metricsPath).toBe(path.join(runDir, "metrics.json"));
+    expect(result.runCommand).toContain(path.join(publicDir, "experiment.py"));
+    expect(result.runCommand).toContain('python3 "/private/tmp/');
+    expect(result.runCommand).not.toContain('python3 "/tmp/');
+  });
+
   it("stops when the local verification command is blocked by policy", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-policy-block-"));
     tempDirs.push(workspace);

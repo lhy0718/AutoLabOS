@@ -25,7 +25,7 @@ export type InteractiveSupervisorOutcome =
       reason: string;
     }
   | {
-      status: "completed" | "failed" | "failed_budget";
+      status: "completed" | "failed";
       run: RunRecord;
       summary: string;
     };
@@ -71,14 +71,6 @@ export class InteractiveRunSupervisor {
         summary: response.result.error || response.result.summary
       };
     }
-    if (run.status === "failed_budget") {
-      return {
-        status: "failed_budget",
-        run,
-        summary: response.result.error || response.result.summary
-      };
-    }
-
     const pendingRequest = await this.getActiveRequest(run);
     if (pendingRequest) {
       return {

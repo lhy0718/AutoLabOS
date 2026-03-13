@@ -38,8 +38,20 @@ export class RunStore {
   }
 
   async getRun(id: string): Promise<RunRecord | undefined> {
-    const runs = await this.listRuns();
-    return runs.find((run) => run.id === id);
+    const runsFile = await this.readRunsFile();
+    const idx = runsFile.runs.findIndex((run) => run.id === id);
+    if (idx < 0) {
+      return undefined;
+    }
+
+    const stored = runsFile.runs[idx];
+    const reconciled = await this.reconcileRunRecord(stored);
+    if (JSON.stringify(stored) !== JSON.stringify(reconciled)) {
+      runsFile.runs[idx] = reconciled;
+      await this.writeRunsFile(runsFile);
+    }
+
+    return reconciled;
   }
 
   async searchRuns(query: string): Promise<RunRecord[]> {

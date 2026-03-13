@@ -90,19 +90,6 @@ export interface NodeState {
   lastError?: string;
 }
 
-export interface BudgetPolicy {
-  maxToolCalls: number;
-  maxWallClockMinutes: number;
-  maxUsd: number;
-}
-
-export interface BudgetState {
-  toolCallsUsed: number;
-  wallClockMsUsed: number;
-  usdUsed?: number;
-  policy: BudgetPolicy;
-}
-
 export interface RetryPolicy {
   maxAttemptsPerNode: number;
   maxAutoRollbacksPerNode: number;
@@ -116,12 +103,11 @@ export interface RunGraphState {
   researchCycle: number;
   pendingTransition?: TransitionRecommendation;
   transitionHistory: TransitionHistoryEntry[];
-  budget: BudgetState;
   checkpointSeq: number;
   retryPolicy: RetryPolicy;
 }
 
-export type RunStatus = "pending" | "running" | "paused" | "completed" | "failed" | "failed_budget";
+export type RunStatus = "pending" | "running" | "paused" | "completed" | "failed";
 
 export interface RunRecord {
   version: 3;

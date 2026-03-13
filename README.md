@@ -37,7 +37,7 @@
 
 - Turn the research loop into a fixed 9-node state graph from `collect_papers` to `write_paper`, with an explicit `review` stage before drafting.
 - Run the main workflow with either `codex` or `OpenAI API`, then switch PDF analysis independently.
-- Keep work local and inspectable with checkpoints, budgets, retries, jumps, and run-scoped memory.
+- Keep work local and inspectable with checkpoints, limits, retries, jumps, and run-scoped memory.
 
 ## Highlights
 
@@ -159,7 +159,7 @@ AutoLabOS has two layers that are easy to conflate:
 | `collect_papers` | `collector_curator` | None | Collects and curates the candidate paper set |
 | `analyze_papers` | `reader_evidence_extractor` | None | Extracts summaries and evidence from selected papers |
 | `generate_hypotheses` | `hypothesis_agent` | `evidence synthesizer`, `skeptical reviewer` | Synthesizes ideas, then pressure-tests them |
-| `design_experiments` | `experiment_designer` | `feasibility reviewer`, `statistical reviewer`, `ops-budget planner` | Filters plans for practicality, statistical quality, and budget fit |
+| `design_experiments` | `experiment_designer` | `feasibility reviewer`, `statistical reviewer`, `ops-capacity planner` | Filters plans for practicality, statistical quality, and execution fit |
 | `implement_experiments` | `implementer` | None | Produces code and local workspace changes through ACI actions |
 | `run_experiments` | `runner` | `trial manager`, `failure triager`, `resource/log watchdog`, `rerun planner` | Drives execution, catches failures, and decides reruns |
 | `analyze_results` | `analyst_statistician` | `metric auditor`, `robustness reviewer`, `confounder detector`, `decision calibrator` | Checks whether results are reliable enough to act on |
@@ -208,7 +208,7 @@ The top-level workflow remains a fixed 9-node graph. Recent automation work live
 | `analyze_results` | The objective metric still cannot be grounded to a concrete numeric signal after best-effort rematching | The TUI asks which metric or success criterion to use, stores the answer, retries `analyze_results`, and then resumes automatic execution |
 | `analyze_results` | A hypothesis reset is recommended, but confidence is too low for `autoExecutable=true` | The TUI presents explicit next-step choices, applies the selected transition or jump, and then resumes automatic execution |
 | Any node in `manual` approval mode | The node reaches an approval boundary | The run waits for `/approve`, `/agent apply`, or another explicit operator choice |
-| `/agent overnight` | The run reaches `write_paper`, hits a low-confidence or disallowed recommendation, repeats the same recommendation too many times, or reaches the overnight time budget | Overnight stops and hands control back to the operator |
+| `/agent overnight` | The run reaches `write_paper`, hits a low-confidence or disallowed recommendation, repeats the same recommendation too many times, or reaches the overnight time limit | Overnight stops and hands control back to the operator |
 
 In the default setup, review outcomes auto-apply into `write_paper` or one of the supported backtracks. Review is no longer a dedicated manual hold in `minimal` mode.
 
@@ -217,7 +217,7 @@ In the default setup, review outcomes auto-apply into `write_paper` or one of th
 | Node | Internal automation | Trigger | Bound or output |
 | --- | --- | --- | --- |
 | `analyze_papers` | Expands a fresh `top_n` selection and reuses manifest-backed completed analyses | The initial selected window is too sparse to ground hypotheses well | At most 2 auto-expansions |
-| `design_experiments` | Scores generated candidates with a deterministic `designer / feasibility / statistical / ops-budget` panel | Candidate designs are available from `designExperimentsFromHypotheses(...)` | Always runs once per design execution and emits internal `design_experiments_panel/*` artifacts |
+| `design_experiments` | Scores generated candidates with a deterministic `designer / feasibility / statistical / ops-capacity` panel | Candidate designs are available from `designExperimentsFromHypotheses(...)` | Always runs once per design execution and emits internal `design_experiments_panel/*` artifacts |
 | `run_experiments` | Builds an execution plan, classifies failures, and applies a one-shot transient rerun policy | The primary run command has been resolved | Never retries policy blocks, missing metrics, or invalid metrics; retries only one transient command failure |
 | `run_experiments` | Chains managed `standard -> quick_check -> confirmatory` profiles | A managed `real_execution` bundle completes the standard run with an observed/met objective | Supplemental runs are best effort and do not overturn a successful primary run |
 | `analyze_results` | Re-tries objective grounding with best-effort metric rematching, then calibrates confidence with a deterministic result panel | Cached or fresh objective evaluation comes back `missing` or `unknown`, or a transition recommendation must be finalized | One bounded rematch before any human clarification pause, plus internal `analyze_results_panel/*` artifacts |
@@ -264,7 +264,7 @@ flowchart LR
     DE --> ED["experiment_designer"]
     ED --> Profiles["constraint profile + objective metric profile"]
     Profiles --> Plans["design candidates"]
-    Plans --> Panel["designer + feasibility + statistical + ops-budget panel"]
+    Plans --> Panel["designer + feasibility + statistical + ops-capacity panel"]
     Panel --> Choice["panel selection"]
     Choice --> Bundle{"supports managed real_execution bundle?"}
     Bundle -->|yes| Managed["bundle sections + runnable profiles"]
@@ -359,7 +359,7 @@ flowchart LR
 | `collect_papers` | `collector_curator` | Semantic Scholar search, de-duplication, enrichment, and BibTeX generation |
 | `analyze_papers` | `reader_evidence_extractor` | ranked paper selection plus resumable planner -> extractor -> reviewer analysis over local or Responses API PDF inputs, with bounded top-N auto-expansion when evidence is too thin |
 | `generate_hypotheses` | `hypothesis_agent` | evidence-axis synthesis, ToT branching, skeptical review, and diversity-aware top-k selection |
-| `design_experiments` | `experiment_designer` | candidate design generation plus deterministic `designer / feasibility / statistical / ops-budget` panel selection before writing `experiment_plan.yaml` |
+| `design_experiments` | `experiment_designer` | candidate design generation plus deterministic `designer / feasibility / statistical / ops-capacity` panel selection before writing `experiment_plan.yaml` |
 | `implement_experiments` | `implementer` | `ImplementSessionManager`, localization, Codex patching, verification, and optional handoff |
 | `run_experiments` | `runner` | ACI preflight/tests/command execution, execution-plan + triage + watchdog control, one-shot transient rerun, managed supplemental profile chaining, and verifier feedback |
 | `analyze_results` | `analyst_statistician` | objective evaluation with best-effort metric rematching, deterministic result-panel calibration, result synthesis, and transition recommendation |
@@ -486,7 +486,7 @@ Key source areas:
 
 - `src/runtime/createRuntime.ts`: wires config, providers, stores, runtime, orchestrator, and the shared execution dependencies
 - `src/interaction/*`: shared command/session layer used by the TUI and the web composer
-- `src/core/stateGraph/*`: node execution, retries, approvals, budgets, jumps, and checkpoints
+- `src/core/stateGraph/*`: node execution, retries, approvals, limits, jumps, and checkpoints
 - `src/core/nodes/*`: the 9 workflow handlers and their artifact-writing logic
 - `src/core/analysis/researchPlanning.ts`, `src/core/designExperimentsPanel.ts`, `src/core/runExperimentsPanel.ts`, `src/core/analyzeResultsPanel.ts`, `src/core/reviewSystem.ts`, and `src/core/reviewPacket.ts`: multi-stage hypothesis generation/design, deterministic mid-pipeline panels/controllers, the specialist review panel, packet building, and review surfacing
 - `src/core/agents/*`: session managers, exported roles, and search-backed implementation localization
@@ -509,7 +509,6 @@ Key source areas:
 | `/agent resume [run] [checkpoint]` | Resume from the latest or a specific checkpoint |
 | `/agent retry [node] [run]` | Retry a node |
 | `/agent jump <node> [run] [--force]` | Jump between nodes |
-| `/agent budget [run]` | Show budget usage |
 | `/model` | Open model and reasoning selector |
 | `/settings` | Edit provider, model, and PDF settings |
 | `/doctor` | Run environment checks |
@@ -589,7 +588,6 @@ Implementation references:
 | `/agent resume [run] [checkpoint]` | Resume from latest or specific checkpoint |
 | `/agent retry [node] [run]` | Retry node |
 | `/agent jump <node> [run] [--force]` | Jump node |
-| `/agent budget [run]` | Show budget usage |
 | `/agent overnight [run]` | Run the overnight autonomy preset with the default safe policy |
 | `/model` | Open arrow-key selector for model and reasoning effort |
 | `/approve` | Approve the current paused node |
@@ -618,8 +616,8 @@ Implementation references:
    - Examples: `clear collected papers, then collect 100 new papers`
 6. Node control
    - Examples: `jump back to collect_papers`, `retry the hypothesis node`, `focus on implement_experiments`
-7. Graph / budget / approval
-   - Examples: `show graph`, `show budget`, `approve the current paused node`, `retry current node`
+7. Graph / approval
+   - Examples: `show graph`, `approve the current paused node`, `retry current node`
 8. Direct questions about collected papers
    - Examples: `how many papers were collected?`
    - Examples: `how many papers are missing PDF paths?`
@@ -654,11 +652,6 @@ Fixed graph nodes:
 - Jump modes:
   - `safe`: only current or previous node
   - `force`: forward jumps allowed and skipped nodes are recorded
-- Budget policy:
-  - `maxToolCalls=150`
-  - `maxWallClockMinutes=240`
-  - `maxUsd=15` (soft-check if provider cost is unavailable)
-
 ### Agent Runtime Patterns
 
 - ReAct loop: `PLAN_CREATED -> TOOL_CALLED -> OBS_RECEIVED`
@@ -693,7 +686,7 @@ Standard actions:
 - `Enter`: execute
 - Run suggestions include `run_id + title + current_node + status + relative time`
 - When the input is empty, the TUI shows context-aware next actions with exact commands and natural-language examples
-- The next-actions panel now expands into a broader state-aware action catalog: run, status, graph, budget, count, jump, and natural-language queries
+- The next-actions panel now expands into a broader state-aware action catalog: run, status, graph, count, jump, and natural-language queries
 - Empty-input guidance follows the user's recent language or OS locale, and `Tab` fills the first suggested action
 
 ### Run Metadata

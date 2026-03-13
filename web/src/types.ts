@@ -61,16 +61,6 @@ export interface RunRecord {
     checkpointSeq: number;
     retryCounters: Partial<Record<NodeId, number>>;
     rollbackCounters: Partial<Record<NodeId, number>>;
-    budget: {
-      toolCallsUsed: number;
-      wallClockMsUsed: number;
-      usdUsed?: number;
-      policy: {
-        maxToolCalls: number;
-        maxWallClockMinutes: number;
-        maxUsd: number;
-      };
-    };
     nodeStates: Record<
       NodeId,
       {

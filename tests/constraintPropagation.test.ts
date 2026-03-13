@@ -267,7 +267,7 @@ describe("constraint propagation", () => {
               implementation_notes: ["Step 1\nStep 2"],
               evaluation_steps: ["Measure line 1\nMeasure line 2"],
               risks: ["Risk line 1\nRisk line 2"],
-              budget_notes: ["Budget line 1\nBudget line 2"]
+              resource_notes: ["Resource line 1\nResource line 2"]
             }
           ],
           selected_id: "plan_1"
@@ -325,7 +325,7 @@ describe("constraint propagation", () => {
               implementation_notes: ["Implement the structured schema arm."],
               evaluation_steps: ["Measure reproducibility_score."],
               risks: ["Needs a concrete dataset."],
-              budget_notes: ["Small budget."]
+              resource_notes: ["Small execution limit."]
             },
             {
               id: "plan_selected",
@@ -338,7 +338,7 @@ describe("constraint propagation", () => {
               implementation_notes: ["Implement both schema and free-form coordination."],
               evaluation_steps: ["Measure reproducibility_score across repeated runs."],
               risks: ["Small benchmark coverage."],
-              budget_notes: ["Fits the managed execution budget."]
+              resource_notes: ["Fits the managed execution limits."]
             }
           ],
           selected_id: "plan_blocked"
@@ -409,7 +409,7 @@ describe("constraint propagation", () => {
               implementation_notes: ["Implement the schema arm."],
               evaluation_steps: ["Measure reproducibility_score."],
               risks: ["No dataset is wired yet."],
-              budget_notes: ["Small budget."]
+              resource_notes: ["Small execution limit."]
             },
             {
               id: "plan_bad",
@@ -422,7 +422,7 @@ describe("constraint propagation", () => {
               implementation_notes: [],
               evaluation_steps: [],
               risks: ["Most execution details are missing."],
-              budget_notes: []
+              resource_notes: []
             }
           ],
           selected_id: "plan_bad"
@@ -643,7 +643,7 @@ describe("constraint propagation", () => {
             implementation_notes: ["Keep browser task instrumentation explicit."],
             evaluation_steps: ["Measure recovery after tool or browser failures."],
             risks: ["Evaluation scope may need narrowing."],
-            budget_notes: ["Stay within the configured local execution budget."]
+            resource_notes: ["Stay within the configured local execution limits."]
           }
         ],
         selected_id: "plan_1"

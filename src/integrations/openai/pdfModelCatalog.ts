@@ -40,7 +40,7 @@ export const RESPONSES_PDF_MODEL_OPTIONS: ResponsesPdfModelOption[] = [
   {
     value: "gpt-4o-mini",
     label: "gpt-4o-mini",
-    description: "Fast, lower-cost multimodal option when latency and budget matter."
+    description: "Fast, lower-cost multimodal option when latency and cost matter."
   }
 ];
 

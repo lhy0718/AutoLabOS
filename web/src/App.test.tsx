@@ -305,16 +305,6 @@ describe("App", () => {
                   checkpointSeq: 3,
                   retryCounters: {},
                   rollbackCounters: {},
-                  budget: {
-                    toolCallsUsed: 4,
-                    wallClockMsUsed: 120000,
-                    usdUsed: 0,
-                    policy: {
-                      maxToolCalls: 20,
-                      maxWallClockMinutes: 60,
-                      maxUsd: 5
-                    }
-                  },
                   nodeStates: {
                     collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                     analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
@@ -390,16 +380,6 @@ describe("App", () => {
                 checkpointSeq: 3,
                 retryCounters: {},
                 rollbackCounters: {},
-                budget: {
-                  toolCallsUsed: 4,
-                  wallClockMsUsed: 120000,
-                  usdUsed: 0,
-                  policy: {
-                    maxToolCalls: 20,
-                    maxWallClockMinutes: 60,
-                    maxUsd: 5
-                  }
-                },
                 nodeStates: {
                   collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                   analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
@@ -601,16 +581,6 @@ describe("App", () => {
                   checkpointSeq: 4,
                   retryCounters: {},
                   rollbackCounters: {},
-                  budget: {
-                    toolCallsUsed: 5,
-                    wallClockMsUsed: 125000,
-                    usdUsed: 0,
-                    policy: {
-                      maxToolCalls: 20,
-                      maxWallClockMinutes: 60,
-                      maxUsd: 5
-                    }
-                  },
                   nodeStates: {
                     collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                     analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
@@ -676,16 +646,6 @@ describe("App", () => {
                 checkpointSeq: 4,
                 retryCounters: {},
                 rollbackCounters: {},
-                budget: {
-                  toolCallsUsed: 5,
-                  wallClockMsUsed: 125000,
-                  usdUsed: 0,
-                  policy: {
-                    maxToolCalls: 20,
-                    maxWallClockMinutes: 60,
-                    maxUsd: 5
-                  }
-                },
                 nodeStates: {
                   collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                   analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
@@ -843,16 +803,6 @@ describe("App", () => {
                     checkpointSeq: 3,
                     retryCounters: {},
                     rollbackCounters: {},
-                    budget: {
-                      toolCallsUsed: 4,
-                      wallClockMsUsed: 120000,
-                      usdUsed: 0,
-                      policy: {
-                        maxToolCalls: 20,
-                        maxWallClockMinutes: 60,
-                        maxUsd: 5
-                      }
-                    },
                     nodeStates: {
                       collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                       analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
@@ -900,16 +850,6 @@ describe("App", () => {
                   checkpointSeq: 3,
                   retryCounters: {},
                   rollbackCounters: {},
-                  budget: {
-                    toolCallsUsed: 4,
-                    wallClockMsUsed: 120000,
-                    usdUsed: 0,
-                    policy: {
-                      maxToolCalls: 20,
-                      maxWallClockMinutes: 60,
-                      maxUsd: 5
-                    }
-                  },
                   nodeStates: {
                     collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
                     analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
@@ -1001,16 +941,6 @@ describe("App", () => {
             checkpointSeq: number;
             retryCounters: Record<string, number>;
             rollbackCounters: Record<string, number>;
-            budget: {
-              toolCallsUsed: number;
-              wallClockMsUsed: number;
-              usdUsed: number;
-              policy: {
-                maxToolCalls: number;
-                maxWallClockMinutes: number;
-                maxUsd: number;
-              };
-            };
             nodeStates: Record<string, { status: string; updatedAt: string }>;
           };
         }
@@ -1063,16 +993,6 @@ describe("App", () => {
             checkpointSeq: 0,
             retryCounters: {},
             rollbackCounters: {},
-            budget: {
-              toolCallsUsed: 0,
-              wallClockMsUsed: 0,
-              usdUsed: 0,
-              policy: {
-                maxToolCalls: 20,
-                maxWallClockMinutes: 60,
-                maxUsd: 5
-              }
-            },
             nodeStates: {
               collect_papers: { status: "running", updatedAt: "2026-03-11T10:00:00.000Z" },
               analyze_papers: { status: "pending", updatedAt: "2026-03-11T10:00:00.000Z" },

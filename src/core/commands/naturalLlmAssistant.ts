@@ -183,7 +183,8 @@ function buildPrompt(
     "If steering hints indicate a previous plan step failed, treat this as a replanning request and revise the plan.",
     "When replanning after failure, avoid repeating the same failed command unchanged unless no safer alternative exists.",
     "If user asks for explanation only, set should_offer_execute=false.",
-    "Allowed root commands: /help, /new, /doctor, /runs, /run, /resume, /title, /agent, /model, /approve, /retry, /settings, /quit.",
+    "The visible UI is intentionally minimal: /new, /brief start --latest, /approve, plus steering.",
+    "Other slash commands still exist, but recommend them only when the user explicitly asks for an advanced operation.",
     "For model settings, recommend '/model' only (no subcommands).",
     "When user asks to collect papers, prefer '/agent collect [query] [options]' and set should_offer_execute=true.",
     "For additional paper collection, prefer '/agent collect --additional <count> --run <run-id>' (legacy '/agent recollect <count> [run-id]' is also valid).",
@@ -471,20 +472,7 @@ async function buildRunFacts(run: RunRecord, workspaceRoot: string): Promise<Run
 
 function unavailableResponse(input: string, targetRunId?: string, error?: unknown): NaturalAssistantResponse {
   const reason = summarizeError(error);
-  const language = detectInputLanguage(input);
-  if (language === "ko") {
-    const lines = [
-      "현재 질문에 답할 모델 응답을 해석하지 못했습니다."
-    ];
-    if (reason) {
-      lines.push(`원인: ${reason}`);
-    }
-    lines.push("질문을 조금 바꿔서 다시 시도해 주세요.");
-    return {
-      lines,
-      targetRunId
-    };
-  }
+  void input;
 
   return {
     lines: [
@@ -518,10 +506,6 @@ function isAbortError(error: unknown): boolean {
   }
   const message = error.message.toLowerCase();
   return message.includes("aborted") || message.includes("abort");
-}
-
-function detectInputLanguage(input: string): "ko" | "en" {
-  return /[\p{Script=Hangul}]/u.test(input) ? "ko" : "en";
 }
 
 function resolvePath(workspaceRoot: string, maybeRelative: string): string {

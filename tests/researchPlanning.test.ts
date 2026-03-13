@@ -760,7 +760,7 @@ describe("researchPlanning helpers", () => {
             implementation_notes: [],
             evaluation_steps: [],
             risks: ["Benchmark may be too narrow."],
-            budget_notes: ["Keep runs under local budget."]
+            resource_notes: ["Keep runs within local execution limits."]
           }
         ],
         selected_id: "plan_1"
@@ -831,7 +831,7 @@ describe("researchPlanning helpers", () => {
             implementation_notes: [],
             evaluation_steps: [],
             risks: [],
-            budget_notes: []
+            resource_notes: []
           }
         ],
         selected_id: "plan_1"

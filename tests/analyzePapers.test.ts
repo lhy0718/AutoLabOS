@@ -1,6 +1,7 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -102,6 +103,21 @@ async function writeCorpus(runId: string, rows: unknown[]): Promise<void> {
     `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
     "utf8"
   );
+}
+
+async function writeCollectEnrichment(runId: string, entries: unknown[]): Promise<void> {
+  const dir = path.join(".autolabos", "runs", runId);
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    path.join(dir, "collect_enrichment.jsonl"),
+    `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+    "utf8"
+  );
+}
+
+function overwriteCorpusSync(runId: string, rows: unknown[]): void {
+  const dir = path.join(".autolabos", "runs", runId);
+  writeFileSync(path.join(dir, "corpus.jsonl"), `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
 }
 
 function jsonOutput(summary: string, claim: string): string {
@@ -606,7 +622,7 @@ describe("analyzePapers node", () => {
     expect(second.status).toBe("success");
     expect(second.needsApproval).toBe(true);
     expect(second.transitionRecommendation?.action).toBe("pause_for_human");
-    expect(second.summary).toContain("no summaries or evidence");
+    expect(second.summary).toContain("summaries or evidence");
 
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8").catch(() => "");
     const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8").catch(() => "");
@@ -614,7 +630,58 @@ describe("analyzePapers node", () => {
     expect(evidenceRaw).toBe("");
 
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
-    expect(loggedTexts.some((text) => text.includes("produced zero summaries/evidence"))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes("No summaries or evidence were persisted"))).toBe(true);
+  });
+
+  it("pauses early on large zero-output passes instead of spending the entire analysis limit", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-early-zero-output-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-early-zero-output";
+    const run = makeRun(runId);
+    await writeCorpus(
+      runId,
+      Array.from({ length: 15 }, (_, index) => ({
+        paper_id: `p${index + 1}`,
+        title: `Paper ${index + 1}`,
+        abstract: `Abstract ${index + 1}`,
+        authors: [`Author ${index + 1}`]
+      }))
+    );
+
+    const llm = new CountingJsonLLM(Array.from({ length: 20 }, () => "invalid-json"));
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(result.transitionRecommendation?.action).toBe("pause_for_human");
+    expect(result.summary).toContain("all failed before any summaries or evidence were persisted");
+    expect(llm.callCount).toBeLessThan(15);
+    expect(result.toolCallsUsed).toBeLessThan(15);
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await runContext.get("analyze_papers.summary_count")).toBe(0);
+    expect(await runContext.get("analyze_papers.evidence_count")).toBe(0);
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Pausing instead of spending the rest of the selection"))).toBe(true);
   });
 
   it("pauses for human when the requested model hits a usage limit before any outputs are produced", async () => {
@@ -664,6 +731,73 @@ describe("analyzePapers node", () => {
 
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
     expect(loggedTexts.some((text) => text.includes("model usage-limit failure"))).toBe(true);
+  });
+
+  it("pauses after persisting an exhausted small corpus when every analyzed paper is abstract fallback", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-abstract-only-exhausted-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-abstract-only-exhausted";
+    const run = makeRun(runId);
+    await writeCorpus(
+      runId,
+      Array.from({ length: 4 }, (_, index) => ({
+        paper_id: `p${index + 1}`,
+        title: `Paper ${index + 1}`,
+        abstract: `Abstract ${index + 1}`,
+        authors: [`Author ${index + 1}`]
+      }))
+    );
+
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new SequenceJsonLLM([
+        jsonOutput("summary 1", "claim 1"),
+        jsonOutput("summary 2", "claim 2"),
+        jsonOutput("summary 3", "claim 3"),
+        jsonOutput("summary 4", "claim 4")
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(result.summary).toContain("abstract-fallback");
+    expect(result.transitionRecommendation?.action).toBe("pause_for_human");
+    expect(result.transitionRecommendation?.reason).toContain("abstract-level evidence");
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
+    expect(summariesRaw.trim().split("\n")).toHaveLength(4);
+    expect(evidenceRaw.trim().split("\n")).toHaveLength(4);
+    expect(summariesRaw).toContain('"source_type":"abstract"');
+    expect(summariesRaw).not.toContain('"source_type":"full_text"');
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await runContext.get("analyze_papers.summary_count")).toBe(4);
+    expect(await runContext.get("analyze_papers.evidence_count")).toBe(4);
+    expect(await runContext.get("analyze_papers.full_text_count")).toBe(0);
+    expect(await runContext.get("analyze_papers.abstract_fallback_count")).toBe(4);
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(
+      loggedTexts.some((text) =>
+        text.includes("Pausing for manual review instead of auto-unblocking downstream hypothesis/experiment generation")
+      )
+    ).toBe(true);
   });
 
   it("rejects mismatched full-text sources before persisting analysis artifacts", async () => {
@@ -887,8 +1021,6 @@ describe("analyzePapers node", () => {
     const manifest = JSON.parse(manifestRaw);
     expect(manifest.selectedPaperIds).toEqual(["p1", "p3"]);
 
-    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
-    expect(loggedTexts.some((text) => text.includes("Selection quality safeguard tightened the rerank-fallback shortlist"))).toBe(true);
   });
 
   it("uses Responses API PDF analysis when configured and a PDF URL is present", async () => {
@@ -935,6 +1067,169 @@ describe("analyzePapers node", () => {
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
     expect(summariesRaw).toContain('"source_type":"full_text"');
     expect(summariesRaw).toContain('"summary":"pdf summary"');
+  });
+
+  it("refreshes selected corpus rows when PDF enrichment lands after analyze_papers starts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-late-pdf-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-late-pdf";
+    const run = makeRun(runId);
+    const initialRow = {
+      paper_id: "p1",
+      title: "Paper 1",
+      abstract: "Abstract 1",
+      authors: ["Alice"],
+      url: "https://example.com/p1"
+    };
+    const secondRow = {
+      paper_id: "p2",
+      title: "Paper 2",
+      abstract: "Abstract 2",
+      authors: ["Bob"],
+      url: "https://example.com/p2"
+    };
+    const enrichedRow = {
+      ...initialRow,
+      pdf_url: "https://example.com/p1.pdf"
+    };
+    await writeCorpus(runId, [initialRow, secondRow]);
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("analyze_papers.request", {
+      topN: 1,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+
+    const eventStream = new InMemoryEventStream();
+    let rerankCalls = 0;
+
+    let analyzePdfCalls = 0;
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "responses_api_pdf",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: {
+        complete: async () => {
+          rerankCalls += 1;
+          overwriteCorpusSync(runId, [enrichedRow, secondRow]);
+          return { text: JSON.stringify({ ordered_paper_ids: ["p1", "p2"] }) };
+        }
+      } as any,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async ({ pdfUrl }: { pdfUrl: string }) => {
+          analyzePdfCalls += 1;
+          expect(pdfUrl).toBe(enrichedRow.pdf_url);
+          return { text: jsonOutput("pdf summary", "pdf claim") };
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(rerankCalls).toBe(1);
+    expect(analyzePdfCalls).toBe(1);
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw).toContain('"source_type":"full_text"');
+    expect(summariesRaw).toContain('"summary":"pdf summary"');
+    expect(summariesRaw).not.toContain('"source_type":"abstract"');
+
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
+    const manifest = JSON.parse(manifestRaw);
+    expect(manifest.papers.p1.pdf_url).toBe(enrichedRow.pdf_url);
+    expect(manifest.papers.p1.score_breakdown.pdf_availability_score).toBe(1);
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Detected recovered PDF metadata"))).toBe(true);
+  });
+
+  it("uses recovered PDF metadata from collect_enrichment logs before corpus rewrite completes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-enrichment-log-pdf-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-enrichment-log-pdf";
+    const run = makeRun(runId);
+    const initialRow = {
+      paper_id: "p1",
+      title: "Paper 1",
+      abstract: "Abstract 1",
+      authors: ["Alice"],
+      url: "https://example.com/p1"
+    };
+    await writeCorpus(runId, [initialRow]);
+    await writeCollectEnrichment(runId, [
+      {
+        paper_id: "p1",
+        pdf_resolution: {
+          source: "landing_page",
+          url: "https://example.com/p1.pdf"
+        },
+        attempts: [{ stage: "landing_page", ok: true }],
+        errors: []
+      }
+    ]);
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("analyze_papers.request", {
+      topN: 1,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+
+    let analyzePdfCalls = 0;
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "responses_api_pdf",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: {
+        complete: async () => ({ text: JSON.stringify({ ordered_paper_ids: ["p1"] }) })
+      } as any,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async ({ pdfUrl }: { pdfUrl: string }) => {
+          analyzePdfCalls += 1;
+          expect(pdfUrl).toBe("https://example.com/p1.pdf");
+          return { text: jsonOutput("pdf summary", "pdf claim") };
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(analyzePdfCalls).toBe(1);
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw).toContain('"source_type":"full_text"');
+    expect(summariesRaw).toContain('"summary":"pdf summary"');
+    expect(summariesRaw).not.toContain('"fallback_reason":"no_pdf_url"');
+
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
+    const manifest = JSON.parse(manifestRaw);
+    expect(manifest.papers.p1.pdf_url).toBe("https://example.com/p1.pdf");
+    expect(manifest.papers.p1.source_type).toBe("full_text");
   });
 
   it("falls back to local text/abstract analysis when Responses API times out downloading a remote PDF", async () => {

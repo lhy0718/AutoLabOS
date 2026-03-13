@@ -76,10 +76,6 @@ export class StateGraphRuntime {
     let run = await this.getRunOrThrow(runId);
     run.graph.currentNode = run.currentNode;
 
-    if (this.isBudgetExceeded(run)) {
-      return this.failByBudget(run, "Budget exceeded before executing next node.");
-    }
-
     const node = run.currentNode;
     run.graph.nodeStates[node] = {
       ...run.graph.nodeStates[node],
@@ -114,16 +110,9 @@ export class StateGraphRuntime {
       });
       this.throwIfAborted(abortSignal);
       run = await this.getRunOrThrow(run.id);
-      const elapsed = Date.now() - started;
-      run.graph.budget.wallClockMsUsed += elapsed;
-      run.graph.budget.toolCallsUsed += result.toolCallsUsed ?? 0;
-      if (typeof result.costUsd === "number") {
-        run.graph.budget.usdUsed = (run.graph.budget.usdUsed ?? 0) + result.costUsd;
-      }
-
-      if (this.isBudgetExceeded(run)) {
-        return this.failByBudget(run, "Budget exceeded after node execution.");
-      }
+      void started;
+      void result.toolCallsUsed;
+      void result.costUsd;
 
       if (result.status === "failure") {
         return this.handleFailure(run, node, result.error || "Node execution failed");
@@ -222,7 +211,7 @@ export class StateGraphRuntime {
         this.throwIfAborted(opts?.abortSignal);
         run = await this.step(run.id, opts?.abortSignal);
         run = await this.pauseIfRegressedBelowFloor(run, opts?.floorNode);
-        if (["completed", "failed", "failed_budget"].includes(run.status)) {
+        if (["completed", "failed"].includes(run.status)) {
           return run;
         }
 
@@ -230,7 +219,7 @@ export class StateGraphRuntime {
           const approvalNode = run.currentNode;
           run = await this.resolveApprovalGate(run);
           run = await this.pauseIfRegressedBelowFloor(run, opts?.floorNode);
-          if (["completed", "failed", "failed_budget"].includes(run.status)) {
+          if (["completed", "failed"].includes(run.status)) {
             return run;
           }
           if (run.status === "paused") {
@@ -622,33 +611,6 @@ export class StateGraphRuntime {
     return this.getRunOrThrow(run.id);
   }
 
-  private async failByBudget(run: RunRecord, reason: string): Promise<RunRecord> {
-    run.graph.pendingTransition = undefined;
-    run.status = "failed_budget";
-    run.graph.nodeStates[run.currentNode] = {
-      ...run.graph.nodeStates[run.currentNode],
-      status: "failed",
-      updatedAt: new Date().toISOString(),
-      note: reason,
-      lastError: reason
-    };
-
-    this.syncLatestSummary(run);
-    const checkpoint = await this.saveCheckpointAndPersist(run, "fail", reason);
-    this.eventStream.emit({
-      type: "BUDGET_EXCEEDED",
-      runId: run.id,
-      node: run.currentNode,
-      payload: {
-        reason,
-        budget: run.graph.budget,
-        checkpoint: checkpoint.seq
-      }
-    });
-
-    return this.getRunOrThrow(run.id);
-  }
-
   private nextNode(node: GraphNodeId): GraphNodeId | undefined {
     const idx = GRAPH_NODE_ORDER.indexOf(node);
     if (idx < 0 || idx === GRAPH_NODE_ORDER.length - 1) {
@@ -665,20 +627,6 @@ export class StateGraphRuntime {
     return GRAPH_NODE_ORDER[idx - 1];
   }
 
-  private isBudgetExceeded(run: RunRecord): boolean {
-    const budget = run.graph.budget;
-    if (budget.toolCallsUsed > budget.policy.maxToolCalls) {
-      return true;
-    }
-    if (budget.wallClockMsUsed > budget.policy.maxWallClockMinutes * 60 * 1000) {
-      return true;
-    }
-    if (typeof budget.usdUsed === "number" && budget.usdUsed > budget.policy.maxUsd) {
-      return true;
-    }
-    return false;
-  }
-
   private async getRunOrThrow(runId: string): Promise<RunRecord> {
     const run = await this.runStore.getRun(runId);
     if (!run) {
@@ -691,7 +639,7 @@ export class StateGraphRuntime {
   }
 
   private async pauseIfRegressedBelowFloor(run: RunRecord, floorNode?: GraphNodeId): Promise<RunRecord> {
-    if (!floorNode || ["completed", "failed", "failed_budget"].includes(run.status)) {
+    if (!floorNode || ["completed", "failed"].includes(run.status)) {
       return run;
     }
 

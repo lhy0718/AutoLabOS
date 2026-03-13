@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { CodexCliClient } from "../src/integrations/codex/codexCliClient.js";
+import {
+  CodexCliClient,
+  normalizeCodexWorkspacePath,
+  presentCodexPath
+} from "../src/integrations/codex/codexCliClient.js";
 
 describe("CodexCliClient fake response sequence", () => {
   afterEach(() => {
@@ -28,5 +32,15 @@ describe("CodexCliClient fake response sequence", () => {
 
     expect(first).toContain("first");
     expect(second).toContain("second");
+  });
+
+  it("maps /private sandbox aliases to writable workspace paths", () => {
+    expect(presentCodexPath("/private/tmp/demo")).toBe("/tmp/demo");
+    expect(
+      normalizeCodexWorkspacePath("/tmp/demo/outputs/experiment.py", "/private/tmp/demo")
+    ).toBe("/private/tmp/demo/outputs/experiment.py");
+    expect(
+      normalizeCodexWorkspacePath("/var/folders/x/demo/run.py", "/private/var/folders/x/demo")
+    ).toBe("/private/var/folders/x/demo/run.py");
   });
 });

@@ -22,15 +22,6 @@ export function createDefaultGraphState(): RunGraphState {
     rollbackCounters: {},
     researchCycle: 0,
     transitionHistory: [],
-    budget: {
-      toolCallsUsed: 0,
-      wallClockMsUsed: 0,
-      policy: {
-        maxToolCalls: 150,
-        maxWallClockMinutes: 240,
-        maxUsd: 15
-      }
-    },
     checkpointSeq: 0,
     retryPolicy: {
       maxAttemptsPerNode: 3,

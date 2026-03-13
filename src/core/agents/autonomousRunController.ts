@@ -72,11 +72,11 @@ export class AutonomousRunController {
       run = await this.getRunOrThrow(runId);
 
       if (Date.now() - startedAt > policy.maxMinutes * 60 * 1000) {
-        this.emit(run, "Overnight autonomy stopped: time budget reached.");
+        this.emit(run, "Overnight autonomy stopped: time limit reached.");
         return {
           run,
           status: "stopped",
-          reason: "Overnight time budget reached.",
+          reason: "Overnight time limit reached.",
           approvalsApplied,
           transitionsApplied,
           iterations
@@ -107,7 +107,7 @@ export class AutonomousRunController {
         };
       }
 
-      if (run.status === "failed" || run.status === "failed_budget") {
+      if (run.status === "failed") {
         this.emit(run, `Overnight autonomy stopped because the run ${run.status}.`);
         return {
           run,

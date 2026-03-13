@@ -14,6 +14,8 @@ import {
   resolveObjectiveMetricProfile
 } from "../objectiveMetric.js";
 import {
+  buildRelatedWorkBrief,
+  buildRelatedWorkNotes,
   buildPaperBibtex,
   buildPaperEvidenceMap,
   collectPaperCitationIds,
@@ -33,6 +35,7 @@ import {
   renderSubmissionPaperTex
 } from "../analysis/paperManuscript.js";
 import { PaperWriterSessionManager } from "../agents/paperWriterSessionManager.js";
+import { maybeEnrichRelatedWorkScout } from "../writePaperRelatedWorkEnrichment.js";
 import { maybeRunRelatedWorkScout } from "../writePaperRelatedWorkScout.js";
 
 interface PaperCompileCommandResult {
@@ -178,6 +181,61 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       if (relatedWorkScout.scout && relatedWorkScout.corpusRows.length > 0) {
         bundle.relatedWorkScout = relatedWorkScout.scout;
         bundle.corpus = mergeBundleCorpus(bundle.corpus, relatedWorkScout.corpusRows);
+      }
+      const relatedWorkEnrichment = await maybeEnrichRelatedWorkScout({
+        run,
+        config: deps.config,
+        scoutRows: relatedWorkScout.corpusRows,
+        existingPaperIds: new Set(bundle.paperSummaries.map((item) => item.paper_id)),
+        llm: deps.llm,
+        pdfTextLlm: deps.pdfTextLlm,
+        responsesPdfAnalysis: deps.responsesPdfAnalysis,
+        abortSignal,
+        emitLog
+      });
+      await runContextMemory.put("write_paper.related_work_enrichment", {
+        status: relatedWorkEnrichment.status,
+        reason: relatedWorkEnrichment.reason,
+        attempted_paper_count: relatedWorkEnrichment.attemptedPaperIds.length,
+        analyzed_paper_count: relatedWorkEnrichment.summaryRows.length,
+        full_text_count: relatedWorkEnrichment.fullTextCount,
+        abstract_fallback_count: relatedWorkEnrichment.abstractFallbackCount,
+        failures: relatedWorkEnrichment.failures
+      });
+      if (relatedWorkEnrichment.summaryRows.length > 0) {
+        bundle.paperSummaries = mergeBundlePaperSummaries(
+          bundle.paperSummaries,
+          relatedWorkEnrichment.summaryRows
+        );
+        bundle.evidenceRows = mergeBundleEvidenceRows(
+          bundle.evidenceRows,
+          relatedWorkEnrichment.evidenceRows
+        );
+      }
+      const relatedWorkNotes = buildRelatedWorkNotes(bundle);
+      if (relatedWorkNotes.length > 0) {
+        bundle.relatedWorkNotes = relatedWorkNotes;
+        const relatedWorkBrief = buildRelatedWorkBrief(bundle);
+        await writeRunArtifact(
+          run,
+          "paper/related_work_notes.json",
+          `${JSON.stringify(
+            {
+              note_count: relatedWorkNotes.length,
+              comparison_axes: relatedWorkBrief.comparison_axes,
+              paragraph_plan: relatedWorkBrief.paragraph_plan,
+              notes: relatedWorkNotes
+            },
+            null,
+            2
+          )}\n`
+        );
+        await runContextMemory.put("write_paper.related_work_notes", {
+          note_count: relatedWorkNotes.length,
+          comparison_axes: relatedWorkBrief.comparison_axes,
+          paragraph_plan: relatedWorkBrief.paragraph_plan,
+          top_titles: relatedWorkNotes.slice(0, 4).map((item) => item.title)
+        });
       }
 
       emitLog(
@@ -444,6 +502,36 @@ function mergeBundleCorpus(existing: PaperWritingBundle["corpus"], additions: Pa
     merged.push(row);
   }
   return merged;
+}
+
+function mergeBundlePaperSummaries(
+  existing: PaperWritingBundle["paperSummaries"],
+  additions: PaperWritingBundle["paperSummaries"]
+): PaperWritingBundle["paperSummaries"] {
+  const merged = new Map(existing.map((item) => [item.paper_id, item] as const));
+  for (const row of additions) {
+    if (!row.paper_id) {
+      continue;
+    }
+    merged.set(row.paper_id, row);
+  }
+  return [...merged.values()];
+}
+
+function mergeBundleEvidenceRows(
+  existing: PaperWritingBundle["evidenceRows"],
+  additions: PaperWritingBundle["evidenceRows"]
+): PaperWritingBundle["evidenceRows"] {
+  const merged = new Map(
+    existing.map((item) => [`${item.paper_id}:${item.evidence_id}`, item] as const)
+  );
+  for (const row of additions) {
+    if (!row.paper_id || !row.evidence_id) {
+      continue;
+    }
+    merged.set(`${row.paper_id}:${row.evidence_id}`, row);
+  }
+  return [...merged.values()];
 }
 
 async function loadValidatedPaperBundle(

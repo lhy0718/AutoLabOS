@@ -30,6 +30,7 @@ import {
   RankedPaperCandidate,
   selectPapersForAnalysis
 } from "../analysis/paperSelection.js";
+import { CollectEnrichmentLogEntry } from "../collection/types.js";
 import { TransitionRecommendation } from "../../types.js";
 
 interface AnalysisManifest {
@@ -86,6 +87,13 @@ interface AnalysisManifestEntry {
 const MAX_AUTO_SELECTION_EXPANSIONS = 2;
 const DEFAULT_SAFE_ANALYSIS_TOP_N = 30;
 const MIN_SELECTION_GUARD_ANCHORS = 2;
+const ABSTRACT_ONLY_EXHAUSTION_MIN_SUMMARIES = 4;
+const ABSTRACT_ONLY_EXHAUSTION_MAX_SELECTED = 12;
+const ZERO_OUTPUT_EARLY_PAUSE_MIN_SELECTED = 12;
+const ZERO_OUTPUT_EARLY_PAUSE_SAMPLE = 2;
+const ZERO_OUTPUT_RETRY_PAUSE_SAMPLE = 1;
+const COLLECT_ENRICHMENT_SELECTED_WAIT_MS = 5_000;
+const COLLECT_ENRICHMENT_POLL_INTERVAL_MS = 250;
 
 const SELECTION_QUALITY_STOPWORDS = new Set([
   "a",
@@ -156,6 +164,11 @@ interface AnalysisQuarantineRow {
   summary_preview?: string;
   source_excerpt?: string;
   createdAt: string;
+}
+
+interface ZeroOutputPauseDecision {
+  attemptedCount: number;
+  threshold: number;
 }
 
 interface SelectedFailureSummary {
@@ -329,9 +342,27 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           );
         }
 
-        const selectedRows = selection.selectedPaperIds
+        let selectedRows = selection.selectedPaperIds
           .map((paperId) => corpusRows.find((row) => row.paper_id === paperId))
           .filter((row): row is AnalysisCorpusRow => Boolean(row));
+        if (
+          selectedRows.some((row) => !resolvePaperPdfUrl(row)) &&
+          (await isCollectEnrichmentPending(run.id))
+        ) {
+          emitLog(
+            "Collect enrichment is still pending for selected papers without PDFs. Waiting briefly for recovered PDF metadata before source resolution."
+          );
+        }
+        const refreshedSelectedRows = await refreshSelectedRowsFromLatestArtifacts(run.id, selectedRows);
+        const upgradedPdfRows = refreshedSelectedRows.filter(
+          (row, index) => !resolvePaperPdfUrl(selectedRows[index]) && Boolean(resolvePaperPdfUrl(row))
+        ).length;
+        if (upgradedPdfRows > 0) {
+          emitLog(
+            `Detected recovered PDF metadata for ${upgradedPdfRows}/${refreshedSelectedRows.length} selected paper(s) after analyze_papers started. Using refreshed corpus rows for source resolution.`
+          );
+        }
+        selectedRows = refreshedSelectedRows;
 
         if (
           analysisMode === "responses_api_pdf" &&
@@ -472,6 +503,12 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           await writeJsonFile(manifestPath, manifest);
         }
 
+        const refreshedManifest = hydrateSelectedManifestEntriesFromRows(manifest, selectedRows);
+        if (refreshedManifest !== manifest) {
+          manifest = refreshedManifest;
+          await writeJsonFile(manifestPath, manifest);
+        }
+
         const reconciledState = reconcileManifestWithOutputs(manifest, existingSummaryRows, existingEvidenceRows);
         let manifestState: AnalysisManifest = reconciledState.manifest;
         if (reconciledState.changed) {
@@ -511,283 +548,327 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
         const pendingRows = selectedRows.filter((row) => manifestState.papers[row.paper_id]?.status !== "completed");
         const previousFailedPaperIds = getSelectedFailedPaperIds(manifestState);
-        const analysisConcurrency = getAnalysisConcurrency(analysisMode);
+        const startingProgress = buildAnalysisProgress(summaryRowsState, evidenceRowsState);
+        const warmStartSerial =
+          startingProgress.summaryRows.length === 0 &&
+          startingProgress.evidenceRows.length === 0 &&
+          selection.selectedPaperIds.length >= ZERO_OUTPUT_EARLY_PAUSE_MIN_SELECTED;
+        const analysisConcurrency = warmStartSerial ? 1 : getAnalysisConcurrency(analysisMode);
         if (pendingRows.length > 0) {
           emitLog(`Analyzing ${pendingRows.length} paper(s) with concurrency ${analysisConcurrency}.`);
+          if (warmStartSerial) {
+            emitLog(
+              `Large zero-output-sensitive analysis is starting in serial mode until the first persisted outputs arrive.`
+            );
+          }
         }
         let failedCount = 0;
+        let attemptedRows = 0;
+        let zeroOutputPauseDecision: ZeroOutputPauseDecision | undefined;
         const persistQueue = createAsyncQueue();
 
-        await runWithConcurrency(pendingRows, analysisConcurrency, async (row, index) => {
-          emitLog(`Analyzing paper ${index + 1}/${pendingRows.length}: "${row.title}".`);
-          emitLog(`Resolving analysis source ${index + 1}/${pendingRows.length} for "${row.title}".`);
-
-        deps.eventStream.emit({
-          type: "TOOL_CALLED",
-          runId: run.id,
-          node: "analyze_papers",
-          payload: {
-            tool: "analyze_paper",
-            paper_id: row.paper_id
-          }
-        });
-
-        const pdfUrl = resolvePaperPdfUrl(row);
-        const useResponsesPdf = analysisMode === "responses_api_pdf" && Boolean(pdfUrl);
-        let source = useResponsesPdf
-          ? {
-              sourceType: "full_text" as const,
-              text: row.abstract || row.title,
-              fullTextAvailable: true,
-              pdfUrl
+        await runWithConcurrency(
+          pendingRows,
+          analysisConcurrency,
+          async (initialRow, index) => {
+            attemptedRows += 1;
+            let row = await refreshCorpusRowFromLatestArtifacts(run.id, initialRow);
+            if (!resolvePaperPdfUrl(initialRow) && resolvePaperPdfUrl(row)) {
+              emitLog(`[${row.paper_id}] Reusing refreshed corpus metadata with a recovered PDF URL.`);
             }
-          : await resolvePaperTextSource({
+            emitLog(`Analyzing paper ${index + 1}/${pendingRows.length}: "${row.title}".`);
+            emitLog(`Resolving analysis source ${index + 1}/${pendingRows.length} for "${row.title}".`);
+            const latestRowBeforeSource = await refreshCorpusRowFromLatestArtifacts(run.id, row);
+            if (!resolvePaperPdfUrl(row) && resolvePaperPdfUrl(latestRowBeforeSource)) {
+              emitLog(`[${latestRowBeforeSource.paper_id}] Reusing refreshed corpus metadata with a recovered PDF URL.`);
+            }
+            row = latestRowBeforeSource;
+
+            deps.eventStream.emit({
+              type: "TOOL_CALLED",
               runId: run.id,
-              paper: row,
-              includePageImages,
-              abortSignal,
-              onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
-            });
-
-        let analysisModeUsed: "responses_api_pdf" | "codex_text_image_hybrid" = useResponsesPdf
-          ? "responses_api_pdf"
-          : "codex_text_image_hybrid";
-        let analysisAttempts = 0;
-        let quarantineRecord: AnalysisQuarantineRow | undefined;
-
-        emitLog(
-          useResponsesPdf
-            ? `Using Responses API PDF input for "${row.title}".`
-            : source.sourceType === "full_text"
-              ? source.pageImagePaths && source.pageImagePaths.length > 0
-                ? `Using full text plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}".`
-                : `Using full text for "${row.title}".`
-              : source.pageImagePaths && source.pageImagePaths.length > 0
-                ? `Falling back to abstract plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}" (${source.fallbackReason || "no full text"}).`
-              : `Falling back to abstract for "${row.title}" (${source.fallbackReason || "no full text"}).`
-        );
-
-        try {
-          const sourceMismatchError = validateResolvedSourceIdentity(row, source);
-          if (sourceMismatchError) {
-            quarantineRecord = buildAnalysisQuarantineRow({
-              paper: row,
-              source,
-              analysisMode: analysisModeUsed,
-              reason: sourceMismatchError
-            });
-            throw new Error(sourceMismatchError);
-          }
-
-          let analysis;
-          if (useResponsesPdf && pdfUrl) {
-            try {
-              analysis = await analyzePaperWithResponsesPdf({
-                client: deps.responsesPdfAnalysis,
-                paper: row,
-                pdfUrl,
-                model: deps.config.analysis.responses_model,
-                reasoningEffort: deps.config.analysis.responses_reasoning_effort,
-                maxAttempts: 2,
-                abortSignal,
-                onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
-              });
-            } catch (error) {
-              if (!shouldFallbackResponsesPdfToLocalText(error)) {
-                throw error;
+              node: "analyze_papers",
+              payload: {
+                tool: "analyze_paper",
+                paper_id: row.paper_id
               }
-              const reason = error instanceof Error ? error.message : String(error);
-              emitLog(
-                `[${row.paper_id}] Responses API could not download the remote PDF (${reason}). Falling back to local PDF download/text-plus-image analysis.`
-              );
-              source = await resolvePaperTextSource({
-                runId: run.id,
-                paper: row,
-                includePageImages,
-                abortSignal,
-                onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
-              });
-              analysisModeUsed = "codex_text_image_hybrid";
-              const fallbackSourceMismatchError = validateResolvedSourceIdentity(row, source);
-              if (fallbackSourceMismatchError) {
+            });
+
+            const pdfUrl = resolvePaperPdfUrl(row);
+            const useResponsesPdf = analysisMode === "responses_api_pdf" && Boolean(pdfUrl);
+            let source = useResponsesPdf
+              ? {
+                  sourceType: "full_text" as const,
+                  text: row.abstract || row.title,
+                  fullTextAvailable: true,
+                  pdfUrl
+                }
+              : await resolvePaperTextSource({
+                  runId: run.id,
+                  paper: row,
+                  includePageImages,
+                  abortSignal,
+                  onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+                });
+
+            let analysisModeUsed: "responses_api_pdf" | "codex_text_image_hybrid" = useResponsesPdf
+              ? "responses_api_pdf"
+              : "codex_text_image_hybrid";
+            let analysisAttempts = 0;
+            let quarantineRecord: AnalysisQuarantineRow | undefined;
+
+            emitLog(
+              useResponsesPdf
+                ? `Using Responses API PDF input for "${row.title}".`
+                : source.sourceType === "full_text"
+                  ? source.pageImagePaths && source.pageImagePaths.length > 0
+                    ? `Using full text plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}".`
+                    : `Using full text for "${row.title}".`
+                  : source.pageImagePaths && source.pageImagePaths.length > 0
+                    ? `Falling back to abstract plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}" (${source.fallbackReason || "no full text"}).`
+                  : `Falling back to abstract for "${row.title}" (${source.fallbackReason || "no full text"}).`
+            );
+
+            try {
+              const sourceMismatchError = validateResolvedSourceIdentity(row, source);
+              if (sourceMismatchError) {
                 quarantineRecord = buildAnalysisQuarantineRow({
                   paper: row,
                   source,
                   analysisMode: analysisModeUsed,
-                  reason: fallbackSourceMismatchError
+                  reason: sourceMismatchError
                 });
-                throw new Error(fallbackSourceMismatchError);
+                throw new Error(sourceMismatchError);
               }
-              emitLog(
-                source.sourceType === "full_text"
-                  ? source.pageImagePaths && source.pageImagePaths.length > 0
-                    ? `Using locally extracted full text plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}" after Responses API fallback.`
-                    : `Using locally extracted full text for "${row.title}" after Responses API fallback.`
-                  : source.pageImagePaths && source.pageImagePaths.length > 0
-                    ? `Falling back to abstract plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}" after Responses API fallback (${source.fallbackReason || "no full text"}).`
-                  : `Falling back to abstract for "${row.title}" after Responses API fallback (${source.fallbackReason || "no full text"}).`
-              );
-              analysis = await analyzePaperWithLlm({
-                llm: source.sourceType === "full_text" ? deps.pdfTextLlm : deps.llm,
-                paper: row,
-                source,
-                maxAttempts: 2,
-                abortSignal,
-                onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+
+              let analysis;
+              if (useResponsesPdf && pdfUrl) {
+                try {
+                  analysis = await analyzePaperWithResponsesPdf({
+                    client: deps.responsesPdfAnalysis,
+                    paper: row,
+                    pdfUrl,
+                    model: deps.config.analysis.responses_model,
+                    reasoningEffort: deps.config.analysis.responses_reasoning_effort,
+                    maxAttempts: 2,
+                    abortSignal,
+                    onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+                  });
+                } catch (error) {
+                  if (!shouldFallbackResponsesPdfToLocalText(error)) {
+                    throw error;
+                  }
+                  const reason = error instanceof Error ? error.message : String(error);
+                  emitLog(
+                    `[${row.paper_id}] Responses API could not download the remote PDF (${reason}). Falling back to local PDF download/text-plus-image analysis.`
+                  );
+                  source = await resolvePaperTextSource({
+                    runId: run.id,
+                    paper: row,
+                    includePageImages,
+                    abortSignal,
+                    onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+                  });
+                  analysisModeUsed = "codex_text_image_hybrid";
+                  const fallbackSourceMismatchError = validateResolvedSourceIdentity(row, source);
+                  if (fallbackSourceMismatchError) {
+                    quarantineRecord = buildAnalysisQuarantineRow({
+                      paper: row,
+                      source,
+                      analysisMode: analysisModeUsed,
+                      reason: fallbackSourceMismatchError
+                    });
+                    throw new Error(fallbackSourceMismatchError);
+                  }
+                  emitLog(
+                    source.sourceType === "full_text"
+                      ? source.pageImagePaths && source.pageImagePaths.length > 0
+                        ? `Using locally extracted full text plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}" after Responses API fallback.`
+                        : `Using locally extracted full text for "${row.title}" after Responses API fallback.`
+                      : source.pageImagePaths && source.pageImagePaths.length > 0
+                        ? `Falling back to abstract plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}" after Responses API fallback (${source.fallbackReason || "no full text"}).`
+                      : `Falling back to abstract for "${row.title}" after Responses API fallback (${source.fallbackReason || "no full text"}).`
+                  );
+                  analysis = await analyzePaperWithLlm({
+                    llm: source.sourceType === "full_text" ? deps.pdfTextLlm : deps.llm,
+                    paper: row,
+                    source,
+                    maxAttempts: 2,
+                    abortSignal,
+                    onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+                  });
+                }
+              } else {
+                analysis = await analyzePaperWithLlm({
+                  llm: source.sourceType === "full_text" ? deps.pdfTextLlm : deps.llm,
+                  paper: row,
+                  source,
+                  maxAttempts: 2,
+                  abortSignal,
+                  onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+                });
+              }
+              analysisAttempts = analysis.attempts;
+              const analysisMismatchError = validateAnalysisBeforePersist(row, source, analysis);
+              if (analysisMismatchError) {
+                quarantineRecord = buildAnalysisQuarantineRow({
+                  paper: row,
+                  source,
+                  analysis,
+                  analysisMode: analysisModeUsed,
+                  reason: analysisMismatchError
+                });
+                throw new Error(analysisMismatchError);
+              }
+
+              await persistQueue.run(async () => {
+                const structureSignals = analyzeStructureSignals(source.text);
+                const nextSummaryRowsState = replaceSummaryRow(summaryRowsState, analysis.summaryRow);
+                const nextEvidenceRowsState = replaceEvidenceRowsForPaper(evidenceRowsState, row.paper_id, analysis.evidenceRows);
+                const nextManifest: AnalysisManifest = {
+                  ...manifestState,
+                  papers: { ...manifestState.papers }
+                };
+
+                const manifestEntry = manifestState.papers[row.paper_id];
+                nextManifest.papers[row.paper_id] = {
+                  ...manifestEntry,
+                  paper_id: row.paper_id,
+                  title: row.title,
+                  status: "completed",
+                  selected: true,
+                  source_type: source.sourceType,
+                  summary_count: 1,
+                  evidence_count: analysis.evidenceRows.length,
+                  analysis_attempts: analysis.attempts,
+                  analysis_mode: analysisModeUsed,
+                  pdf_url: source.pdfUrl ?? resolvePaperPdfUrl(row),
+                  pdf_cache_path: source.pdfCachePath,
+                  text_cache_path: source.textCachePath,
+                  fallback_reason: source.fallbackReason,
+                  last_error: undefined,
+                  score_breakdown: refreshPdfAvailabilityScoreBreakdown(manifestEntry?.score_breakdown, row),
+                  has_table_references: structureSignals.tableReferenceCount > 0,
+                  table_reference_count: structureSignals.tableReferenceCount,
+                  has_figure_references: structureSignals.figureReferenceCount > 0,
+                  figure_reference_count: structureSignals.figureReferenceCount,
+                  updatedAt: new Date().toISOString(),
+                  completedAt: new Date().toISOString()
+                };
+                nextManifest.updatedAt = new Date().toISOString();
+                await appendJsonl(run, "paper_summaries.jsonl", nextSummaryRowsState);
+                await appendJsonl(run, "evidence_store.jsonl", nextEvidenceRowsState);
+                await writeJsonFile(manifestPath, nextManifest);
+                await syncAnalysisProgress(runContextMemory, {
+                  runContextPath: run.memoryRefs.runContextPath,
+                  summaryRows: nextSummaryRowsState,
+                  evidenceRows: nextEvidenceRowsState,
+                  selectedCount: selection.selectedPaperIds.length,
+                  totalCandidates: selection.totalCandidates,
+                  selectionFingerprint: selection.selectionFingerprint
+                });
+                await syncAnalyzeRunRecord({
+                  runStore: deps.runStore,
+                  runId: run.id,
+                  summary: buildAnalyzeProgressSummary({
+                    request,
+                    selectedCount: selection.selectedPaperIds.length,
+                    totalCandidates: selection.totalCandidates,
+                    progress: buildAnalysisProgress(nextSummaryRowsState, nextEvidenceRowsState),
+                    failedCount,
+                    analysisMode
+                  })
+                });
+                manifestState = nextManifest;
+                summaryRowsState = nextSummaryRowsState;
+                evidenceRowsState = nextEvidenceRowsState;
+                emitLog(
+                  `Persisted analysis outputs for "${row.title}" (1 summary row, ${analysis.evidenceRows.length} evidence row(s)).`
+                );
               });
-            }
-          } else {
-            analysis = await analyzePaperWithLlm({
-              llm: source.sourceType === "full_text" ? deps.pdfTextLlm : deps.llm,
-              paper: row,
-              source,
-              maxAttempts: 2,
-              abortSignal,
-              onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
-            });
-          }
-          analysisAttempts = analysis.attempts;
-          const analysisMismatchError = validateAnalysisBeforePersist(row, source, analysis);
-          if (analysisMismatchError) {
-            quarantineRecord = buildAnalysisQuarantineRow({
-              paper: row,
-              source,
-              analysis,
-              analysisMode: analysisModeUsed,
-              reason: analysisMismatchError
-            });
-            throw new Error(analysisMismatchError);
-          }
 
-          await persistQueue.run(async () => {
-            const structureSignals = analyzeStructureSignals(source.text);
-            const nextSummaryRowsState = replaceSummaryRow(summaryRowsState, analysis.summaryRow);
-            const nextEvidenceRowsState = replaceEvidenceRowsForPaper(evidenceRowsState, row.paper_id, analysis.evidenceRows);
-            const nextManifest: AnalysisManifest = {
-              ...manifestState,
-              papers: { ...manifestState.papers }
-            };
-
-            const manifestEntry = manifestState.papers[row.paper_id];
-            nextManifest.papers[row.paper_id] = {
-              ...manifestEntry,
-              paper_id: row.paper_id,
-              title: row.title,
-              status: "completed",
-              selected: true,
-              source_type: source.sourceType,
-              summary_count: 1,
-              evidence_count: analysis.evidenceRows.length,
-              analysis_attempts: analysis.attempts,
-              analysis_mode: analysisModeUsed,
-              pdf_url: source.pdfUrl,
-              pdf_cache_path: source.pdfCachePath,
-              text_cache_path: source.textCachePath,
-              fallback_reason: source.fallbackReason,
-              last_error: undefined,
-              has_table_references: structureSignals.tableReferenceCount > 0,
-              table_reference_count: structureSignals.tableReferenceCount,
-              has_figure_references: structureSignals.figureReferenceCount > 0,
-              figure_reference_count: structureSignals.figureReferenceCount,
-              updatedAt: new Date().toISOString(),
-              completedAt: new Date().toISOString()
-            };
-            nextManifest.updatedAt = new Date().toISOString();
-            await appendJsonl(run, "paper_summaries.jsonl", nextSummaryRowsState);
-            await appendJsonl(run, "evidence_store.jsonl", nextEvidenceRowsState);
-            await writeJsonFile(manifestPath, nextManifest);
-            await syncAnalysisProgress(runContextMemory, {
-              runContextPath: run.memoryRefs.runContextPath,
-              summaryRows: nextSummaryRowsState,
-              evidenceRows: nextEvidenceRowsState,
-              selectedCount: selection.selectedPaperIds.length,
-              totalCandidates: selection.totalCandidates,
-              selectionFingerprint: selection.selectionFingerprint
-            });
-            await syncAnalyzeRunRecord({
-              runStore: deps.runStore,
-              runId: run.id,
-              summary: buildAnalyzeProgressSummary({
-                request,
-                selectedCount: selection.selectedPaperIds.length,
-                totalCandidates: selection.totalCandidates,
-                progress: buildAnalysisProgress(nextSummaryRowsState, nextEvidenceRowsState),
-                failedCount,
-                analysisMode
-              })
-            });
-            manifestState = nextManifest;
-            summaryRowsState = nextSummaryRowsState;
-            evidenceRowsState = nextEvidenceRowsState;
-            emitLog(
-              `Persisted analysis outputs for "${row.title}" (1 summary row, ${analysis.evidenceRows.length} evidence row(s)).`
-            );
-          });
-
-          emitLog(`Analyzed "${row.title}" (${analysis.evidenceRows.length} evidence item(s), source=${source.sourceType}).`);
-        } catch (error) {
-          if (isAbortError(error)) {
-            throw error;
-          }
-          failedCount += 1;
-          const message = error instanceof Error ? error.message : String(error);
-          await persistQueue.run(async () => {
-            if (quarantineRecord) {
-              await appendJsonlItems(run, "analysis_quarantine.jsonl", [quarantineRecord]);
-            }
-            const manifestEntry = manifestState.papers[row.paper_id];
-            manifestState.papers[row.paper_id] = {
-              ...manifestEntry,
-              paper_id: row.paper_id,
-              title: row.title,
-              status: "failed",
-              selected: true,
-              source_type: source.sourceType,
-              summary_count: 0,
-              evidence_count: 0,
-              analysis_attempts: analysisAttempts,
-              analysis_mode: analysisModeUsed,
-              pdf_url: source.pdfUrl,
-              pdf_cache_path: source.pdfCachePath,
-              text_cache_path: source.textCachePath,
-              fallback_reason: source.fallbackReason,
-              last_error: message,
-              has_table_references: false,
-              table_reference_count: 0,
-              has_figure_references: false,
-              figure_reference_count: 0,
-              updatedAt: new Date().toISOString()
-            };
-            manifestState.updatedAt = new Date().toISOString();
-            await writeJsonFile(manifestPath, manifestState);
-            await syncAnalyzeRunRecord({
-              runStore: deps.runStore,
-              runId: run.id,
-              summary: buildAnalyzeProgressSummary({
-                request,
-                selectedCount: selection.selectedPaperIds.length,
-                totalCandidates: selection.totalCandidates,
-                progress: buildAnalysisProgress(summaryRowsState, evidenceRowsState),
-                failedCount,
-                analysisMode
-              })
-            });
-            deps.eventStream.emit({
-              type: "TEST_FAILED",
-              runId: run.id,
-              node: "analyze_papers",
-              payload: {
-                text: `Analysis failed for "${row.title}": ${message}`,
-                error: message
+              emitLog(`Analyzed "${row.title}" (${analysis.evidenceRows.length} evidence item(s), source=${source.sourceType}).`);
+            } catch (error) {
+              if (isAbortError(error)) {
+                throw error;
               }
-            });
-          });
-        }
-        });
+              failedCount += 1;
+              const message = error instanceof Error ? error.message : String(error);
+              await persistQueue.run(async () => {
+                if (quarantineRecord) {
+                  await appendJsonlItems(run, "analysis_quarantine.jsonl", [quarantineRecord]);
+                }
+                const manifestEntry = manifestState.papers[row.paper_id];
+                manifestState.papers[row.paper_id] = {
+                  ...manifestEntry,
+                  paper_id: row.paper_id,
+                  title: row.title,
+                  status: "failed",
+                  selected: true,
+                  source_type: source.sourceType,
+                  summary_count: 0,
+                  evidence_count: 0,
+                  analysis_attempts: analysisAttempts,
+                  analysis_mode: analysisModeUsed,
+                  pdf_url: source.pdfUrl ?? resolvePaperPdfUrl(row),
+                  pdf_cache_path: source.pdfCachePath,
+                  text_cache_path: source.textCachePath,
+                  fallback_reason: source.fallbackReason,
+                  last_error: message,
+                  score_breakdown: refreshPdfAvailabilityScoreBreakdown(manifestEntry?.score_breakdown, row),
+                  has_table_references: false,
+                  table_reference_count: 0,
+                  has_figure_references: false,
+                  figure_reference_count: 0,
+                  updatedAt: new Date().toISOString()
+                };
+                manifestState.updatedAt = new Date().toISOString();
+                await writeJsonFile(manifestPath, manifestState);
+                await syncAnalyzeRunRecord({
+                  runStore: deps.runStore,
+                  runId: run.id,
+                  summary: buildAnalyzeProgressSummary({
+                    request,
+                    selectedCount: selection.selectedPaperIds.length,
+                    totalCandidates: selection.totalCandidates,
+                    progress: buildAnalysisProgress(summaryRowsState, evidenceRowsState),
+                    failedCount,
+                    analysisMode
+                  })
+                });
+                deps.eventStream.emit({
+                  type: "TEST_FAILED",
+                  runId: run.id,
+                  node: "analyze_papers",
+                  payload: {
+                    text: `Analysis failed for "${row.title}": ${message}`,
+                    error: message
+                  }
+                });
+              });
+              const progress = buildAnalysisProgress(summaryRowsState, evidenceRowsState);
+              const zeroOutputPause = shouldPauseForZeroOutputStall({
+                selectedCount: selection.selectedPaperIds.length,
+                attemptedCount: attemptedRows,
+                failedCount,
+                priorRetryCount: run.graph.retryCounters.analyze_papers ?? 0,
+                progress
+              });
+              if (zeroOutputPause && !zeroOutputPauseDecision) {
+                zeroOutputPauseDecision = zeroOutputPause;
+                emitLog(
+                  `No summaries or evidence were persisted after ${zeroOutputPause.attemptedCount}/${selection.selectedPaperIds.length} attempted paper analyses. Pausing instead of spending the rest of the selection on the same zero-output failure pattern.`
+                );
+              }
+            }
+          },
+          () => Boolean(zeroOutputPauseDecision)
+        );
 
         await persistQueue.onIdle();
 
         const progress = buildAnalysisProgress(summaryRowsState, evidenceRowsState);
+        const analysisToolCallsUsed = pendingRows.length > 0 ? Math.max(1, attemptedRows) : 0;
         await syncAnalysisProgress(runContextMemory, {
           runContextPath: run.memoryRefs.runContextPath,
           summaryRows: summaryRowsState,
@@ -824,7 +905,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                     ? `analyze_papers paused because ${blockedCount}/${selection.selectedPaperIds.length} selected paper(s) hit the current model usage limit before any summaries or evidence were produced.`
                     : `analyze_papers paused because ${blockedCount} selected paper(s) hit the current model usage limit before any summaries or evidence were produced.`,
               needsApproval: true,
-              toolCallsUsed: Math.max(1, pendingRows.length),
+              toolCallsUsed: analysisToolCallsUsed,
               transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
                 runId: run.id,
                 reason:
@@ -866,7 +947,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                     ? `analyze_papers paused because ${blockedCount}/${selection.selectedPaperIds.length} selected paper(s) failed source-identity validation before any summaries or evidence were persisted.`
                     : `analyze_papers paused because ${blockedCount} selected paper(s) failed source-identity validation before any summaries or evidence were persisted.`,
               needsApproval: true,
-              toolCallsUsed: Math.max(1, pendingRows.length),
+              toolCallsUsed: analysisToolCallsUsed,
               transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
                 runId: run.id,
                 reason:
@@ -905,7 +986,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   ? `analyze_papers paused because all top ${selection.selectedPaperIds.length} selected paper(s) failed with environment or permission errors before any summaries or evidence were produced.`
                   : "analyze_papers paused because all selected papers failed with environment or permission errors before any summaries or evidence were produced.",
               needsApproval: true,
-              toolCallsUsed: Math.max(1, pendingRows.length),
+              toolCallsUsed: analysisToolCallsUsed,
               transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
                 runId: run.id,
                 reason:
@@ -914,6 +995,38 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 evidence: [
                   `${failureSummary.environmentBlockedEntries.length} selected paper(s) failed with environment or permission errors.`,
                   "No summaries or evidence were persisted in this pass.",
+                  sampleMessage
+                ],
+                suggestedCommands: ["/doctor", "/model", `/agent run analyze_papers ${run.id}`]
+              })
+            };
+          }
+
+          if (zeroProgress && zeroOutputPauseDecision) {
+            const retryCount = run.graph.retryCounters.analyze_papers ?? 0;
+            const sampleMessage =
+              failureSummary.cleanedMessages[0] ||
+              `The first ${zeroOutputPauseDecision.attemptedCount} attempted papers all failed before any persisted outputs were produced.`;
+            return {
+              status: "success",
+              summary:
+                request.selectionMode === "top_n" && request.topN
+                  ? `analyze_papers paused after the first ${zeroOutputPauseDecision.attemptedCount}/${selection.selectedPaperIds.length} ranked paper(s) all failed before any summaries or evidence were persisted.`
+                  : `analyze_papers paused after the first ${zeroOutputPauseDecision.attemptedCount} attempted paper(s) all failed before any summaries or evidence were persisted.`,
+              needsApproval: true,
+              toolCallsUsed: analysisToolCallsUsed,
+              transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+                runId: run.id,
+                reason:
+                  retryCount > 0
+                    ? "analyze_papers retried into the same zero-output failure pattern, so the node paused before spending the remaining analysis limit."
+                    : "analyze_papers hit a zero-output failure pattern early, so the node paused before spending the remaining analysis limit.",
+                confidence: retryCount > 0 ? 0.94 : 0.9,
+                evidence: [
+                  `0 summaries and 0 evidence items were persisted after ${zeroOutputPauseDecision.attemptedCount} attempted paper analyses.`,
+                  retryCount > 0
+                    ? `Retry counter before this pass was ${retryCount}; repeated automatic retries would likely churn without new artifacts.`
+                    : `The early zero-output guard triggered after ${zeroOutputPauseDecision.threshold} consecutive failed attempts.`,
                   sampleMessage
                 ],
                 suggestedCommands: ["/doctor", "/model", `/agent run analyze_papers ${run.id}`]
@@ -938,7 +1051,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               status: "success",
               summary,
               needsApproval: true,
-              toolCallsUsed: Math.max(1, pendingRows.length),
+              toolCallsUsed: analysisToolCallsUsed,
               transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
                 runId: run.id,
                 reason:
@@ -966,7 +1079,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   ? `analyze_papers produced no summaries or evidence after repeated retries on top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers, so the node paused for manual review.`
                   : "analyze_papers produced no summaries or evidence after repeated retries, so the node paused for manual review.",
               needsApproval: true,
-              toolCallsUsed: Math.max(1, pendingRows.length),
+              toolCallsUsed: analysisToolCallsUsed,
               transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
                 runId: run.id,
                 reason:
@@ -988,7 +1101,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 ? `Analyzed ${progress.summaryRows.length}/${selection.selectedPaperIds.length} selected papers from ${selection.totalCandidates} candidates; ${failedCount} failed and can be retried.`
                 : `Analyzed ${progress.summaryRows.length}/${corpusRows.length} papers, ${failedCount} failed and can be retried.`,
             error: `Analysis incomplete: ${failedCount} paper(s) failed validation or LLM extraction.`,
-            toolCallsUsed: Math.max(1, pendingRows.length)
+            toolCallsUsed: analysisToolCallsUsed
           };
         }
 
@@ -1011,6 +1124,35 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           continue;
         }
 
+        const abstractOnlyExhaustionPause = shouldPauseForAbstractOnlySelectionExhaustion({
+          request,
+          selection,
+          progress
+        });
+        if (abstractOnlyExhaustionPause) {
+          await runContextMemory.put("analyze_papers.auto_expand_count", autoExpansionCount);
+          await runContextMemory.put("analyze_papers.auto_expand_reason", autoExpansionReason || null);
+          emitLog(abstractOnlyExhaustionPause.logMessage);
+          return {
+            status: "success",
+            summary: abstractOnlyExhaustionPause.summary,
+            needsApproval: true,
+            toolCallsUsed: analysisToolCallsUsed,
+            transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+              runId: run.id,
+              reason:
+                "analyze_papers exhausted a small corpus without recovering any full-text support, so downstream hypothesis/experiment generation would be anchored only to abstract-level evidence.",
+              confidence: 0.88,
+              evidence: abstractOnlyExhaustionPause.evidence,
+              suggestedCommands: [
+                `/agent collect ${run.topic} --run ${run.id}`,
+                `/agent run analyze_papers ${run.id}`,
+                "/model"
+              ]
+            })
+          };
+        }
+
         await runContextMemory.put("analyze_papers.auto_expand_count", autoExpansionCount);
         await runContextMemory.put("analyze_papers.auto_expand_reason", autoExpansionReason || null);
 
@@ -1026,7 +1168,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               ? `${baseSummary} Auto-expanded the analysis window ${autoExpansionCount} time(s) and finished at top ${request.topN}.`
               : baseSummary,
           needsApproval: true,
-          toolCallsUsed: Math.max(1, pendingRows.length)
+          toolCallsUsed: analysisToolCallsUsed
         };
       }
     }
@@ -1081,6 +1223,46 @@ function decideAutomaticSelectionExpansion(input: {
   };
 }
 
+function shouldPauseForAbstractOnlySelectionExhaustion(input: {
+  request: AnalysisSelectionRequest;
+  selection: PaperSelectionResult;
+  progress: ReturnType<typeof buildAnalysisProgress>;
+}):
+  | {
+      summary: string;
+      logMessage: string;
+      evidence: string[];
+    }
+  | undefined {
+  if (
+    input.progress.summaryRows.length < ABSTRACT_ONLY_EXHAUSTION_MIN_SUMMARIES ||
+    input.progress.fullTextCount > 0 ||
+    input.progress.abstractFallbackCount !== input.progress.summaryRows.length ||
+    input.selection.selectedPaperIds.length !== input.selection.totalCandidates ||
+    input.selection.selectedPaperIds.length > ABSTRACT_ONLY_EXHAUSTION_MAX_SELECTED
+  ) {
+    return undefined;
+  }
+
+  const summary =
+    input.request.selectionMode === "top_n" && input.request.topN
+      ? `analyze_papers paused because the exhausted top ${input.selection.selectedPaperIds.length}/${input.selection.totalCandidates} selection produced only abstract-fallback summaries and no full-text support was recovered.`
+      : `analyze_papers paused because all ${input.progress.summaryRows.length} analyzed papers produced only abstract-fallback summaries and no full-text support was recovered.`;
+  const evidence = [
+    `${input.progress.summaryRows.length} summary row(s) and ${input.progress.evidenceRows.length} evidence item(s) were persisted.`,
+    `Full-text coverage remained at 0/${input.progress.summaryRows.length}; abstract fallback covered all analyzed papers.`,
+    `The selected set exhausted the available corpus (${input.selection.selectedPaperIds.length}/${input.selection.totalCandidates}), so there is no larger shortlist to auto-expand into.`
+  ];
+  return {
+    summary,
+    logMessage:
+      `Persisted ${input.progress.summaryRows.length} abstract-only summary row(s) with no full-text support across an exhausted ` +
+      `${input.selection.selectedPaperIds.length}/${input.selection.totalCandidates} selection. Pausing for manual review ` +
+      `instead of auto-unblocking downstream hypothesis/experiment generation on abstract-only evidence.`,
+    evidence
+  };
+}
+
 function createAsyncQueue() {
   let tail = Promise.resolve();
   return {
@@ -1101,13 +1283,17 @@ function createAsyncQueue() {
 async function runWithConcurrency<T>(
   items: T[],
   concurrency: number,
-  worker: (item: T, index: number) => Promise<void>
+  worker: (item: T, index: number) => Promise<void>,
+  shouldStop?: () => boolean
 ): Promise<void> {
   const normalizedConcurrency = Math.max(1, Math.min(concurrency, items.length || 1));
   let nextIndex = 0;
 
   const runners = Array.from({ length: normalizedConcurrency }, async () => {
     while (true) {
+      if (shouldStop?.()) {
+        return;
+      }
       const index = nextIndex;
       nextIndex += 1;
       if (index >= items.length) {
@@ -1183,6 +1369,177 @@ async function readCorpusRows(runId: string): Promise<AnalysisCorpusRow[]> {
       }
     })
     .filter((row): row is AnalysisCorpusRow => Boolean(row?.paper_id));
+}
+
+async function readCollectEnrichmentLogs(runId: string): Promise<Map<string, CollectEnrichmentLogEntry>> {
+  const enrichmentPath = path.join(".autolabos", "runs", runId, "collect_enrichment.jsonl");
+  const enrichmentText = await safeRead(enrichmentPath);
+  return new Map(
+    enrichmentText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line) as CollectEnrichmentLogEntry;
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((entry): entry is CollectEnrichmentLogEntry => Boolean(entry?.paper_id))
+      .map((entry) => [entry.paper_id, entry] as const)
+  );
+}
+
+function mergeCorpusRowWithEnrichment(
+  row: AnalysisCorpusRow,
+  enrichment: CollectEnrichmentLogEntry | undefined
+): AnalysisCorpusRow {
+  const recoveredPdfUrl = enrichment?.pdf_resolution?.url?.trim();
+  if (!recoveredPdfUrl || resolvePaperPdfUrl(row)) {
+    return row;
+  }
+  return {
+    ...row,
+    pdf_url: recoveredPdfUrl
+  };
+}
+
+function mergeCorpusRow(base: AnalysisCorpusRow, latest: AnalysisCorpusRow): AnalysisCorpusRow {
+  return {
+    ...base,
+    ...latest,
+    abstract: latest.abstract || base.abstract,
+    url: latest.url || base.url,
+    pdf_url: latest.pdf_url || base.pdf_url,
+    authors: latest.authors.length > 0 ? latest.authors : base.authors,
+    venue: latest.venue || base.venue,
+    year: latest.year ?? base.year,
+    citation_count: latest.citation_count ?? base.citation_count,
+    influential_citation_count: latest.influential_citation_count ?? base.influential_citation_count,
+    publication_date: latest.publication_date || base.publication_date,
+    publication_types: latest.publication_types?.length ? latest.publication_types : base.publication_types,
+    fields_of_study: latest.fields_of_study?.length ? latest.fields_of_study : base.fields_of_study
+  };
+}
+
+async function readLatestArtifactBackedCorpusRows(runId: string): Promise<Map<string, AnalysisCorpusRow>> {
+  const latestById = new Map((await readCorpusRows(runId)).map((row) => [row.paper_id, row] as const));
+  if (latestById.size === 0) {
+    return latestById;
+  }
+  const enrichmentById = await readCollectEnrichmentLogs(runId);
+  for (const [paperId, row] of latestById.entries()) {
+    latestById.set(paperId, mergeCorpusRowWithEnrichment(row, enrichmentById.get(paperId)));
+  }
+  return latestById;
+}
+
+function countRowsWithoutPdf(rows: AnalysisCorpusRow[]): number {
+  return rows.filter((row) => !resolvePaperPdfUrl(row)).length;
+}
+
+async function refreshSelectedRowsFromLatestArtifacts(
+  runId: string,
+  rows: AnalysisCorpusRow[]
+): Promise<AnalysisCorpusRow[]> {
+  if (rows.length === 0) {
+    return rows;
+  }
+  let refreshed = mergeSelectedRows(rows, await readLatestArtifactBackedCorpusRows(runId));
+  if (countRowsWithoutPdf(refreshed) === 0 || !(await isCollectEnrichmentPending(runId))) {
+    return refreshed;
+  }
+
+  const deadline = Date.now() + COLLECT_ENRICHMENT_SELECTED_WAIT_MS;
+  while (Date.now() < deadline) {
+    await sleep(COLLECT_ENRICHMENT_POLL_INTERVAL_MS);
+    const next = mergeSelectedRows(rows, await readLatestArtifactBackedCorpusRows(runId));
+    if (countRowsWithoutPdf(next) < countRowsWithoutPdf(refreshed)) {
+      refreshed = next;
+    }
+    if (countRowsWithoutPdf(refreshed) === 0 || !(await isCollectEnrichmentPending(runId))) {
+      break;
+    }
+  }
+  return refreshed;
+}
+
+function mergeSelectedRows(rows: AnalysisCorpusRow[], latestById: Map<string, AnalysisCorpusRow>): AnalysisCorpusRow[] {
+  return rows.map((row) => {
+    const latest = latestById.get(row.paper_id);
+    return latest ? mergeCorpusRow(row, latest) : row;
+  });
+}
+
+async function refreshCorpusRowFromLatestArtifacts(runId: string, row: AnalysisCorpusRow): Promise<AnalysisCorpusRow> {
+  if (resolvePaperPdfUrl(row)) {
+    return row;
+  }
+  const latest = (await readLatestArtifactBackedCorpusRows(runId)).get(row.paper_id);
+  return latest ? mergeCorpusRow(row, latest) : row;
+}
+
+async function isCollectEnrichmentPending(runId: string): Promise<boolean> {
+  const collectResultPath = path.join(".autolabos", "runs", runId, "collect_result.json");
+  try {
+    const collectResult = await readJsonFile<{ enrichment?: { status?: string } }>(collectResultPath);
+    return collectResult?.enrichment?.status === "pending";
+  } catch {
+    return false;
+  }
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function refreshPdfAvailabilityScoreBreakdown(
+  scoreBreakdown: DeterministicScoreBreakdown | undefined,
+  row: AnalysisCorpusRow
+): DeterministicScoreBreakdown | undefined {
+  if (!scoreBreakdown) {
+    return scoreBreakdown;
+  }
+  return {
+    ...scoreBreakdown,
+    pdf_availability_score: resolvePaperPdfUrl(row) ? 1 : scoreBreakdown.pdf_availability_score
+  };
+}
+
+function hydrateSelectedManifestEntriesFromRows(
+  manifest: AnalysisManifest,
+  selectedRows: AnalysisCorpusRow[]
+): AnalysisManifest {
+  let changed = false;
+  const nextPapers: AnalysisManifest["papers"] = { ...manifest.papers };
+  const now = new Date().toISOString();
+  for (const row of selectedRows) {
+    const existing = nextPapers[row.paper_id];
+    if (!existing || !existing.selected) {
+      continue;
+    }
+    const nextPdfUrl = resolvePaperPdfUrl(row);
+    const nextScoreBreakdown = refreshPdfAvailabilityScoreBreakdown(existing.score_breakdown, row);
+    if (existing.pdf_url === nextPdfUrl && nextScoreBreakdown === existing.score_breakdown) {
+      continue;
+    }
+    nextPapers[row.paper_id] = {
+      ...existing,
+      pdf_url: nextPdfUrl,
+      score_breakdown: nextScoreBreakdown,
+      updatedAt: now
+    };
+    changed = true;
+  }
+  if (!changed) {
+    return manifest;
+  }
+  return {
+    ...manifest,
+    updatedAt: now,
+    papers: nextPapers
+  };
 }
 
 async function readExistingManifest(manifestPath: string): Promise<AnalysisManifest | undefined> {
@@ -1458,6 +1815,7 @@ function createFreshManifest(
           status: candidate.selected ? "pending" : "skipped",
           selected: candidate.selected,
           rank: candidate.rank,
+          pdf_url: resolvePaperPdfUrl(candidate.paper),
           summary_count: 0,
           evidence_count: 0,
           analysis_attempts: 0,
@@ -1577,6 +1935,13 @@ function buildAnalyzeProgressSummary(input: {
   failedCount: number;
   analysisMode: string;
 }): string {
+  if (input.failedCount > 0 && input.progress.summaryRows.length === 0 && input.progress.evidenceRows.length === 0) {
+    if (input.request.selectionMode === "top_n" && input.request.topN && input.selectedCount > 0 && input.totalCandidates > 0) {
+      return `Selected top ${input.selectedCount}/${input.totalCandidates} ranked papers for analysis. Persisted 0 summary row(s) and 0 evidence row(s); ${input.failedCount} attempt(s) have failed so far.`;
+    }
+    return `Selected ${input.selectedCount}/${input.totalCandidates} paper(s) for analysis. Persisted 0 summary row(s) and 0 evidence row(s); ${input.failedCount} attempt(s) have failed so far.`;
+  }
+
   if (input.failedCount > 0) {
     if (input.request.selectionMode === "top_n" && input.request.topN && input.selectedCount > 0 && input.totalCandidates > 0) {
       return `Analyzed ${input.progress.summaryRows.length}/${input.selectedCount} selected papers from ${input.totalCandidates} candidates; ${input.failedCount} failed and can be retried.`;
@@ -1690,6 +2055,37 @@ function shouldPauseForRepeatedAnalysisFailures(input: {
     return false;
   }
   return true;
+}
+
+function shouldPauseForZeroOutputStall(input: {
+  selectedCount: number;
+  attemptedCount: number;
+  failedCount: number;
+  priorRetryCount: number;
+  progress: ReturnType<typeof buildAnalysisProgress>;
+}): ZeroOutputPauseDecision | undefined {
+  if (input.progress.summaryRows.length > 0 || input.progress.evidenceRows.length > 0) {
+    return undefined;
+  }
+  if (input.attemptedCount === 0 || input.failedCount !== input.attemptedCount) {
+    return undefined;
+  }
+
+  const threshold =
+    input.priorRetryCount >= 1 && input.selectedCount >= ZERO_OUTPUT_RETRY_PAUSE_SAMPLE
+      ? Math.min(input.selectedCount, ZERO_OUTPUT_RETRY_PAUSE_SAMPLE)
+      : input.selectedCount >= ZERO_OUTPUT_EARLY_PAUSE_MIN_SELECTED
+        ? Math.min(input.selectedCount, ZERO_OUTPUT_EARLY_PAUSE_SAMPLE)
+        : 0;
+
+  if (threshold === 0 || input.attemptedCount < threshold) {
+    return undefined;
+  }
+
+  return {
+    attemptedCount: input.attemptedCount,
+    threshold
+  };
 }
 
 function shouldPreservePartialArtifactsOnSelectionRegression(input: {

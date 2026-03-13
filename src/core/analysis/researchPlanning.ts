@@ -151,7 +151,7 @@ export interface ExperimentDesignCandidate {
   implementation_notes: string[];
   evaluation_steps: string[];
   risks: string[];
-  budget_notes: string[];
+  resource_notes: string[];
 }
 
 export interface ExperimentDesignResult {
@@ -275,7 +275,7 @@ interface RawDesignCandidate {
   implementation_notes?: unknown;
   evaluation_steps?: unknown;
   risks?: unknown;
-  budget_notes?: unknown;
+  resource_notes?: unknown;
 }
 
 export async function generateHypothesesFromEvidence(args: {
@@ -919,7 +919,7 @@ function buildDesignPrompt(
     '      "implementation_notes": ["note"],',
     '      "evaluation_steps": ["step"],',
     '      "risks": ["risk"],',
-    '      "budget_notes": ["budget note"]',
+    '      "resource_notes": ["resource note"]',
     "    }",
     "  ],",
     '  "selected_id": "plan_1"',
@@ -1584,10 +1584,10 @@ function normalizeDesignCandidate(
     ]),
     evaluation_steps: dedupeStrings([...normalizeStringArray(raw.evaluation_steps), ...guidance.evaluationSteps]),
     risks: normalizeStringArray(raw.risks),
-    budget_notes:
-      normalizeStringArray(raw.budget_notes).length > 0
-        ? normalizeStringArray(raw.budget_notes)
-        : buildDefaultBudgetNotes(constraintProfile)
+    resource_notes:
+      normalizeStringArray(raw.resource_notes).length > 0
+        ? normalizeStringArray(raw.resource_notes)
+        : buildDefaultResourceNotes(constraintProfile)
   };
 }
 
@@ -1639,7 +1639,7 @@ function buildFallbackDesigns(
         "Compare the hypothesis-driven change against the baseline."
       ],
       risks: ["Specification may be underspecified and require narrower scope."],
-      budget_notes: buildDefaultBudgetNotes(constraintProfile)
+      resource_notes: buildDefaultResourceNotes(constraintProfile)
     };
   });
   const selected = candidates[0]!;
@@ -2086,11 +2086,11 @@ function candidateSimilarity(a: HypothesisCandidate, b: HypothesisCandidate): nu
   return union === 0 ? 0 : overlap / union;
 }
 
-function buildDefaultBudgetNotes(constraintProfile: ConstraintProfile): string[] {
+function buildDefaultResourceNotes(constraintProfile: ConstraintProfile): string[] {
   if (constraintProfile.experiment.designNotes.length > 0) {
     return [...constraintProfile.experiment.designNotes];
   }
-  return ["Stay within the configured local execution budget."];
+  return ["Stay within the configured local execution limits."];
 }
 
 function emitProgress(

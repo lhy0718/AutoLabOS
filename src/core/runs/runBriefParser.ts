@@ -234,7 +234,7 @@ function buildRunBriefPrompt(
     "- If the brief already has an explicit Topic/주제 field, preserve its wording closely and do not fold constraints into the topic.",
     "- For generalized briefs, keep topic close to the core literature question; do not inject operational qualifiers like resource-aware, CPU-only, runtime, memory, or small public datasets unless they already appear in the explicit topic.",
     "- objective_metric should be the main success criterion or metric.",
-    "- constraints should capture explicit limits, required datasets/tools, time windows, venue style, or budget constraints.",
+    "- constraints should capture explicit limits, required datasets/tools, time windows, venue style, or resource constraints.",
     "- Preserve one constraint per bullet/item when the brief uses a list.",
     "- plan_summary should preserve experimental intent that does not fit neatly into topic/objective/constraints.",
     "- If a field is missing, fall back to the provided defaults only when necessary.",

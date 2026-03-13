@@ -13,6 +13,8 @@ export interface TuiThemePalette {
   muted: number;
   subtle: number;
   panel: number;
+  panelBg: number;
+  composerBg: number;
   selected: number;
   success: number;
   warning: number;
@@ -27,6 +29,8 @@ export const TUI_THEME: TuiThemePalette = {
   muted: 245,
   subtle: 239,
   panel: 240,
+  panelBg: 236,
+  composerBg: 236,
   selected: 237,
   success: 150,
   warning: 179,

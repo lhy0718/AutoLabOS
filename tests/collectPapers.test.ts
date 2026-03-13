@@ -1215,12 +1215,20 @@ describe("collectPapers bibtex", () => {
     expect(completionIndex).toBeGreaterThan(progressIndex);
 
     const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
-      enrichment?: { status?: string; processedCount?: number; blocking?: boolean };
+      enrichment?: {
+        status?: string;
+        processedCount?: number;
+        attemptedCount?: number;
+        updatedCount?: number;
+        blocking?: boolean;
+      };
     } | undefined;
     expect(lastResult?.enrichment).toMatchObject({
       blocking: false,
       status: "completed",
-      processedCount: 2
+      processedCount: 2,
+      attemptedCount: 2,
+      updatedCount: 0
     });
     expect(await readRunContextValue(root, runId, "collect_papers.last_error")).toBeNull();
     expect(await readRunContextValue(root, runId, "collect_papers.enrichment_last_error")).toBeNull();

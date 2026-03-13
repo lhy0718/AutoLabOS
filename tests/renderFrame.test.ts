@@ -81,7 +81,7 @@ describe("buildFrame", () => {
       thinking: false,
       thinkingFrame: 0,
       run: makeRun(),
-      logs: ["현재 수집된 논문은 20편입니다.", "1. First paper title"],
+      logs: ["The current run has 20 collected papers.", "1. First paper title"],
       input: "",
       inputCursor: 0,
       suggestions: [],
@@ -89,14 +89,14 @@ describe("buildFrame", () => {
       colorEnabled: true
     });
 
-    const answerLine = frame.lines.find((line) => stripAnsi(line) === "• 현재 수집된 논문은 20편입니다.") ?? "";
+    const answerLine = frame.lines.find((line) => stripAnsi(line) === "• The current run has 20 collected papers.") ?? "";
     const titleLine = frame.lines.find((line) => stripAnsi(line) === "• 1. First paper title") ?? "";
 
     expect(answerLine).toMatch(/\x1b\[[0-9;]*38;5;255m/);
     expect(titleLine).toMatch(/\x1b\[[0-9;]*38;5;255m/);
   });
 
-  it("renders compact header with version", () => {
+  it("renders an empty transcript without the old boxed header", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: false,
@@ -112,9 +112,9 @@ describe("buildFrame", () => {
     });
 
     const plain = frame.lines.map((line) => stripAnsi(line));
-    expect(plain[0]).toMatch(/^\+-+\+$/);
-    expect(plain.some((line) => line.includes("AutoLabOS (v1.0.0)"))).toBe(true);
-    expect(plain.some((line) => line.includes("model: not configured"))).toBe(true);
+    expect(plain.some((line) => line.includes("AutoLabOS"))).toBe(false);
+    expect(plain.some((line) => line.includes("model:"))).toBe(false);
+    expect(plain[frame.inputLineIndex - 1]).toContain("› ");
   });
 
   it("renders active run insight lines above recent logs", () => {
@@ -201,7 +201,7 @@ describe("buildFrame", () => {
     const plain = frame.lines.map((line) => stripAnsi(line));
     const insightTitleIndex = plain.indexOf("Result analysis");
     const logsIndex = plain.indexOf("• ready");
-    expect(insightTitleIndex).toBeGreaterThan(0);
+    expect(insightTitleIndex).toBeGreaterThanOrEqual(0);
     expect(logsIndex).toBeGreaterThan(insightTitleIndex);
     expect(plain).toContain("• Objective: met - accuracy reached the configured target.");
     expect(plain).toContain("• Recommendation: advance -> review (88%)");
@@ -262,9 +262,8 @@ describe("buildFrame", () => {
     expect(plain).not.toContain("Activity: Collecting...");
     expect(plain).toContain("• Collecting...");
     const promptIndex = frame.inputLineIndex - 1;
-    expect(plain[promptIndex]).toContain("> ");
-    expect(plain[promptIndex - 1]).toBe("");
-    expect(plain[promptIndex - 2]).toBe("• Collecting...");
+    expect(plain[promptIndex]).toContain("› ");
+    expect(plain.slice(0, promptIndex).some((line) => line === "• Collecting...")).toBe(true);
   });
 
   it("renders collecting progress with ETA above the input", () => {
@@ -291,7 +290,33 @@ describe("buildFrame", () => {
     expect(plain).toContain("• Collecting... 199/300 (ETA ~2m 40s)");
   });
 
-  it("renders suggestions in a floating panel above the input line", () => {
+  it("renders a run-creation placeholder while /brief is starting research", () => {
+    const graph = createDefaultGraphState();
+    graph.currentNode = "collect_papers";
+    graph.nodeStates.collect_papers.status = "pending";
+
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: true,
+      activityLabel: "Starting research...",
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun({ graph, currentNode: "collect_papers" }),
+      logs: [],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    const promptIndex = frame.inputLineIndex - 1;
+    expect(plain).toContain("• Starting research...");
+    expect(plain[promptIndex]).toContain("Creating a new research run. Wait for the first node update.");
+  });
+
+  it("renders suggestions in a Codex-style surface below the input line", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: false,
@@ -307,14 +332,14 @@ describe("buildFrame", () => {
     });
 
     const inputLine = frame.lines[frame.inputLineIndex - 1];
-    expect(stripAnsi(inputLine)).toContain("> /");
+    expect(stripAnsi(inputLine)).toContain("› /");
 
-    const suggestionRows = frame.lines.slice(0, frame.inputLineIndex - 1).map((line) => stripAnsi(line));
-    expect(suggestionRows.some((row) => row.includes("Command suggestions"))).toBe(true);
-    expect(suggestionRows.some((row) => row.includes("> /doctor  Run environment checks"))).toBe(true);
+    const suggestionRows = frame.lines.slice(frame.inputLineIndex).map((line) => stripAnsi(line));
+    expect(suggestionRows.some((row) => row.includes("Commands"))).toBe(false);
+    expect(suggestionRows.some((row) => row.includes("/doctor  Run environment checks"))).toBe(true);
   });
 
-  it("renders contextual guidance in a floating panel above the input when provided", () => {
+  it("does not render contextual guidance as a floating panel when provided", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: false,
@@ -337,9 +362,8 @@ describe("buildFrame", () => {
     });
 
     const plain = frame.lines.map((line) => stripAnsi(line));
-    expect(plain.some((line) => line.includes("Next actions"))).toBe(true);
-    expect(plain.some((line) => line.includes("- /new  Create a research brief file"))).toBe(true);
-    expect(plain.some((line) => line.includes("- what should I do next?  Ask for the recommended next step"))).toBe(true);
+    expect(plain.some((line) => line.includes("Next actions"))).toBe(false);
+    expect(plain.some((line) => line.includes("Create a research brief file"))).toBe(false);
   });
 
   it("prefixes regular log lines with INFO/WARN/OK/ERR tags", () => {
@@ -427,7 +451,99 @@ describe("buildFrame", () => {
     expect(frame.inputColumn).toBe(7);
   });
 
-  it("highlights selected suggestion with the muted selected panel color", () => {
+  it("clips transcript to the available viewport while keeping the composer fixed", () => {
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      terminalWidth: 80,
+      terminalHeight: 12,
+      run: makeRun(),
+      logs: Array.from({ length: 20 }, (_, idx) => `log ${idx + 1}`),
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false,
+      footerItems: ["gpt-5.3-codex", "run-1"]
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    expect(plain.some((line) => line.includes("AutoLabOS"))).toBe(false);
+    expect(plain.some((line) => line.includes("log 20"))).toBe(true);
+    expect(plain[frame.inputLineIndex - 1]).toContain("› ");
+    expect(frame.transcriptHiddenLineCountAbove).toBeGreaterThan(0);
+  });
+
+  it("shows older transcript lines when a scroll offset is applied", () => {
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      terminalWidth: 80,
+      terminalHeight: 12,
+      run: makeRun(),
+      logs: Array.from({ length: 20 }, (_, idx) => `log ${idx + 1}`),
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false,
+      transcriptScrollOffset: 4,
+      footerItems: ["gpt-5.3-codex", "run-1"]
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    expect(plain.some((line) => line.includes("log 20"))).toBe(false);
+    expect(plain.some((line) => line.includes("log 16"))).toBe(true);
+    expect(frame.transcriptHiddenLineCountBelow).toBe(4);
+  });
+
+  it("renders the composer with a grey background instead of a box", () => {
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun(),
+      logs: [],
+      input: "steer this run",
+      inputCursor: 4,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: true
+    });
+
+    const inputLine = frame.lines[frame.inputLineIndex - 1] ?? "";
+    expect(stripAnsi(inputLine)).toContain("› steer this run");
+    expect(inputLine).toContain("48;5;236");
+    expect(stripAnsi(inputLine)).not.toContain("│");
+  });
+
+  it("keeps a single-line draft vertically centered inside the three-row composer", () => {
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun(),
+      logs: [],
+      input: "brief",
+      inputCursor: 5,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    expect((plain[frame.inputLineIndex - 2] ?? "").trim()).toBe("");
+    expect(plain[frame.inputLineIndex - 1]).toContain("› brief");
+    expect((plain[frame.inputLineIndex] ?? "").trim()).toBe("");
+  });
+
+  it("highlights selected suggestion with the Codex accent color on the same surface", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: false,
@@ -442,9 +558,10 @@ describe("buildFrame", () => {
       colorEnabled: true
     });
 
-    const selectedRow = frame.lines.find((line) => stripAnsi(line).includes("> /doctor  Run environment checks")) || "";
+    const selectedRow = frame.lines.find((line) => stripAnsi(line).includes("/doctor  Run environment checks")) || "";
     expect(selectedRow).toContain("\x1b[");
-    expect(selectedRow).toContain("48;5;237");
+    expect(selectedRow).toContain("38;5;110");
+    expect(selectedRow).toContain("48;5;236");
   });
 
   it("renders selection menu rows when active", () => {
@@ -480,10 +597,10 @@ describe("buildFrame", () => {
     const plain = frame.lines.map((line) => stripAnsi(line));
     expect(plain.some((line) => line.includes("Select model"))).toBe(true);
     expect(plain.some((line) => line.includes("gpt-5.3-codex  Primary Codex model."))).toBe(true);
-    expect(plain.some((line) => line.includes("> gpt-5.2-codex"))).toBe(true);
+    expect(plain.some((line) => line.includes("gpt-5.2-codex"))).toBe(true);
   });
 
-  it("highlights selected selection menu row with the muted selected panel color", () => {
+  it("highlights selected selection menu row with the Codex accent color on the same surface", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: true,
@@ -507,9 +624,10 @@ describe("buildFrame", () => {
       }
     });
 
-    const selected = frame.lines.find((line) => stripAnsi(line).includes("> high")) || "";
+    const selected = frame.lines.find((line) => stripAnsi(line).includes("high")) || "";
     expect(selected).toContain("\x1b[");
-    expect(selected).toContain("48;5;237");
+    expect(selected).toContain("38;5;110");
+    expect(selected).toContain("48;5;236");
   });
 
   it("renders moving monochrome gradient on Thinking text", () => {
@@ -609,6 +727,59 @@ describe("buildFrame", () => {
     expect(
       plain.filter((line) => line.includes("Graph nodes:") || line.includes("generate_hypotheses") || line.includes("review") || line.includes("write_paper")).length
     ).toBeGreaterThan(1);
-    expect(plain[frame.inputLineIndex - 1]).toContain("> ");
+    expect(plain[frame.inputLineIndex - 1]).toContain("› ");
+  });
+
+  it("renders footer metadata with state, model, and version", () => {
+    const frame = buildFrame({
+      appVersion: "1.2.3",
+      busy: true,
+      thinking: false,
+      thinkingFrame: 0,
+      terminalWidth: 120,
+      run: makeRun(),
+      logs: [],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false,
+      modelLabel: "gpt-5.4 + low",
+      footerItems: ["running", "collect_papers pending"]
+    });
+
+    const footer = stripAnsi(frame.lines.at(-1) ?? "");
+    expect(footer.startsWith("running")).toBe(true);
+    expect(footer).toContain("running");
+    expect(footer).toContain("collect_papers pending");
+    expect(footer).toContain("gpt-5.4 + low");
+    expect(footer).toContain("v1.2.3");
+  });
+
+  it("keeps footer metadata visible under the slash menu", () => {
+    const frame = buildFrame({
+      appVersion: "1.2.3",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      terminalWidth: 90,
+      run: makeRun(),
+      logs: [],
+      input: "/",
+      inputCursor: 1,
+      suggestions,
+      selectedSuggestion: 0,
+      colorEnabled: false,
+      modelLabel: "gpt-5.4 + low",
+      footerItems: ["idle"]
+    });
+
+    const footer = stripAnsi(frame.lines.at(-1) ?? "");
+    expect(footer.startsWith("↑↓ navigate")).toBe(true);
+    expect(footer).toContain("↑↓ navigate");
+    expect(footer).toContain("Tab complete");
+    expect(footer).toContain("Enter run");
+    expect(footer).toContain("gpt-5.4 + low");
+    expect(footer).toContain("v1.2.3");
   });
 });

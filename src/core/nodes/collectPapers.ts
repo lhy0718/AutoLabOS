@@ -93,6 +93,8 @@ interface CollectEnrichmentMeta {
   status: "not_needed" | "pending" | "completed" | "failed";
   targetCount: number;
   processedCount: number;
+  attemptedCount?: number;
+  updatedCount?: number;
   lastError?: string;
 }
 
@@ -256,7 +258,9 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                     blocking: false,
                     status: "not_needed",
                     targetCount: 0,
-                    processedCount: 0
+                    processedCount: 0,
+                    attemptedCount: 0,
+                    updatedCount: 0
                   }
                 }),
                 enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
@@ -368,13 +372,17 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 blocking: false,
                 status: "pending",
                 targetCount: papersToEnrich.length,
-                processedCount: 0
+                processedCount: 0,
+                attemptedCount: 0,
+                updatedCount: 0
               }
             : {
                 blocking: false,
                 status: "not_needed",
                 targetCount: 0,
-                processedCount: 0
+                processedCount: 0,
+                attemptedCount: 0,
+                updatedCount: 0
               }
       });
 
@@ -748,8 +756,10 @@ async function runEnrichmentPass(input: {
   bibtexEnriched: number;
   storedCount: number;
   processedCount: number;
+  updatedCount: number;
 }> {
   let processed = 0;
+  let updated = 0;
   let changedSinceLastPersist = false;
 
   const persistProgress = async () => {
@@ -777,7 +787,9 @@ async function runEnrichmentPass(input: {
         blocking: false,
         status: "pending",
         targetCount: input.papers.length,
-        processedCount: processed
+        processedCount: processed,
+        attemptedCount: processed,
+        updatedCount: updated
       }
     });
     await persistCollectSnapshot({
@@ -854,6 +866,7 @@ async function runEnrichmentPass(input: {
     if (previous !== next) {
       input.storedRows.set(paper.paperId, enrichedRow);
       input.storedCount = input.storedRows.size;
+      updated += 1;
       changedSinceLastPersist = true;
     }
 
@@ -880,7 +893,8 @@ async function runEnrichmentPass(input: {
     pdfRecovered: input.pdfRecovered,
     bibtexEnriched: input.bibtexEnriched,
     storedCount: input.storedCount,
-    processedCount: processed
+    processedCount: processed,
+    updatedCount: updated
   };
 }
 
@@ -1184,7 +1198,7 @@ function startDetachedEnrichment(input: {
         newPaperIds: input.newPaperIds,
         requestedQuery: input.requestedQuery,
         queryAttempts: input.queryAttempts,
-        writeCorpusArtifactsOnProgress: false,
+        writeCorpusArtifactsOnProgress: true,
         runContextMemory
       });
 
@@ -1209,7 +1223,9 @@ function startDetachedEnrichment(input: {
           blocking: false,
           status: "completed",
           targetCount: input.papers.length,
-          processedCount: enrichmentState.processedCount
+          processedCount: enrichmentState.processedCount,
+          attemptedCount: enrichmentState.processedCount,
+          updatedCount: enrichmentState.updatedCount
         }
       });
 
@@ -1267,6 +1283,8 @@ function startDetachedEnrichment(input: {
           status: "failed",
           targetCount: input.papers.length,
           processedCount: input.currentEnrichmentLogs.size,
+          attemptedCount: input.currentEnrichmentLogs.size,
+          updatedCount: 0,
           lastError: message
         }
       });

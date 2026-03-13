@@ -99,12 +99,12 @@ export const SUPPORTED_NATURAL_INPUTS: SupportedNaturalInput[] = [
     examples: ["상위 50개만 분석해줘", "title과 가장 비슷한 논문 30개만 분석", "analyze the top 100 papers"]
   },
   {
-    id: "graph_budget_approval",
-    descriptionEn: "Show graph, show budget, approve current node, or retry current node",
-    descriptionKo: "그래프 보기, 예산 보기, 현재 노드 승인, 현재 노드 재시도",
-    commandHintEn: "/agent graph | /agent budget | /approve | /retry",
-    commandHintKo: "/agent graph | /agent budget | /approve | /retry",
-    examples: ["그래프 보여줘", "예산 상태 보여줘", "승인해줘", "다시 시도해줘"]
+    id: "graph_approval",
+    descriptionEn: "Show graph, approve current node, or retry current node",
+    descriptionKo: "그래프 보기, 현재 노드 승인, 현재 노드 재시도",
+    commandHintEn: "/agent graph | /approve | /retry",
+    commandHintKo: "/agent graph | /approve | /retry",
+    examples: ["그래프 보여줘", "승인해줘", "다시 시도해줘"]
   },
   {
     id: "paper_questions",
@@ -165,16 +165,15 @@ export function isSupportedNaturalInputsQuery(text: string): boolean {
 }
 
 export function formatSupportedNaturalInputLines(language: InputLanguage): string[] {
-  const lines = [
-    language === "ko" ? "지원되는 자연어 입력 범주:" : "Supported natural-language input families:"
+  void language;
+  return [
+    "Supported natural-language controls:",
+    "- Research Brief setup: /new | /brief start --latest | e.g. create a new brief",
+    "- Status and next step: e.g. what should I do next?",
+    "- Approval: e.g. approve the current step",
+    "- Steering: e.g. focus on recent open-access review papers",
+    "- Paper checks: e.g. how many papers were collected?"
   ];
-  for (const item of SUPPORTED_NATURAL_INPUTS) {
-    const desc = language === "ko" ? item.descriptionKo : item.descriptionEn;
-    const hint = language === "ko" ? item.commandHintKo : item.commandHintEn;
-    const example = item.examples[0];
-    lines.push(hint ? `- ${desc}: ${hint} | e.g. ${example}` : `- ${desc} | e.g. ${example}`);
-  }
-  return lines.slice(0, 12);
 }
 
 export function resolveDeterministicPendingCommand(
@@ -244,16 +243,6 @@ export function resolveDeterministicPendingCommand(
       `run ${targetRun.id}의 그래프를 표시합니다.`
     );
   }
-  if (targetRun && matchesAny(lower, [/budget/i, /예산/u, /cost/i])) {
-    return buildPending(
-      language,
-      `/agent budget ${targetRun.id}`,
-      targetRun.id,
-      `Showing budget for ${targetRun.id}.`,
-      `run ${targetRun.id}의 예산 상태를 표시합니다.`
-    );
-  }
-
   const nodeCommand = resolveNodeCommand(text, targetRun?.id);
   if (nodeCommand) {
     return buildPending(language, nodeCommand.command, targetRun?.id, nodeCommand.en, nodeCommand.ko);
@@ -602,8 +591,10 @@ function buildPending(
   english: string,
   korean: string
 ): DeterministicNaturalResult {
+  void language;
+  void korean;
   return {
-    lines: [language === "ko" ? korean : english],
+    lines: [english],
     pendingCommand: command,
     targetRunId
   };

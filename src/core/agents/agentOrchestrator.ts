@@ -49,7 +49,7 @@ export class AgentOrchestrator {
       floorNode: nodeId
     });
     const run = await this.getPersistedRunOrThrow(runId);
-    if (["failed", "failed_budget"].includes(run.status)) {
+    if (run.status === "failed") {
       return {
         run,
         result: {
@@ -88,7 +88,7 @@ export class AgentOrchestrator {
     });
     const run = await this.getPersistedRunOrThrow(runId);
 
-    if (["failed", "failed_budget"].includes(run.status)) {
+    if (run.status === "failed") {
       return {
         run,
         result: {
@@ -140,11 +140,6 @@ export class AgentOrchestrator {
 
   async getGraphStatus(runId: string): Promise<RunGraphState> {
     return this.runtime.getGraph(runId);
-  }
-
-  async getBudgetStatus(runId: string): Promise<RunGraphState["budget"]> {
-    const graph = await this.runtime.getGraph(runId);
-    return graph.budget;
   }
 
   async listCheckpoints(runId: string): Promise<number[]> {

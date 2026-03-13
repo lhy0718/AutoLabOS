@@ -95,7 +95,7 @@ describe("run brief start flow", () => {
       "새 연구를 시작해줘",
       "주제: SWE-bench에서 멀티에이전트 수정 전략 비교",
       "목표: pass@1 improvement over baseline",
-      "제약: 최근 3년 논문, 오픈소스 데이터셋, 6시간 예산",
+      "제약: 최근 3년 논문, 오픈소스 데이터셋, 6시간 제한",
       "계획: baseline, ablation, confirmatory run까지 자동으로 진행"
     ].join("\n"));
 
@@ -105,7 +105,7 @@ describe("run brief start flow", () => {
     expect(run.title).toBe("Natural brief run");
     expect(run.topic).toBe("SWE-bench에서 멀티에이전트 수정 전략 비교");
     expect(run.objectiveMetric).toBe("pass@1 improvement over baseline");
-    expect(run.constraints).toEqual(["최근 3년 논문", "오픈소스 데이터셋", "6시간 예산"]);
+    expect(run.constraints).toEqual(["최근 3년 논문", "오픈소스 데이터셋", "6시간 제한"]);
     expect(runCurrentAgentWithOptions).toHaveBeenCalledWith(
       run.id,
       expect.objectContaining({ abortSignal: expect.any(AbortSignal) })
@@ -124,6 +124,13 @@ describe("run brief start flow", () => {
     expect(result.activeRunId).toBe(run.id);
     expect(result.logs.some((line) => line.includes(`Created run ${run.id}`))).toBe(true);
     expect(result.logs.some((line) => line.includes("Auto-starting research"))).toBe(true);
-    expect(result.logs.some((line) => line.includes("연구를 시작했습니다"))).toBe(true);
+    expect(
+      result.logs.some((line) => line.includes("Research start result: collect_papers started"))
+    ).toBe(true);
+    expect(
+      result.logs.some((line) =>
+        line.includes(`Created run ${run.id} from the natural-language brief and started research.`)
+      )
+    ).toBe(true);
   });
 });

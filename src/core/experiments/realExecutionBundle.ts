@@ -212,7 +212,7 @@ export async function writeRealExecutionBundle(
         tasks_per_dataset: 1
       }
     },
-    token_budget: 4096,
+    token_limit: 4096,
     paper_year_window: {
       from: 2022,
       to: new Date().getUTCFullYear()
@@ -861,7 +861,7 @@ def evaluate_trial(
     repeat_index: int,
     bundle_dir: Path,
     config: dict[str, Any],
-    token_budget: int,
+    token_limit: int,
     profile_name: str,
 ) -> dict[str, Any]:
     planner_profile = resolve_role_llm_profile(config, "planner")
@@ -891,7 +891,7 @@ def evaluate_trial(
         verifier_user,
         verifier_output,
     )
-    over_budget = int(token_count > token_budget)
+    over_limit = int(token_count > token_limit)
 
     try:
         parsed = parse_json_object(verifier_output)
@@ -906,7 +906,7 @@ def evaluate_trial(
             "prompt_id": prompt_variant["id"],
             "prompt_style": prompt_variant["id"],
             "token_count": token_count,
-            "over_budget": over_budget,
+            "over_limit": over_limit,
             "score": 0,
             "failure": 1,
             "failure_reason": f"verifier_parse_failed:{type(exc).__name__}",
@@ -958,7 +958,7 @@ def evaluate_trial(
         "prompt_id": prompt_variant["id"],
         "prompt_style": prompt_variant["id"],
         "token_count": token_count,
-        "over_budget": over_budget,
+        "over_limit": over_limit,
         "score": int(score),
         "failure": int(failure),
         "failure_reason": failure_reason,
@@ -1271,7 +1271,7 @@ def run_experiment(
     tasks_per_dataset = int(profile.get("tasks_per_dataset", 1))
     selected_tasks = sample_tasks(tasks, tasks_per_dataset)
     selected_prompts = prompts[:prompt_count]
-    token_budget = int(config.get("token_budget", 4096))
+    token_limit = int(config.get("token_limit", 4096))
     execution = config.get("execution", {})
     resume_partial_results = bool(execution.get("resume_partial_results", True)) if isinstance(execution, dict) else True
     write_progress_enabled = bool(execution.get("write_progress", True)) if isinstance(execution, dict) else True
@@ -1338,7 +1338,7 @@ def run_experiment(
             repeat_index=int(spec["repeat_index"]),
             bundle_dir=bundle_dir,
             config=config,
-            token_budget=token_budget,
+            token_limit=token_limit,
             profile_name=profile_name,
         )
 

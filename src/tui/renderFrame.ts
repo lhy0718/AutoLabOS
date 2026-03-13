@@ -1,7 +1,10 @@
 import { RunInsightCard, RunRecord, SuggestionItem } from "../types.js";
-import { ContextualGuidance, GuidanceItem } from "./contextualGuidance.js";
+import { ContextualGuidance } from "./contextualGuidance.js";
 import { PaintStyle, paint, reset, stripAnsi, TUI_THEME } from "./theme.js";
 import { getDisplayWidth } from "./displayWidth.js";
+
+const COMPOSER_PROMPT = "› ";
+const COMPOSER_PROMPT_WIDTH = getDisplayWidth(COMPOSER_PROMPT);
 
 export interface RenderFrameInput {
   appVersion: string;
@@ -10,6 +13,7 @@ export interface RenderFrameInput {
   thinking: boolean;
   thinkingFrame: number;
   terminalWidth?: number;
+  terminalHeight?: number;
   modelLabel?: string;
   workspaceLabel?: string;
   footerItems?: string[];
@@ -18,9 +22,11 @@ export interface RenderFrameInput {
   logs: string[];
   input: string;
   inputCursor: number;
+  newlineHintLabel?: string;
   suggestions: SuggestionItem[];
   selectedSuggestion: number;
   colorEnabled: boolean;
+  transcriptScrollOffset?: number;
   guidance?: ContextualGuidance;
   selectionMenu?: {
     title: string;
@@ -40,23 +46,85 @@ export interface RenderFrameOutput {
   inputLineIndex: number;
   inputColumn: number;
   thinkingLineIndex?: number;
+  totalTranscriptLines: number;
+  maxTranscriptScrollOffset: number;
+  transcriptHiddenLineCountAbove: number;
+  transcriptHiddenLineCountBelow: number;
+  appliedTranscriptScrollOffset: number;
 }
 
 export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
-  const rawLines: string[] = [];
-  let rawThinkingLineIndex: number | undefined;
   const wrapWidth = Math.max(20, (input.terminalWidth ?? 120) - 1);
-  const tipLine = buildTipLine(input);
+  const transcriptLines = buildTranscriptLines(input, wrapWidth);
+  const bottomCore = buildBottomChrome(input, wrapWidth);
 
-  rawLines.push(...renderHeaderCard(input, wrapWidth));
+  let viewport = sliceTranscriptViewport(
+    transcriptLines,
+    resolveTranscriptViewportHeight(input.terminalHeight, bottomCore.lines.length + 1),
+    input.transcriptScrollOffset ?? 0
+  );
 
-  if (tipLine) {
-    rawLines.push("");
-    rawLines.push(tipLine);
+  let footerLine = renderFooterLine(input, viewport.hiddenLineCountAbove, viewport.hiddenLineCountBelow, wrapWidth);
+  let bottomLines = footerLine ? [...bottomCore.lines, footerLine] : [...bottomCore.lines];
+
+  viewport = sliceTranscriptViewport(
+    transcriptLines,
+    resolveTranscriptViewportHeight(input.terminalHeight, bottomLines.length),
+    input.transcriptScrollOffset ?? 0
+  );
+
+  footerLine = renderFooterLine(input, viewport.hiddenLineCountAbove, viewport.hiddenLineCountBelow, wrapWidth);
+  bottomLines = footerLine ? [...bottomCore.lines, footerLine] : [...bottomCore.lines];
+
+  let lines = [...viewport.lines, ...bottomLines];
+  let inputLineIndex = viewport.lines.length + bottomCore.inputLineIndex;
+  let thinkingLineIndex =
+    bottomCore.thinkingLineIndex !== undefined ? viewport.lines.length + bottomCore.thinkingLineIndex : undefined;
+
+  if (input.terminalHeight && lines.length > input.terminalHeight) {
+    const overflow = lines.length - input.terminalHeight;
+    lines = lines.slice(-input.terminalHeight);
+    inputLineIndex = Math.max(1, inputLineIndex - overflow);
+    if (thinkingLineIndex !== undefined) {
+      thinkingLineIndex = Math.max(1, thinkingLineIndex - overflow);
+    }
   }
 
+  return {
+    lines,
+    inputLineIndex,
+    inputColumn: bottomCore.inputColumn,
+    thinkingLineIndex,
+    totalTranscriptLines: transcriptLines.length,
+    maxTranscriptScrollOffset: viewport.maxScrollOffset,
+    transcriptHiddenLineCountAbove: viewport.hiddenLineCountAbove,
+    transcriptHiddenLineCountBelow: viewport.hiddenLineCountBelow,
+    appliedTranscriptScrollOffset: viewport.appliedScrollOffset
+  };
+}
+
+interface BottomChromeOutput {
+  lines: string[];
+  inputLineIndex: number;
+  inputColumn: number;
+  thinkingLineIndex?: number;
+}
+
+interface TranscriptViewport {
+  lines: string[];
+  hiddenLineCountAbove: number;
+  hiddenLineCountBelow: number;
+  maxScrollOffset: number;
+  appliedScrollOffset: number;
+}
+
+function buildTranscriptLines(input: RenderFrameInput, wrapWidth: number): string[] {
+  const rawLines: string[] = [];
+
   if (input.runInsight?.lines.length) {
-    rawLines.push("");
+    if (rawLines.length > 0) {
+      rawLines.push("");
+    }
     rawLines.push(renderSectionHeading(input.runInsight.title, input.colorEnabled));
     for (const line of input.runInsight.lines.slice(0, 4)) {
       rawLines.push(renderInsightLine(line, input.colorEnabled));
@@ -76,120 +144,129 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
     }
   }
 
-  const recentLogs = input.logs.slice(-12);
-  rawLines.push("");
-  if (recentLogs.length === 0) {
-    rawLines.push(paint("No transcript yet. Try /new, /help, or describe the task you want to run.", { fg: TUI_THEME.muted }, input.colorEnabled));
-  } else {
-    for (const log of recentLogs) {
+  if (input.logs.length > 0) {
+    if (rawLines.length > 0) {
+      rawLines.push("");
+    }
+    for (const log of input.logs) {
       rawLines.push(renderLogLine(log, input.colorEnabled));
     }
   }
 
+  return rawLines.flatMap((line) => wrapAnsiLine(line, wrapWidth));
+}
+
+function buildBottomChrome(input: RenderFrameInput, terminalWidth: number): BottomChromeOutput {
+  const lines: string[] = [];
+  let thinkingLineIndex: number | undefined;
+
   if (input.thinking || input.activityLabel) {
-    rawLines.push("");
-    rawLines.push(
+    lines.push(
       buildAnimatedStatusText(
         `• ${input.thinking ? "Thinking..." : input.activityLabel!}`,
         input.thinkingFrame,
         input.colorEnabled
       )
     );
-    rawThinkingLineIndex = rawLines.length;
+    thinkingLineIndex = lines.length;
   }
 
-  if (input.suggestions.length > 0) {
-    rawLines.push("");
-    rawLines.push(
-      ...renderFloatingPanel(
-        "Command suggestions",
-        input.suggestions.map((suggestion, idx) =>
-          renderSuggestionRow({
-            suggestion,
-            selected: idx === input.selectedSuggestion,
-            colorEnabled: input.colorEnabled
-          })
-        ),
-        input.colorEnabled,
-        wrapWidth
-      )
-    );
+  if (lines.length > 0) {
+    lines.push("");
   }
 
-  if (input.guidance && input.guidance.items.length > 0) {
-    rawLines.push("");
-    rawLines.push(
-      ...renderFloatingPanel(
-        input.guidance.title,
-        input.guidance.items.map((item) =>
-          renderGuidanceRow({
-            item,
-            colorEnabled: input.colorEnabled
-          })
-        ),
-        input.colorEnabled,
-        wrapWidth
-      )
-    );
+  const composer = renderComposerBlock(input, terminalWidth);
+  const inputLineIndex = lines.length + composer.inputLineIndex;
+  lines.push(...composer.lines);
+
+  const panelLines = buildBottomPanelLines(input, terminalWidth);
+  if (panelLines.length > 0) {
+    lines.push(...panelLines);
   }
-
-  if (input.selectionMenu) {
-    rawLines.push("");
-    rawLines.push(
-      ...renderFloatingPanel(
-        `${input.selectionMenu.title}  (↑/↓ move, Enter select, Esc cancel)`,
-        input.selectionMenu.options.map((option, idx) =>
-          renderSelectionRow({
-            option,
-            selected: idx === input.selectionMenu?.selectedIndex,
-            colorEnabled: input.colorEnabled
-          })
-        ),
-        input.colorEnabled,
-        wrapWidth
-      )
-    );
-  }
-
-  rawLines.push("");
-  rawLines.push(renderComposerLine(input));
-  const rawInputLineIndex = rawLines.length;
-  const inputColumn = 3 + getDisplayWidth(sliceByChars(input.input, input.inputCursor));
-
-  const footerLine = renderFooterLine(input);
-  if (footerLine) {
-    rawLines.push(footerLine);
-  }
-
-  const lines: string[] = [];
-  let inputLineIndex = 0;
-  let thinkingLineIndex: number | undefined;
-
-  rawLines.forEach((line, rawIndex) => {
-    const oneBasedIndex = rawIndex + 1;
-    const wrapped =
-      oneBasedIndex === rawInputLineIndex || oneBasedIndex === rawThinkingLineIndex
-        ? [line]
-        : wrapAnsiLine(line, wrapWidth);
-    lines.push(...wrapped);
-    if (oneBasedIndex === rawThinkingLineIndex) {
-      thinkingLineIndex = lines.length;
-    }
-    if (oneBasedIndex === rawInputLineIndex) {
-      inputLineIndex = lines.length;
-    }
-  });
 
   return {
     lines,
     inputLineIndex,
-    inputColumn,
+    inputColumn: composer.inputColumn,
     thinkingLineIndex
   };
 }
 
-function sliceByChars(text: string, count: number): string {
-  return Array.from(text).slice(0, Math.max(0, count)).join("");
+function buildBottomPanelLines(input: RenderFrameInput, wrapWidth: number): string[] {
+  if (input.selectionMenu) {
+    return renderMenuSurface(
+      [
+        paint(input.selectionMenu.title, { fg: TUI_THEME.text, bg: TUI_THEME.panelBg, bold: true }, input.colorEnabled),
+        ...renderSelectionRows(
+          input.selectionMenu.options,
+          input.selectionMenu.selectedIndex,
+          input.colorEnabled,
+          wrapWidth
+        )
+      ],
+      input.colorEnabled,
+      wrapWidth
+    );
+  }
+
+  if (input.suggestions.length > 0) {
+    return renderMenuSurface(
+      renderSuggestionRows(input.suggestions, input.selectedSuggestion, input.colorEnabled, wrapWidth),
+      input.colorEnabled,
+      wrapWidth
+    );
+  }
+
+  return [];
+}
+
+function renderMenuSurface(rows: string[], colorEnabled: boolean, terminalWidth: number): string[] {
+  const contentWidth = Math.max(1, terminalWidth - 2);
+  const lines: string[] = [];
+
+  for (const row of rows) {
+    for (const wrapped of wrapAnsiLine(row, contentWidth)) {
+      lines.push(`${paint("  ", { bg: TUI_THEME.panelBg }, colorEnabled)}${wrapped}`);
+    }
+  }
+
+  return lines;
+}
+
+function resolveTranscriptViewportHeight(terminalHeight: number | undefined, bottomChromeHeight: number): number | undefined {
+  if (!terminalHeight) {
+    return undefined;
+  }
+  return Math.max(0, terminalHeight - bottomChromeHeight);
+}
+
+function sliceTranscriptViewport(
+  transcriptLines: string[],
+  viewportHeight: number | undefined,
+  requestedScrollOffset: number
+): TranscriptViewport {
+  if (viewportHeight === undefined) {
+    return {
+      lines: transcriptLines,
+      hiddenLineCountAbove: 0,
+      hiddenLineCountBelow: 0,
+      maxScrollOffset: 0,
+      appliedScrollOffset: 0
+    };
+  }
+
+  const maxScrollOffset = Math.max(0, transcriptLines.length - viewportHeight);
+  const appliedScrollOffset = Math.min(Math.max(0, requestedScrollOffset), maxScrollOffset);
+  const end = Math.max(0, transcriptLines.length - appliedScrollOffset);
+  const start = Math.max(0, end - viewportHeight);
+
+  return {
+    lines: transcriptLines.slice(start, end),
+    hiddenLineCountAbove: start,
+    hiddenLineCountBelow: transcriptLines.length - end,
+    maxScrollOffset,
+    appliedScrollOffset
+  };
 }
 
 function wrapAnsiLine(line: string, width: number): string[] {
@@ -244,78 +321,384 @@ function wrapAnsiLine(line: string, width: number): string[] {
   return out.length > 0 ? out : [line];
 }
 
-function renderHeaderCard(input: RenderFrameInput, terminalWidth: number): string[] {
-  const lines = [
-    `${paint(">_", { fg: TUI_THEME.accent, bold: true }, input.colorEnabled)} ${paint("AutoLabOS", { fg: TUI_THEME.text, bold: true }, input.colorEnabled)} ${paint(`(v${input.appVersion})`, { fg: TUI_THEME.muted }, input.colorEnabled)}`,
-    renderHeaderMetaLine("model", input.modelLabel || "not configured", input.colorEnabled, "/model to change"),
-    renderHeaderMetaLine("directory", input.workspaceLabel || ".", input.colorEnabled)
-  ];
-
-  return renderFloatingPanel(undefined, lines, input.colorEnabled, Math.min(terminalWidth, 72));
-}
-
-function renderHeaderMetaLine(
-  label: string,
-  value: string,
-  colorEnabled: boolean,
-  hint?: string
-): string {
-  const labelText = paint(`${label}:`, { fg: TUI_THEME.muted }, colorEnabled);
-  const valueText = paint(value, { fg: TUI_THEME.text, bold: label === "model" }, colorEnabled);
-  if (!hint) {
-    return `${labelText} ${valueText}`;
-  }
-  return `${labelText} ${valueText}  ${paint(hint, { fg: TUI_THEME.accent }, colorEnabled)}`;
-}
-
-function buildTipLine(input: RenderFrameInput): string | undefined {
-  let tip: string | undefined;
-  if (input.selectionMenu) {
-    tip = "Tip: Use arrow keys to move, Enter to select, and Esc to cancel.";
-  } else if (input.thinking) {
-    tip = "Tip: While thinking, new input is treated as steering.";
-  } else if (input.suggestions.length > 0) {
-    tip = "Tip: Tab inserts the highlighted command suggestion.";
-  } else if (input.busy) {
-    tip = "Tip: Activity updates stream inline while the active node is running.";
-  } else if (!input.run) {
-    tip = "Tip: Start with /new, /help, or a natural-language request.";
-  } else {
-    tip = "Tip: Use slash commands or plain language in the same prompt.";
-  }
-
-  return tip ? paint(tip, { fg: TUI_THEME.muted }, input.colorEnabled) : undefined;
-}
-
-function renderFooterLine(input: RenderFrameInput): string | undefined {
-  const items = input.footerItems?.filter((item) => item.trim().length > 0) || [];
-  if (items.length === 0) {
+function renderFooterLine(
+  input: RenderFrameInput,
+  hiddenLineCountAbove: number,
+  hiddenLineCountBelow: number,
+  terminalWidth: number
+): string | undefined {
+  const footerParts = fitFooterParts(
+    [...buildFooterHintParts(input, hiddenLineCountAbove, hiddenLineCountBelow), ...buildFooterMetaParts(input)],
+    terminalWidth
+  );
+  if (footerParts.length === 0) {
     return undefined;
   }
-  return paint(items.join(" · "), { fg: TUI_THEME.muted, dim: true }, input.colorEnabled);
+  return renderFooterParts(footerParts, input.colorEnabled);
 }
 
-function renderComposerLine(input: RenderFrameInput): string {
-  const prompt = paint(">", { fg: TUI_THEME.text, bold: true }, input.colorEnabled);
-  const hasInput = input.input.length > 0;
-  const content = hasInput
-    ? paint(input.input, { fg: TUI_THEME.text }, input.colorEnabled)
-    : paint("Ask AutoLabOS to collect, analyze, or run...", { fg: TUI_THEME.muted, dim: true }, input.colorEnabled);
-  const hint = resolveComposerHint(input);
-  return `${prompt} ${content}${hint ? `  ${paint(hint, { fg: TUI_THEME.subtle, dim: true }, input.colorEnabled)}` : ""}`;
+interface FooterPart {
+  text: string;
+  kind: "hint" | "state" | "model" | "version";
 }
 
-function resolveComposerHint(input: RenderFrameInput): string | undefined {
+function buildFooterHintParts(
+  input: RenderFrameInput,
+  hiddenLineCountAbove: number,
+  hiddenLineCountBelow: number
+): FooterPart[] {
+  const parts: FooterPart[] = [];
+
   if (input.selectionMenu) {
-    return "Esc to cancel";
+    parts.push(createFooterPart("↑↓ navigate", "hint"));
+    parts.push(createFooterPart("Enter select", "hint"));
+    parts.push(createFooterPart("Esc close", "hint"));
+    return parts;
   }
+
   if (input.suggestions.length > 0) {
-    return "Tab to insert";
+    parts.push(createFooterPart("↑↓ navigate", "hint"));
+    parts.push(createFooterPart("Tab complete", "hint"));
+    parts.push(createFooterPart("Enter run", "hint"));
+    parts.push(createFooterPart("Esc close", "hint"));
+    return parts;
   }
-  if (input.input.trim().length > 0) {
-    return "Enter to submit";
+
+  if (hiddenLineCountAbove > 0 || hiddenLineCountBelow > 0) {
+    parts.push(createFooterPart("PgUp/PgDn scroll", "hint"));
   }
-  return "/help";
+  if (hiddenLineCountBelow > 0) {
+    parts.push(createFooterPart("End latest", "hint"));
+  }
+
+  return parts;
+}
+
+function buildFooterMetaParts(input: RenderFrameInput): FooterPart[] {
+  const parts: FooterPart[] = [];
+
+  for (const item of input.footerItems || []) {
+    const trimmed = item.trim();
+    if (trimmed) {
+      parts.push(createFooterPart(trimmed, "state"));
+    }
+  }
+
+  const modelLabel = input.modelLabel?.trim();
+  if (modelLabel) {
+    parts.push(createFooterPart(modelLabel, "model"));
+  }
+
+  const versionLabel = normalizeFooterVersion(input.appVersion);
+  if (versionLabel) {
+    parts.push(createFooterPart(versionLabel, "version"));
+  }
+
+  return parts;
+}
+
+function fitFooterParts(parts: FooterPart[], terminalWidth: number): FooterPart[] {
+  let next = [...parts];
+
+  while (measureFooterParts(next) > terminalWidth && next.filter((part) => part.kind === "hint").length > 2) {
+    const lastHintIndex = next.map((part) => part.kind).lastIndexOf("hint");
+    if (lastHintIndex < 0) {
+      break;
+    }
+    next.splice(lastHintIndex, 1);
+  }
+
+  while (measureFooterParts(next) > terminalWidth && next.some((part) => part.kind === "state")) {
+    const stateIndex = next.findIndex((part) => part.kind === "state");
+    if (stateIndex < 0) {
+      break;
+    }
+    next.splice(stateIndex, 1);
+  }
+
+  while (measureFooterParts(next) > terminalWidth && next.length > 0 && next.at(-1)?.kind === "version") {
+    next = next.slice(0, -1);
+  }
+
+  const modelIndex = next.findIndex((part) => part.kind === "model");
+  if (modelIndex >= 0 && measureFooterParts(next) > terminalWidth) {
+    const withoutModel = next.filter((_, index) => index !== modelIndex);
+    const remainingWidth = Math.max(8, terminalWidth - measureFooterParts(withoutModel) - footerJoinerWidth(withoutModel.length > 0));
+    next[modelIndex] = {
+      ...next[modelIndex],
+      text: truncatePlainText(next[modelIndex]!.text, remainingWidth)
+    };
+  }
+
+  while (measureFooterParts(next) > terminalWidth && next.length > 0 && next[0]?.kind === "hint") {
+    next = next.slice(1);
+  }
+
+  while (measureFooterParts(next) > terminalWidth && next.length > 1) {
+    next = next.slice(0, -1);
+  }
+
+  if (measureFooterParts(next) > terminalWidth && next.length > 0) {
+    const lastIndex = next.length - 1;
+    next[lastIndex] = {
+      ...next[lastIndex]!,
+      text: truncatePlainText(next[lastIndex]!.text, Math.max(6, terminalWidth))
+    };
+  }
+
+  return next;
+}
+
+function normalizeFooterVersion(appVersion: string): string {
+  const trimmed = appVersion.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.startsWith("v") ? trimmed : `v${trimmed}`;
+}
+
+function createFooterPart(text: string, kind: FooterPart["kind"]): FooterPart {
+  return { text, kind };
+}
+
+function measureFooterParts(parts: FooterPart[]): number {
+  if (parts.length === 0) {
+    return 0;
+  }
+
+  return parts.reduce((total, part, index) => {
+    const partWidth = getDisplayWidth(part.text);
+    if (index === 0) {
+      return partWidth;
+    }
+    return total + footerJoinerWidth(true) + partWidth;
+  }, 0);
+}
+
+function footerJoinerWidth(include: boolean): number {
+  return include ? getDisplayWidth(" · ") : 0;
+}
+
+function renderFooterParts(parts: FooterPart[], colorEnabled: boolean): string {
+  if (parts.length === 0) {
+    return "";
+  }
+
+  const style = { fg: TUI_THEME.muted, dim: true };
+  const joiner = paint(" · ", style, colorEnabled);
+  return parts.map((part) => paint(part.text, style, colorEnabled)).join(joiner);
+}
+
+interface ComposerBlockOutput {
+  lines: string[];
+  inputLineIndex: number;
+  inputColumn: number;
+}
+
+function renderComposerBlock(input: RenderFrameInput, terminalWidth: number): ComposerBlockOutput {
+  const contentWidth = Math.max(24, terminalWidth - 1);
+  const spacerLine = renderComposerSurfaceLine({
+    prefix: " ".repeat(COMPOSER_PROMPT_WIDTH),
+    prefixStyle: { bg: TUI_THEME.composerBg },
+    content: "",
+    contentStyle: { bg: TUI_THEME.composerBg },
+    contentWidth,
+    fillStyle: { bg: TUI_THEME.composerBg },
+    colorEnabled: input.colorEnabled
+  });
+  const body = renderComposerBody(input, contentWidth);
+  return {
+    lines: [spacerLine, ...body.lines, spacerLine],
+    inputLineIndex: body.cursorLineIndex + 2,
+    inputColumn: 1 + body.cursorOffset
+  };
+}
+
+interface ComposerBodyOutput {
+  lines: string[];
+  cursorLineIndex: number;
+  cursorOffset: number;
+}
+
+function renderComposerBody(input: RenderFrameInput, contentWidth: number): ComposerBodyOutput {
+  const availableWidth = Math.max(1, contentWidth - COMPOSER_PROMPT_WIDTH);
+  const backgroundStyle = { bg: TUI_THEME.composerBg };
+  const promptStyle = { fg: TUI_THEME.text, bg: TUI_THEME.composerBg, bold: true };
+  const textStyle = { fg: TUI_THEME.text, bg: TUI_THEME.composerBg };
+  const placeholderStyle = { fg: TUI_THEME.muted, bg: TUI_THEME.composerBg, dim: true };
+  const busyPlaceholder =
+    input.busy && input.activityLabel?.startsWith("Starting research")
+      ? "Creating a new research run. Wait for the first node update."
+      : "Add steering to redirect the current run.";
+
+  if (input.input.length === 0) {
+    return {
+      lines: [
+      renderComposerSurfaceLine({
+        prefix: COMPOSER_PROMPT,
+        prefixStyle: promptStyle,
+        content: truncatePlainText(
+          input.busy
+            ? busyPlaceholder
+            : input.run
+              ? "Add steering, or wait for the next run or approval."
+              : "Start with /new to create a Research Brief.",
+          availableWidth
+        ),
+        contentStyle: placeholderStyle,
+        contentWidth,
+        fillStyle: backgroundStyle,
+        colorEnabled: input.colorEnabled
+      })
+      ],
+      cursorLineIndex: 0,
+      cursorOffset: COMPOSER_PROMPT_WIDTH
+    };
+  }
+
+  const fullLines = input.input.split("\n");
+  const beforeCursor = Array.from(input.input).slice(0, Math.max(0, input.inputCursor)).join("");
+  const cursorLogicalLineIndex = beforeCursor.split("\n").length - 1;
+  const currentLineBeforeCursor = beforeCursor.split("\n").at(-1) ?? "";
+  const cursorCharCount = Array.from(currentLineBeforeCursor).length;
+  const renderedLines: string[] = [];
+  let cursorLineIndex = 0;
+  let cursorOffset = COMPOSER_PROMPT_WIDTH;
+
+  for (const [logicalLineIndex, line] of fullLines.entries()) {
+    const segments = wrapComposerLine(line, availableWidth);
+    const cursorLocation =
+      logicalLineIndex === cursorLogicalLineIndex ? locateWrappedCursor(segments, cursorCharCount) : undefined;
+
+    for (const [segmentIndex, segment] of segments.entries()) {
+      const isPromptLine = renderedLines.length === 0;
+      renderedLines.push(
+        renderComposerSurfaceLine({
+          prefix: isPromptLine ? COMPOSER_PROMPT : " ".repeat(COMPOSER_PROMPT_WIDTH),
+          prefixStyle: isPromptLine ? promptStyle : backgroundStyle,
+          content: segment.text,
+          contentStyle: textStyle,
+          contentWidth,
+          fillStyle: backgroundStyle,
+          colorEnabled: input.colorEnabled
+        })
+      );
+
+      if (cursorLocation && cursorLocation.segmentIndex === segmentIndex) {
+        cursorLineIndex = renderedLines.length - 1;
+        cursorOffset = COMPOSER_PROMPT_WIDTH + cursorLocation.cursorOffset;
+      }
+    }
+  }
+
+  return {
+    lines: renderedLines,
+    cursorLineIndex,
+    cursorOffset
+  };
+}
+
+interface WrappedComposerSegment {
+  text: string;
+  charCount: number;
+  width: number;
+}
+
+function wrapComposerLine(text: string, maxWidth: number): WrappedComposerSegment[] {
+  const chars = Array.from(text);
+  if (chars.length === 0) {
+    return [{ text: "", charCount: 0, width: 0 }];
+  }
+
+  const segments: WrappedComposerSegment[] = [];
+  let currentChars: string[] = [];
+  let currentWidth = 0;
+
+  for (const char of chars) {
+    const charWidth = getDisplayWidth(char);
+    if (currentWidth > 0 && currentWidth + charWidth > maxWidth) {
+      segments.push({
+        text: currentChars.join(""),
+        charCount: currentChars.length,
+        width: currentWidth
+      });
+      currentChars = [char];
+      currentWidth = charWidth;
+      continue;
+    }
+
+    currentChars.push(char);
+    currentWidth += charWidth;
+  }
+
+  segments.push({
+    text: currentChars.join(""),
+    charCount: currentChars.length,
+    width: currentWidth
+  });
+
+  return segments;
+}
+
+function locateWrappedCursor(
+  segments: WrappedComposerSegment[],
+  cursorCharCount: number
+): { segmentIndex: number; cursorOffset: number } {
+  let remainingChars = Math.max(0, cursorCharCount);
+
+  for (const [segmentIndex, segment] of segments.entries()) {
+    if (remainingChars <= segment.charCount) {
+      const prefix = Array.from(segment.text)
+        .slice(0, remainingChars)
+        .join("");
+      return {
+        segmentIndex,
+        cursorOffset: getDisplayWidth(prefix)
+      };
+    }
+    remainingChars -= segment.charCount;
+  }
+
+  const lastSegment = segments[segments.length - 1] ?? { text: "", charCount: 0, width: 0 };
+  return {
+    segmentIndex: Math.max(0, segments.length - 1),
+    cursorOffset: lastSegment.width
+  };
+}
+
+function renderComposerSurfaceLine(args: {
+  prefix: string;
+  prefixStyle: PaintStyle;
+  content: string;
+  contentStyle: PaintStyle;
+  contentWidth: number;
+  fillStyle: PaintStyle;
+  colorEnabled: boolean;
+}): string {
+  const usedWidth = getDisplayWidth(args.prefix) + getDisplayWidth(args.content);
+  const fillWidth = Math.max(0, args.contentWidth - usedWidth);
+  return `${paint(args.prefix, args.prefixStyle, args.colorEnabled)}${paint(args.content, args.contentStyle, args.colorEnabled)}${paint(" ".repeat(fillWidth), args.fillStyle, args.colorEnabled)}`;
+}
+
+function takeHeadByWidth(chars: string[], maxWidth: number): string[] {
+  const out: string[] = [];
+  let width = 0;
+  for (const char of chars) {
+    const charWidth = getDisplayWidth(char);
+    if (width + charWidth > maxWidth) {
+      break;
+    }
+    out.push(char);
+    width += charWidth;
+  }
+  return out;
+}
+
+function truncatePlainText(text: string, maxWidth: number): string {
+  if (getDisplayWidth(text) <= maxWidth) {
+    return text;
+  }
+  return `${takeHeadByWidth(Array.from(text), Math.max(1, maxWidth - 3)).join("")}...`;
 }
 
 function renderFloatingPanel(
@@ -327,8 +710,9 @@ function renderFloatingPanel(
   const visibleRows = title ? [title, ...rows] : [...rows];
   const maxContentWidth = Math.max(...visibleRows.map((row) => getDisplayWidth(stripAnsi(row))), 0);
   const contentWidth = Math.min(Math.max(24, maxContentWidth), Math.max(24, terminalWidth - 4));
-  const border = paint(`+${"-".repeat(contentWidth + 2)}+`, { fg: TUI_THEME.panel }, colorEnabled);
-  const rendered = [border];
+  const topBorder = paint(`╭${"─".repeat(contentWidth + 2)}╮`, { fg: TUI_THEME.panel }, colorEnabled);
+  const bottomBorder = paint(`╰${"─".repeat(contentWidth + 2)}╯`, { fg: TUI_THEME.panel }, colorEnabled);
+  const rendered = [topBorder];
 
   visibleRows.forEach((row, index) => {
     const body =
@@ -336,11 +720,11 @@ function renderFloatingPanel(
         ? paint(stripAnsi(title) === title ? title : row, { fg: TUI_THEME.text, bold: true }, colorEnabled)
         : row;
     rendered.push(
-      `${paint("|", { fg: TUI_THEME.panel }, colorEnabled)} ${padAnsiRight(body, contentWidth)} ${paint("|", { fg: TUI_THEME.panel }, colorEnabled)}`
+      `${paint("│", { fg: TUI_THEME.panel }, colorEnabled)} ${padAnsiRight(body, contentWidth)} ${paint("│", { fg: TUI_THEME.panel }, colorEnabled)}`
     );
   });
 
-  rendered.push(border);
+  rendered.push(bottomBorder);
   return rendered;
 }
 
@@ -360,51 +744,110 @@ interface SuggestionRowArgs {
   suggestion: SuggestionItem;
   selected: boolean;
   colorEnabled: boolean;
+  descriptionColumn?: number;
 }
 
 function renderSuggestionRow(args: SuggestionRowArgs): string {
-  const marker = args.selected
-    ? paint(">", { fg: TUI_THEME.accent, bold: true }, args.colorEnabled)
-    : paint(" ", { fg: TUI_THEME.subtle }, args.colorEnabled);
-  const commandStyle = args.selected
-    ? { fg: TUI_THEME.text, bg: TUI_THEME.selected, bold: true }
-    : { fg: TUI_THEME.text };
-  const descriptionStyle = args.selected
-    ? { fg: TUI_THEME.text, bg: TUI_THEME.selected }
-    : { fg: TUI_THEME.muted };
-  return `${marker} ${paint(args.suggestion.label, commandStyle, args.colorEnabled)}  ${paint(args.suggestion.description, descriptionStyle, args.colorEnabled)}`;
-}
-
-interface GuidanceRowArgs {
-  item: GuidanceItem;
-  colorEnabled: boolean;
-}
-
-function renderGuidanceRow(args: GuidanceRowArgs): string {
-  return `${paint("-", { fg: TUI_THEME.accent }, args.colorEnabled)} ${paint(args.item.label, { fg: TUI_THEME.text }, args.colorEnabled)}  ${paint(args.item.description, { fg: TUI_THEME.muted }, args.colorEnabled)}`;
+  return renderPopupMenuRow({
+    label: args.suggestion.label,
+    description: args.suggestion.description,
+    selected: args.selected,
+    colorEnabled: args.colorEnabled,
+    descriptionColumn: args.descriptionColumn
+  });
 }
 
 interface SelectionRowArgs {
   option: SelectionMenuOption;
   selected: boolean;
   colorEnabled: boolean;
+  descriptionColumn?: number;
 }
 
 function renderSelectionRow(args: SelectionRowArgs): string {
-  const marker = args.selected
-    ? paint(">", { fg: TUI_THEME.accent, bold: true }, args.colorEnabled)
-    : paint(" ", { fg: TUI_THEME.subtle }, args.colorEnabled);
-  const labelStyle = args.selected
-    ? { fg: TUI_THEME.text, bg: TUI_THEME.selected, bold: true }
-    : { fg: TUI_THEME.text };
-  const descriptionStyle = args.selected
-    ? { fg: TUI_THEME.text, bg: TUI_THEME.selected }
-    : { fg: TUI_THEME.muted };
-  const text = paint(args.option.label, labelStyle, args.colorEnabled);
-  if (!args.option.description) {
-    return `${marker} ${text}`;
+  return renderPopupMenuRow({
+    label: args.option.label,
+    description: args.option.description,
+    selected: args.selected,
+    colorEnabled: args.colorEnabled,
+    descriptionColumn: args.descriptionColumn
+  });
+}
+
+function renderSuggestionRows(
+  suggestions: SuggestionItem[],
+  selectedSuggestion: number,
+  colorEnabled: boolean,
+  wrapWidth: number
+): string[] {
+  const descriptionColumn = computeMenuDescriptionColumn(
+    suggestions.map((suggestion) => suggestion.label),
+    suggestions.map((suggestion) => suggestion.description),
+    Math.max(1, wrapWidth - 4)
+  );
+  return suggestions.map((suggestion, idx) =>
+    renderSuggestionRow({
+      suggestion,
+      selected: idx === selectedSuggestion,
+      colorEnabled,
+      descriptionColumn
+    })
+  );
+}
+
+function renderSelectionRows(
+  options: SelectionMenuOption[],
+  selectedIndex: number,
+  colorEnabled: boolean,
+  wrapWidth: number
+): string[] {
+  const descriptionColumn = computeMenuDescriptionColumn(
+    options.map((option) => option.label),
+    options.map((option) => option.description),
+    Math.max(1, wrapWidth - 4)
+  );
+  return options.map((option, idx) =>
+    renderSelectionRow({
+      option,
+      selected: idx === selectedIndex,
+      colorEnabled,
+      descriptionColumn
+    })
+  );
+}
+
+function computeMenuDescriptionColumn(
+  labels: string[],
+  descriptions: Array<string | undefined>,
+  contentWidth: number
+): number | undefined {
+  if (!descriptions.some((description) => Boolean(description))) {
+    return undefined;
   }
-  return `${marker} ${text}  ${paint(args.option.description, descriptionStyle, args.colorEnabled)}`;
+
+  const widestLabel = labels.reduce((max, label) => Math.max(max, getDisplayWidth(label)), 0);
+  const maxDescriptionColumn = Math.max(12, Math.floor(contentWidth * 0.7));
+  return Math.min(widestLabel + 2, maxDescriptionColumn);
+}
+
+function renderPopupMenuRow(args: {
+  label: string;
+  description?: string;
+  selected: boolean;
+  colorEnabled: boolean;
+  descriptionColumn?: number;
+}): string {
+  const labelStyle = args.selected ? { fg: TUI_THEME.accent, bold: true } : { fg: TUI_THEME.text };
+  const descriptionStyle = args.selected
+    ? { fg: TUI_THEME.accent, bold: true }
+    : { fg: TUI_THEME.muted, dim: true };
+  const label = paint(args.label, labelStyle, args.colorEnabled);
+  if (!args.description || args.descriptionColumn === undefined) {
+    return label;
+  }
+
+  const gap = Math.max(2, args.descriptionColumn - getDisplayWidth(args.label));
+  return `${label}${" ".repeat(gap)}${paint(args.description, descriptionStyle, args.colorEnabled)}`;
 }
 
 function renderInsightLine(line: string, colorEnabled: boolean): string {
@@ -471,10 +914,9 @@ function classifyLogLine(log: string): ClassifiedLogLine {
 
   if (
     log === "Help" ||
-    log === "Core:" ||
-    log === "Workflow:" ||
-    log === "Collection:" ||
-    log === "Natural language:"
+    log === "Flow:" ||
+    log === "Controls:" ||
+    log === "Notes:"
   ) {
     return {
       marker: "•",
@@ -574,10 +1016,6 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     };
   }
   if (
-    lower.startsWith("현재 수집된 논문은") ||
-    lower.startsWith("pdf 경로가 없는 논문은") ||
-    lower.startsWith("citation이 가장 높은 논문은") ||
-    lower.startsWith("논문 제목 ") ||
     lower.startsWith("the current run has ") ||
     lower.startsWith("papers without a pdf path:") ||
     lower.startsWith("the top-cited paper is ") ||
@@ -640,14 +1078,7 @@ function classifyLogLine(log: string): ClassifiedLogLine {
       textStyle: { fg: TUI_THEME.danger, bold: true }
     };
   }
-  if (lower.startsWith("next step:") || lower.startsWith("execution intent detected")) {
-    return {
-      marker: "•",
-      prefixStyle: { fg: TUI_THEME.accent, bold: true },
-      textStyle: { fg: TUI_THEME.text, bold: true }
-    };
-  }
-  if (log.startsWith("다음 단계:") || log.startsWith("실행 의도 감지")) {
+  if (lower.startsWith("next step:") || lower.startsWith("next action:") || lower.startsWith("execution intent detected")) {
     return {
       marker: "•",
       prefixStyle: { fg: TUI_THEME.accent, bold: true },
@@ -657,16 +1088,8 @@ function classifyLogLine(log: string): ClassifiedLogLine {
   if (
     lower.startsWith("natural query:") ||
     lower.startsWith("available commands:") ||
-    lower.startsWith("current node:") ||
-    lower.startsWith("budget:")
+    lower.startsWith("current node:")
   ) {
-    return {
-      marker: "•",
-      prefixStyle: { fg: TUI_THEME.accent, bold: true },
-      textStyle: { fg: TUI_THEME.text, bold: true }
-    };
-  }
-  if (log.startsWith("자연어 질의:") || log.startsWith("현재 노드:") || log.startsWith("예산:")) {
     return {
       marker: "•",
       prefixStyle: { fg: TUI_THEME.accent, bold: true },
@@ -694,24 +1117,8 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     };
   }
   if (
-    log.startsWith("런:") ||
-    log.startsWith("상태:") ||
-    log.startsWith("워크플로:") ||
-    log.startsWith("노드 ") ||
-    log.startsWith("생성된 run") ||
-    log.startsWith("선택된 run") ||
-    log.startsWith("그래프 ") ||
-    log.startsWith("재개됨") ||
-    log.startsWith("재시도 ") ||
-    log.startsWith("승인됨")
-  ) {
-    return {
-      marker: "•",
-      prefixStyle: { fg: TUI_THEME.accent, bold: true },
-      textStyle: { fg: TUI_THEME.text }
-    };
-  }
-  if (
+    lower.startsWith("next step ready:") ||
+    lower.startsWith("a pending step is ready.") ||
     lower.startsWith("type 'y'") ||
     lower.startsWith("pending command:") ||
     lower.startsWith("pending plan:") ||

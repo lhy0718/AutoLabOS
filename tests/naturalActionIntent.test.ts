@@ -62,7 +62,7 @@ describe("naturalActionIntent", () => {
     });
 
     expect(result?.commands).toEqual([`/agent collect --sort relevance --limit 300 --open-access --run ${run.id}`]);
-    expect(result?.displayActions).toEqual(["논문 수집 (limit=300, openAccess=true)"]);
+    expect(result?.displayActions).toEqual(["Collect papers (limit=300, openAccess=true)"]);
     expect(runForText).not.toHaveBeenCalled();
   });
 
@@ -77,7 +77,7 @@ describe("naturalActionIntent", () => {
     });
 
     expect(result?.commands).toEqual([`/agent run analyze_papers ${run.id} --top-n 30`]);
-    expect(result?.displayActions).toEqual(["상위 30개 논문 분석"]);
+    expect(result?.displayActions).toEqual(["Analyze top 30 papers"]);
     expect(runForText).not.toHaveBeenCalled();
   });
 
@@ -94,7 +94,7 @@ describe("naturalActionIntent", () => {
     expect(result?.commands).toEqual([
       `/agent run generate_hypotheses ${run.id} --top-k 10 --branch-count 10`
     ]);
-    expect(result?.displayActions).toEqual(["가설 생성 (topK=10, branchCount=10)"]);
+    expect(result?.displayActions).toEqual(["Generate hypotheses (topK=10, branchCount=10)"]);
     expect(runForText).not.toHaveBeenCalled();
   });
 
@@ -126,8 +126,8 @@ describe("naturalActionIntent", () => {
       `/agent collect "${run.title}" --sort relevance --limit 50 --run ${run.id}`
     ]);
     expect(result?.displayActions).toEqual([
-      "collect_papers 산출물 정리",
-      `논문 수집 (query=\"${run.title}\", limit=50)`
+      "Clear collect_papers artifacts",
+      `Collect papers (query=\"${run.title}\", limit=50)`
     ]);
   });
 

@@ -12,8 +12,6 @@ export interface NaturalAssistantResponse {
   pendingCommand?: string;
 }
 
-type InputLanguage = "en" | "ko";
-
 const STRUCTURE_KEYWORDS = [
   "structure",
   "architecture",
@@ -94,29 +92,23 @@ export function matchesNaturalAssistantIntent(input: string): boolean {
 export function buildNaturalAssistantResponse(ctx: NaturalAssistantContext): NaturalAssistantResponse {
   const text = ctx.input.trim();
   const lower = text.toLowerCase();
-  const language = detectInputLanguage(text);
   const wantsStructure = includesAny(lower, STRUCTURE_KEYWORDS);
   const wantsNext = includesAny(lower, NEXT_KEYWORDS);
   const wantsStatus = includesAny(lower, STATUS_KEYWORDS);
   const wantsExecution = includesAny(lower, EXECUTE_INTENT_KEYWORDS);
-
   const targetRun = resolveTargetRun(ctx.runs, ctx.activeRunId, lower);
 
   const lines: string[] = [];
   if (wantsStructure) {
     lines.push(
-      localize(
-        language,
-        "Workflow: collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> review -> write_paper",
-        "워크플로: collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> review -> write_paper"
-      )
+      "Workflow: collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> review -> write_paper"
     );
   }
 
   if (!targetRun) {
-    lines.push(localize(language, "No run is active yet.", "활성 run이 없습니다."));
-    lines.push(localize(language, "Next step: /new", "다음 단계: /new"));
-    lines.push(localize(language, "Optional check: /doctor", "선택 점검: /doctor"));
+    lines.push("No run is active yet.");
+    lines.push("Next action: new brief");
+    lines.push("Create a Research Brief with /new and start it with /brief start --latest.");
     return { lines, pendingCommand: wantsExecution ? "/new" : undefined };
   }
 
@@ -127,16 +119,12 @@ export function buildNaturalAssistantResponse(ctx: NaturalAssistantContext): Nat
   }).length;
 
   if (wantsStatus || wantsNext || wantsExecution) {
-    lines.push(localize(language, `Run: ${targetRun.id} | ${targetRun.title}`, `런: ${targetRun.id} | ${targetRun.title}`));
+    lines.push(`Run: ${targetRun.id} | ${targetRun.title}`);
     lines.push(
-      localize(
-        language,
-        `Status: ${targetRun.status} | Node: ${targetRun.currentNode} (${nodeState.status}) | Progress: ${doneCount}/${GRAPH_NODE_ORDER.length}`,
-        `상태: ${targetRun.status} | 노드: ${targetRun.currentNode} (${nodeState.status}) | 진행률: ${doneCount}/${GRAPH_NODE_ORDER.length}`
-      )
+      `Status: ${targetRun.status} | Node: ${targetRun.currentNode} (${nodeState.status}) | Progress: ${doneCount}/${GRAPH_NODE_ORDER.length}`
     );
 
-    const recommendation = buildNextStepRecommendation(targetRun, nodeState.status, language);
+    const recommendation = buildNextStepRecommendation(targetRun, nodeState.status);
     lines.push(...recommendation.lines);
     return {
       lines,
@@ -145,13 +133,7 @@ export function buildNaturalAssistantResponse(ctx: NaturalAssistantContext): Nat
     };
   }
 
-  lines.push(
-    localize(
-      language,
-      "I can answer run status, next step, and result counts. Ask for details like: 'How many papers were collected?'",
-      "run 상태, 다음 단계, 결과 개수 질문에 답할 수 있습니다. 예: '논문 몇 개 수집됐어?'"
-    )
-  );
+  lines.push("I can answer run status and next-step questions. Ask: What should I do next?");
   return {
     lines,
     targetRunId: targetRun.id
@@ -165,64 +147,33 @@ interface NextStepRecommendation {
 
 function buildNextStepRecommendation(
   run: RunRecord,
-  nodeStatus: RunRecord["graph"]["nodeStates"][GraphNodeId]["status"],
-  language: InputLanguage
+  nodeStatus: RunRecord["graph"]["nodeStates"][GraphNodeId]["status"]
 ): NextStepRecommendation {
   if (run.status === "completed") {
     return {
-      lines: [
-        localize(language, "Run is already completed.", "run이 이미 완료되었습니다."),
-        localize(language, "Next step: /new", "다음 단계: /new")
-      ],
+      lines: ["Run is already completed.", "Next action: new brief"],
       primaryCommand: "/new"
-    };
-  }
-
-  if (run.status === "failed_budget") {
-    const command = `/agent budget ${run.id}`;
-    return {
-      lines: [
-        localize(language, `Budget exceeded at ${run.currentNode}.`, `예산이 ${run.currentNode} 단계에서 초과되었습니다.`),
-        localize(language, `Next step: ${command}`, `다음 단계: ${command}`),
-        localize(
-          language,
-          `Then retry: /agent retry ${run.currentNode} ${run.id}`,
-          `그 다음 재시도: /agent retry ${run.currentNode} ${run.id}`
-        )
-      ],
-      primaryCommand: command
     };
   }
 
   if (run.status === "failed" || nodeStatus === "failed") {
     const command = `/agent retry ${run.currentNode} ${run.id}`;
     return {
-      lines: [localize(language, `Next step: ${command}`, `다음 단계: ${command}`)],
+      lines: ["Next action: run", `This retries ${run.currentNode}.`],
       primaryCommand: command
     };
   }
 
   if (run.status === "paused" && nodeStatus === "needs_approval") {
     return {
-      lines: [localize(language, "Next step: /approve", "다음 단계: /approve")],
+      lines: ["Next action: approve", "Approve the current step to continue the workflow."],
       primaryCommand: "/approve"
-    };
-  }
-
-  if (run.status === "running" || run.status === "pending" || nodeStatus === "pending" || nodeStatus === "running") {
-    const command = `/agent run ${run.currentNode} ${run.id}`;
-    return {
-      lines: [localize(language, `Next step: ${command}`, `다음 단계: ${command}`)],
-      primaryCommand: command
     };
   }
 
   const command = `/agent run ${run.currentNode} ${run.id}`;
   return {
-    lines: [
-      localize(language, "You can inspect graph status with /agent graph", "/agent graph 로 그래프 상태를 확인할 수 있습니다."),
-      localize(language, `Suggested execution: ${command}`, `권장 실행: ${command}`)
-    ],
+    lines: ["Next action: run", `This continues ${run.currentNode}.`],
     primaryCommand: command
   };
 }
@@ -246,12 +197,4 @@ function resolveTargetRun(runs: RunRecord[], activeRunId: string | undefined, lo
 
 function includesAny(text: string, keywords: string[]): boolean {
   return keywords.some((keyword) => text.includes(keyword));
-}
-
-function detectInputLanguage(input: string): InputLanguage {
-  return /[\p{Script=Hangul}]/u.test(input) ? "ko" : "en";
-}
-
-function localize(language: InputLanguage, english: string, korean: string): string {
-  return language === "ko" ? korean : english;
 }

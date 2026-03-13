@@ -114,14 +114,6 @@ export function applyEventToRunProjection(run: RunRecord, event: AutoLabOSEvent)
         event.node,
         readNumberPayload(event.payload.retryAttempt)
       );
-    case "BUDGET_EXCEEDED":
-      return updateProjectedRun(run, event.node, event.timestamp, {
-        runStatus: "failed_budget",
-        nodeStatus: "failed",
-        note: readStringPayload(event.payload.reason),
-        lastError: readStringPayload(event.payload.reason),
-        clearPendingTransition: true
-      });
     case "NODE_COMPLETED":
       return updateProjectedRun(run, event.node, event.timestamp, {
         runStatus: event.node === GRAPH_NODE_ORDER[GRAPH_NODE_ORDER.length - 1] ? "completed" : undefined,
@@ -299,6 +291,13 @@ function resolveDisplayNode(run: RunRecord, hints?: RunProjectionHints): GraphNo
     if (graphNodeStatus && graphNodeStatus !== "failed") {
       return graphNode;
     }
+  }
+
+  if (
+    run.status === "failed" &&
+    run.graph.nodeStates[run.currentNode]?.status !== "failed"
+  ) {
+    return resolveFailedNode(run);
   }
 
   if (hints?.analyze && run.currentNode === "analyze_papers" && run.status === "paused") {

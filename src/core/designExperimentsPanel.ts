@@ -5,7 +5,7 @@ export type DesignExperimentsPanelReviewerId =
   | "designer"
   | "feasibility_reviewer"
   | "statistical_reviewer"
-  | "ops_budget_planner";
+  | "ops_capacity_planner";
 
 export interface DesignExperimentsPanelReview {
   reviewer_id: DesignExperimentsPanelReviewerId;
@@ -51,7 +51,7 @@ export function runDesignExperimentsPanel(input: {
     reviews.push(buildDesignerReview(candidate));
     reviews.push(buildFeasibilityReview(candidate));
     reviews.push(buildStatisticalReview(candidate, input.objectiveProfile));
-    reviews.push(buildOpsBudgetReview(candidate, input.managedBundleSupported));
+    reviews.push(buildOpsCapacityReview(candidate, input.managedBundleSupported));
   }
 
   const scores = input.candidates.map((candidate) =>
@@ -178,34 +178,34 @@ function buildStatisticalReview(
   };
 }
 
-function buildOpsBudgetReview(
+function buildOpsCapacityReview(
   candidate: ExperimentDesignCandidate,
   managedBundleSupported: boolean
 ): DesignExperimentsPanelReview {
   const datasetLoad = candidate.datasets.length;
   const implementationLoad = candidate.implementation_notes.length;
-  const budgetNotesPresent = candidate.budget_notes.length > 0;
-  const hardBlock = datasetLoad > 6 || (!budgetNotesPresent && datasetLoad > 3);
+  const resourceNotesPresent = candidate.resource_notes.length > 0;
+  const hardBlock = datasetLoad > 6 || (!resourceNotesPresent && datasetLoad > 3);
   const rawScore =
     5 -
     (datasetLoad > 4 ? 1 : 0) -
     (datasetLoad > 6 ? 2 : 0) -
     (implementationLoad > 6 ? 1 : 0) -
-    (!budgetNotesPresent ? 1 : 0) +
+    (!resourceNotesPresent ? 1 : 0) +
     (managedBundleSupported ? 1 : 0);
   return {
-    reviewer_id: "ops_budget_planner",
-    reviewer_label: "Ops-budget planner",
+    reviewer_id: "ops_capacity_planner",
+    reviewer_label: "Ops-capacity planner",
     candidate_id: candidate.id,
     score_1_to_5: clampScore(rawScore),
     hard_block: hardBlock,
     summary: hardBlock
-      ? "The plan is oversized for the current execution budget assumptions."
+      ? "The plan is oversized for the current execution capacity."
       : managedBundleSupported
-        ? "The plan fits the current execution model and can be scheduled within the managed budget envelope."
+        ? "The plan fits the current execution model and can be scheduled within the managed execution envelope."
         : "The plan is operationally acceptable, but it will rely on plain execution rather than the managed bundle.",
     findings: uniqueStrings([
-      budgetNotesPresent ? candidate.budget_notes[0] || "" : "No budget notes were specified.",
+      resourceNotesPresent ? candidate.resource_notes[0] || "" : "No resource notes were specified.",
       managedBundleSupported ? "Managed real_execution bundle support is available." : "Managed real_execution bundle support is unavailable.",
       datasetLoad > 0 ? `${datasetLoad} dataset(s) are in scope.` : "No datasets are in scope."
     ]).slice(0, 3)
@@ -219,7 +219,7 @@ function buildCandidateScore(
   const candidateReviews = reviews.filter((review) => review.candidate_id === candidate.id);
   const feasibilityScore = candidateReviews.find((review) => review.reviewer_id === "feasibility_reviewer")?.score_1_to_5 || 0;
   const statisticalScore = candidateReviews.find((review) => review.reviewer_id === "statistical_reviewer")?.score_1_to_5 || 0;
-  const opsFitScore = candidateReviews.find((review) => review.reviewer_id === "ops_budget_planner")?.score_1_to_5 || 0;
+  const opsFitScore = candidateReviews.find((review) => review.reviewer_id === "ops_capacity_planner")?.score_1_to_5 || 0;
   const blockedBy = candidateReviews
     .filter((review) => review.hard_block)
     .map((review) => review.reviewer_id);

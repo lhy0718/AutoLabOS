@@ -32,17 +32,25 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
 }
 
 describe("buildContextualGuidance", () => {
-  it("shows startup actions when no run exists", () => {
+  it("shows the minimal Research Brief entry flow when no run exists", () => {
     const guidance = buildContextualGuidance({});
 
-    expect(guidance?.title).toBe("Start here");
-    expect(guidance?.items.some((item) => item.label === "/new")).toBe(true);
-    expect(guidance?.items.some((item) => item.label === "/help")).toBe(true);
-    expect(guidance?.items.some((item) => item.label === "what natural inputs are supported?")).toBe(true);
-    expect(guidance?.items.length).toBeGreaterThanOrEqual(7);
+    expect(guidance?.title).toBe("Research brief");
+    expect(guidance?.items).toEqual([
+      {
+        label: "new brief",
+        description: "Create a Markdown Research Brief in .autolabos/briefs.",
+        applyValue: "/new"
+      },
+      {
+        label: "start latest brief",
+        description: "Start the most recent Research Brief file.",
+        applyValue: "/brief start --latest"
+      }
+    ]);
   });
 
-  it("shows a broad action catalog for an active run", () => {
+  it("shows only run and steering for an active run", () => {
     const run = makeRun({
       id: "run-active",
       currentNode: "analyze_papers",
@@ -53,15 +61,14 @@ describe("buildContextualGuidance", () => {
 
     const guidance = buildContextualGuidance({ run });
 
-    expect(guidance?.title).toBe("Next actions");
-    expect(guidance?.items[0]?.label).toBe("/agent run analyze_papers run-active");
-    expect(guidance?.items[1]?.label).toBe("/agent status run-active");
-    expect(guidance?.items.some((item) => item.label === "/agent graph run-active")).toBe(true);
-    expect(guidance?.items.some((item) => item.label === "/agent budget run-active")).toBe(true);
-    expect(guidance?.items.some((item) => item.label === "/agent count analyze_papers run-active")).toBe(true);
-    expect(guidance?.items.some((item) => item.label === "/agent run analyze_papers run-active --top-n 50")).toBe(true);
-    expect(guidance?.items.some((item) => item.label === "analyze the top 50 papers")).toBe(true);
-    expect(guidance?.items.length).toBeGreaterThanOrEqual(10);
+    expect(guidance?.title).toBe("Next step");
+    expect(guidance?.items[0]).toEqual({
+      label: "run",
+      description: "Continue analyze_papers.",
+      applyValue: "/agent run analyze_papers run-active"
+    });
+    expect(guidance?.items[1]?.label).toBe("steering");
+    expect(guidance?.items).toHaveLength(2);
   });
 
   it("switches guidance to the running recovery node instead of the stale failed node", () => {
@@ -78,8 +85,7 @@ describe("buildContextualGuidance", () => {
 
     const guidance = buildContextualGuidance({ run });
 
-    expect(guidance?.items[0]?.label).toBe("/agent run analyze_papers run-recovery");
-    expect(guidance?.items.some((item) => item.label === "/agent retry generate_hypotheses run-recovery")).toBe(false);
+    expect(guidance?.items[0]?.applyValue).toBe("/agent run analyze_papers run-recovery");
   });
 
   it("prefers checkpoint-backed node guidance when the run index lags behind", () => {
@@ -118,11 +124,10 @@ describe("buildContextualGuidance", () => {
       }
     });
 
-    expect(guidance?.items[0]?.label).toBe("/agent run implement_experiments run-checkpoint");
-    expect(guidance?.items.some((item) => item.label === "/agent run design_experiments run-checkpoint")).toBe(false);
+    expect(guidance?.items[0]?.applyValue).toBe("/agent run implement_experiments run-checkpoint");
   });
 
-  it("keeps rollback guidance on the design recovery target after implement_experiments fails", () => {
+  it("shows approve first when the projected node needs approval", () => {
     const run = makeRun({
       id: "run-rollback",
       currentNode: "implement_experiments",
@@ -133,9 +138,6 @@ describe("buildContextualGuidance", () => {
     run.graph.checkpointSeq = 17;
     run.graph.nodeStates.design_experiments.status = "completed";
     run.graph.nodeStates.implement_experiments.status = "failed";
-    run.graph.nodeStates.implement_experiments.updatedAt = "2026-03-12T10:22:48.582Z";
-    run.graph.nodeStates.implement_experiments.lastError =
-      "Local verification failed via python -m py_compile outputs/example/experiment/run.py (environment): [Errno 2] No such file or directory.";
 
     const checkpointSnapshot = makeRun({
       id: "run-rollback",
@@ -146,13 +148,7 @@ describe("buildContextualGuidance", () => {
     checkpointSnapshot.graph.currentNode = "design_experiments";
     checkpointSnapshot.graph.checkpointSeq = 19;
     checkpointSnapshot.graph.nodeStates.design_experiments.status = "needs_approval";
-    checkpointSnapshot.graph.nodeStates.design_experiments.updatedAt = "2026-03-12T10:24:11.005Z";
-    checkpointSnapshot.graph.nodeStates.design_experiments.note =
-      "Three executable CPU-only experiment designs compare lightweight tabular classification baselines against unmodified logistic regression.";
     checkpointSnapshot.graph.nodeStates.implement_experiments.status = "failed";
-    checkpointSnapshot.graph.nodeStates.implement_experiments.updatedAt = "2026-03-12T10:22:48.582Z";
-    checkpointSnapshot.graph.nodeStates.implement_experiments.lastError =
-      "Local verification failed via python -m py_compile outputs/example/experiment/run.py (environment): [Errno 2] No such file or directory.";
 
     const guidance = buildContextualGuidance({
       run,
@@ -166,16 +162,16 @@ describe("buildContextualGuidance", () => {
       }
     });
 
-    expect(guidance?.items[0]?.label).toBe("/approve");
-    expect(guidance?.items.some((item) => item.label === "/agent retry design_experiments run-rollback")).toBe(true);
-    expect(guidance?.items.some((item) => item.label === "/agent retry implement_experiments run-rollback")).toBe(false);
-
-    const countItem = guidance?.items.find((item) => item.label === "/agent count design_experiments run-rollback");
-    expect(countItem?.description).toContain("experiment designs");
-    expect(countItem?.description).not.toContain("evidence");
+    expect(guidance?.title).toBe("Approval");
+    expect(guidance?.items[0]).toEqual({
+      label: "approve",
+      description: "Approve design_experiments and continue the workflow.",
+      applyValue: "/approve"
+    });
+    expect(guidance?.items[1]?.label).toBe("run");
   });
 
-  it("surfaces model-switch guidance when analyze_papers is blocked by a usage limit", () => {
+  it("keeps usage-limit guidance on run while mentioning /model in the description", () => {
     const run = makeRun({
       id: "run-usage-limit",
       currentNode: "analyze_papers",
@@ -204,9 +200,9 @@ describe("buildContextualGuidance", () => {
       }
     });
 
-    expect(guidance?.items[0]?.label).toBe("/model");
-    expect(guidance?.items.some((item) => item.label === "/agent retry analyze_papers run-usage-limit")).toBe(true);
-    expect(guidance?.items.some((item) => item.label === "/agent count analyze_papers run-usage-limit")).toBe(true);
+    expect(guidance?.items[0]?.label).toBe("run");
+    expect(guidance?.items[0]?.applyValue).toBe("/agent retry analyze_papers run-usage-limit");
+    expect(guidance?.items[0]?.description).toContain("/model");
   });
 
   it("targets the upstream node when a downstream step is blocked by missing evidence", () => {
@@ -234,52 +230,37 @@ describe("buildContextualGuidance", () => {
       }
     });
 
-    expect(guidance?.items[0]?.label).toBe("/agent retry analyze_papers run-blocked");
-    expect(guidance?.items.some((item) => item.label === "/agent retry generate_hypotheses run-blocked")).toBe(false);
+    expect(guidance?.items[0]?.applyValue).toBe("/agent retry analyze_papers run-blocked");
   });
 
-  it("shows y/a/n controls for pending plans", () => {
+  it("shows run/cancel only for pending plans while keeping the preview in the description", () => {
     const guidance = buildContextualGuidance({
-      pendingPlan: {
-        command: "/agent run collect_papers run-1",
-        commands: ["/agent run collect_papers run-1", "/agent run analyze_papers run-1"],
-        stepIndex: 0,
-        totalSteps: 2
-      }
-    });
-
-    expect(guidance?.title).toBe("Pending plan");
-    expect(guidance?.items.some((item) => item.label === "y")).toBe(true);
-    expect(guidance?.items.some((item) => item.label === "a")).toBe(true);
-    expect(guidance?.items.some((item) => item.label === "n")).toBe(true);
-  });
-
-  it("localizes guidance to Korean when requested", () => {
-    const guidance = buildContextualGuidance({ language: "ko" });
-
-    expect(guidance?.title).toBe("시작 가이드");
-    expect(guidance?.items.some((item) => item.label === "지원되는 자연어 입력을 보여줘")).toBe(true);
-    expect(guidance?.items.some((item) => item.label === "/설정" || item.label === "/settings")).toBe(true);
-  });
-
-  it("keeps display and apply values separate for pending plans", () => {
-    const guidance = buildContextualGuidance({
-      language: "ko",
       pendingPlan: {
         command: "/agent run analyze_papers run-1 --top-n 30",
         commands: ["/agent run analyze_papers run-1 --top-n 30"],
-        displayCommands: ["상위 30개 논문 분석"],
+        displayCommands: ["Analyze top 30 papers"],
         stepIndex: 0,
         totalSteps: 1
       }
     });
 
-    expect(guidance?.items[0]?.label).toBe("상위 30개 논문 분석");
-    expect(guidance?.items[0]?.applyValue).toBe("/agent run analyze_papers run-1 --top-n 30");
+    expect(guidance?.title).toBe("Command ready");
+    expect(guidance?.items).toEqual([
+      {
+        label: "run",
+        description: "Run step 1/1: Analyze top 30 papers",
+        applyValue: "y"
+      },
+      {
+        label: "cancel",
+        description: "Cancel this pending command.",
+        applyValue: "n"
+      }
+    ]);
   });
 
-  it("detects guidance language from user text", () => {
-    expect(detectGuidanceLanguageFromText("현재 상태 보여줘")).toBe("ko");
+  it("keeps guidance in English even after Hangul input", () => {
+    expect(detectGuidanceLanguageFromText("현재 상태 보여줘")).toBe("en");
     expect(detectGuidanceLanguageFromText("show current status")).toBe("en");
   });
 });

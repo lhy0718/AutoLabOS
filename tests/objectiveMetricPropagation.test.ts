@@ -35,7 +35,7 @@ class StructuredResultAnalysisLLM extends MockLLMClient {
         text: JSON.stringify({
           discussion_points: [
             "The shared-state schema condition met the accuracy target and outperformed the baseline on the reported comparisons.",
-            "Supplemental confirmatory and quick-check runs remained above the objective threshold, which supports stability across smaller and larger budgets.",
+            "Supplemental confirmatory and quick-check runs remained above the objective threshold, which supports stability across smaller and larger trial scales.",
             "The recent paper comparison suggests the current run exceeds the strongest recent reference score in the provided window."
           ],
           failure_analysis: [
@@ -209,7 +209,7 @@ describe("objective metric propagation", () => {
         '    - "Measure treatment vs baseline deltas."',
         "  risks:",
         '    - "Small sample size may exaggerate gains."',
-        "  budget_notes:",
+        "  resource_notes:",
         '    - "Quick-check scale execution only."',
         "shortlisted_designs:",
         '  - id: "design_accuracy"',

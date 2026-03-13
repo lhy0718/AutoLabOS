@@ -170,7 +170,7 @@ describe("InteractionSession", () => {
 
     const result = await session.submitInput("수집된 논문은 몇건이지?");
 
-    expect(result.logs.some((line) => line.includes("현재 수집된 논문은 3편입니다."))).toBe(true);
+    expect(result.logs.some((line) => line.includes("The current run has 3 collected papers."))).toBe(true);
   });
 
   it("shows structured analyze_results details in /agent count logs", async () => {

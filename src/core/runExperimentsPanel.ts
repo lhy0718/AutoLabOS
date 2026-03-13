@@ -22,7 +22,7 @@ export interface RunExperimentsExecutionPlan {
     command: string;
     metrics_path: string;
   }>;
-  rerun_budget: {
+  rerun_policy: {
     max_automatic_reruns: number;
   };
 }
@@ -92,7 +92,7 @@ export function buildRunExperimentsExecutionPlan(input: {
       command: profile.command,
       metrics_path: profile.metricsPath
     })),
-    rerun_budget: {
+    rerun_policy: {
       max_automatic_reruns: 1
     }
   };
@@ -154,7 +154,7 @@ export function decideRunExperimentsRerun(input: {
   if (input.automaticRerunsUsed >= maxAutomaticReruns) {
     return {
       decision: "fail_fast",
-      reason: "The automatic rerun budget for transient command failures is exhausted."
+      reason: "The automatic rerun limit for transient command failures is exhausted."
     };
   }
 
