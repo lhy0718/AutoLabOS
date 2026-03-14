@@ -2,34 +2,133 @@
 
 This document captures minimum quality requirements around `write_paper` outputs.
 
+It distinguishes between:
+- paper-shaped draft
+- system validation note
+- research memo
+- paper-ready experimental manuscript
+
+A successful paper build is not automatically a paper-ready manuscript.
+
 ## 1) Structural artifact requirements
-
 When `write_paper` succeeds:
-
 - `paper/main.tex` must exist.
 - `paper/references.bib` must exist.
 - `paper/evidence_links.json` must exist.
+- `paper/paper_readiness.json` should exist.
+- `paper/claim_evidence_table.json` should exist when major claims are present.
 
 ## 2) Evidence linkage sanity
-
 `paper/evidence_links.json` must be structurally useful:
-
-- Contains a non-empty `claims` array when claims are present.
-- Each major claim entry includes:
+- contains a non-empty `claims` array when claims are present
+- each major claim entry includes:
   - non-empty `claim_id`
   - non-empty statement text
   - at least one concrete evidence or citation reference
-- Reject obviously empty placeholder mappings (blank, `TODO`, `TBD`, `placeholder`, `unknown`).
+- reject obviously empty placeholder mappings
+  - blank
+  - `TODO`
+  - `TBD`
+  - `placeholder`
+  - `unknown`
 
-## 3) Review packet handoff discipline
+## 3) Claim-evidence table expectation
+For papers that make experimental claims, `paper/claim_evidence_table.json` should map each major claim to:
+- evidence source type
+  - literature
+  - experiment
+  - qualitative observation
+  - limitation
+- artifact or citation reference
+- confidence / strength level
+- downgrade note when evidence is weak
 
+If the manuscript makes claims that cannot be mapped back to evidence,
+the review stage should block paper-ready status.
+
+## 4) Review packet handoff discipline
 Before drafting, review output should be structurally complete:
+- review packet has core sections (`readiness`, `checks`, `suggested_actions`)
+- decision and revision artifacts are present when decisioning is active
+- readiness state explicitly distinguishes:
+  - `system_validation_note`
+  - `research_memo`
+  - `paper_scale_candidate`
+  - `paper_ready`
+  - `blocked_for_paper_scale`
 
-- Review packet has core sections (`readiness`, `checks`, `suggested_actions`).
-- Decision and revision artifacts are present when decisioning is active.
+## 5) Paper-ready minimum gate
+For a manuscript to be marked `paper_ready=true`, all of the following should hold:
 
-## 4) Claim strength and evidence discipline
+1. The paper states a clear research question.
+2. Related work is more than shallow title/abstract paraphrase.
+3. The method section corresponds to actual executed work.
+4. The experiment section identifies task/dataset/metric.
+5. At least one baseline or comparator is explicit.
+6. At least one quantitative result or compact result table is present.
+7. Major claims are traceable to evidence.
+8. Limitations or failure modes are stated.
+9. The paper does not center internal workflow validation as the main scientific contribution.
 
+## 6) Automatic downgrade / block conditions
+The manuscript must not be labeled `paper_ready` when any of the following is true:
+- no executed external experiment
+- no baseline or comparator
+- no result table or recoverable quantitative comparison
+- claims exceed evidence
+- related work is too shallow to support positioning
+- the main contribution is really pipeline validation rather than research on an external task
+- the manuscript is mostly generated filler around weak artifacts
+
+In such cases, downgrade to one of:
+- `system_validation_note`
+- `research_memo`
+- `paper_scale_candidate`
+- `blocked_for_paper_scale`
+
+## 7) Claim strength and evidence discipline
 - Do not overstate claims beyond available artifacts.
 - If evidence is weak or incomplete, downgrade claim language explicitly.
 - Do not fabricate statistics, confidence intervals, or reproducibility claims.
+- Do not convert runtime completion into scientific success.
+- Do not present workflow traces as if they were external experimental findings.
+
+## 8) Related-work discipline
+Related work should support positioning, not just decorate the paper.
+At minimum:
+- the paper should identify the most relevant comparator family
+- the paper should position the proposed experiment against concrete prior approaches
+- related work should not be purely metadata-level when stronger evidence is available
+- if full-text grounding is limited, the manuscript should say so explicitly
+
+## 9) Method/result consistency
+The method and result sections must agree on what was actually run.
+Do not claim:
+- ablations that were not executed
+- baseline comparisons that do not exist
+- robustness checks that were not performed
+- statistical procedures that were not run
+
+## 10) Limitation discipline
+A paper-ready manuscript must include limitations.
+Typical limitations include:
+- small dataset scope
+- restricted compute budget
+- shallow comparator set
+- non-significant improvement
+- sensitivity to prompts or implementation details
+- incomplete literature coverage
+
+## 11) Why this bar exists
+Paper generation is the easiest place for weak evidence to become inflated prose.
+This bar exists to preserve:
+- honest scientific writing
+- traceable claims
+- clear downgrade paths
+- operator trust in manuscript quality
+
+## 12) Intended strictness
+- Strict on structural artifact presence.
+- Strict on claim→evidence linkage.
+- Strict on blocking obviously underpowered “paper-ready” labels.
+- Conservative on stylistic judgments.

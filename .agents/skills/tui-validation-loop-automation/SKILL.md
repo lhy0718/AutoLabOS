@@ -15,6 +15,12 @@ description: 작업이 test/ 하위 실제 TUI 검증을 반복 수행하면서,
 
 이 스킬의 핵심은 **“수정”보다 “실검증 기반 재현-기록-재검증 루프”를 우선**하는 것입니다.
 
+중요:
+이 스킬의 1차 목적은 **실제 TUI/workflow/상태/아티팩트 일관성 검증**입니다.
+`cycle completed`, `write_paper completed`, `PDF built successfully`는 시스템 실행 완주를 의미할 뿐,
+논문 제출 가능 수준의 연구 완성을 의미하지 않습니다.
+실험 논문 수준의 산출물이 목표일 경우 반드시 `paper-scale-research-loop`와 함께 사용해야 합니다.
+
 ## 이 스킬을 사용하는 경우
 다음과 같은 요청일 때 사용합니다:
 
@@ -33,20 +39,21 @@ description: 작업이 test/ 하위 실제 TUI 검증을 반복 수행하면서,
 - "ISSUES.md 업데이트하면서 진행"
 - "test/ 기준 라이브 검증"
 
-## 이 스킬이 다루는 기본 원칙
-1. **실제 TUI 동작이 1차 진실원천이다.**
-2. **수정보다 먼저 재현과 기록을 한다.**
-3. **항상 `test/` 하위에서 작업한다.**
-4. **항상 가장 작은 수정만 시도한다.**
-5. **같은 플로우로 재검증하기 전에는 해결 선언을 하지 않는다.**
-6. **관찰된 사실과 가설을 분리한다.**
-7. **필요하면 fresh session과 existing session을 반드시 비교한다.**
-8. **persisted artifact와 UI 표시가 다를 수 있음을 항상 의심한다.**
+## 이 스킬이 다루지 않는 것
+다음은 이 스킬만으로 보장되지 않습니다:
+
+- 연구 주제의 학술적 타당성
+- 논문 작성 가능 스케일의 corpus adequacy
+- 반증 가능한 가설 품질
+- baseline/ablation이 포함된 실험 설계 충분성
+- 수치 결과와 표를 갖춘 paper-ready 원고
+
+위 목표가 포함되면 반드시 `paper-scale-research-loop`를 함께 사용하십시오.
 
 ## 기본 작업 디렉토리 규칙
 - 실검증용 워크스페이스는 반드시 `test/` 하위에 둡니다.
 - 실검증 중 생성되는 임시 연구 워크스페이스, 산출물, 로그, 실행 흔적도 `test/` 기준으로 관리합니다.
-- 애플리케이션 소스 수정은 루트 소스에 반영하되, **검증 실행 자체는 `test/` 컨텍스트를 기준으로 수행**합니다.
+- 애플리케이션 소스 수정은 루트 소스에 반영하되, 검증 실행 자체는 `test/` 컨텍스트를 기준으로 수행합니다.
 
 예시:
 - `test/tui-live-cycle-<timestamp>-iterN`
@@ -81,6 +88,7 @@ description: 작업이 test/ 하위 실제 TUI 검증을 반복 수행하면서,
      - Expected behavior
      - Actual behavior
      - Fresh vs existing session comparison
+     - Artifact vs UI comparison
      - Root cause hypothesis
      - Code/test changes
      - Regression status
@@ -133,7 +141,7 @@ description: 작업이 test/ 하위 실제 TUI 검증을 반복 수행하면서,
 13. 다음 반복 결정
 
 ## ISSUES.md 갱신 규칙
-- `ISSUES.md`는 **append-only 라이브 검증 기록**으로 취급합니다.
+- `ISSUES.md`는 append-only 라이브 검증 기록으로 취급합니다.
 - 기존 항목을 지우기보다:
   - 새 iteration log를 추가하고
   - 상태(open / re-validating / blocked / fixed)를 갱신하고
@@ -187,6 +195,7 @@ description: 작업이 test/ 하위 실제 TUI 검증을 반복 수행하면서,
 - 관찰과 추측을 섞어 쓰지 마십시오.
 - 한 번에 여러 실패 경계를 동시에 고치지 마십시오.
 - unrelated refactor를 끼워 넣지 마십시오.
+- `write_paper completed`만으로 paper-ready를 선언하지 마십시오.
 
 ## 좋은 완료 기준
 다음 조건을 만족하면 한 이슈에 대한 루프를 종료할 수 있습니다:
@@ -200,11 +209,7 @@ description: 작업이 test/ 하위 실제 TUI 검증을 반복 수행하면서,
 - `ISSUES.md`에 재현, 수정, 재검증, 남은 리스크가 모두 기록됨
 
 ## 권장 실행 태도
-- 한 번에 완벽히 고치려 하지 말고 **병목을 한 단계씩 줄입니다.**
+- 한 번에 완벽히 고치려 하지 말고 병목을 한 단계씩 줄입니다.
 - 각 반복은 “무엇을 배웠는가”를 남겨야 합니다.
 - 실패한 반복도 가치가 있으며, 반드시 다음 가설의 입력으로 축적합니다.
-
-## 예시 목표 문장
-- `test/` 하위 fresh TUI 세션에서 `/new -> /brief start --latest` 실행 후 implement 단계 고착 원인을 줄인다.
-- existing session에서만 발생하는 stale summary 문제를 fresh session과 비교해 `resume_reload_bug`인지 확인한다.
-- artifact는 정상인데 TUI 상단 요약이 뒤처지는 문제를 `in_memory_projection_bug` 관점에서 재현하고 축소한다.
+- 연구 완성도가 목적이면 반드시 `paper-scale-research-loop`를 함께 호출합니다.
