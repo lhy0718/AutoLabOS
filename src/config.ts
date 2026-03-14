@@ -208,7 +208,8 @@ function buildConfigFromWizardAnswers(answers: {
     experiments: {
       runner: "local_python",
       timeout_sec: 3600,
-      allow_network: false
+      allow_network: false,
+      candidate_isolation: "attempt_snapshot_restore"
     },
     paper: {
       template: "acl",
@@ -610,6 +611,15 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     mode: "agent_approval",
     wizard_enabled: true,
     approval_mode: normalizeWorkflowApprovalMode(config.workflow.approval_mode)
+  };
+  config.experiments = {
+    runner: "local_python",
+    timeout_sec: Math.max(1, config.experiments?.timeout_sec || 3600),
+    allow_network: config.experiments?.allow_network === true,
+    candidate_isolation:
+      config.experiments?.candidate_isolation === "attempt_worktree"
+        ? "attempt_worktree"
+        : "attempt_snapshot_restore"
   };
   config.paper_profile = normalizePaperProfileConfig(config.paper_profile);
   return config;

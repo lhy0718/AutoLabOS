@@ -1,5 +1,7 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
 
 import { EventStream } from "../events.js";
 import { RunStore } from "../runs/runStore.js";
@@ -19,6 +21,8 @@ import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
 import { AgentComputerInterface, AciObservation } from "../../tools/aci.js";
 import {
   buildExperimentImplementationContext,
+  CandidateIsolationAttemptReport,
+  CandidateIsolationReport,
   EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_KEY,
   loadExperimentComparisonContract,
   storeExperimentGovernanceDecision
@@ -103,6 +107,9 @@ const NON_RESTORABLE_RUN_DIR_ENTRIES = new Set([
   "implement_task_spec.json",
   "long_term_memory_result.json"
 ]);
+const execFile = promisify(execFileCallback);
+
+type CandidateIsolationStrategy = "attempt_snapshot_restore" | "attempt_worktree";
 
 type ImplementFailureType =
   | "implementation"
@@ -209,6 +216,7 @@ interface AttemptRecord {
 interface PreparedImplementAttempt {
   threadId?: string;
   branchPlan: BranchPlan;
+  workspaceRoot: string;
   rawResponse: string;
   summary: string;
   runCommand: string;
@@ -228,10 +236,27 @@ interface PreparedImplementAttempt {
 }
 
 interface ImplementAttemptSnapshot {
+  snapshotRoot: string;
+  orphanedResiduePaths: string[];
   capturePaths(paths: Array<string | undefined>): Promise<void>;
   markCreatedPaths(paths: Array<string | undefined>): void;
   restore(): Promise<{ restoredPaths: string[] }>;
   cleanup(): Promise<void>;
+}
+
+interface AttemptIsolationContext {
+  requestedStrategy: CandidateIsolationStrategy;
+  effectiveStrategy: CandidateIsolationStrategy;
+  fallbackFrom?: "attempt_worktree";
+  fallbackReason?: string;
+  controlWorkspaceRoot: string;
+  workspaceRoot: string;
+  runDir: string;
+  publicDir: string;
+  metricsPath: string;
+  attemptSnapshot?: ImplementAttemptSnapshot;
+  worktreePath?: string;
+  orphanedResiduePaths: string[];
 }
 
 interface BranchPlan {
@@ -392,10 +417,13 @@ export class ImplementSessionManager {
 
     let activeThreadId = currentThreadId;
     let finalAttempt: PreparedImplementAttempt | undefined;
+    let finalIsolation: AttemptIsolationContext | undefined;
     const attemptRecords: AttemptRecord[] = [];
     let latestSearchLocalization: LocalizationResult | undefined;
     let recentReflections = await episodeMemory.recent(run.id, "implement_experiments", 3);
     let restoredAttemptCount = 0;
+    const requestedIsolationStrategy = resolveConfiguredCandidateIsolationStrategy(this.deps.config);
+    const candidateIsolationAttempts: CandidateIsolationAttemptReport[] = [];
 
     for (let attempt = 1; attempt <= MAX_IMPLEMENT_ATTEMPTS; attempt += 1) {
       emitImplementObservation("attempt", `Implementation attempt ${attempt}/${MAX_IMPLEMENT_ATTEMPTS} started.`, {
@@ -404,6 +432,7 @@ export class ImplementSessionManager {
         publicDir: defaultPublicDir
       });
 
+      const attemptStartedAt = new Date().toISOString();
       const branchContextFiles = dedupeStrings([...changedFiles, ...historicalChangedFiles]);
       const searchLocalization = await this.localizer.localize(
         this.buildLocalizerInput(taskSpec, attemptRecords.at(-1), branchContextFiles)
@@ -411,12 +440,17 @@ export class ImplementSessionManager {
       latestSearchLocalization = searchLocalization;
       await writeJsonFile(path.join(runDir, "localization_search_result.json"), latestSearchLocalization || {});
       const branchPlan = chooseBranchPlan(searchLocalization, attemptRecords, branchContextFiles);
-      const attemptSnapshot = await createImplementAttemptSnapshot({
+      const isolation = await createAttemptIsolationContext({
+        config: this.deps.config,
         workspaceRoot: this.deps.workspaceRoot,
+        run,
         runDir,
-        attempt
+        defaultPublicDir,
+        metricsPath,
+        attempt,
+        requestedStrategy: requestedIsolationStrategy
       });
-      await attemptSnapshot.capturePaths([
+      await isolation.attemptSnapshot?.capturePaths([
         defaultPublicDir,
         metricsPath,
         ...(await listRestorableRunDirEntries(runDir)),
@@ -429,6 +463,26 @@ export class ImplementSessionManager {
       const attemptChangedFiles = new Set<string>(changedFiles);
       const attemptArtifacts = new Set<string>(artifacts);
       const attemptPublicArtifacts = new Set<string>(publicArtifacts);
+      const promptTaskSpec = translateTaskSpecToWorkspace(taskSpec, {
+        fromWorkspaceRoot: this.deps.workspaceRoot,
+        toWorkspaceRoot: isolation.workspaceRoot,
+        runDir: isolation.runDir,
+        publicDir: isolation.publicDir,
+        metricsPath: isolation.metricsPath
+      });
+      const promptSearchLocalization = translateLocalizationResultWorkspace(searchLocalization, {
+        fromWorkspaceRoot: this.deps.workspaceRoot,
+        toWorkspaceRoot: isolation.workspaceRoot
+      });
+      const actualSearchLocalization = promptSearchLocalization;
+      const promptBranchPlan = translateBranchPlanWorkspace(branchPlan, {
+        fromWorkspaceRoot: this.deps.workspaceRoot,
+        toWorkspaceRoot: isolation.workspaceRoot
+      });
+      const promptPreviousAttempt = translateAttemptRecordWorkspace(attemptRecords.at(-1), {
+        fromWorkspaceRoot: this.deps.workspaceRoot,
+        toWorkspaceRoot: isolation.workspaceRoot
+      });
 
       emitImplementObservation("localize", `Search-backed localization: ${formatLocalizationSummary(searchLocalization)}`, {
         attempt,
@@ -455,21 +509,32 @@ export class ImplementSessionManager {
 
       const result = await this.deps.codex.runTurnStream({
         prompt: this.buildAttemptPrompt({
-          taskSpec,
-          searchLocalization,
-          branchPlan,
+          taskSpec: promptTaskSpec,
+          searchLocalization: promptSearchLocalization,
+          branchPlan: promptBranchPlan,
           recentReflections,
           attempt,
-          previousAttempt: attemptRecords.at(-1),
-          existingChangedFiles: [...changedFiles],
-          historicalChangedFiles: [...historicalChangedFiles]
+          previousAttempt: promptPreviousAttempt,
+          existingChangedFiles: translatePathsBetweenWorkspaces([...changedFiles], {
+            fromWorkspaceRoot: this.deps.workspaceRoot,
+            toWorkspaceRoot: isolation.workspaceRoot
+          }),
+          historicalChangedFiles: translatePathsBetweenWorkspaces([...historicalChangedFiles], {
+            fromWorkspaceRoot: this.deps.workspaceRoot,
+            toWorkspaceRoot: isolation.workspaceRoot
+          })
         }),
         threadId: activeThreadId,
         agentId: `implementer:${run.id}`,
-        systemPrompt: this.buildSystemPrompt(runDir, defaultPublicDir, metricsPath, experimentLlmProfile),
+        systemPrompt: this.buildSystemPrompt(
+          isolation.runDir,
+          isolation.publicDir,
+          isolation.metricsPath,
+          experimentLlmProfile
+        ),
         sandboxMode: "workspace-write",
         approvalPolicy: "never",
-        workingDirectory: toSandboxFriendlyWorkspaceRoot(this.deps.workspaceRoot),
+        workingDirectory: toSandboxFriendlyWorkspaceRoot(isolation.workspaceRoot),
         abortSignal,
         onEvent: (event) => {
           rawEvents.push(event);
@@ -479,13 +544,17 @@ export class ImplementSessionManager {
             runId: run.id,
             node: "implement_experiments",
             agentRole: "implementer",
-            workspaceRoot: this.deps.workspaceRoot
+            workspaceRoot: isolation.workspaceRoot
           });
           for (const item of mapped) {
+            const nextItem = translateMappedCodexEventToPrimaryWorkspace(item, {
+              fromWorkspaceRoot: isolation.workspaceRoot,
+              toWorkspaceRoot: this.deps.workspaceRoot
+            });
             if (item.type === "PATCH_APPLIED" && !shouldTrackPatchEvent(item.payload)) {
               continue;
             }
-            this.deps.eventStream.emit(item);
+            this.deps.eventStream.emit(nextItem);
             const fileValue = typeof item.payload.file === "string" ? item.payload.file : undefined;
             if (fileValue && item.type === "PATCH_APPLIED") {
               attemptChangedFiles.add(fileValue);
@@ -504,19 +573,24 @@ export class ImplementSessionManager {
       });
       const prepared = await this.prepareAttemptResult({
         run,
-        runDir,
-        defaultPublicDir,
-        metricsPath,
+        workspaceRoot: isolation.workspaceRoot,
+        runDir: isolation.runDir,
+        defaultPublicDir: isolation.publicDir,
+        metricsPath: isolation.metricsPath,
         branchPlan,
         result,
         changedFiles: attemptChangedFiles,
         artifacts: attemptArtifacts,
         publicArtifacts: attemptPublicArtifacts,
-        attemptSnapshot,
+        attemptSnapshot: isolation.attemptSnapshot,
         experimentLlmProfile
       });
+      const preparedDisplay = translatePreparedAttemptToWorkspace(prepared, {
+        fromWorkspaceRoot: isolation.workspaceRoot,
+        toWorkspaceRoot: this.deps.workspaceRoot
+      });
       prepared.localization = mergeLocalizationResults(
-        searchLocalization,
+        actualSearchLocalization,
         prepared.localization,
         inferLocalizationFromArtifacts({
           changedFiles: prepared.changedFiles,
@@ -549,9 +623,9 @@ export class ImplementSessionManager {
       finalAttempt = prepared;
       attemptRecords.push({
         attempt,
-        summary: prepared.summary,
+        summary: preparedDisplay.summary,
         branch_plan: branchPlan,
-        localization: prepared.localization,
+        localization: preparedDisplay.localization,
         search_localization: searchLocalization,
         verify_report: verifyReport,
         reflection:
@@ -563,13 +637,13 @@ export class ImplementSessionManager {
                 branchPlan,
                 attempt,
                 verifyReport,
-                prepared,
+                prepared: preparedDisplay,
                 searchLocalization
               })
             : undefined,
-        changed_files: prepared.changedFiles,
-        artifacts: prepared.artifacts,
-        public_artifacts: prepared.publicArtifacts,
+        changed_files: preparedDisplay.changedFiles,
+        artifacts: preparedDisplay.artifacts,
+        public_artifacts: preparedDisplay.publicArtifacts,
         raw_response: prepared.rawResponse,
         restored_after_failure: false,
         restored_paths: []
@@ -579,7 +653,7 @@ export class ImplementSessionManager {
         attempts: attemptRecords
       });
       recentReflections = await episodeMemory.recent(run.id, "implement_experiments", 3);
-      attemptSnapshot.markCreatedPaths([
+      isolation.attemptSnapshot?.markCreatedPaths([
         prepared.scriptPath,
         prepared.metricsPath,
         prepared.publicDir,
@@ -589,33 +663,92 @@ export class ImplementSessionManager {
       ]);
 
       if (verifyReport.status !== "fail") {
-        replaceSetContents(changedFiles, prepared.changedFiles);
-        replaceSetContents(artifacts, prepared.artifacts);
-        replaceSetContents(publicArtifacts, prepared.publicArtifacts);
-        await attemptSnapshot.cleanup();
+        finalIsolation = isolation;
+        replaceSetContents(changedFiles, preparedDisplay.changedFiles);
+        replaceSetContents(artifacts, preparedDisplay.artifacts);
+        replaceSetContents(publicArtifacts, preparedDisplay.publicArtifacts);
+        candidateIsolationAttempts.push({
+          attempt,
+          requested_strategy: requestedIsolationStrategy,
+          effective_strategy: isolation.effectiveStrategy,
+          fallback_from: isolation.fallbackFrom,
+          fallback_reason: isolation.fallbackReason,
+          workspace_root: this.deps.workspaceRoot,
+          isolated_workspace_root:
+            isolation.effectiveStrategy === "attempt_worktree" ? isolation.workspaceRoot : undefined,
+          snapshot_root: isolation.attemptSnapshot?.snapshotRoot,
+          worktree_path: isolation.worktreePath,
+          restored_paths: [],
+          restored_after_failure: false,
+          cleanup_status: "skipped",
+          cleanup_notes: [],
+          orphaned_residue_paths: isolation.orphanedResiduePaths,
+          started_at: attemptStartedAt,
+          finished_at: new Date().toISOString()
+        });
         break;
       }
 
       if (verifyReport.next_action === "stop_for_environment" || verifyReport.next_action === "stop_for_policy") {
-        replaceSetContents(changedFiles, prepared.changedFiles);
-        replaceSetContents(artifacts, prepared.artifacts);
-        replaceSetContents(publicArtifacts, prepared.publicArtifacts);
-        await attemptSnapshot.cleanup();
+        finalIsolation = isolation;
+        replaceSetContents(changedFiles, preparedDisplay.changedFiles);
+        replaceSetContents(artifacts, preparedDisplay.artifacts);
+        replaceSetContents(publicArtifacts, preparedDisplay.publicArtifacts);
+        candidateIsolationAttempts.push({
+          attempt,
+          requested_strategy: requestedIsolationStrategy,
+          effective_strategy: isolation.effectiveStrategy,
+          fallback_from: isolation.fallbackFrom,
+          fallback_reason: isolation.fallbackReason,
+          workspace_root: this.deps.workspaceRoot,
+          isolated_workspace_root:
+            isolation.effectiveStrategy === "attempt_worktree" ? isolation.workspaceRoot : undefined,
+          snapshot_root: isolation.attemptSnapshot?.snapshotRoot,
+          worktree_path: isolation.worktreePath,
+          restored_paths: [],
+          restored_after_failure: false,
+          cleanup_status: "skipped",
+          cleanup_notes: [],
+          orphaned_residue_paths: isolation.orphanedResiduePaths,
+          started_at: attemptStartedAt,
+          finished_at: new Date().toISOString()
+        });
         break;
       }
       if (attempt >= MAX_IMPLEMENT_ATTEMPTS) {
-        replaceSetContents(changedFiles, prepared.changedFiles);
-        replaceSetContents(artifacts, prepared.artifacts);
-        replaceSetContents(publicArtifacts, prepared.publicArtifacts);
-        await attemptSnapshot.cleanup();
+        finalIsolation = isolation;
+        replaceSetContents(changedFiles, preparedDisplay.changedFiles);
+        replaceSetContents(artifacts, preparedDisplay.artifacts);
+        replaceSetContents(publicArtifacts, preparedDisplay.publicArtifacts);
+        candidateIsolationAttempts.push({
+          attempt,
+          requested_strategy: requestedIsolationStrategy,
+          effective_strategy: isolation.effectiveStrategy,
+          fallback_from: isolation.fallbackFrom,
+          fallback_reason: isolation.fallbackReason,
+          workspace_root: this.deps.workspaceRoot,
+          isolated_workspace_root:
+            isolation.effectiveStrategy === "attempt_worktree" ? isolation.workspaceRoot : undefined,
+          snapshot_root: isolation.attemptSnapshot?.snapshotRoot,
+          worktree_path: isolation.worktreePath,
+          restored_paths: [],
+          restored_after_failure: false,
+          cleanup_status: "skipped",
+          cleanup_notes: [],
+          orphaned_residue_paths: isolation.orphanedResiduePaths,
+          started_at: attemptStartedAt,
+          finished_at: new Date().toISOString()
+        });
         break;
       }
 
-      for (const filePath of prepared.changedFiles) {
+      for (const filePath of preparedDisplay.changedFiles) {
         historicalChangedFiles.add(filePath);
       }
-      const restoreResult = await attemptSnapshot.restore();
-      restoredAttemptCount += 1;
+      const restoreResult = await restoreIsolationContextForRetry(isolation);
+      if (restoreResult.restoredPaths.length > 0 || isolation.effectiveStrategy === "attempt_snapshot_restore") {
+        restoredAttemptCount += 1;
+      }
       const lastAttempt = attemptRecords.at(-1);
       if (lastAttempt) {
         lastAttempt.restored_after_failure = true;
@@ -636,11 +769,47 @@ export class ImplementSessionManager {
           publicDir: defaultPublicDir
         }
       );
-      await attemptSnapshot.cleanup();
+      const retryIsolationAttempt: CandidateIsolationAttemptReport = {
+        attempt,
+        requested_strategy: requestedIsolationStrategy,
+        effective_strategy: isolation.effectiveStrategy,
+        fallback_from: isolation.fallbackFrom,
+        fallback_reason: isolation.fallbackReason,
+        workspace_root: this.deps.workspaceRoot,
+        isolated_workspace_root:
+          isolation.effectiveStrategy === "attempt_worktree" ? isolation.workspaceRoot : undefined,
+        snapshot_root: isolation.attemptSnapshot?.snapshotRoot,
+        worktree_path: isolation.worktreePath,
+        restored_paths: restoreResult.restoredPaths,
+        restored_after_failure: true,
+        cleanup_status: "completed",
+        cleanup_notes: [],
+        orphaned_residue_paths: isolation.orphanedResiduePaths,
+        started_at: attemptStartedAt,
+        finished_at: new Date().toISOString()
+      };
+      candidateIsolationAttempts.push(retryIsolationAttempt);
+      const retryCleanup = await cleanupIsolationContext(isolation);
+      retryIsolationAttempt.cleanup_status = retryCleanup.status;
+      retryIsolationAttempt.cleanup_notes = retryCleanup.notes;
     }
 
     if (!finalAttempt) {
       throw new Error("Codex implementation session did not return an implementation attempt.");
+    }
+    if (finalIsolation?.effectiveStrategy === "attempt_worktree") {
+      finalAttempt = await materializeWorktreeAttemptToPrimaryWorkspace(finalAttempt, {
+        fromWorkspaceRoot: finalIsolation.workspaceRoot,
+        toWorkspaceRoot: this.deps.workspaceRoot
+      });
+    }
+    if (finalIsolation) {
+      const cleanup = await cleanupIsolationContext(finalIsolation);
+      const lastIsolationAttempt = candidateIsolationAttempts.at(-1);
+      if (lastIsolationAttempt) {
+        lastIsolationAttempt.cleanup_status = cleanup.status;
+        lastIsolationAttempt.cleanup_notes = cleanup.notes;
+      }
     }
 
     const publishedArtifacts = await publishReusableArtifacts({
@@ -771,6 +940,17 @@ export class ImplementSessionManager {
     await runContext.put("implement_experiments.last_summary", summary);
     await runContext.put("implement_experiments.raw_response", finalAttempt.rawResponse);
     await runContext.put("implement_experiments.assumptions", finalAttempt.assumptions);
+    const candidateIsolationReport: CandidateIsolationReport = {
+      version: 1,
+      run_id: run.id,
+      requested_strategy: requestedIsolationStrategy,
+      final_strategy:
+        candidateIsolationAttempts.at(-1)?.effective_strategy || requestedIsolationStrategy,
+      fallback_occurred: candidateIsolationAttempts.some((attempt) => Boolean(attempt.fallback_from)),
+      attempts: candidateIsolationAttempts,
+      updated_at: new Date().toISOString()
+    };
+    await runContext.put("implement_experiments.candidate_isolation_report", candidateIsolationReport);
     const comparisonContract = await loadExperimentComparisonContract(run, runContext);
     const implementationContext = comparisonContract
       ? buildExperimentImplementationContext({
@@ -782,16 +962,31 @@ export class ImplementSessionManager {
           testCommand: rewrittenTestCommand,
           workingDir: finalAttempt.workingDir,
           threadId: activeThreadId,
-          candidateIsolationStrategy: "attempt_snapshot_restore",
-          restoredAttempts: restoredAttemptCount
+          candidateIsolationStrategy: candidateIsolationReport.final_strategy,
+          requestedCandidateIsolationStrategy: candidateIsolationReport.requested_strategy,
+          fallbackFrom: candidateIsolationAttempts.at(-1)?.fallback_from,
+          fallbackReason: candidateIsolationAttempts.at(-1)?.fallback_reason,
+          restoredAttempts: restoredAttemptCount,
+          snapshotRoot: candidateIsolationAttempts.at(-1)?.snapshot_root,
+          worktreePath: candidateIsolationAttempts.at(-1)?.worktree_path,
+          cleanupStatus: candidateIsolationAttempts.at(-1)?.cleanup_status,
+          orphanedResidueDetected: candidateIsolationAttempts.some(
+            (attempt) => attempt.orphaned_residue_paths.length > 0
+          )
         })
       : undefined;
     if (implementationContext) {
       await storeExperimentGovernanceDecision(run, runContext, {
         implementationContext,
+        candidateIsolationReport,
         entries: []
       });
       await runContext.put(EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_KEY, implementationContext);
+    } else {
+      await storeExperimentGovernanceDecision(run, runContext, {
+        candidateIsolationReport,
+        entries: []
+      });
     }
 
     await ensureDir(runDir);
@@ -812,6 +1007,10 @@ export class ImplementSessionManager {
     await writeJsonFile(path.join(runDir, "implement_attempts.json"), {
       attempts: attemptRecords
     });
+    await writeJsonFile(
+      path.join(runDir, "experiment_governance", "candidate_isolation_report.json"),
+      candidateIsolationReport
+    );
     await writeJsonFile(path.join(runDir, "implement_result.json"), {
       thread_id: activeThreadId,
       summary,
@@ -1164,6 +1363,7 @@ export class ImplementSessionManager {
   }
 
   private async prepareAttemptResult(params: {
+    workspaceRoot: string;
     run: RunRecord;
     runDir: string;
     defaultPublicDir: string;
@@ -1173,43 +1373,43 @@ export class ImplementSessionManager {
     changedFiles: Set<string>;
     artifacts: Set<string>;
     publicArtifacts: Set<string>;
-    attemptSnapshot: ImplementAttemptSnapshot;
+    attemptSnapshot?: ImplementAttemptSnapshot;
     experimentLlmProfile: ReturnType<typeof resolveExperimentLlmProfile>;
   }): Promise<PreparedImplementAttempt> {
     const parsedResponse = parseStructuredResponse(params.result.finalText);
     const parsed = parsedResponse.value;
     const normalizedPublicDir =
-      normalizeStoredPath(parsed.public_dir, this.deps.workspaceRoot) || params.defaultPublicDir;
+      normalizeStoredPath(parsed.public_dir, params.workspaceRoot) || params.defaultPublicDir;
     const normalizedMetricsPath =
-      normalizeStoredPath(parsed.metrics_path, this.deps.workspaceRoot) || params.metricsPath;
+      normalizeStoredPath(parsed.metrics_path, params.workspaceRoot) || params.metricsPath;
     let normalizedWorkingDir =
-      normalizeStoredPath(parsed.working_dir, this.deps.workspaceRoot) || normalizedPublicDir;
+      normalizeStoredPath(parsed.working_dir, params.workspaceRoot) || normalizedPublicDir;
     const originalScriptPath =
-      normalizeStoredPath(parsed.script_path, this.deps.workspaceRoot) ||
-      (await inferScriptPath(params.runDir, normalizedPublicDir, this.deps.workspaceRoot, parsed.run_command));
+      normalizeStoredPath(parsed.script_path, params.workspaceRoot) ||
+      (await inferScriptPath(params.runDir, normalizedPublicDir, params.workspaceRoot, parsed.run_command));
     let normalizedScriptPath = originalScriptPath;
     let experimentMode = normalizeExperimentMode(parsed.experiment_mode, parsed.summary);
 
-    await params.attemptSnapshot.capturePaths([
+    await params.attemptSnapshot?.capturePaths([
       normalizedPublicDir,
       normalizedMetricsPath
     ]);
 
     for (const filePath of parsed.changed_files || []) {
-      const normalized = normalizeStoredPath(filePath, this.deps.workspaceRoot);
+      const normalized = normalizeStoredPath(filePath, params.workspaceRoot);
       if (normalized) {
         params.changedFiles.add(normalized);
         params.artifacts.add(normalized);
       }
     }
     for (const filePath of parsed.artifacts || []) {
-      const normalized = normalizeStoredPath(filePath, this.deps.workspaceRoot);
+      const normalized = normalizeStoredPath(filePath, params.workspaceRoot);
       if (normalized) {
         params.artifacts.add(normalized);
       }
     }
     for (const filePath of parsed.public_artifacts || []) {
-      const normalized = normalizeStoredPath(filePath, this.deps.workspaceRoot);
+      const normalized = normalizeStoredPath(filePath, params.workspaceRoot);
       if (normalized) {
         params.publicArtifacts.add(normalized);
         params.artifacts.add(normalized);
@@ -1225,7 +1425,7 @@ export class ImplementSessionManager {
       `Codex implementation session updated ${Math.max(1, params.changedFiles.size)} file(s).`;
     let runCommand =
       parsed.run_command?.trim() ||
-      (normalizedScriptPath ? inferRunCommand(normalizedScriptPath, this.deps.workspaceRoot, params.run.id) : "");
+      (normalizedScriptPath ? inferRunCommand(normalizedScriptPath, params.workspaceRoot, params.run.id) : "");
     let testCommand = parsed.test_command?.trim() || deriveFallbackTestCommand(normalizedScriptPath);
     const hasRunnableArtifact = Boolean(runCommand || normalizedScriptPath);
     const bundleSupported = supportsRealExecutionBundle({
@@ -1282,23 +1482,23 @@ export class ImplementSessionManager {
     normalizedScriptPath = materialized.scriptPath;
 
     const localization =
-      normalizeLocalizationResult(parsed.localization, this.deps.workspaceRoot) ||
+      normalizeLocalizationResult(parsed.localization, params.workspaceRoot) ||
       emptyLocalizationResult();
     runCommand = rewriteWorkspacePathsToPrimary(
       rewriteCommandScriptPath(runCommand, originalScriptPath, normalizedScriptPath),
-      this.deps.workspaceRoot
+      params.workspaceRoot
     );
     testCommand =
       rewriteWorkspacePathsToPrimary(
         rewriteCommandScriptPath(testCommand || "", originalScriptPath, normalizedScriptPath),
-        this.deps.workspaceRoot
+        params.workspaceRoot
       ) || undefined;
     const verificationCommand = testCommand || deriveFallbackTestCommand(normalizedScriptPath);
     const verificationArtifactCandidates = new Set(
       dedupeStrings([
         ...(normalizedScriptPath ? [normalizedScriptPath] : []),
         ...(verificationCommand
-          ? extractWorkspacePathsFromCommand(verificationCommand, normalizedWorkingDir, this.deps.workspaceRoot)
+          ? extractWorkspacePathsFromCommand(verificationCommand, normalizedWorkingDir, params.workspaceRoot)
           : [])
       ])
     );
@@ -1310,7 +1510,7 @@ export class ImplementSessionManager {
       : missingSupplementalArtifacts.length > 0
         ? buildMissingArtifactVerifyReport(parsedResponse.isStructured, {
             missingArtifacts: missingSupplementalArtifacts,
-            workspaceRoot: this.deps.workspaceRoot
+            workspaceRoot: params.workspaceRoot
           })
       : {
           status: "not_run" as const,
@@ -1321,6 +1521,7 @@ export class ImplementSessionManager {
     return {
       threadId: params.result.threadId,
       branchPlan: params.branchPlan,
+      workspaceRoot: params.workspaceRoot,
       rawResponse: params.result.finalText,
       summary: baseSummary,
       runCommand,
@@ -1454,7 +1655,7 @@ export class ImplementSessionManager {
       const report = buildMissingArtifactVerifyReport(true, {
         command,
         missingArtifacts,
-        workspaceRoot: this.deps.workspaceRoot
+        workspaceRoot: attempt.workspaceRoot
       });
       this.deps.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -2239,6 +2440,13 @@ async function createImplementAttemptSnapshot(params: {
     "attempt_snapshots",
     `attempt_${params.attempt}`
   );
+  const orphanedResiduePaths: string[] = [];
+  try {
+    await fs.access(snapshotRoot);
+    orphanedResiduePaths.push(snapshotRoot);
+  } catch {
+    // no prior residue
+  }
   await fs.rm(snapshotRoot, { recursive: true, force: true });
   await ensureDir(snapshotRoot);
   const captured = new Map<
@@ -2303,6 +2511,8 @@ async function createImplementAttemptSnapshot(params: {
   };
 
   return {
+    snapshotRoot,
+    orphanedResiduePaths,
     async capturePaths(paths) {
       for (const filePath of dedupeStrings(
         paths.filter((item): item is string => typeof item === "string")
@@ -2356,6 +2566,496 @@ async function createImplementAttemptSnapshot(params: {
       await fs.rm(snapshotRoot, { recursive: true, force: true });
     }
   };
+}
+
+function resolveConfiguredCandidateIsolationStrategy(config: AppConfig): CandidateIsolationStrategy {
+  const configured = asString(
+    (config as AppConfig & {
+      experiments?: AppConfig["experiments"] & {
+        candidate_isolation?: unknown;
+        candidate_isolation_strategy?: unknown;
+      };
+    }).experiments?.candidate_isolation
+  ) || asString(
+    (config as AppConfig & {
+      experiments?: AppConfig["experiments"] & {
+        candidate_isolation_strategy?: unknown;
+      };
+    }).experiments?.candidate_isolation_strategy
+  );
+  const envOverride = process.env.AUTOLABOS_CANDIDATE_ISOLATION_STRATEGY;
+  const raw = (envOverride || configured || "").trim().toLowerCase();
+  if (raw === "attempt_worktree" || raw === "worktree") {
+    return "attempt_worktree";
+  }
+  return "attempt_snapshot_restore";
+}
+
+async function createAttemptIsolationContext(params: {
+  config: AppConfig;
+  workspaceRoot: string;
+  run: RunRecord;
+  runDir: string;
+  defaultPublicDir: string;
+  metricsPath: string;
+  attempt: number;
+  requestedStrategy: CandidateIsolationStrategy;
+}): Promise<AttemptIsolationContext> {
+  if (params.requestedStrategy !== "attempt_worktree") {
+    const attemptSnapshot = await createImplementAttemptSnapshot({
+      workspaceRoot: params.workspaceRoot,
+      runDir: params.runDir,
+      attempt: params.attempt
+    });
+    return {
+      requestedStrategy: params.requestedStrategy,
+      effectiveStrategy: "attempt_snapshot_restore",
+      controlWorkspaceRoot: params.workspaceRoot,
+      workspaceRoot: params.workspaceRoot,
+      runDir: params.runDir,
+      publicDir: params.defaultPublicDir,
+      metricsPath: params.metricsPath,
+      attemptSnapshot,
+      orphanedResiduePaths: attemptSnapshot.orphanedResiduePaths
+    };
+  }
+
+  try {
+    const worktreePath = resolveAttemptWorktreePath(params.runDir, params.attempt);
+    const orphanedResiduePaths = await cleanupAttemptWorktreeResidue({
+      workspaceRoot: params.workspaceRoot,
+      worktreeRoot: resolveAttemptWorktreeRoot(params.runDir),
+      worktreePath
+    });
+    await assertAttemptWorktreeReady({
+      workspaceRoot: params.workspaceRoot,
+      runId: params.run.id
+    });
+    await ensureDir(path.dirname(worktreePath));
+    await execFile("git", ["worktree", "add", "--detach", worktreePath, "HEAD"], {
+      cwd: params.workspaceRoot
+    });
+    const worktreeRunDir = path.join(worktreePath, ".autolabos", "runs", params.run.id);
+    const worktreePublicDir = buildPublicExperimentDir(worktreePath, params.run);
+    const worktreeMetricsPath = path.join(worktreeRunDir, "metrics.json");
+    await ensureDir(worktreeRunDir);
+    await ensureDir(worktreePublicDir);
+    return {
+      requestedStrategy: params.requestedStrategy,
+      effectiveStrategy: "attempt_worktree",
+      controlWorkspaceRoot: params.workspaceRoot,
+      workspaceRoot: worktreePath,
+      runDir: worktreeRunDir,
+      publicDir: worktreePublicDir,
+      metricsPath: worktreeMetricsPath,
+      worktreePath,
+      orphanedResiduePaths
+    };
+  } catch (error) {
+    const attemptSnapshot = await createImplementAttemptSnapshot({
+      workspaceRoot: params.workspaceRoot,
+      runDir: params.runDir,
+      attempt: params.attempt
+    });
+    return {
+      requestedStrategy: params.requestedStrategy,
+      effectiveStrategy: "attempt_snapshot_restore",
+      fallbackFrom: "attempt_worktree",
+      fallbackReason: `attempt_worktree fallback to snapshot/restore: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      controlWorkspaceRoot: params.workspaceRoot,
+      workspaceRoot: params.workspaceRoot,
+      runDir: params.runDir,
+      publicDir: params.defaultPublicDir,
+      metricsPath: params.metricsPath,
+      attemptSnapshot,
+      orphanedResiduePaths: [
+        ...(attemptSnapshot.orphanedResiduePaths || [])
+      ]
+    };
+  }
+}
+
+async function restoreIsolationContextForRetry(
+  isolation: AttemptIsolationContext
+): Promise<{ restoredPaths: string[] }> {
+  if (isolation.effectiveStrategy === "attempt_snapshot_restore" && isolation.attemptSnapshot) {
+    return isolation.attemptSnapshot.restore();
+  }
+  return { restoredPaths: [] };
+}
+
+async function cleanupIsolationContext(isolation: AttemptIsolationContext): Promise<{
+  status: "completed" | "failed";
+  notes: string[];
+}> {
+  if (isolation.effectiveStrategy === "attempt_snapshot_restore") {
+    if (isolation.attemptSnapshot) {
+      await isolation.attemptSnapshot.cleanup();
+    }
+    return {
+      status: "completed",
+      notes: []
+    };
+  }
+  if (!isolation.worktreePath) {
+    return {
+      status: "completed",
+      notes: []
+    };
+  }
+  try {
+    await cleanupManagedWorktree({
+      workspaceRoot: isolation.controlWorkspaceRoot,
+      worktreePath: isolation.worktreePath,
+      isIsolatedWorkspaceRoot: false
+    });
+    return {
+      status: "completed",
+      notes: []
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      notes: [error instanceof Error ? error.message : String(error)]
+    };
+  }
+}
+
+async function materializeWorktreeAttemptToPrimaryWorkspace(
+  attempt: PreparedImplementAttempt,
+  params: {
+    fromWorkspaceRoot: string;
+    toWorkspaceRoot: string;
+  }
+): Promise<PreparedImplementAttempt> {
+  const translated = translatePreparedAttemptToWorkspace(attempt, params);
+  await ensureDir(translated.publicDir);
+  const candidates = dedupeStrings([
+    attempt.publicDir,
+    attempt.scriptPath,
+    attempt.metricsPath,
+    ...attempt.changedFiles,
+    ...attempt.artifacts,
+    ...attempt.publicArtifacts
+  ]);
+  for (const sourcePath of candidates) {
+    const normalizedSource = normalizeStoredPath(sourcePath, params.fromWorkspaceRoot);
+    if (!normalizedSource || !isPathInsideOrEqual(normalizedSource, params.fromWorkspaceRoot)) {
+      continue;
+    }
+    const targetPath = translatePathBetweenWorkspaces(normalizedSource, params);
+    if (!targetPath) {
+      continue;
+    }
+    if (normalizedSource === attempt.publicDir) {
+      await ensureDir(targetPath);
+      continue;
+    }
+    await copyPathBetweenRoots(normalizedSource, targetPath);
+  }
+  return translated;
+}
+
+function translateTaskSpecToWorkspace(
+  taskSpec: ImplementTaskSpec,
+  params: {
+    fromWorkspaceRoot: string;
+    toWorkspaceRoot: string;
+    runDir: string;
+    publicDir: string;
+    metricsPath: string;
+  }
+): ImplementTaskSpec {
+  const translated = translateValueBetweenWorkspaces(taskSpec, params);
+  translated.workspace = {
+    root: params.toWorkspaceRoot,
+    run_dir: params.runDir,
+    public_dir: params.publicDir,
+    metrics_path: params.metricsPath
+  };
+  return translated;
+}
+
+function translateLocalizationResultWorkspace(
+  value: LocalizationResult,
+  params: {
+    fromWorkspaceRoot: string;
+    toWorkspaceRoot: string;
+  }
+): LocalizationResult {
+  return translateValueBetweenWorkspaces(value, params);
+}
+
+function translateBranchPlanWorkspace(
+  value: BranchPlan,
+  params: {
+    fromWorkspaceRoot: string;
+    toWorkspaceRoot: string;
+  }
+): BranchPlan {
+  return translateValueBetweenWorkspaces(value, params);
+}
+
+function translateAttemptRecordWorkspace(
+  value: AttemptRecord | undefined,
+  params: {
+    fromWorkspaceRoot: string;
+    toWorkspaceRoot: string;
+  }
+): AttemptRecord | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return translateValueBetweenWorkspaces(value, params);
+}
+
+function translatePreparedAttemptToWorkspace(
+  value: PreparedImplementAttempt,
+  params: {
+    fromWorkspaceRoot: string;
+    toWorkspaceRoot: string;
+  }
+): PreparedImplementAttempt {
+  const translated = translateValueBetweenWorkspaces(value, params);
+  translated.workspaceRoot = params.toWorkspaceRoot;
+  return translated;
+}
+
+function translateMappedCodexEventToPrimaryWorkspace<T extends { payload: Record<string, unknown> }>(
+  event: T,
+  params: {
+    fromWorkspaceRoot: string;
+    toWorkspaceRoot: string;
+  }
+): T {
+  return {
+    ...event,
+    payload: translateValueBetweenWorkspaces(event.payload, params)
+  };
+}
+
+function translatePathsBetweenWorkspaces(
+  values: string[],
+  params: {
+    fromWorkspaceRoot: string;
+    toWorkspaceRoot: string;
+  }
+): string[] {
+  return dedupeStrings(
+    values.map((value) => translatePathBetweenWorkspaces(value, params) || value)
+  );
+}
+
+function translatePathBetweenWorkspaces(
+  value: string | undefined,
+  params: {
+    fromWorkspaceRoot: string;
+    toWorkspaceRoot: string;
+  }
+): string | undefined {
+  if (!value) {
+    return value;
+  }
+  const normalized = normalizeStoredPath(value, params.fromWorkspaceRoot);
+  if (!normalized || !isPathInsideOrEqual(normalized, params.fromWorkspaceRoot)) {
+    return translateWorkspaceStringBetweenRoots(value, params);
+  }
+  const relative = path.relative(params.fromWorkspaceRoot, normalized);
+  return normalizeFsPath(
+    relative ? path.join(params.toWorkspaceRoot, relative) : params.toWorkspaceRoot
+  );
+}
+
+function translateValueBetweenWorkspaces<T>(
+  value: T,
+  params: {
+    fromWorkspaceRoot: string;
+    toWorkspaceRoot: string;
+  }
+): T {
+  if (typeof value === "string") {
+    return translateWorkspaceStringBetweenRoots(value, params) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => translateValueBetweenWorkspaces(item, params)) as T;
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
+      key,
+      translateValueBetweenWorkspaces(nested, params)
+    ])
+  ) as T;
+}
+
+function translateWorkspaceStringBetweenRoots(
+  value: string,
+  params: {
+    fromWorkspaceRoot: string;
+    toWorkspaceRoot: string;
+  }
+): string {
+  const aliases = resolveWorkspaceRootAliases(params.fromWorkspaceRoot)
+    .concat([params.fromWorkspaceRoot])
+    .sort((left, right) => right.length - left.length);
+  let rewritten = value;
+  for (const alias of aliases) {
+    rewritten = replaceWorkspaceRootReference(rewritten, alias, params.toWorkspaceRoot);
+  }
+  return rewritten;
+}
+
+function resolveAttemptWorktreePath(runDir: string, attempt: number): string {
+  return path.join(resolveAttemptWorktreeRoot(runDir), `attempt_${attempt}`);
+}
+
+function resolveAttemptWorktreeRoot(runDir: string): string {
+  return path.join(runDir, "implement_experiments", "attempt_worktrees");
+}
+
+async function assertAttemptWorktreeReady(params: {
+  workspaceRoot: string;
+  runId: string;
+}): Promise<void> {
+  const repoRoot = normalizeFsPath(
+    (await execFile("git", ["rev-parse", "--show-toplevel"], {
+      cwd: params.workspaceRoot
+    })).stdout.trim()
+  );
+  if (repoRoot !== normalizeFsPath(params.workspaceRoot)) {
+    throw new Error("attempt_worktree requires the workspace root to be the git repository root");
+  }
+
+  const blockingDirtyPaths = await listBlockingWorktreeDirtyPaths(params);
+  if (blockingDirtyPaths.length > 0) {
+    throw new Error(
+      `attempt_worktree requires a clean git workspace outside managed run artifacts; found ${blockingDirtyPaths
+        .slice(0, 4)
+        .join(", ")}${blockingDirtyPaths.length > 4 ? ", ..." : ""}`
+    );
+  }
+}
+
+async function listBlockingWorktreeDirtyPaths(params: {
+  workspaceRoot: string;
+  runId: string;
+}): Promise<string[]> {
+  const statusOutput = (
+    await execFile("git", ["status", "--porcelain", "--untracked-files=all"], {
+      cwd: params.workspaceRoot
+    })
+  ).stdout;
+  const allowedPrefixes = [
+    normalizeFsPath(path.join(params.workspaceRoot, ".autolabos"))
+  ];
+  return statusOutput
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => line.slice(3).trim())
+    .map((entry) => entry.split(" -> ").at(-1) || entry)
+    .map((entry) => normalizeStoredPath(entry, params.workspaceRoot) || "")
+    .filter(Boolean)
+    .filter(
+      (filePath) => !allowedPrefixes.some((prefix) => isPathInsideOrEqual(normalizeFsPath(filePath), prefix))
+    );
+}
+
+async function cleanupAttemptWorktreeResidue(params: {
+  workspaceRoot: string;
+  worktreeRoot: string;
+  worktreePath: string;
+}): Promise<string[]> {
+  const orphanedResiduePaths: string[] = [];
+  const candidates = new Set<string>();
+  try {
+    const entries = await fs.readdir(params.worktreeRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      candidates.add(path.join(params.worktreeRoot, entry.name));
+    }
+  } catch {
+    // no managed residue root yet
+  }
+  candidates.add(params.worktreePath);
+  for (const candidatePath of candidates) {
+    try {
+      await fs.access(candidatePath);
+    } catch {
+      continue;
+    }
+    orphanedResiduePaths.push(candidatePath);
+    await cleanupManagedWorktree({
+      workspaceRoot: params.workspaceRoot,
+      worktreePath: candidatePath,
+      isIsolatedWorkspaceRoot: false
+    });
+  }
+  return orphanedResiduePaths;
+}
+
+async function cleanupManagedWorktree(params: {
+  workspaceRoot: string;
+  worktreePath: string;
+  isIsolatedWorkspaceRoot: boolean;
+}): Promise<void> {
+  const normalizedWorktreePath = normalizeFsPath(params.worktreePath);
+  if (!isManagedAttemptWorktreePath(normalizedWorktreePath, params.workspaceRoot)) {
+    throw new Error(`Refusing to cleanup non-managed attempt worktree path: ${normalizedWorktreePath}`);
+  }
+  const controlCwd = params.isIsolatedWorkspaceRoot ? process.cwd() : params.workspaceRoot;
+  try {
+    await execFile("git", ["worktree", "remove", "--force", normalizedWorktreePath], {
+      cwd: controlCwd
+    });
+  } catch {
+    // Fall back to managed-path cleanup below.
+  }
+  try {
+    await execFile("git", ["worktree", "prune"], {
+      cwd: controlCwd
+    });
+  } catch {
+    // best effort only
+  }
+  await fs.rm(normalizedWorktreePath, { recursive: true, force: true });
+}
+
+function isManagedAttemptWorktreePath(worktreePath: string, workspaceRoot: string): boolean {
+  const managedRunsRoot = normalizeFsPath(path.join(workspaceRoot, ".autolabos", "runs"));
+  const managedAttemptSegment = `${path.sep}implement_experiments${path.sep}attempt_worktrees${path.sep}`;
+  return (
+    isPathInsideOrEqual(worktreePath, managedRunsRoot) &&
+    worktreePath.includes(managedAttemptSegment)
+  );
+}
+
+async function copyPathBetweenRoots(sourcePath: string, targetPath: string): Promise<void> {
+  try {
+    const stat = await fs.lstat(sourcePath);
+    await fs.rm(targetPath, { recursive: true, force: true });
+    await ensureDir(path.dirname(targetPath));
+    if (stat.isSymbolicLink()) {
+      const linkTarget = await fs.readlink(sourcePath);
+      await fs.symlink(linkTarget, targetPath);
+      return;
+    }
+    if (stat.isDirectory()) {
+      await fs.cp(sourcePath, targetPath, { recursive: true });
+      return;
+    }
+    if (stat.isFile()) {
+      await fs.copyFile(sourcePath, targetPath);
+    }
+  } catch {
+    // Missing ephemeral files do not block materialization.
+  }
 }
 
 async function listRestorableRunDirEntries(runDir: string): Promise<string[]> {
@@ -3073,6 +3773,6 @@ function extractPolicyRuleId(text: string): string | undefined {
   return text.match(/rule=([a-z0-9_]+)/i)?.[1];
 }
 
-function dedupeStrings(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean))];
+function dedupeStrings(values: Array<string | undefined | null>): string[] {
+  return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))];
 }

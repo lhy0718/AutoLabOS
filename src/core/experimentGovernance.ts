@@ -10,10 +10,16 @@ import { safeRead, writeRunArtifact } from "./nodes/helpers.js";
 import { normalizeFsPath } from "../utils/fs.js";
 
 export const EXPERIMENT_GOVERNANCE_CONTRACT_KEY = "experiment_governance.comparison_contract";
-export const EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_KEY = "experiment_governance.implementation_context";
-export const EXPERIMENT_GOVERNANCE_BASELINE_SNAPSHOT_KEY = "experiment_governance.baseline_snapshot";
+export const EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_KEY =
+  "experiment_governance.implementation_context";
+export const EXPERIMENT_GOVERNANCE_BASELINE_SNAPSHOT_KEY =
+  "experiment_governance.baseline_snapshot";
 export const EXPERIMENT_GOVERNANCE_LATEST_DECISION_KEY = "experiment_governance.latest_decision";
-export const EXPERIMENT_GOVERNANCE_MANAGED_BUNDLE_LOCK_KEY = "experiment_governance.managed_bundle_lock";
+export const EXPERIMENT_GOVERNANCE_MANAGED_BUNDLE_LOCK_KEY =
+  "experiment_governance.managed_bundle_lock";
+export const EXPERIMENT_GOVERNANCE_DRIFT_REPORT_KEY = "experiment_governance.drift_report";
+export const EXPERIMENT_GOVERNANCE_CANDIDATE_ISOLATION_REPORT_KEY =
+  "experiment_governance.candidate_isolation_report";
 
 export const EXPERIMENT_GOVERNANCE_DIR = "experiment_governance";
 export const EXPERIMENT_GOVERNANCE_CONTRACT_ARTIFACT = path.join(
@@ -36,6 +42,16 @@ export const EXPERIMENT_GOVERNANCE_MANAGED_BUNDLE_LOCK_ARTIFACT = path.join(
   EXPERIMENT_GOVERNANCE_DIR,
   "managed_bundle_lock.json"
 );
+export const EXPERIMENT_GOVERNANCE_DRIFT_REPORT_ARTIFACT = path.join(
+  EXPERIMENT_GOVERNANCE_DIR,
+  "drift_report.json"
+);
+export const EXPERIMENT_GOVERNANCE_CANDIDATE_ISOLATION_REPORT_ARTIFACT = path.join(
+  EXPERIMENT_GOVERNANCE_DIR,
+  "candidate_isolation_report.json"
+);
+
+export type CandidateIsolationStrategy = "attempt_snapshot_restore" | "attempt_worktree";
 
 export interface ExperimentBudgetProfile {
   mode: "managed_standard" | "single_run_locked";
@@ -83,12 +99,19 @@ export interface ExperimentImplementationContext {
   candidate_id: string;
   parent_candidate_id?: string | null;
   candidate_isolation: {
-    strategy: "branch_focus_patch_summary" | "attempt_snapshot_restore";
+    strategy: "branch_focus_patch_summary" | CandidateIsolationStrategy;
+    requested_strategy?: CandidateIsolationStrategy;
+    fallback_from?: CandidateIsolationStrategy;
+    fallback_reason?: string;
     branch_id?: string;
     focus_files: string[];
     changed_files: string[];
     thread_id?: string;
     restored_attempts?: number;
+    snapshot_root?: string;
+    worktree_path?: string;
+    cleanup_status?: "completed" | "failed" | "skipped";
+    orphaned_residue_detected?: boolean;
   };
   code_state_ref: {
     strategy: "branch_focus_patch_summary";
@@ -120,8 +143,21 @@ export interface ExperimentBaselineSnapshot {
   created_at: string;
 }
 
+export interface ExperimentDependencyFingerprint {
+  scope: "bundle" | "workspace";
+  kind:
+    | "package_manifest"
+    | "package_lockfile"
+    | "python_manifest"
+    | "python_lockfile"
+    | "environment_manifest";
+  path: string;
+  hash: string;
+}
+
 export interface ExperimentManagedBundleLock {
-  version: 1;
+  version: 2;
+  environment_lock_version: number;
   plan_id: string;
   objective_metric_name: string;
   evaluator_contract_id: string;
@@ -136,6 +172,15 @@ export interface ExperimentManagedBundleLock {
   prompts_hash: string;
   evaluator_hash: string;
   environment_hash: string;
+  dependency_surface_hash: string;
+  runtime_profile_fingerprint: string;
+  dependency_fingerprints: ExperimentDependencyFingerprint[];
+  lock_source_scope: {
+    public_dir: string;
+    workspace_root?: string;
+    dependency_files: string[];
+  };
+  collected_at_stage: "run_experiments" | "analyze_results";
   environment_signature: {
     python?: string;
     platform?: string;
@@ -146,6 +191,64 @@ export interface ExperimentManagedBundleLock {
     fast_mode?: boolean;
   };
   locked_at: string;
+}
+
+export interface ExperimentDriftFinding {
+  kind:
+    | "evaluator_drift"
+    | "environment_drift"
+    | "dependency_drift"
+    | "prompt_or_task_drift"
+    | "trial_shape_drift"
+    | "unverifiable_lock";
+  field: string;
+  severity: "block" | "warn";
+  detail: string;
+}
+
+export interface ExperimentManagedBundleDriftReport {
+  version: 1;
+  plan_id?: string;
+  evaluator_contract_id?: string;
+  status: "validated" | "drifted" | "unverifiable";
+  verdict: "allow" | "block";
+  summary: string;
+  findings: ExperimentDriftFinding[];
+  drift_fields: string[];
+  checked_at: string;
+  locked_at?: string;
+  public_dir?: string;
+  lock_source_scope?: ExperimentManagedBundleLock["lock_source_scope"];
+  collected_at_stage?: ExperimentManagedBundleLock["collected_at_stage"];
+}
+
+export interface CandidateIsolationAttemptReport {
+  attempt: number;
+  requested_strategy: CandidateIsolationStrategy;
+  effective_strategy: CandidateIsolationStrategy;
+  fallback_from?: CandidateIsolationStrategy;
+  fallback_reason?: string;
+  workspace_root: string;
+  isolated_workspace_root?: string;
+  snapshot_root?: string;
+  worktree_path?: string;
+  restored_paths?: string[];
+  restored_after_failure?: boolean;
+  cleanup_status?: "completed" | "failed" | "skipped";
+  cleanup_notes?: string[];
+  orphaned_residue_paths: string[];
+  started_at?: string;
+  finished_at?: string;
+}
+
+export interface CandidateIsolationReport {
+  version: 1;
+  run_id: string;
+  requested_strategy: CandidateIsolationStrategy;
+  final_strategy: CandidateIsolationStrategy;
+  fallback_occurred?: boolean;
+  attempts: CandidateIsolationAttemptReport[];
+  updated_at: string;
 }
 
 export interface ExperimentLedgerEntry {
@@ -184,6 +287,7 @@ export interface ManagedBundleValidation {
   ok: boolean;
   rationale: string;
   drift_fields?: string[];
+  report: ExperimentManagedBundleDriftReport;
 }
 
 export function buildExperimentComparisonContract(input: {
@@ -201,8 +305,7 @@ export function buildExperimentComparisonContract(input: {
   const baselineIds = dedupeStrings(
     input.selectedDesign.baselines.map((item) => toBaselineCandidateId(input.selectedDesign.id, item))
   );
-  const comparisonMode =
-    baselineIds.length > 0 ? "baseline_first_locked" : "objective_only";
+  const comparisonMode = baselineIds.length > 0 ? "baseline_first_locked" : "objective_only";
   const contract: ExperimentComparisonContract = {
     version: 1,
     run_id: input.run.id,
@@ -240,7 +343,14 @@ export function buildExperimentImplementationContext(input: {
   workingDir?: string;
   threadId?: string;
   candidateIsolationStrategy?: ExperimentImplementationContext["candidate_isolation"]["strategy"];
+  requestedCandidateIsolationStrategy?: CandidateIsolationStrategy;
+  fallbackFrom?: CandidateIsolationStrategy;
+  fallbackReason?: string;
   restoredAttempts?: number;
+  snapshotRoot?: string;
+  worktreePath?: string;
+  cleanupStatus?: ExperimentImplementationContext["candidate_isolation"]["cleanup_status"];
+  orphanedResidueDetected?: boolean;
   updatedAt?: string;
 }): ExperimentImplementationContext {
   const focusFiles = dedupeStrings(input.branchPlan?.focus_files || []);
@@ -251,6 +361,9 @@ export function buildExperimentImplementationContext(input: {
     parent_candidate_id: input.contract.baseline_candidate_ids[0] || null,
     candidate_isolation: {
       strategy: input.candidateIsolationStrategy || "branch_focus_patch_summary",
+      requested_strategy: input.requestedCandidateIsolationStrategy,
+      fallback_from: input.fallbackFrom,
+      fallback_reason: input.fallbackReason,
       branch_id: input.branchPlan?.branch_id,
       focus_files: focusFiles,
       changed_files: changedFiles,
@@ -258,7 +371,11 @@ export function buildExperimentImplementationContext(input: {
       restored_attempts:
         typeof input.restoredAttempts === "number" && input.restoredAttempts > 0
           ? input.restoredAttempts
-          : undefined
+          : undefined,
+      snapshot_root: cleanString(input.snapshotRoot),
+      worktree_path: cleanString(input.worktreePath),
+      cleanup_status: input.cleanupStatus,
+      orphaned_residue_detected: input.orphanedResidueDetected === true ? true : undefined
     },
     code_state_ref: {
       strategy: "branch_focus_patch_summary",
@@ -284,14 +401,11 @@ export function buildCrashLedgerEntry(input: {
 }): ExperimentLedgerEntry {
   const timestamp = input.timestamp || new Date().toISOString();
   const planId = input.contract?.plan_id || "unknown_plan";
-  const candidateId =
-    input.implementationContext?.candidate_id || toPrimaryCandidateId(planId);
+  const candidateId = input.implementationContext?.candidate_id || toPrimaryCandidateId(planId);
   return {
     candidate_id: candidateId,
     parent_candidate_id:
-      input.implementationContext?.parent_candidate_id ||
-      input.contract?.baseline_candidate_ids[0] ||
-      null,
+      input.implementationContext?.parent_candidate_id || input.contract?.baseline_candidate_ids[0] || null,
     hypothesis_id: input.contract?.hypothesis_id || null,
     plan_id: planId,
     code_state_ref:
@@ -338,10 +452,7 @@ export function deriveGovernedAnalysisDecision(input: {
         rationale: oneLine(input.managedBundleValidation.rationale),
         resource_usage: {
           ...resourceUsage,
-          managed_bundle_validation: {
-            ok: false,
-            drift_fields: input.managedBundleValidation.drift_fields || []
-          }
+          managed_bundle_validation: input.managedBundleValidation.report
         },
         timestamp: new Date().toISOString()
       },
@@ -364,6 +475,7 @@ export function deriveGovernedAnalysisDecision(input: {
   const comparisonMetric = pickComparisonMetric(input.report);
 
   if (hasBudgetMismatch(input.report, input.contract.budget_profile)) {
+    const rationale = buildBudgetMismatchRationale(input.report, input.contract.budget_profile);
     return {
       candidateEntry: {
         candidate_id: implementationContext.candidate_id,
@@ -375,13 +487,13 @@ export function deriveGovernedAnalysisDecision(input: {
         objective_metric_name: input.contract.objective_metric_name,
         observed_value: input.report.overview.observed_value ?? null,
         verdict: "discard",
-        rationale: buildBudgetMismatchRationale(input.report, input.contract.budget_profile),
+        rationale,
         resource_usage: resourceUsage,
         timestamp: new Date().toISOString()
       },
       transitionOverride: {
         targetNode: "implement_experiments",
-        rationale: buildBudgetMismatchRationale(input.report, input.contract.budget_profile)
+        rationale
       }
     };
   }
@@ -420,8 +532,7 @@ export function deriveGovernedAnalysisDecision(input: {
     parseConditionPair(comparisonMetric.comparison.id).baseline ||
     "baseline";
   const baselineCandidateId =
-    input.contract.baseline_candidate_ids[0] ||
-    toBaselineCandidateId(input.contract.plan_id, baselineCondition);
+    input.contract.baseline_candidate_ids[0] || toBaselineCandidateId(input.contract.plan_id, baselineCondition);
   const primaryCandidateId = implementationContext.candidate_id;
   const improved = isStrictImprovement(
     comparisonMetric.metric.primary_value as number,
@@ -606,6 +717,8 @@ export async function storeExperimentGovernanceDecision(
     implementationContext?: ExperimentImplementationContext;
     baselineSnapshot?: ExperimentBaselineSnapshot;
     managedBundleLock?: ExperimentManagedBundleLock;
+    driftReport?: ExperimentManagedBundleDriftReport;
+    candidateIsolationReport?: CandidateIsolationReport;
     entries: ExperimentLedgerEntry[];
   }
 ): Promise<void> {
@@ -619,10 +732,7 @@ export async function storeExperimentGovernanceDecision(
       EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_ARTIFACT,
       input.implementationContext
     );
-    await runContext.put(
-      EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_KEY,
-      input.implementationContext
-    );
+    await runContext.put(EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_KEY, input.implementationContext);
   }
   if (input.baselineSnapshot) {
     await writeExperimentGovernanceJson(
@@ -640,6 +750,25 @@ export async function storeExperimentGovernanceDecision(
     );
     await runContext.put(EXPERIMENT_GOVERNANCE_MANAGED_BUNDLE_LOCK_KEY, input.managedBundleLock);
   }
+  if (input.driftReport) {
+    await writeExperimentGovernanceJson(
+      run,
+      EXPERIMENT_GOVERNANCE_DRIFT_REPORT_ARTIFACT,
+      input.driftReport
+    );
+    await runContext.put(EXPERIMENT_GOVERNANCE_DRIFT_REPORT_KEY, input.driftReport);
+  }
+  if (input.candidateIsolationReport) {
+    await writeExperimentGovernanceJson(
+      run,
+      EXPERIMENT_GOVERNANCE_CANDIDATE_ISOLATION_REPORT_ARTIFACT,
+      input.candidateIsolationReport
+    );
+    await runContext.put(
+      EXPERIMENT_GOVERNANCE_CANDIDATE_ISOLATION_REPORT_KEY,
+      input.candidateIsolationReport
+    );
+  }
   const ledger = await appendExperimentLedgerEntries(run, input.entries);
   const latest = input.entries.at(-1);
   if (latest) {
@@ -656,7 +785,9 @@ export async function storeExperimentGovernanceDecision(
 export async function freezeManagedBundleLock(input: {
   contract: ExperimentComparisonContract;
   publicDir?: string;
+  workspaceRoot?: string;
   lockedAt?: string;
+  collectedAtStage?: "run_experiments" | "analyze_results";
 }): Promise<ExperimentManagedBundleLock | undefined> {
   if (input.contract.budget_profile.mode !== "managed_standard") {
     return undefined;
@@ -679,6 +810,7 @@ export async function freezeManagedBundleLock(input: {
       return undefined;
     }
   }
+
   const [scriptBytes, config, tasks, prompts, evaluator, environment] = await Promise.all([
     fs.readFile(scriptPath),
     readJsonFile(configPath),
@@ -688,8 +820,28 @@ export async function freezeManagedBundleLock(input: {
     readJsonFile(environmentPath)
   ]);
   const environmentSignature = sanitizeEnvironmentLock(environment);
+  const dependencyFingerprints = await collectDependencyFingerprints({
+    workspaceRoot: input.workspaceRoot,
+    publicDir: normalizedPublicDir
+  });
+  const dependencySurfaceHash = hashCanonicalJson(
+    dependencyFingerprints.map((item) => ({
+      scope: item.scope,
+      kind: item.kind,
+      path: item.path,
+      hash: item.hash
+    }))
+  );
+  const runtimeProfileFingerprint = hashCanonicalJson({
+    environment_signature: environmentSignature,
+    dependency_surface_hash: dependencySurfaceHash,
+    config_surface: extractManagedBundleConfigSurface(config)
+  });
+  const environmentLockVersion = asNumber(asRecord(environment)?.version) || 1;
+
   return {
-    version: 1,
+    version: 2,
+    environment_lock_version: environmentLockVersion,
     plan_id: input.contract.plan_id,
     objective_metric_name: input.contract.objective_metric_name,
     evaluator_contract_id: input.contract.evaluator_contract_id,
@@ -704,6 +856,15 @@ export async function freezeManagedBundleLock(input: {
     prompts_hash: hashCanonicalJson(prompts),
     evaluator_hash: hashCanonicalJson(evaluator),
     environment_hash: hashCanonicalJson(environmentSignature),
+    dependency_surface_hash: dependencySurfaceHash,
+    runtime_profile_fingerprint: runtimeProfileFingerprint,
+    dependency_fingerprints: dependencyFingerprints,
+    lock_source_scope: {
+      public_dir: normalizedPublicDir,
+      workspace_root: cleanString(input.workspaceRoot) ? normalizeFsPath(input.workspaceRoot as string) : undefined,
+      dependency_files: dependencyFingerprints.map((item) => item.path)
+    },
+    collected_at_stage: input.collectedAtStage || "run_experiments",
     environment_signature: environmentSignature,
     locked_at: input.lockedAt || new Date().toISOString()
   };
@@ -712,61 +873,113 @@ export async function freezeManagedBundleLock(input: {
 export async function validateManagedBundleLock(input: {
   contract?: ExperimentComparisonContract;
   managedBundleLock?: ExperimentManagedBundleLock;
+  implementationContext?: ExperimentImplementationContext;
   metrics?: Record<string, unknown>;
   publicDir?: string;
+  workspaceRoot?: string;
 }): Promise<ManagedBundleValidation | undefined> {
   if (!input.contract || input.contract.budget_profile.mode !== "managed_standard") {
     return undefined;
   }
   if (!input.managedBundleLock) {
+    const report = buildDriftReport({
+      planId: input.contract.plan_id,
+      evaluatorContractId: input.contract.evaluator_contract_id,
+      publicDir: input.publicDir,
+      collectedAtStage: "run_experiments",
+      status: "unverifiable",
+      findings: [
+        {
+          kind: "unverifiable_lock",
+          field: "managed_bundle_lock",
+          severity: "block",
+          detail:
+            "No immutable managed bundle lock was captured from the primary standard run."
+        }
+      ]
+    });
     return {
       ok: false,
-      rationale:
-        "Managed bundle comparison could not be kept because no immutable evaluator/environment lock was captured from the primary standard run."
+      rationale: report.summary,
+      drift_fields: ["managed_bundle_lock"],
+      report
     };
   }
   if (input.managedBundleLock.contract_binding_id !== buildManagedBundleBindingId(input.contract)) {
+    const report = buildDriftReport({
+      planId: input.contract.plan_id,
+      evaluatorContractId: input.contract.evaluator_contract_id,
+      publicDir: input.managedBundleLock.public_dir,
+      lockedAt: input.managedBundleLock.locked_at,
+      lockSourceScope: input.managedBundleLock.lock_source_scope,
+      collectedAtStage: input.managedBundleLock.collected_at_stage,
+      status: "unverifiable",
+      findings: [
+        {
+          kind: "unverifiable_lock",
+          field: "contract_binding_id",
+          severity: "block",
+          detail:
+            "The frozen evaluator lock no longer matches the active comparison contract."
+        }
+      ]
+    });
     return {
       ok: false,
-      rationale:
-        "Managed bundle comparison could not be kept because the frozen evaluator lock no longer matches the active comparison contract.",
-      drift_fields: ["contract_binding_id"]
+      rationale: report.summary,
+      drift_fields: ["contract_binding_id"],
+      report
     };
   }
+
   const currentLock = await freezeManagedBundleLock({
     contract: input.contract,
     publicDir: input.publicDir || input.managedBundleLock.public_dir,
-    lockedAt: input.managedBundleLock.locked_at
+    workspaceRoot: input.managedBundleLock.lock_source_scope.workspace_root || input.workspaceRoot,
+    lockedAt: input.managedBundleLock.locked_at,
+    collectedAtStage: input.managedBundleLock.collected_at_stage
   });
   if (!currentLock) {
+    const report = buildDriftReport({
+      planId: input.contract.plan_id,
+      evaluatorContractId: input.contract.evaluator_contract_id,
+      publicDir: input.publicDir || input.managedBundleLock.public_dir,
+      lockedAt: input.managedBundleLock.locked_at,
+      lockSourceScope: input.managedBundleLock.lock_source_scope,
+      collectedAtStage: input.managedBundleLock.collected_at_stage,
+      status: "unverifiable",
+      findings: [
+        {
+          kind: "unverifiable_lock",
+          field: "bundle_artifacts",
+          severity: "block",
+          detail:
+            "One or more immutable evaluator artifacts are missing from the managed bundle."
+        }
+      ]
+    });
     return {
       ok: false,
-      rationale:
-        "Managed bundle comparison could not be kept because one or more immutable evaluator artifacts are missing."
+      rationale: report.summary,
+      drift_fields: ["bundle_artifacts"],
+      report
     };
   }
-  const driftFields = compareManagedBundleLocks(input.managedBundleLock, currentLock);
-  if (driftFields.length > 0) {
-    return {
-      ok: false,
-      rationale: oneLine(
-        `Managed bundle comparison could not be kept because the immutable evaluator contract drifted (${driftFields.join(
-          ", "
-        )}).`
-      ),
-      drift_fields: driftFields
-    };
-  }
+
+  const findings = classifyManagedBundleDrift(
+    input.managedBundleLock,
+    currentLock,
+    input.implementationContext
+  );
   const samplingProfile = asRecord(input.metrics?.sampling_profile);
   const observedProfileName = cleanString(asString(samplingProfile?.name));
   if (observedProfileName && observedProfileName !== input.managedBundleLock.sampling_profile_name) {
-    return {
-      ok: false,
-      rationale: oneLine(
-        `Managed bundle comparison could not be kept because the observed sampling profile (${observedProfileName}) did not match the locked standard profile.`
-      ),
-      drift_fields: ["sampling_profile.name"]
-    };
+    findings.push({
+      kind: "trial_shape_drift",
+      field: "sampling_profile.name",
+      severity: "block",
+      detail: `Observed sampling profile ${observedProfileName} did not match the locked standard profile.`
+    });
   }
   const expectedTrials = input.managedBundleLock.total_trials;
   const observedTrials = asNumber(samplingProfile?.total_trials);
@@ -775,17 +988,30 @@ export async function validateManagedBundleLock(input: {
     typeof observedTrials === "number" &&
     observedTrials !== expectedTrials
   ) {
-    return {
-      ok: false,
-      rationale: oneLine(
-        `Managed bundle comparison could not be kept because the observed standard-run trial count (${observedTrials}) did not match the locked budget (${expectedTrials}).`
-      ),
-      drift_fields: ["sampling_profile.total_trials"]
-    };
+    findings.push({
+      kind: "trial_shape_drift",
+      field: "sampling_profile.total_trials",
+      severity: "block",
+      detail: `Observed standard-run trial count ${observedTrials} did not match locked budget ${expectedTrials}.`
+    });
   }
+
+  const report = buildDriftReport({
+    planId: input.contract.plan_id,
+    evaluatorContractId: input.contract.evaluator_contract_id,
+    publicDir: input.managedBundleLock.public_dir,
+    lockedAt: input.managedBundleLock.locked_at,
+    lockSourceScope: input.managedBundleLock.lock_source_scope,
+    collectedAtStage: input.managedBundleLock.collected_at_stage,
+    status: findings.some((item) => item.severity === "block") ? "drifted" : "validated",
+    findings
+  });
+
   return {
-    ok: true,
-    rationale: "Managed bundle lock validated."
+    ok: report.verdict === "allow",
+    rationale: report.summary,
+    drift_fields: findings.map((item) => item.field),
+    report
   };
 }
 
@@ -891,7 +1117,9 @@ function extractManagedBundleConfigSurface(value: unknown): Record<string, unkno
   };
 }
 
-function sanitizeEnvironmentLock(value: unknown): ExperimentManagedBundleLock["environment_signature"] {
+function sanitizeEnvironmentLock(
+  value: unknown
+): ExperimentManagedBundleLock["environment_signature"] {
   const record = asRecord(value) || {};
   return {
     python: asString(record.python),
@@ -904,28 +1132,341 @@ function sanitizeEnvironmentLock(value: unknown): ExperimentManagedBundleLock["e
   };
 }
 
-function compareManagedBundleLocks(
-  expected: ExperimentManagedBundleLock,
-  observed: ExperimentManagedBundleLock
-): string[] {
-  const driftFields: string[] = [];
-  const fields: Array<keyof ExperimentManagedBundleLock> = [
-    "script_hash",
-    "config_hash",
-    "benchmark_tasks_hash",
-    "prompts_hash",
-    "evaluator_hash",
-    "environment_hash",
-    "sampling_profile_name",
-    "total_trials",
-    "contract_binding_id"
-  ];
-  for (const field of fields) {
-    if (expected[field] !== observed[field]) {
-      driftFields.push(String(field));
+async function collectDependencyFingerprints(input: {
+  publicDir: string;
+  workspaceRoot?: string;
+}): Promise<ExperimentDependencyFingerprint[]> {
+  const results: ExperimentDependencyFingerprint[] = [];
+  for (const candidate of dependencyFingerprintCandidates(input.publicDir, input.workspaceRoot)) {
+    const normalizedPath = normalizeFsPath(candidate.absolutePath);
+    try {
+      const stat = await fs.stat(normalizedPath);
+      if (!stat.isFile()) {
+        continue;
+      }
+      results.push({
+        kind: candidate.kind,
+        scope: candidate.scope,
+        path: candidate.relativeLabel,
+        hash: hashBytes(await fs.readFile(normalizedPath))
+      });
+    } catch {
+      continue;
     }
   }
-  return driftFields;
+  return results.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function dependencyFingerprintCandidates(publicDir: string, workspaceRoot?: string): Array<{
+  scope: "bundle" | "workspace";
+  kind: ExperimentDependencyFingerprint["kind"];
+  absolutePath: string;
+  relativeLabel: string;
+}> {
+  const bundleFiles: Array<{
+    kind: ExperimentDependencyFingerprint["kind"];
+    fileName: string;
+  }> = [
+    { kind: "package_manifest", fileName: "package.json" },
+    { kind: "package_lockfile", fileName: "package-lock.json" },
+    { kind: "package_lockfile", fileName: "pnpm-lock.yaml" },
+    { kind: "package_lockfile", fileName: "yarn.lock" },
+    { kind: "package_lockfile", fileName: "bun.lockb" },
+    { kind: "package_lockfile", fileName: "bun.lock" },
+    { kind: "python_manifest", fileName: "requirements.txt" },
+    { kind: "python_manifest", fileName: "requirements-dev.txt" },
+    { kind: "python_manifest", fileName: "requirements.lock" },
+    { kind: "python_manifest", fileName: "pyproject.toml" },
+    { kind: "python_manifest", fileName: "Pipfile" },
+    { kind: "python_lockfile", fileName: "Pipfile.lock" },
+    { kind: "python_lockfile", fileName: "poetry.lock" },
+    { kind: "python_lockfile", fileName: "uv.lock" },
+    { kind: "environment_manifest", fileName: "environment.yml" },
+    { kind: "environment_manifest", fileName: "environment.yaml" },
+    { kind: "environment_manifest", fileName: "conda-lock.yml" },
+    { kind: "environment_manifest", fileName: "conda-lock.yaml" },
+    { kind: "python_manifest", fileName: "setup.py" },
+    { kind: "python_manifest", fileName: "setup.cfg" }
+  ];
+  const candidates: Array<{
+    scope: ExperimentDependencyFingerprint["scope"];
+    kind: ExperimentDependencyFingerprint["kind"];
+    absolutePath: string;
+    relativeLabel: string;
+  }> = bundleFiles.map((entry) => ({
+    scope: "bundle",
+    kind: entry.kind,
+    absolutePath: path.join(publicDir, entry.fileName),
+    relativeLabel: `bundle/${entry.fileName}`
+  }));
+  const normalizedWorkspaceRoot = cleanString(workspaceRoot);
+  if (normalizedWorkspaceRoot) {
+    for (const entry of bundleFiles) {
+      candidates.push({
+        scope: "workspace",
+        kind: entry.kind,
+        absolutePath: path.join(normalizedWorkspaceRoot, entry.fileName),
+        relativeLabel: `workspace/${entry.fileName}`
+      });
+    }
+  }
+  return candidates;
+}
+
+function classifyManagedBundleDrift(
+  expected: ExperimentManagedBundleLock,
+  observed: ExperimentManagedBundleLock,
+  implementationContext?: ExperimentImplementationContext
+): ExperimentDriftFinding[] {
+  const findings: ExperimentDriftFinding[] = [];
+  if (expected.evaluator_hash !== observed.evaluator_hash) {
+    findings.push({
+      kind: "evaluator_drift",
+      field: "evaluator_hash",
+      severity: "block",
+      detail: "Evaluator manifest changed after the lock was captured."
+    });
+  }
+  const promptOrTaskFields: string[] = [];
+  if (expected.script_hash !== observed.script_hash) {
+    promptOrTaskFields.push("script_hash");
+  }
+  if (expected.config_hash !== observed.config_hash) {
+    promptOrTaskFields.push("config_hash");
+  }
+  if (expected.benchmark_tasks_hash !== observed.benchmark_tasks_hash) {
+    promptOrTaskFields.push("benchmark_tasks_hash");
+  }
+  if (expected.prompts_hash !== observed.prompts_hash) {
+    promptOrTaskFields.push("prompts_hash");
+  }
+  if (promptOrTaskFields.length > 0) {
+    findings.push({
+      kind: "prompt_or_task_drift",
+      field: promptOrTaskFields.join(","),
+      severity: "block",
+      detail: "Managed runner code, prompt surface, task set, or locked config changed after the standard run."
+    });
+  }
+  const environmentFields: string[] = [];
+  if (expected.environment_hash !== observed.environment_hash) {
+    environmentFields.push("environment_hash");
+  }
+  if (expected.environment_lock_version !== observed.environment_lock_version) {
+    environmentFields.push("environment_lock_version");
+  }
+  if (environmentFields.length > 0) {
+    findings.push({
+      kind: "environment_drift",
+      field: environmentFields.join(","),
+      severity: "block",
+      detail: "Runtime environment signature changed after the lock was captured."
+    });
+  }
+  const dependencyDiff = diffDependencyFingerprints(
+    expected.dependency_fingerprints,
+    observed.dependency_fingerprints
+  );
+  if (dependencyDiff.length > 0) {
+    const workspaceRoot =
+      cleanString(expected.lock_source_scope.workspace_root) ||
+      cleanString(observed.lock_source_scope.workspace_root);
+    const bundleDiffs = dependencyDiff.filter((item) => item.scope === "bundle");
+    const workspaceDiffs = dependencyDiff.filter((item) => item.scope === "workspace");
+    if (bundleDiffs.length > 0) {
+      findings.push({
+        kind: "dependency_drift",
+        field: "dependency_fingerprints",
+        severity: "block",
+        detail: `Dependency manifest or lockfile surface changed after the standard run (${bundleDiffs
+          .map((item) => item.path)
+          .slice(0, 4)
+          .join(", ")}${bundleDiffs.length > 4 ? ", ..." : ""}).`
+      });
+    }
+    if (workspaceDiffs.length > 0) {
+      const relevantWorkspaceDiffs = workspaceDiffs.filter((item) =>
+        isRelevantWorkspaceDependencyDiff(item.path, workspaceRoot, implementationContext)
+      );
+      const severity: ExperimentDriftFinding["severity"] =
+        relevantWorkspaceDiffs.length > 0 || !workspaceRoot || !implementationContext ? "block" : "warn";
+      findings.push({
+        kind: "dependency_drift",
+        field: "dependency_fingerprints",
+        severity,
+        detail:
+          severity === "block"
+            ? `Workspace dependency surface changed on a relevant execution path (${workspaceDiffs
+                .map((item) => item.path)
+                .slice(0, 4)
+                .join(", ")}${workspaceDiffs.length > 4 ? ", ..." : ""}).`
+            : `Workspace dependency surface changed outside the candidate execution surface (${workspaceDiffs
+                .map((item) => item.path)
+                .slice(0, 4)
+                .join(", ")}${workspaceDiffs.length > 4 ? ", ..." : ""}).`
+      });
+    }
+  } else if (expected.dependency_surface_hash !== observed.dependency_surface_hash) {
+    findings.push({
+      kind: "dependency_drift",
+      field: "dependency_surface_hash",
+      severity: "block",
+      detail: "Dependency manifest or lockfile surface changed after the standard run."
+    });
+  }
+  if (
+    expected.runtime_profile_fingerprint !== observed.runtime_profile_fingerprint &&
+    environmentFields.length === 0 &&
+    dependencyDiff.length === 0 &&
+    expected.dependency_surface_hash === observed.dependency_surface_hash
+  ) {
+    findings.push({
+      kind: "dependency_drift",
+      field: "runtime_profile_fingerprint",
+      severity: "block",
+      detail:
+        "Runtime dependency/profile fingerprint changed even though the comparison cohort is locked."
+    });
+  }
+  return dedupeDriftFindings(findings);
+}
+
+function dedupeDriftFindings(findings: ExperimentDriftFinding[]): ExperimentDriftFinding[] {
+  const seen = new Set<string>();
+  const deduped: ExperimentDriftFinding[] = [];
+  for (const finding of findings) {
+    const key = `${finding.kind}:${finding.field}:${finding.detail}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(finding);
+  }
+  return deduped;
+}
+
+function diffDependencyFingerprints(
+  expected: ExperimentDependencyFingerprint[],
+  observed: ExperimentDependencyFingerprint[]
+): ExperimentDependencyFingerprint[] {
+  const expectedByPath = new Map(expected.map((item) => [item.path, item]));
+  const observedByPath = new Map(observed.map((item) => [item.path, item]));
+  const changed = new Map<string, ExperimentDependencyFingerprint>();
+  for (const [pathLabel, item] of expectedByPath.entries()) {
+    if (observedByPath.get(pathLabel)?.hash !== item.hash) {
+      changed.set(pathLabel, item);
+    }
+  }
+  for (const [pathLabel, item] of observedByPath.entries()) {
+    if (expectedByPath.get(pathLabel)?.hash !== item.hash) {
+      changed.set(pathLabel, item);
+    }
+  }
+  return [...changed.values()].sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function isRelevantWorkspaceDependencyDiff(
+  pathLabel: string,
+  workspaceRoot: string | undefined,
+  implementationContext: ExperimentImplementationContext | undefined
+): boolean {
+  if (!workspaceRoot || !implementationContext) {
+    return true;
+  }
+  const absolutePath = resolveDependencyFingerprintAbsolutePath(pathLabel, workspaceRoot);
+  if (!absolutePath) {
+    return true;
+  }
+  const dependencyDir = path.dirname(absolutePath);
+  const codeState = implementationContext.code_state_ref;
+  const relatedPaths = dedupeStrings([
+    codeState.script_path,
+    codeState.working_dir,
+    ...codeState.focus_files,
+    ...codeState.changed_files
+  ]).map((value) => normalizeGovernancePath(value, workspaceRoot))
+    .filter((value): value is string => Boolean(value));
+  if (relatedPaths.some((value) => value === absolutePath)) {
+    return true;
+  }
+  if (dependencyDir === normalizeFsPath(workspaceRoot)) {
+    return relatedPaths.some((value) => normalizeFsPath(value) === normalizeFsPath(workspaceRoot));
+  }
+  return relatedPaths.some((value) => isPathInsideOrEqual(normalizeFsPath(value), dependencyDir));
+}
+
+function resolveDependencyFingerprintAbsolutePath(
+  pathLabel: string,
+  workspaceRoot: string
+): string | undefined {
+  if (!pathLabel.startsWith("workspace/")) {
+    return undefined;
+  }
+  const relativePath = pathLabel.slice("workspace/".length);
+  if (!relativePath) {
+    return undefined;
+  }
+  return normalizeFsPath(path.join(workspaceRoot, relativePath));
+}
+
+function normalizeGovernancePath(value: string | undefined, workspaceRoot: string): string | undefined {
+  const cleaned = cleanString(value);
+  if (!cleaned) {
+    return undefined;
+  }
+  if (path.isAbsolute(cleaned)) {
+    return normalizeFsPath(cleaned);
+  }
+  return normalizeFsPath(path.join(workspaceRoot, cleaned));
+}
+
+function isPathInsideOrEqual(filePath: string, parentDir: string): boolean {
+  const relative = path.relative(parentDir, filePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function buildDriftReport(input: {
+  planId?: string;
+  evaluatorContractId?: string;
+  publicDir?: string;
+  lockedAt?: string;
+  lockSourceScope?: ExperimentManagedBundleLock["lock_source_scope"];
+  collectedAtStage?: ExperimentManagedBundleLock["collected_at_stage"];
+  status: ExperimentManagedBundleDriftReport["status"];
+  findings: ExperimentDriftFinding[];
+}): ExperimentManagedBundleDriftReport {
+  const hasBlockingFindings = input.findings.some((item) => item.severity === "block");
+  const hasWarningFindings = input.findings.some((item) => item.severity === "warn");
+  const verdict = input.status === "validated" && !hasBlockingFindings ? "allow" : "block";
+  const driftKinds = dedupeStrings(input.findings.map((item) => item.kind));
+  const summary =
+    input.status === "validated"
+      ? hasWarningFindings
+        ? `Managed bundle lock validated with warnings: ${input.findings
+            .filter((item) => item.severity === "warn")
+            .map((item) => item.detail)
+            .join(" ")}`
+        : "Managed bundle lock validated."
+      : input.status === "unverifiable"
+        ? `Managed bundle comparison could not be verified: ${input.findings.map((item) => item.detail).join(" ")}`
+        : `Managed bundle comparison could not be kept because ${driftKinds.join(", ")} was detected: ${input.findings
+            .map((item) => item.detail)
+            .join(" ")}`;
+  return {
+    version: 1,
+    plan_id: input.planId,
+    evaluator_contract_id: input.evaluatorContractId,
+    status: input.status,
+    verdict,
+    summary: oneLine(summary),
+    findings: input.findings,
+    drift_fields: input.findings.map((item) => item.field),
+    checked_at: new Date().toISOString(),
+    locked_at: input.lockedAt,
+    public_dir: input.publicDir,
+    lock_source_scope: input.lockSourceScope,
+    collected_at_stage: input.collectedAtStage
+  };
 }
 
 function toPrimaryCandidateId(planId: string): string {
@@ -949,7 +1490,9 @@ function buildAnalysisResourceUsage(
   };
 }
 
-function pickComparisonMetric(report: AnalysisReport):
+function pickComparisonMetric(
+  report: AnalysisReport
+):
   | {
       comparison: AnalysisConditionComparison;
       metric: {
@@ -1010,10 +1553,7 @@ function isStrictImprovement(
   return primaryValue > baselineValue;
 }
 
-function hasBudgetMismatch(
-  report: AnalysisReport,
-  budgetProfile: ExperimentBudgetProfile
-): boolean {
+function hasBudgetMismatch(report: AnalysisReport, budgetProfile: ExperimentBudgetProfile): boolean {
   if (budgetProfile.mode !== "managed_standard") {
     return false;
   }
@@ -1045,16 +1585,21 @@ function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "baseline";
 }
 
-function dedupeStrings(values: string[]): string[] {
-  return [...new Set(values.map((item) => cleanString(item)).filter((item): item is string => Boolean(item)))];
-}
-
 function cleanString(value: string | undefined): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  return value?.trim() ? value.trim() : undefined;
 }
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+async function readJsonFile(filePath: string): Promise<unknown> {
+  const raw = await fs.readFile(normalizeFsPath(filePath), "utf8");
+  return JSON.parse(raw) as unknown;
+}
+
+function dedupeStrings(values: Array<string | undefined | null>): string[] {
+  return [...new Set(values.map((item) => cleanString(item || undefined)).filter((item): item is string => Boolean(item)))];
 }
 
 function asString(value: unknown): string | undefined {
@@ -1073,8 +1618,4 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-async function readJsonFile(filePath: string): Promise<unknown> {
-  return JSON.parse(await fs.readFile(normalizeFsPath(filePath), "utf8")) as unknown;
 }
