@@ -36,6 +36,12 @@ Run tests:
 npm test
 ```
 
+Run harness quality validation (issue log + checked-in run artifact structure):
+
+```bash
+npm run validate:harness
+```
+
 Start the TUI:
 
 ```bash

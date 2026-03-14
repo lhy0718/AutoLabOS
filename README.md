@@ -50,6 +50,14 @@
 | Research runtime patterns | ReAct, ReWOO, ToT, and Reflexion are used where they make sense |
 | Local ACI execution | `implement_experiments` and `run_experiments` execute through file, command, and test actions |
 
+## Operational Quality Docs
+
+- `docs/architecture.md`
+- `docs/tui-live-validation.md`
+- `docs/experiment-quality-bar.md`
+- `docs/paper-quality-bar.md`
+- `docs/reproducibility.md`
+
 ## Start Here
 
 - If this is your first time, start with `autolabos web`. It gives you guided onboarding, the dashboard, logs, checkpoints, and artifact browsing in one place.
