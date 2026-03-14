@@ -9,6 +9,7 @@ import {
   buildExperimentComparisonContract,
   buildExperimentImplementationContext,
   EXPERIMENT_GOVERNANCE_BASELINE_SNAPSHOT_ARTIFACT,
+  EXPERIMENT_GOVERNANCE_DRIFT_REPORT_ARTIFACT,
   EXPERIMENT_GOVERNANCE_LEDGER_ARTIFACT,
   freezeManagedBundleLock,
   storeExperimentGovernanceDecision
@@ -485,12 +486,12 @@ describe("experiment governance", () => {
       contract,
       branchPlan: {
         branch_id: "search_primary",
-        focus_files: [path.join(publicDir, "run_experiment.py")]
+        focus_files: [path.join(publicDir, "run_experiment.py"), path.join(root, "package.json")]
       },
-      changedFiles: [path.join(publicDir, "run_experiment.py")],
+      changedFiles: [path.join(publicDir, "run_experiment.py"), path.join(root, "package.json")],
       scriptPath: path.join(publicDir, "run_experiment.py"),
       runCommand: `python3 ${JSON.stringify(path.join(publicDir, "run_experiment.py"))}`,
-      workingDir: publicDir
+      workingDir: root
     });
     const managedBundleLock = await freezeManagedBundleLock({
       contract,
@@ -526,6 +527,16 @@ describe("experiment governance", () => {
       targetNode: "implement_experiments"
     });
 
+    const driftReport = JSON.parse(
+      await readFile(path.join(runDir, EXPERIMENT_GOVERNANCE_DRIFT_REPORT_ARTIFACT), "utf8")
+    ) as {
+      status: string;
+      findings: Array<{ kind: string; field: string }>;
+    };
+    expect(driftReport.status).toBe("drifted");
+    expect(driftReport.findings.some((finding) => finding.kind === "evaluator_drift")).toBe(true);
+    expect(driftReport.findings.some((finding) => finding.kind === "dependency_drift")).toBe(false);
+
     const ledger = JSON.parse(
       await readFile(path.join(runDir, EXPERIMENT_GOVERNANCE_LEDGER_ARTIFACT), "utf8")
     ) as {
@@ -536,7 +547,667 @@ describe("experiment governance", () => {
         (entry) =>
           entry.candidate_id.endsWith(":primary") &&
           entry.verdict === "discard" &&
-          /immutable evaluator contract drifted/u.test(entry.rationale)
+          /managed bundle/i.test(entry.rationale)
+      )
+    ).toBe(true);
+  });
+
+  it("captures runtime dependency fingerprints in the managed bundle lock", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-experiment-governance-lock-"));
+    process.chdir(root);
+
+    const run = makeRun("run-governance-lock", "run_experiments", "accuracy at least 0.8");
+    const publicDir = path.join(root, "public-experiment");
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(path.join(publicDir, "run_experiment.py"), "print('bundle')\n", "utf8");
+    await writeFile(
+      path.join(publicDir, "experiment_config.json"),
+      JSON.stringify(
+        {
+          experiment_mode: "real_execution",
+          llm_profile: { provider: "openai", model: "gpt-5.4", reasoning_effort: "medium", fast_mode: false },
+          execution: { max_workers: 2, role_overrides: { planner: "gpt-5.4" } },
+          sampling: { standard: { repeats: 2, prompt_count: 2, tasks_per_dataset: 2 } }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(publicDir, "benchmark_tasks.json"), JSON.stringify([{ id: "task-1" }], null, 2), "utf8");
+    await writeFile(path.join(publicDir, "prompts.json"), JSON.stringify([{ id: "prompt-1" }], null, 2), "utf8");
+    await writeFile(path.join(publicDir, "evaluator_manifest.json"), JSON.stringify({ qa_metric: "exact_match" }, null, 2), "utf8");
+    await writeFile(
+      path.join(publicDir, "package.json"),
+      JSON.stringify({ name: "bundle-managed", version: "1.0.0" }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      path.join(publicDir, "environment.lock.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          python: "3.11.8",
+          platform: "Linux",
+          implementation: "CPython",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning_effort: "medium",
+          fast_mode: false
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "managed-bundle" }, null, 2), "utf8");
+    await writeFile(path.join(root, "uv.lock"), "# lock\n", "utf8");
+
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "design_managed_lock",
+        hypothesis_ids: ["h_1"],
+        baselines: []
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: true
+    });
+    const managedBundleLock = await freezeManagedBundleLock({
+      contract,
+      publicDir,
+      workspaceRoot: root
+    });
+
+    expect(managedBundleLock).toBeTruthy();
+    expect(managedBundleLock?.dependency_fingerprints.map((item) => item.path)).toEqual(
+      expect.arrayContaining(["workspace/package.json", "workspace/uv.lock"])
+    );
+    expect(managedBundleLock?.dependency_fingerprints.find((item) => item.path === "workspace/package.json")?.kind).toBe(
+      "package_manifest"
+    );
+    expect(managedBundleLock?.dependency_fingerprints.find((item) => item.path === "workspace/uv.lock")?.kind).toBe(
+      "python_lockfile"
+    );
+    expect(managedBundleLock?.dependency_surface_hash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(managedBundleLock?.runtime_profile_fingerprint).toMatch(/^[a-f0-9]{64}$/u);
+    expect(managedBundleLock?.environment_lock_version).toBe(1);
+    expect(managedBundleLock?.collected_at_stage).toBe("run_experiments");
+    expect(managedBundleLock?.lock_source_scope.workspace_root).toBe(root);
+    expect(managedBundleLock?.lock_source_scope.dependency_files).toEqual(
+      expect.arrayContaining(["workspace/package.json", "workspace/uv.lock"])
+    );
+  });
+
+  it("classifies dependency drift separately from evaluator drift", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-experiment-governance-dependency-"));
+    process.chdir(root);
+
+    const run = makeRun("run-governance-dependency", "analyze_results", "accuracy at least 0.8");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-experiment");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${run.id}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.92,
+          sampling_profile: { name: "standard", total_trials: 48, executed_trials: 48 }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(publicDir, "run_experiment.py"), "print('bundle')\n", "utf8");
+    await writeFile(
+      path.join(publicDir, "experiment_config.json"),
+      JSON.stringify(
+        {
+          experiment_mode: "real_execution",
+          llm_profile: { provider: "openai", model: "gpt-5.4", reasoning_effort: "medium", fast_mode: false },
+          execution: { max_workers: 2 },
+          sampling: { standard: { repeats: 2, prompt_count: 2, tasks_per_dataset: 2 } }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(publicDir, "benchmark_tasks.json"), JSON.stringify([{ id: "task-1" }], null, 2), "utf8");
+    await writeFile(path.join(publicDir, "prompts.json"), JSON.stringify([{ id: "prompt-1" }], null, 2), "utf8");
+    await writeFile(path.join(publicDir, "evaluator_manifest.json"), JSON.stringify({ qa_metric: "exact_match" }, null, 2), "utf8");
+    await writeFile(
+      path.join(publicDir, "environment.lock.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          python: "3.11.8",
+          platform: "Linux",
+          implementation: "CPython",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning_effort: "medium",
+          fast_mode: false
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "design_managed_dependency",
+        hypothesis_ids: ["h_1"],
+        baselines: []
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: true
+    });
+    const implementationContext = buildExperimentImplementationContext({
+      contract,
+      branchPlan: {
+        branch_id: "search_primary",
+        focus_files: [path.join(publicDir, "run_experiment.py"), path.join(publicDir, "package.json")]
+      },
+      changedFiles: [path.join(publicDir, "run_experiment.py"), path.join(publicDir, "package.json")],
+      scriptPath: path.join(publicDir, "run_experiment.py"),
+      runCommand: `python3 ${JSON.stringify(path.join(publicDir, "run_experiment.py"))}`,
+      workingDir: publicDir
+    });
+    const managedBundleLock = await freezeManagedBundleLock({
+      contract,
+      publicDir,
+      workspaceRoot: root
+    });
+    await storeExperimentGovernanceDecision(run, memory, {
+      contract,
+      implementationContext,
+      managedBundleLock: managedBundleLock || undefined,
+      entries: []
+    });
+
+    await writeFile(
+      path.join(publicDir, "package.json"),
+      JSON.stringify({ name: "bundle-managed", version: "2.0.0" }, null, 2),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode(buildNodeDeps());
+    const result = await analyzeNode.execute({ run });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_implement",
+      targetNode: "implement_experiments"
+    });
+
+    const driftReport = JSON.parse(
+      await readFile(path.join(runDir, EXPERIMENT_GOVERNANCE_DRIFT_REPORT_ARTIFACT), "utf8")
+    ) as {
+      status: string;
+      findings: Array<{ kind: string; field: string }>;
+    };
+    expect(driftReport.status).toBe("drifted");
+    expect(driftReport.findings.some((finding) => finding.kind === "dependency_drift")).toBe(true);
+    expect(driftReport.findings.some((finding) => finding.kind === "evaluator_drift")).toBe(false);
+  });
+
+  it("keeps managed bundle validation as a warning when unrelated workspace dependencies drift", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-experiment-governance-dependency-warn-"));
+    process.chdir(root);
+
+    const run = makeRun("run-governance-dependency-warn", "analyze_results", "accuracy at least 0.8");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-experiment");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${run.id}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.92,
+          sampling_profile: { name: "standard", total_trials: 48, executed_trials: 48 }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(publicDir, "run_experiment.py"), "print('bundle')\n", "utf8");
+    await writeFile(
+      path.join(publicDir, "experiment_config.json"),
+      JSON.stringify(
+        {
+          experiment_mode: "real_execution",
+          llm_profile: { provider: "openai", model: "gpt-5.4", reasoning_effort: "medium", fast_mode: false },
+          execution: { max_workers: 2 },
+          sampling: { standard: { repeats: 2, prompt_count: 2, tasks_per_dataset: 2 } }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(publicDir, "benchmark_tasks.json"), JSON.stringify([{ id: "task-1" }], null, 2), "utf8");
+    await writeFile(path.join(publicDir, "prompts.json"), JSON.stringify([{ id: "prompt-1" }], null, 2), "utf8");
+    await writeFile(path.join(publicDir, "evaluator_manifest.json"), JSON.stringify({ qa_metric: "exact_match" }, null, 2), "utf8");
+    await writeFile(
+      path.join(publicDir, "environment.lock.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          python: "3.11.8",
+          platform: "Linux",
+          implementation: "CPython",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning_effort: "medium",
+          fast_mode: false
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "managed-bundle", version: "1.0.0" }, null, 2), "utf8");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "design_managed_dependency_warn",
+        hypothesis_ids: ["h_1"],
+        baselines: []
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: true
+    });
+    const implementationContext = buildExperimentImplementationContext({
+      contract,
+      branchPlan: {
+        branch_id: "search_primary",
+        focus_files: [path.join(publicDir, "run_experiment.py")]
+      },
+      changedFiles: [path.join(publicDir, "run_experiment.py")],
+      scriptPath: path.join(publicDir, "run_experiment.py"),
+      runCommand: `python3 ${JSON.stringify(path.join(publicDir, "run_experiment.py"))}`,
+      workingDir: publicDir
+    });
+    const managedBundleLock = await freezeManagedBundleLock({
+      contract,
+      publicDir,
+      workspaceRoot: root
+    });
+    await storeExperimentGovernanceDecision(run, memory, {
+      contract,
+      implementationContext,
+      managedBundleLock: managedBundleLock || undefined,
+      entries: []
+    });
+
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "managed-bundle", version: "2.0.0" }, null, 2), "utf8");
+
+    const analyzeNode = createAnalyzeResultsNode(buildNodeDeps());
+    const result = await analyzeNode.execute({ run });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.action).not.toBe("backtrack_to_implement");
+
+    const driftReport = JSON.parse(
+      await readFile(path.join(runDir, EXPERIMENT_GOVERNANCE_DRIFT_REPORT_ARTIFACT), "utf8")
+    ) as {
+      status: string;
+      verdict: string;
+      summary: string;
+      findings: Array<{ kind: string; severity: string }>;
+    };
+    expect(driftReport.status).toBe("validated");
+    expect(driftReport.verdict).toBe("allow");
+    expect(driftReport.summary).toContain("validated with warnings");
+    expect(
+      driftReport.findings.some(
+        (finding) => finding.kind === "dependency_drift" && finding.severity === "warn"
+      )
+    ).toBe(true);
+  });
+
+  it("classifies environment drift separately from dependency drift", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-experiment-governance-environment-"));
+    process.chdir(root);
+
+    const run = makeRun("run-governance-environment", "analyze_results", "accuracy at least 0.8");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-experiment");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${run.id}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.92,
+          sampling_profile: { name: "standard", total_trials: 48, executed_trials: 48 }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(publicDir, "run_experiment.py"), "print('bundle')\n", "utf8");
+    await writeFile(
+      path.join(publicDir, "experiment_config.json"),
+      JSON.stringify(
+        {
+          experiment_mode: "real_execution",
+          llm_profile: { provider: "openai", model: "gpt-5.4", reasoning_effort: "medium", fast_mode: false },
+          execution: { max_workers: 2 },
+          sampling: { standard: { repeats: 2, prompt_count: 2, tasks_per_dataset: 2 } }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(publicDir, "benchmark_tasks.json"), JSON.stringify([{ id: "task-1" }], null, 2), "utf8");
+    await writeFile(path.join(publicDir, "prompts.json"), JSON.stringify([{ id: "prompt-1" }], null, 2), "utf8");
+    await writeFile(path.join(publicDir, "evaluator_manifest.json"), JSON.stringify({ qa_metric: "exact_match" }, null, 2), "utf8");
+    await writeFile(
+      path.join(publicDir, "environment.lock.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          python: "3.11.8",
+          platform: "Linux",
+          implementation: "CPython",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning_effort: "medium",
+          fast_mode: false
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "design_managed_environment",
+        hypothesis_ids: ["h_1"],
+        baselines: []
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: true
+    });
+    const implementationContext = buildExperimentImplementationContext({
+      contract,
+      branchPlan: {
+        branch_id: "search_primary",
+        focus_files: [path.join(publicDir, "run_experiment.py")]
+      },
+      changedFiles: [path.join(publicDir, "run_experiment.py")],
+      scriptPath: path.join(publicDir, "run_experiment.py"),
+      runCommand: `python3 ${JSON.stringify(path.join(publicDir, "run_experiment.py"))}`,
+      workingDir: publicDir
+    });
+    const managedBundleLock = await freezeManagedBundleLock({
+      contract,
+      publicDir,
+      workspaceRoot: root
+    });
+    await storeExperimentGovernanceDecision(run, memory, {
+      contract,
+      implementationContext,
+      managedBundleLock: managedBundleLock || undefined,
+      entries: []
+    });
+
+    await writeFile(
+      path.join(publicDir, "environment.lock.json"),
+      JSON.stringify(
+        {
+          version: 2,
+          python: "3.12.1",
+          platform: "Linux",
+          implementation: "CPython",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning_effort: "medium",
+          fast_mode: false
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode(buildNodeDeps());
+    const result = await analyzeNode.execute({ run });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_implement",
+      targetNode: "implement_experiments"
+    });
+
+    const driftReport = JSON.parse(
+      await readFile(path.join(runDir, EXPERIMENT_GOVERNANCE_DRIFT_REPORT_ARTIFACT), "utf8")
+    ) as {
+      status: string;
+      findings: Array<{ kind: string; field: string }>;
+      drift_fields: string[];
+    };
+    expect(driftReport.status).toBe("drifted");
+    expect(driftReport.findings.some((finding) => finding.kind === "environment_drift")).toBe(true);
+    expect(driftReport.findings.some((finding) => finding.kind === "dependency_drift")).toBe(false);
+    expect(driftReport.drift_fields).toContain("environment_hash,environment_lock_version");
+  });
+
+  it("blocks keep when the locked managed trial count drifts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-experiment-governance-trials-"));
+    process.chdir(root);
+
+    const run = makeRun("run-governance-trials", "analyze_results", "accuracy at least 0.8");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-experiment");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${run.id}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.93,
+          sampling_profile: { name: "standard", total_trials: 24, executed_trials: 24 }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(publicDir, "run_experiment.py"), "print('bundle')\n", "utf8");
+    await writeFile(
+      path.join(publicDir, "experiment_config.json"),
+      JSON.stringify(
+        {
+          experiment_mode: "real_execution",
+          llm_profile: { provider: "openai", model: "gpt-5.4", reasoning_effort: "medium", fast_mode: false },
+          execution: { max_workers: 2 },
+          sampling: { standard: { repeats: 2, prompt_count: 2, tasks_per_dataset: 2 } }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(publicDir, "benchmark_tasks.json"), JSON.stringify([{ id: "task-1" }], null, 2), "utf8");
+    await writeFile(path.join(publicDir, "prompts.json"), JSON.stringify([{ id: "prompt-1" }], null, 2), "utf8");
+    await writeFile(path.join(publicDir, "evaluator_manifest.json"), JSON.stringify({ qa_metric: "exact_match" }, null, 2), "utf8");
+    await writeFile(
+      path.join(publicDir, "environment.lock.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          python: "3.11.8",
+          platform: "Linux",
+          implementation: "CPython",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning_effort: "medium",
+          fast_mode: false
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "design_managed_trials",
+        hypothesis_ids: ["h_1"],
+        baselines: []
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: true
+    });
+    const implementationContext = buildExperimentImplementationContext({
+      contract,
+      branchPlan: {
+        branch_id: "search_primary",
+        focus_files: [path.join(publicDir, "run_experiment.py")]
+      },
+      changedFiles: [path.join(publicDir, "run_experiment.py")],
+      scriptPath: path.join(publicDir, "run_experiment.py"),
+      runCommand: `python3 ${JSON.stringify(path.join(publicDir, "run_experiment.py"))}`,
+      workingDir: publicDir
+    });
+    const managedBundleLock = await freezeManagedBundleLock({
+      contract,
+      publicDir,
+      workspaceRoot: root
+    });
+    await storeExperimentGovernanceDecision(run, memory, {
+      contract,
+      implementationContext,
+      managedBundleLock: managedBundleLock || undefined,
+      entries: []
+    });
+
+    const analyzeNode = createAnalyzeResultsNode(buildNodeDeps());
+    const result = await analyzeNode.execute({ run });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_implement",
+      targetNode: "implement_experiments"
+    });
+
+    const driftReport = JSON.parse(
+      await readFile(path.join(runDir, EXPERIMENT_GOVERNANCE_DRIFT_REPORT_ARTIFACT), "utf8")
+    ) as {
+      status: string;
+      findings: Array<{ kind: string; field: string }>;
+      drift_fields: string[];
+    };
+    expect(driftReport.status).toBe("drifted");
+    expect(driftReport.findings.some((finding) => finding.kind === "trial_shape_drift")).toBe(true);
+    expect(driftReport.drift_fields).toContain("sampling_profile.total_trials");
+
+    const ledger = JSON.parse(
+      await readFile(path.join(runDir, EXPERIMENT_GOVERNANCE_LEDGER_ARTIFACT), "utf8")
+    ) as {
+      entries: Array<{ verdict: string; rationale: string }>;
+    };
+    expect(
+      ledger.entries.some(
+        (entry) => entry.verdict === "discard" && /trial count/i.test(entry.rationale)
       )
     ).toBe(true);
   });

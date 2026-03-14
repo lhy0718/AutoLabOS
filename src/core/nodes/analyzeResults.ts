@@ -90,11 +90,23 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       const managedBundleValidation = await validateManagedBundleLock({
         contract: comparisonContract,
         managedBundleLock,
+        implementationContext,
         metrics,
-        publicDir
+        publicDir,
+        workspaceRoot: process.cwd()
       });
+      if (managedBundleValidation) {
+        await storeExperimentGovernanceDecision(run, runContextMemory, {
+          driftReport: managedBundleValidation.report,
+          entries: []
+        });
+      }
       if (managedBundleValidation && !managedBundleValidation.ok) {
         inputWarnings.push(managedBundleValidation.rationale);
+      } else if (
+        managedBundleValidation?.report.findings.some((finding) => finding.severity === "warn")
+      ) {
+        inputWarnings.push(managedBundleValidation.report.summary);
       }
 
       const manualObjectiveClarification =

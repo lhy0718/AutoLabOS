@@ -203,6 +203,7 @@ export interface AppConfig {
     runner: "local_python";
     timeout_sec: number;
     allow_network: boolean;
+    candidate_isolation?: "attempt_snapshot_restore" | "attempt_worktree";
   };
   paper: {
     template: "acl";

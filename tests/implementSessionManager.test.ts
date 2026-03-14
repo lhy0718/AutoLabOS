@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
@@ -46,7 +47,7 @@ async function waitForText(
   throw new Error(`Timed out waiting for ${filePath}`);
 }
 
-function createTestConfig() {
+function createTestConfig(candidateIsolation: "attempt_snapshot_restore" | "attempt_worktree" = "attempt_snapshot_restore") {
   return {
     version: 1,
     project_name: "test",
@@ -93,10 +94,26 @@ function createTestConfig() {
       default_objective_metric: "reproducibility"
     },
     workflow: { mode: "agent_approval" as const, wizard_enabled: true },
-    experiments: { runner: "local_python" as const, timeout_sec: 3600, allow_network: false },
+    experiments: {
+      runner: "local_python" as const,
+      timeout_sec: 3600,
+      allow_network: false,
+      candidate_isolation: candidateIsolation
+    },
     paper: { template: "acl" as const, build_pdf: true, latex_engine: "auto_install" as const },
     paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
   };
+}
+
+function initGitWorkspace(workspace: string, trackedFiles: string[]): void {
+  execFileSync("git", ["init"], { cwd: workspace, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "autolabos@example.com"], { cwd: workspace, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "AutoLabOS Test"], { cwd: workspace, stdio: "ignore" });
+  execFileSync("git", ["add", "."], { cwd: workspace, stdio: "ignore" });
+  if (trackedFiles.length > 0) {
+    execFileSync("git", ["add", ...trackedFiles], { cwd: workspace, stdio: "ignore" });
+  }
+  execFileSync("git", ["commit", "-m", "init"], { cwd: workspace, stdio: "ignore" });
 }
 
 describe("ImplementSessionManager", () => {
@@ -1606,6 +1623,294 @@ describe("ImplementSessionManager", () => {
     expect(prompts[1]).toContain('"branch_id": "branch_alternate_2"');
     expect(prompts[1]).toContain(path.basename(alternateCandidate));
     expect(readFileSync(primaryCandidate, "utf8")).toBe("def accuracy_primary():\n    return 0\n");
+  }, 15000);
+
+  it("uses attempt worktrees to isolate retry candidates when the workspace is git-backed", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-worktree-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const trackedRunner = path.join(workspace, "src", "isolation_runner.py");
+    mkdirSync(path.dirname(trackedRunner), { recursive: true });
+    writeFileSync(trackedRunner, "def run_trial():\n    return 0\n", "utf8");
+    initGitWorkspace(workspace, [trackedRunner]);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Worktree Isolation Run",
+      topic: "git-backed retry isolation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - isolate\n", "utf8");
+    const orphanResidueRoot = path.join(runDir, "implement_experiments", "attempt_worktrees");
+    const orphanAttemptPath = path.join(orphanResidueRoot, "attempt_1");
+    mkdirSync(orphanAttemptPath, { recursive: true });
+    writeFileSync(path.join(orphanAttemptPath, "stale.txt"), "stale\n", "utf8");
+
+    const workingDirectories: string[] = [];
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async ({
+        workingDirectory
+      }: {
+        workingDirectory?: string;
+      }) => {
+        workingDirectories.push(workingDirectory || "");
+        callCount += 1;
+        const activeRoot = workingDirectory || workspace;
+        const candidatePath = path.join(activeRoot, "src", "isolation_runner.py");
+        const attemptMetricsPath = path.join(activeRoot, ".autolabos", "runs", run.id, "metrics.json");
+        if (callCount === 1) {
+          writeFileSync(candidatePath, "def run_trial():\n    print(\n", "utf8");
+          return {
+            threadId: "thread-impl-worktree",
+            finalText: JSON.stringify({
+              summary: "Patched the isolated runner with a syntax bug.",
+              run_command: `python3 ${JSON.stringify(candidatePath)}`,
+              changed_files: [candidatePath],
+              artifacts: [candidatePath],
+              script_path: candidatePath,
+              metrics_path: attemptMetricsPath,
+              working_dir: activeRoot,
+              localization: {
+                summary: "Focused on the isolated runner.",
+                selected_files: [candidatePath],
+                candidate_files: [{ path: candidatePath, reason: "Primary isolated entry point.", confidence: 0.9 }]
+              }
+            }),
+            events: []
+          };
+        }
+
+        writeFileSync(candidatePath, "def run_trial():\n    return 2\n", "utf8");
+        return {
+          threadId: "thread-impl-worktree",
+          finalText: JSON.stringify({
+            summary: "Fixed the isolated runner in the worktree.",
+            run_command: `python3 ${JSON.stringify(candidatePath)}`,
+            changed_files: [candidatePath],
+            artifacts: [candidatePath],
+            script_path: candidatePath,
+            metrics_path: attemptMetricsPath,
+            working_dir: activeRoot,
+            localization: {
+              summary: "Kept the isolated runner focused.",
+              selected_files: [candidatePath],
+              candidate_files: [{ path: candidatePath, reason: "Primary isolated entry point.", confidence: 0.95 }]
+            }
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig("attempt_worktree"),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const isolationReport = JSON.parse(
+      readFileSync(path.join(runDir, "experiment_governance", "candidate_isolation_report.json"), "utf8")
+    ) as {
+      final_strategy: string;
+      fallback_occurred?: boolean;
+      attempts: Array<{
+        effective_strategy: string;
+        isolated_workspace_root?: string;
+        worktree_path?: string;
+        cleanup_status?: string;
+        orphaned_residue_paths: string[];
+      }>;
+    };
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const memoryIsolationReport = await memory.get<{ final_strategy: string }>(
+      "experiment_governance.candidate_isolation_report"
+    );
+
+    expect(callCount).toBe(2);
+    expect(workingDirectories[0]).not.toBe(workspace);
+    expect(workingDirectories[0]).toBe(path.join(runDir, "implement_experiments", "attempt_worktrees", "attempt_1"));
+    expect(result.scriptPath).toBe(trackedRunner);
+    expect(readFileSync(trackedRunner, "utf8")).toBe("def run_trial():\n    return 2\n");
+    expect(isolationReport.final_strategy).toBe("attempt_worktree");
+    expect(isolationReport.fallback_occurred).toBe(false);
+    expect(isolationReport.attempts[0]?.effective_strategy).toBe("attempt_worktree");
+    expect(isolationReport.attempts[0]?.isolated_workspace_root).toBe(workingDirectories[0]);
+    expect(isolationReport.attempts[0]?.worktree_path).toBe(workingDirectories[0]);
+    expect(isolationReport.attempts[0]?.cleanup_status).toBe("completed");
+    expect(isolationReport.attempts[0]?.orphaned_residue_paths).toContain(orphanAttemptPath);
+    expect(existsSync(workingDirectories[0]!)).toBe(false);
+    expect(memoryIsolationReport?.final_strategy).toBe("attempt_worktree");
+  }, 15000);
+
+  it("falls back to snapshot restore when worktree isolation is requested without git support", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-worktree-fallback-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Worktree Fallback Run",
+      topic: "snapshot fallback",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - fallback\n", "utf8");
+
+    const firstScriptPath = path.join(runDir, "broken_worktree_candidate.py");
+    const secondScriptPath = path.join(runDir, "fixed_worktree_candidate.py");
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          writeFileSync(firstScriptPath, "print(\n", "utf8");
+          return {
+            threadId: "thread-impl-worktree-fallback",
+            finalText: JSON.stringify({
+              summary: "Initial draft under requested worktree isolation.",
+              run_command: `python3 ${JSON.stringify(firstScriptPath)}`,
+              changed_files: [firstScriptPath],
+              artifacts: [firstScriptPath],
+              script_path: firstScriptPath,
+              metrics_path: path.join(runDir, "metrics.json")
+            }),
+            events: []
+          };
+        }
+        writeFileSync(secondScriptPath, "print('fixed')\n", "utf8");
+        return {
+          threadId: "thread-impl-worktree-fallback",
+          finalText: JSON.stringify({
+            summary: "Recovered via snapshot fallback.",
+            run_command: `python3 ${JSON.stringify(secondScriptPath)}`,
+            changed_files: [secondScriptPath],
+            artifacts: [secondScriptPath],
+            script_path: secondScriptPath,
+            metrics_path: path.join(runDir, "metrics.json")
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig("attempt_worktree"),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await manager.run(run);
+    const isolationReport = JSON.parse(
+      readFileSync(path.join(runDir, "experiment_governance", "candidate_isolation_report.json"), "utf8")
+    ) as {
+      requested_strategy: string;
+      final_strategy: string;
+      fallback_occurred?: boolean;
+      attempts: Array<{
+        fallback_from?: string;
+        fallback_reason?: string;
+        snapshot_root?: string;
+        cleanup_status?: string;
+      }>;
+    };
+
+    expect(isolationReport.requested_strategy).toBe("attempt_worktree");
+    expect(isolationReport.final_strategy).toBe("attempt_snapshot_restore");
+    expect(isolationReport.fallback_occurred).toBe(true);
+    expect(isolationReport.attempts[0]?.fallback_from).toBe("attempt_worktree");
+    expect(isolationReport.attempts[0]?.fallback_reason).toContain("snapshot/restore");
+    expect(isolationReport.attempts[0]?.snapshot_root).toContain(path.join(run.id, "implement_experiments", "attempt_snapshots"));
+    expect(isolationReport.attempts[0]?.cleanup_status).toBe("completed");
+    expect(existsSync(firstScriptPath)).toBe(false);
+    expect(readFileSync(secondScriptPath, "utf8")).toContain("fixed");
+  }, 15000);
+
+  it("falls back to snapshot restore when git worktree isolation is blocked by dirty tracked files", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-worktree-dirty-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const trackedRunner = path.join(workspace, "src", "dirty_runner.py");
+    mkdirSync(path.dirname(trackedRunner), { recursive: true });
+    writeFileSync(trackedRunner, "def run_trial():\n    return 0\n", "utf8");
+    initGitWorkspace(workspace, [trackedRunner]);
+    writeFileSync(trackedRunner, "def run_trial():\n    return 1\n", "utf8");
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Dirty Worktree Fallback Run",
+      topic: "dirty git fallback",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - dirty-fallback\n", "utf8");
+
+    const generatedScript = path.join(runDir, "dirty_fallback_candidate.py");
+    const workingDirectories: string[] = [];
+    const codex = {
+      runTurnStream: async ({ workingDirectory }: { workingDirectory?: string }) => {
+        workingDirectories.push(workingDirectory || "");
+        writeFileSync(generatedScript, "print('dirty fallback')\n", "utf8");
+        return {
+          threadId: "thread-impl-worktree-dirty",
+          finalText: JSON.stringify({
+            summary: "Recovered with snapshot fallback after dirty git state blocked worktree isolation.",
+            run_command: `python3 ${JSON.stringify(generatedScript)}`,
+            changed_files: [generatedScript],
+            artifacts: [generatedScript],
+            script_path: generatedScript,
+            metrics_path: path.join(runDir, "metrics.json")
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig("attempt_worktree"),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await manager.run(run);
+    const isolationReport = JSON.parse(
+      readFileSync(path.join(runDir, "experiment_governance", "candidate_isolation_report.json"), "utf8")
+    ) as {
+      final_strategy: string;
+      fallback_occurred?: boolean;
+      attempts: Array<{ fallback_reason?: string }>;
+    };
+
+    expect(workingDirectories[0]).toBe(workspace);
+    expect(isolationReport.final_strategy).toBe("attempt_snapshot_restore");
+    expect(isolationReport.fallback_occurred).toBe(true);
+    expect(isolationReport.attempts[0]?.fallback_reason).toContain("clean git workspace");
+    expect(readFileSync(trackedRunner, "utf8")).toBe("def run_trial():\n    return 1\n");
   }, 15000);
 
   it("requires approval when local verification is deferred to run_experiments", async () => {

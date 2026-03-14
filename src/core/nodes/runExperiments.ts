@@ -689,6 +689,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       if (comparisonContract) {
         const managedBundleLock = await freezeManagedBundleLock({
           contract: comparisonContract,
+          workspaceRoot: process.cwd(),
           publicDir:
             managedSupplementalPlan?.publicDir ||
             resolveMaybeRelative(await runContext.get<string>("implement_experiments.public_dir"), process.cwd()) ||
