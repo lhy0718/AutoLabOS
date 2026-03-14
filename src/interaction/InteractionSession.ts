@@ -1141,11 +1141,13 @@ export class InteractionSession {
           return { ok: false, reason: "target run not found" };
         }
         const memory = new RunContextMemory(run.memoryRefs.runContextPath);
-        await memory.put("analyze_papers.request", {
-          topN: parsed.topN ?? null,
-          selectionMode: parsed.topN ? "top_n" : "all",
-          selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
-        });
+        if (parsed.topN) {
+          await memory.put("analyze_papers.request", {
+            topN: parsed.topN,
+            selectionMode: "top_n",
+            selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+          });
+        }
       } else if (nodeRaw === "generate_hypotheses") {
         const parsed = parseGenerateHypothesesRunArgs(args.slice(2));
         if (parsed.error) {
@@ -1253,6 +1255,10 @@ export class InteractionSession {
       if (!run) {
         return { ok: false, reason: "target run not found" };
       }
+      if (run.status === "running") {
+        this.pushLog("Cannot clear node artifacts while the target run is still running. Stop or pause the run first.");
+        return { ok: false, reason: "target run is currently running" };
+      }
       const removed = await this.clearNodeArtifacts(run, nodeRaw);
       await this.resetRunFromNode(run.id, nodeRaw, `clear ${nodeRaw}`);
       await this.setActiveRunId(run.id);
@@ -1267,11 +1273,16 @@ export class InteractionSession {
       if (!run) {
         return { ok: false, reason: "target run not found" };
       }
+      if (run.status === "running") {
+        this.pushLog("Cannot clear paper artifacts while the target run is still running. Stop or pause the run first.");
+        return { ok: false, reason: "target run is currently running" };
+      }
       const removed = await this.clearNodeArtifacts(run, "collect_papers");
       await this.resetRunFromNode(run.id, "collect_papers", "clear collect_papers");
       await this.setActiveRunId(run.id);
       this.pushLog(`Cleared paper artifacts: ${removed} file(s).`);
       this.pushLog("Run reset to collect_papers (pending).");
+      this.pushLog("collect_papers corpus artifacts were removed. Use /agent clear analyze_papers if you only want to rerun analysis on the existing corpus.");
       await this.refreshRunIndex();
       return { ok: true };
     }
@@ -1327,6 +1338,15 @@ export class InteractionSession {
       const updated = await this.orchestrator.retryCurrent(run.id, node);
       this.pushLog(`Retry armed for ${updated.currentNode}.`);
       await this.refreshRunIndex();
+      const continued = await this.orchestrator.runCurrentAgentWithOptions(run.id, { abortSignal });
+      await this.refreshRunIndex();
+      await this.setActiveRunId(continued.run.id);
+      if (continued.result.status === "failure") {
+        const failure = continued.result.error || continued.result.summary || "run failed";
+        this.pushLog(`Research stopped: ${oneLine(failure)}`);
+        return { ok: false, reason: failure };
+      }
+      this.pushLog(`Research continued: ${oneLine(continued.result.summary)}`);
       return { ok: true };
     }
 
@@ -1595,6 +1615,15 @@ export class InteractionSession {
     const updated = await this.orchestrator.retryCurrent(run.id);
     this.pushLog(`Retry set for node ${updated.currentNode}.`);
     await this.refreshRunIndex();
+    const continued = await this.orchestrator.runCurrentAgentWithOptions(run.id);
+    await this.refreshRunIndex();
+    await this.setActiveRunId(continued.run.id);
+    if (continued.result.status === "failure") {
+      const failure = continued.result.error || continued.result.summary || "run failed";
+      this.pushLog(`Research stopped: ${oneLine(failure)}`);
+      return { ok: false, reason: failure };
+    }
+    this.pushLog(`Research continued: ${oneLine(continued.result.summary)}`);
     return { ok: true };
   }
 

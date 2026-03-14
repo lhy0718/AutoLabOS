@@ -385,6 +385,35 @@ describe("runProjection", () => {
     expect(projection.detail).toBeUndefined();
   });
 
+  it("suppresses stale collect-summary detail when analyze-start hints are already fresher than collect", () => {
+    const run = makeRun({
+      status: "running",
+      currentNode: "analyze_papers",
+      latestSummary: 'Semantic Scholar stored 200 papers for "topic". Deferred enrichment scheduled in background for 171 paper(s).'
+    });
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.collect_papers.updatedAt = "2026-03-12T12:39:54.428Z";
+    run.graph.nodeStates.collect_papers.note = run.latestSummary;
+    run.graph.nodeStates.analyze_papers.status = "running";
+    run.graph.nodeStates.analyze_papers.updatedAt = "2026-03-12T12:40:30.000Z";
+    run.graph.nodeStates.analyze_papers.note =
+      "analyze_papers has started. Ranking 200 candidate paper(s) to select top 30; persisted 0 summary row(s) and 0 evidence row(s).";
+
+    const projection = projectRunForDisplay(run, {
+      analyze: {
+        selectedCount: 30,
+        totalCandidates: 200,
+        summaryCount: 0,
+        evidenceCount: 0
+      }
+    });
+
+    expect(projection.staleLatestSummary).toBe(true);
+    expect(projection.headline).toContain("analyze_papers has started");
+    expect(projection.detail).not.toContain("Ignoring stale top-level summary");
+  });
+
   it("redirects actionable recovery to the upstream node when a downstream step lacks evidence", () => {
     const run = makeRun({
       status: "failed",

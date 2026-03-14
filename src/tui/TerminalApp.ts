@@ -121,6 +121,8 @@ import {
   parseCollectArgs
 } from "../core/commands/collectOptions.js";
 
+const COLLECT_SUMMARY_PREFIXES = ["Semantic Scholar stored", "Artifacts cleared for collect_papers"];
+
 interface TerminalAppDeps {
   config: AppConfig;
   runStore: RunStore;
@@ -246,6 +248,8 @@ export class TerminalApp {
   private steeringBufferDuringThinking: string[] = [];
   private activeBusyAbortController?: AbortController;
   private activeBusyLabel?: string;
+  private activeBusyPromise?: Promise<void>;
+  private shutdownAbortGraceMs = 1500;
   private creatingRunFromBrief = false;
   private creatingRunTargetId?: string;
   private collectProgress?: CollectProgressState;
@@ -254,6 +258,10 @@ export class TerminalApp {
   private readonly corpusInsightsCache = new Map<string, CorpusInsightsCacheEntry>();
   private stopped = false;
   private resolver?: () => void;
+  private processTerminationCleanupStarted = false;
+  private readonly signalExitHandlers = new Map<NodeJS.Signals, () => void>();
+  private uncaughtExceptionHandler?: (error: Error) => void;
+  private unhandledRejectionHandler?: (reason: unknown) => void;
   private unsubscribeEvents?: () => void;
   private lastRenderedFrame?: RenderFrameOutput;
   private pendingNaturalCommand?: PendingNaturalCommandState;
@@ -295,6 +303,7 @@ export class TerminalApp {
     this.unsubscribeEvents = this.eventStream.subscribe((event) => {
       void this.handleStreamEvent(event);
     });
+    this.attachProcessTerminationHandlers();
     await this.attachKeyboard();
     this.render();
 
@@ -394,11 +403,8 @@ export class TerminalApp {
     this.rawKeyboardSequenceBuffer = retainRawKeyboardSequenceSuffix(this.rawKeyboardSequenceBuffer);
   }
 
-  private isCtrlNewlineKey(str: string, key: readline.Key): boolean {
-    if (key.ctrl && (key.name === "j" || key.name === "m")) {
-      return true;
-    }
-    return str === "\n";
+  private isCtrlNewlineKey(_str: string, key: readline.Key): boolean {
+    return Boolean(key.ctrl && (key.name === "j" || key.name === "m"));
   }
 
   private insertComposerNewline(): void {
@@ -1072,31 +1078,41 @@ export class TerminalApp {
     label = "operation"
   ): Promise<void> {
     const abortController = new AbortController();
-    this.activeBusyAbortController = abortController;
-    this.activeBusyLabel = label;
-    this.busy = true;
-    this.ensureStatusAnimationTimer();
-    this.render();
-    try {
-      await action(abortController.signal);
-    } catch (error) {
-      if (this.isAbortError(error)) {
-        this.pushLog(`Canceled: ${label}`);
-        return;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      this.pushLog(`Error: ${message}`);
-    } finally {
-      if (this.activeBusyAbortController === abortController) {
-        this.activeBusyAbortController = undefined;
-        this.activeBusyLabel = undefined;
-      }
-      this.busy = false;
-      this.stopStatusAnimationIfIdle();
-      this.updateSuggestions();
+    const busyPromise = (async () => {
+      this.activeBusyAbortController = abortController;
+      this.activeBusyLabel = label;
+      this.busy = true;
+      this.ensureStatusAnimationTimer();
       this.render();
-      if (!this.stopped) {
-        void this.drainQueuedInputs();
+      try {
+        await action(abortController.signal);
+      } catch (error) {
+        if (this.isAbortError(error)) {
+          this.pushLog(`Canceled: ${label}`);
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        this.pushLog(`Error: ${message}`);
+      } finally {
+        if (this.activeBusyAbortController === abortController) {
+          this.activeBusyAbortController = undefined;
+          this.activeBusyLabel = undefined;
+        }
+        this.busy = false;
+        this.stopStatusAnimationIfIdle();
+        this.updateSuggestions();
+        this.render();
+        if (!this.stopped) {
+          void this.drainQueuedInputs();
+        }
+      }
+    })();
+    this.activeBusyPromise = busyPromise;
+    try {
+      await busyPromise;
+    } finally {
+      if (this.activeBusyPromise === busyPromise) {
+        this.activeBusyPromise = undefined;
       }
     }
   }
@@ -1805,7 +1821,8 @@ export class TerminalApp {
   }
 
   private async handleBriefCommand(args: string[], abortSignal?: AbortSignal): Promise<SlashExecutionResult> {
-    const [subcommand, ...rest] = args;
+    const normalizedArgs = args.length === 0 ? ["start", "--latest"] : args;
+    const [subcommand, ...rest] = normalizedArgs;
     if (subcommand !== "start") {
       this.pushLog("Usage: /brief start <path|--latest>");
       return { ok: false, reason: "invalid /brief usage" };
@@ -2111,11 +2128,13 @@ export class TerminalApp {
       if (nodeRaw === "analyze_papers") {
         const parsed = parseAnalyzeRunArgs(args.slice(2));
         const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
-        await runContext.put("analyze_papers.request", {
-          topN: parsed.topN ?? null,
-          selectionMode: parsed.topN ? "top_n" : "all",
-          selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
-        });
+        if (parsed.topN) {
+          await runContext.put("analyze_papers.request", {
+            topN: parsed.topN,
+            selectionMode: "top_n",
+            selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+          });
+        }
       } else if (nodeRaw === "generate_hypotheses") {
         const parsed = parseGenerateHypothesesRunArgs(args.slice(2));
         const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
@@ -2126,17 +2145,24 @@ export class TerminalApp {
       }
 
       await this.setActiveRunId(run.id);
-      if (run.currentNode !== nodeRaw) {
-        await this.orchestrator.jumpToNode(run.id, nodeRaw, "force", "manual node run");
-        await this.refreshRunIndex();
+      const response = await this.orchestrator.runAgentWithOptions(run.id, nodeRaw, { abortSignal });
+      await this.refreshRunIndex();
+      const updatedRun = response.run;
+      await this.setActiveRunId(updatedRun.id);
+      const pendingRequest = await this.interactiveSupervisor.getActiveRequest(updatedRun);
+      if (pendingRequest) {
+        this.pendingHumanIntervention = {
+          runId: updatedRun.id,
+          request: pendingRequest
+        };
+        this.announceHumanIntervention(pendingRequest);
+        return { ok: true };
       }
-
-      const updatedRun = await this.continueSupervisedRun(run.id, abortSignal);
       if (this.wasAgentRunCanceled(updatedRun, nodeRaw)) {
         throw new Error("Operation aborted by user");
       }
 
-      if (updatedRun.status === "failed") {
+      if (response.result.status === "failure" || updatedRun.status === "failed") {
         const failedNode = resolveFailedNode(updatedRun);
         const failedState = updatedRun.graph.nodeStates[failedNode];
         const fallbackFailure =
@@ -2155,6 +2181,7 @@ export class TerminalApp {
       }
 
       const nodeSummary =
+        response.result.summary ||
         updatedRun.graph.nodeStates[nodeRaw].note ||
         updatedRun.latestSummary ||
         `${nodeRaw} executed`;
@@ -2240,6 +2267,10 @@ export class TerminalApp {
       if (!run) {
         return { ok: false, reason: "target run not found" };
       }
+      if (run.status === "running") {
+        this.pushLog("Cannot clear node artifacts while the target run is still running. Stop or pause the run first.");
+        return { ok: false, reason: "target run is currently running" };
+      }
       const removed = await this.clearNodeArtifacts(run, nodeRaw);
       await this.resetRunFromNode(run.id, nodeRaw, `clear ${nodeRaw}`);
       await this.setActiveRunId(run.id);
@@ -2255,12 +2286,17 @@ export class TerminalApp {
       if (!run) {
         return { ok: false, reason: "target run not found" };
       }
+      if (run.status === "running") {
+        this.pushLog("Cannot clear paper artifacts while the target run is still running. Stop or pause the run first.");
+        return { ok: false, reason: "target run is currently running" };
+      }
 
       const removed = await this.clearNodeArtifacts(run, "collect_papers");
       await this.resetRunFromNode(run.id, "collect_papers", "clear collect_papers");
       await this.setActiveRunId(run.id);
       this.pushLog(`Cleared paper artifacts: ${removed} file(s).`);
       this.pushLog("Run reset to collect_papers (pending).");
+      this.pushLog("collect_papers corpus artifacts were removed. Use /agent clear analyze_papers if you only want to rerun analysis on the existing corpus.");
       await this.refreshRunIndex();
       return { ok: true };
     }
@@ -2323,6 +2359,19 @@ export class TerminalApp {
       const updated = await this.orchestrator.retryCurrent(run.id, node);
       this.pushLog(`Retry armed for ${updated.currentNode}.`);
       await this.refreshRunIndex();
+      await this.setActiveRunId(run.id);
+      const updatedRun = await this.continueSupervisedRun(run.id, abortSignal);
+      if (updatedRun.status === "failed") {
+        const failedNode = resolveFailedNode(updatedRun);
+        const failedState = updatedRun.graph.nodeStates[failedNode];
+        const failure =
+          failedState.lastError ||
+          failedState.note ||
+          updatedRun.latestSummary ||
+          `${failedNode} failed`;
+        this.pushLog(`Node ${failedNode} failed: ${failure}`);
+        return { ok: false, reason: failure };
+      }
       return { ok: true };
     }
 
@@ -2614,6 +2663,19 @@ export class TerminalApp {
     const updated = await this.orchestrator.retryCurrent(run.id);
     this.pushLog(`Retry set for node ${updated.currentNode}.`);
     await this.refreshRunIndex();
+    await this.setActiveRunId(run.id);
+    const updatedRun = await this.continueSupervisedRun(run.id);
+    if (updatedRun.status === "failed") {
+      const failedNode = resolveFailedNode(updatedRun);
+      const failedState = updatedRun.graph.nodeStates[failedNode];
+      const failure =
+        failedState.lastError ||
+        failedState.note ||
+        updatedRun.latestSummary ||
+        `${failedNode} failed`;
+      this.pushLog(`Node ${failedNode} failed: ${failure}`);
+      return { ok: false, reason: failure };
+    }
     return { ok: true };
   }
 
@@ -3627,7 +3689,10 @@ export class TerminalApp {
       return;
     }
 
-    const merged = mergeProjectedRunState(refreshed, this.runIndex[index]);
+    const merged = this.syncPersistedCurrentNodeSummary(
+      mergeProjectedRunState(refreshed, this.runIndex[index]),
+      refreshed
+    );
     if (merged === this.runIndex[index]) {
       return;
     }
@@ -3637,6 +3702,48 @@ export class TerminalApp {
       merged,
       ...this.runIndex.slice(index + 1)
     ];
+  }
+
+  private syncPersistedCurrentNodeSummary(projected: RunRecord, persisted: RunRecord): RunRecord {
+    if (
+      projected.id !== persisted.id ||
+      projected.currentNode !== persisted.currentNode ||
+      projected.currentNode === "collect_papers" ||
+      !this.isCollectSummary(projected.latestSummary) ||
+      !persisted.latestSummary ||
+      this.isCollectSummary(persisted.latestSummary) ||
+      projected.latestSummary === persisted.latestSummary
+    ) {
+      return projected;
+    }
+
+    const currentNode = persisted.currentNode;
+    const persistedState = persisted.graph.nodeStates[currentNode];
+    const projectedState = projected.graph.nodeStates[currentNode];
+
+    return {
+      ...projected,
+      latestSummary: persisted.latestSummary,
+      graph: {
+        ...projected.graph,
+        nodeStates: {
+          ...projected.graph.nodeStates,
+          [currentNode]: {
+            ...projectedState,
+            note: persistedState?.note ?? projectedState?.note,
+            lastError: persistedState?.lastError ?? projectedState?.lastError
+          }
+        }
+      }
+    };
+  }
+
+  private isCollectSummary(summary: string | undefined): boolean {
+    const normalized = summary?.trim();
+    if (!normalized) {
+      return false;
+    }
+    return COLLECT_SUMMARY_PREFIXES.some((prefix) => normalized.startsWith(prefix));
   }
 
   private async refreshRunProjectionHints(runId = this.activeRunId): Promise<void> {
@@ -4497,12 +4604,17 @@ export class TerminalApp {
       return;
     }
     this.stopped = true;
+    this.detachProcessTerminationHandlers();
     this.queuedInputs = [];
     this.pendingNaturalCommand = undefined;
     this.steeringBufferDuringThinking = [];
     if (options?.abortActive) {
       this.activeNaturalRequest?.abortController.abort();
       this.activeBusyAbortController?.abort();
+      const settled = await this.waitForActiveBusyActionToFinish();
+      if (!settled) {
+        await this.forcePauseActiveRunIfStillRunning();
+      }
     }
     if (this.activeSelectionMenu) {
       const resolve = this.activeSelectionMenu.resolve;
@@ -4517,6 +4629,113 @@ export class TerminalApp {
     process.stdin.pause();
     this.onQuit();
     this.resolver?.();
+  }
+
+  private attachProcessTerminationHandlers(): void {
+    if (this.signalExitHandlers.size > 0 || this.uncaughtExceptionHandler || this.unhandledRejectionHandler) {
+      return;
+    }
+
+    for (const signal of ["SIGHUP", "SIGTERM"] as const) {
+      const handler = () => {
+        void this.handleUnexpectedTermination(signal);
+      };
+      this.signalExitHandlers.set(signal, handler);
+      process.once(signal, handler);
+    }
+
+    this.uncaughtExceptionHandler = (error: Error) => {
+      void this.handleUnexpectedTermination("SIGTERM", error);
+    };
+    this.unhandledRejectionHandler = (reason: unknown) => {
+      void this.handleUnexpectedTermination("SIGTERM", reason);
+    };
+    process.once("uncaughtException", this.uncaughtExceptionHandler);
+    process.once("unhandledRejection", this.unhandledRejectionHandler);
+  }
+
+  private detachProcessTerminationHandlers(): void {
+    for (const [signal, handler] of this.signalExitHandlers.entries()) {
+      process.off(signal, handler);
+    }
+    this.signalExitHandlers.clear();
+
+    if (this.uncaughtExceptionHandler) {
+      process.off("uncaughtException", this.uncaughtExceptionHandler);
+      this.uncaughtExceptionHandler = undefined;
+    }
+    if (this.unhandledRejectionHandler) {
+      process.off("unhandledRejection", this.unhandledRejectionHandler);
+      this.unhandledRejectionHandler = undefined;
+    }
+  }
+
+  private async handleUnexpectedTermination(signal: NodeJS.Signals, error?: unknown): Promise<void> {
+    if (this.processTerminationCleanupStarted) {
+      return;
+    }
+    this.processTerminationCleanupStarted = true;
+    try {
+      await this.pauseActiveRunForUnexpectedExit();
+    } finally {
+      this.detachProcessTerminationHandlers();
+      if (error instanceof Error) {
+        process.stderr.write(`${error.stack || error.message}\n`);
+      } else if (error != null) {
+        process.stderr.write(`${String(error)}\n`);
+      }
+      process.exit(signal === "SIGHUP" ? 129 : 143);
+    }
+  }
+
+  private async pauseActiveRunForUnexpectedExit(): Promise<void> {
+    this.activeNaturalRequest?.abortController.abort();
+    this.activeBusyAbortController?.abort();
+    await this.waitForActiveBusyActionToFinish();
+    await this.forcePauseActiveRunIfStillRunning();
+  }
+
+  private async waitForActiveBusyActionToFinish(): Promise<boolean> {
+    const pending = this.activeBusyPromise;
+    if (!pending) {
+      return true;
+    }
+
+    const outcome = await Promise.race([
+      pending.then(() => "settled", () => "settled"),
+      new Promise<"timeout">((resolve) => {
+        setTimeout(() => resolve("timeout"), this.shutdownAbortGraceMs);
+      })
+    ]);
+    return outcome === "settled";
+  }
+
+  private async forcePauseActiveRunIfStillRunning(): Promise<void> {
+    if (!this.activeRunId) {
+      return;
+    }
+
+    const run = await this.runStore.getRun(this.activeRunId);
+    if (!run || run.status !== "running") {
+      return;
+    }
+
+    const state = run.graph.nodeStates[run.currentNode];
+    if (!state || (state.status !== "running" && state.status !== "pending")) {
+      return;
+    }
+
+    const canceledAt = new Date().toISOString();
+    run.status = "paused";
+    run.updatedAt = canceledAt;
+    run.graph.nodeStates[run.currentNode] = {
+      ...state,
+      status: "pending",
+      updatedAt: canceledAt,
+      note: "Canceled by user"
+    };
+    run.latestSummary = "Canceled by user";
+    await this.runStore.updateRun(run);
   }
 
   private renderExitTranscript(): void {

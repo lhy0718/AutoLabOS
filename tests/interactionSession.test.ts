@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveAppPaths, ensureScaffold } from "../src/config.js";
 import { InteractionSession } from "../src/interaction/InteractionSession.js";
+import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
@@ -604,5 +605,91 @@ describe("InteractionSession", () => {
     );
     expect(snapshot.activeRunInsight?.title).toBe("Review packet");
     expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Review readiness: blocking"))).toBe(true);
+  });
+
+  it("preserves an existing analyze_papers request when /agent run analyze_papers omits --top-n", async () => {
+    const run = await runStore.createRun({
+      title: "Analyze preserve run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.status = "paused";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.analyze_papers.status = "pending";
+    await runStore.updateRun(run);
+
+    const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
+    await runContext.put("analyze_papers.request", {
+      topN: 30,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+
+    const runAgentWithOptions = vi.fn(async (runId: string) => {
+      const stored = await runStore.getRun(runId);
+      if (!stored) {
+        throw new Error("expected stored run");
+      }
+      stored.status = "paused";
+      stored.currentNode = "analyze_papers";
+      stored.graph.currentNode = "analyze_papers";
+      stored.graph.nodeStates.analyze_papers = {
+        status: "running",
+        updatedAt: new Date().toISOString(),
+        note: "Analyzing papers."
+      };
+      await runStore.updateRun(stored);
+      return {
+        run: stored,
+        result: { status: "success" as const, summary: "Analyzing papers." }
+      };
+    });
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        },
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+          openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+        },
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        },
+        papers: { max_results: 100 }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {
+        runAgentWithOptions
+      } as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const result = await session.submitInput(`/agent run analyze_papers ${run.id}`);
+
+    expect(result.logs.some((line) => line.includes("analyze_papers finished: Analyzing papers."))).toBe(true);
+    expect(runAgentWithOptions).toHaveBeenCalledWith(
+      run.id,
+      "analyze_papers",
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) })
+    );
+    expect(await runContext.get("analyze_papers.request")).toMatchObject({
+      topN: 30,
+      selectionMode: "top_n"
+    });
   });
 });

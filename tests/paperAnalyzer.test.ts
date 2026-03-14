@@ -95,6 +95,59 @@ class HangingExtractorLLM extends MockLLMClient {
   }
 }
 
+class PlannerImageSensitiveLLM extends MockLLMClient {
+  plannerCallsWithImages = 0;
+  extractorCallsWithImages = 0;
+  reviewerCallsWithImages = 0;
+
+  override async complete(_prompt: string, opts?: { systemPrompt?: string; abortSignal?: AbortSignal; inputImagePaths?: string[] }): Promise<{ text: string }> {
+    const imageCount = opts?.inputImagePaths?.length ?? 0;
+    if (opts?.systemPrompt?.includes("planning agent")) {
+      this.plannerCallsWithImages += imageCount;
+      return {
+        text: JSON.stringify({
+          focus_sections: ["methods", "results"],
+          target_claims: ["main result"],
+          extraction_priorities: ["metrics"],
+          verification_checks: ["source-grounded"],
+          risk_flags: []
+        })
+      };
+    }
+    if (opts?.systemPrompt?.includes("scientific literature analyst")) {
+      this.extractorCallsWithImages += imageCount;
+      return {
+        text: JSON.stringify({
+          summary: "Extractor summary",
+          key_findings: ["Extractor finding"],
+          limitations: [],
+          datasets: ["Dataset A"],
+          metrics: ["Accuracy"],
+          novelty: "Extractor novelty",
+          reproducibility_notes: [],
+          evidence_items: [{ claim: "Extractor claim", evidence_span: "Full text with extracted content.", confidence: 0.8 }]
+        })
+      };
+    }
+    if (opts?.systemPrompt?.includes("verification agent")) {
+      this.reviewerCallsWithImages += imageCount;
+      return {
+        text: JSON.stringify({
+          summary: "Reviewed summary",
+          key_findings: ["Reviewed finding"],
+          limitations: [],
+          datasets: ["Dataset A"],
+          metrics: ["Accuracy"],
+          novelty: "Reviewed novelty",
+          reproducibility_notes: [],
+          evidence_items: [{ claim: "Reviewed claim", evidence_span: "Full text with extracted content.", confidence: 0.7 }]
+        })
+      };
+    }
+    throw new Error("unexpected stage");
+  }
+}
+
 const paper: AnalysisCorpusRow = {
   paper_id: "paper-1",
   title: "Agentic Workflows for Science",
@@ -409,18 +462,31 @@ describe("paperAnalyzer", () => {
 
   it("passes rendered PDF page images into hybrid LLM analysis", async () => {
     const llm = {
-      complete: vi.fn(async () => ({
-        text: JSON.stringify({
-          summary: "Hybrid summary",
-          key_findings: ["Hybrid finding"],
-          limitations: [],
-          datasets: [],
-          metrics: [],
-          novelty: "Hybrid novelty",
-          reproducibility_notes: [],
-          evidence_items: [{ claim: "Hybrid claim", confidence: 0.8 }]
-        })
-      }))
+      complete: vi.fn(async (_prompt: string, opts?: { systemPrompt?: string }) => {
+        if (opts?.systemPrompt?.includes("planning agent")) {
+          return {
+            text: JSON.stringify({
+              focus_sections: ["methods"],
+              target_claims: ["main claim"],
+              extraction_priorities: ["metrics"],
+              verification_checks: ["source-grounded"],
+              risk_flags: []
+            })
+          };
+        }
+        return {
+          text: JSON.stringify({
+            summary: "Hybrid summary",
+            key_findings: ["Hybrid finding"],
+            limitations: [],
+            datasets: [],
+            metrics: [],
+            novelty: "Hybrid novelty",
+            reproducibility_notes: [],
+            evidence_items: [{ claim: "Hybrid claim", confidence: 0.8 }]
+          })
+        };
+      })
     };
 
     const result = await analyzePaperWithLlm({
@@ -436,12 +502,37 @@ describe("paperAnalyzer", () => {
     });
 
     expect(result.summaryRow.summary).toBe("Hybrid summary");
-    expect(llm.complete).toHaveBeenCalledWith(
-      expect.stringContaining("Attached page numbers: 1, 3"),
-      expect.objectContaining({
-        inputImagePaths: ["/tmp/page-001.png", "/tmp/page-003.png"]
-      })
-    );
+    expect(
+      llm.complete.mock.calls.some(
+        ([prompt, opts]) =>
+          typeof prompt === "string" &&
+          prompt.includes("Attached page numbers: 1, 3") &&
+          Array.isArray((opts as { inputImagePaths?: string[] } | undefined)?.inputImagePaths) &&
+          (opts as { inputImagePaths?: string[] }).inputImagePaths?.join(",") ===
+            "/tmp/page-001.png,/tmp/page-003.png"
+      )
+    ).toBe(true);
+  });
+
+  it("keeps supplemental page images off the planner and reviewer stages", async () => {
+    const llm = new PlannerImageSensitiveLLM();
+
+    const result = await analyzePaperWithLlm({
+      llm,
+      paper,
+      source: {
+        sourceType: "full_text",
+        text: "Full text with extracted content.",
+        fullTextAvailable: true,
+        pageImagePaths: ["/tmp/page-001.png", "/tmp/page-003.png"],
+        pageImagePages: [1, 3]
+      }
+    });
+
+    expect(result.summaryRow.summary).toBe("Reviewed summary");
+    expect(llm.plannerCallsWithImages).toBe(0);
+    expect(llm.extractorCallsWithImages).toBe(2);
+    expect(llm.reviewerCallsWithImages).toBe(0);
   });
 
   it("normalizes Responses API PDF analysis results", async () => {

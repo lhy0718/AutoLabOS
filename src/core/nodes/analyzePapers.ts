@@ -10,6 +10,7 @@ import { readJsonFile, writeJsonFile } from "../../utils/fs.js";
 import {
   analyzePaperWithLlm,
   analyzePaperWithResponsesPdf,
+  PaperAnalysisResult,
   PaperEvidenceRow,
   PaperSummaryRow,
   shouldFallbackResponsesPdfToLocalText
@@ -33,6 +34,7 @@ import {
 import { CollectEnrichmentLogEntry } from "../collection/types.js";
 import { DoctorCheck, TransitionRecommendation } from "../../types.js";
 import { RECOMMENDED_CODEX_MODEL } from "../../integrations/codex/modelCatalog.js";
+import { CodexLLMClient } from "../llm/client.js";
 
 interface AnalysisManifest {
   version: 2 | 3;
@@ -97,6 +99,26 @@ const SMALL_SELECTION_SERIAL_WARM_START_MAX = 4;
 const COLLECT_ENRICHMENT_SELECTED_WAIT_MS = 5_000;
 const COLLECT_ENRICHMENT_EXTENDED_WAIT_MS = 15_000;
 const COLLECT_ENRICHMENT_POLL_INTERVAL_MS = 250;
+
+function createSelectionRerankLlm(deps: NodeExecutionDeps): NodeExecutionDeps["llm"] {
+  const providerConfig = deps.config?.providers;
+  if (!providerConfig) {
+    return deps.llm;
+  }
+
+  if (providerConfig.llm_mode === "openai_api") {
+    return deps.llm;
+  }
+
+  return new CodexLLMClient(deps.codex, {
+    model: providerConfig.codex.chat_model || providerConfig.codex.model,
+    reasoningEffort:
+      providerConfig.codex.command_reasoning_effort ||
+      providerConfig.codex.chat_reasoning_effort ||
+      providerConfig.codex.reasoning_effort,
+    fastMode: providerConfig.codex.chat_fast_mode ?? providerConfig.codex.fast_mode
+  });
+}
 
 const SELECTION_QUALITY_STOPWORDS = new Set([
   "a",
@@ -232,6 +254,73 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       if (loadedRequest.autoDefaultReason) {
         emitLog(loadedRequest.autoDefaultReason);
       }
+      if (corpusRows.length === 0) {
+        const suggestedLimit = Math.max(1, deps.config.papers?.max_results ?? 200);
+        const existingSummaryRows = await readSummaryRows(summaryPath);
+        const existingEvidenceRows = await readEvidenceRows(evidencePath);
+        if (initialManifest && existingSummaryRows.length > 0 && existingEvidenceRows.length > 0) {
+          const preservedSelectedCount = initialManifest.selectedPaperIds.length;
+          const preservedTotalCandidates = initialManifest.totalCandidates;
+          const preservationReason =
+            `Preserving ${existingSummaryRows.length} summary row(s) and ${existingEvidenceRows.length} evidence row(s) ` +
+            `because the collected corpus regressed to 0 candidate(s) without a new analysis request.`;
+          await syncAnalysisProgress(runContextMemory, {
+            runContextPath: run.memoryRefs.runContextPath,
+            summaryRows: existingSummaryRows,
+            evidenceRows: existingEvidenceRows,
+            selectedCount: preservedSelectedCount,
+            totalCandidates: preservedTotalCandidates,
+            selectionFingerprint: initialManifest.selectionFingerprint
+          });
+          emitLog(
+            `${preservationReason} Manual review is required before replacing the recovered artifacts because collect_papers data is missing.`
+          );
+          return {
+            status: "success",
+            summary:
+              `${preservationReason} Approval can continue with the preserved partial analysis, or you can re-run collect_papers after reviewing the corpus regression.`,
+            needsApproval: true,
+            toolCallsUsed: 0,
+            transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+              runId: run.id,
+              reason:
+                "analyze_papers preserved the previous partial analysis because corpus.jsonl is now empty even though prior evidence already exists.",
+              confidence: 0.98,
+              targetNode: "generate_hypotheses",
+              evidence: [
+                `${existingSummaryRows.length} summary row(s) and ${existingEvidenceRows.length} evidence item(s) already exist on disk.`,
+                `The previous selection covered ${preservedSelectedCount}/${preservedTotalCandidates} candidates.`,
+                "corpus.jsonl is currently empty, so a fresh analyze_papers run would have no shortlist to execute."
+              ],
+              suggestedCommands: [
+                `/agent run generate_hypotheses ${run.id}`,
+                `/agent collect --limit ${suggestedLimit} --run ${run.id}`
+              ]
+            })
+          };
+        }
+        emitLog("No corpus rows are available for analyze_papers. Run collect_papers before attempting analysis.");
+        return {
+          status: "success",
+          summary: "analyze_papers paused because no collected corpus rows are currently available.",
+          needsApproval: true,
+          toolCallsUsed: 0,
+          transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+            runId: run.id,
+            reason:
+              "analyze_papers requires a collected corpus, but corpus.jsonl is currently missing or empty.",
+            confidence: 0.99,
+            evidence: [
+              "corpus.jsonl did not contain any parseable paper rows.",
+              "No selection shortlist can be built until collect_papers repopulates the research corpus."
+            ],
+            suggestedCommands: [
+              `/agent collect --limit ${suggestedLimit} --run ${run.id}`,
+              `/agent run collect_papers ${run.id}`
+            ]
+          })
+        };
+      }
       const includePageImages = deps.config.providers?.llm_mode === "codex_chatgpt_only";
       const analysisFingerprint = buildAnalysisFingerprint({
         analysisMode,
@@ -269,6 +358,14 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           })
         };
       }
+      await syncAnalyzeRunRecord({
+        runStore: deps.runStore,
+        runId: run.id,
+        summary: buildAnalyzeStartSummary({
+          request,
+          totalCandidates: corpusRows.length
+        })
+      });
       let autoExpansionCount = 0;
       let autoExpansionReason: string | undefined;
       const startedWithExistingManifest = Boolean(initialManifest);
@@ -296,6 +393,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               );
               return selectPapersForAnalysis({
                 llm: deps.llm,
+                rerankLlm: createSelectionRerankLlm(deps),
                 runTitle: run.title,
                 runTopic: run.topic,
                 corpusRows,
@@ -779,24 +877,26 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                         ? `Falling back to abstract plus ${source.pageImagePaths.length} rendered PDF page image(s) for "${row.title}" after Responses API fallback (${source.fallbackReason || "no full text"}).`
                       : `Falling back to abstract for "${row.title}" after Responses API fallback (${source.fallbackReason || "no full text"}).`
                   );
-                  analysis = await analyzePaperWithLlm({
+                  const localFallbackAnalysis = await analyzePaperWithPageImageTimeoutFallback({
                     llm: source.sourceType === "full_text" ? deps.pdfTextLlm : deps.llm,
                     paper: row,
                     source,
-                    maxAttempts: 2,
                     abortSignal,
                     onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
                   });
+                  analysis = localFallbackAnalysis.analysis;
+                  source = localFallbackAnalysis.source;
                 }
               } else {
-                analysis = await analyzePaperWithLlm({
+                const localFallbackAnalysis = await analyzePaperWithPageImageTimeoutFallback({
                   llm: source.sourceType === "full_text" ? deps.pdfTextLlm : deps.llm,
                   paper: row,
                   source,
-                  maxAttempts: 2,
                   abortSignal,
                   onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
                 });
+                analysis = localFallbackAnalysis.analysis;
+                source = localFallbackAnalysis.source;
               }
               analysisAttempts = analysis.attempts;
               const analysisMismatchError = validateAnalysisBeforePersist(row, source, analysis);
@@ -1531,7 +1631,7 @@ function mergeCorpusRowWithEnrichment(
   enrichment: CollectEnrichmentLogEntry | undefined
 ): AnalysisCorpusRow {
   const recoveredPdfUrl = enrichment?.pdf_resolution?.url?.trim();
-  if (!recoveredPdfUrl || resolvePaperPdfUrl(row)) {
+  if (!recoveredPdfUrl || recoveredPdfUrl === resolvePaperPdfUrl(row)) {
     return row;
   }
   return {
@@ -1613,9 +1713,6 @@ function mergeSelectedRows(rows: AnalysisCorpusRow[], latestById: Map<string, An
 }
 
 async function refreshCorpusRowFromLatestArtifacts(runId: string, row: AnalysisCorpusRow): Promise<AnalysisCorpusRow> {
-  if (resolvePaperPdfUrl(row)) {
-    return row;
-  }
   const latest = (await readLatestArtifactBackedCorpusRows(runId)).get(row.paper_id);
   return latest ? mergeCorpusRow(row, latest) : row;
 }
@@ -1660,7 +1757,7 @@ export async function retryResolvedSourceAfterLatePdfRecovery(args: {
   abortSignal?: AbortSignal;
   onProgress?: (message: string) => void;
 }): Promise<{ paper: AnalysisCorpusRow; source: ResolvedPaperSource }> {
-  if (args.source.sourceType !== "abstract" || args.source.fallbackReason !== "no_pdf_url") {
+  if (args.source.sourceType !== "abstract") {
     return {
       paper: args.paper,
       source: args.source
@@ -1672,8 +1769,10 @@ export async function retryResolvedSourceAfterLatePdfRecovery(args: {
     selectedCount: args.selectedCount,
     totalCandidates: args.totalCandidates
   });
-  if (!resolvePaperPdfUrl(args.paper) && resolvePaperPdfUrl(refreshedPaper)) {
-    args.onProgress?.("Detected late recovered PDF metadata after the initial abstract fallback. Retrying source resolution.");
+  const originalPdfUrl = resolvePaperPdfUrl(args.paper);
+  const refreshedPdfUrl = resolvePaperPdfUrl(refreshedPaper);
+  if (refreshedPdfUrl && refreshedPdfUrl !== originalPdfUrl) {
+    args.onProgress?.("Detected updated PDF metadata after the initial abstract fallback. Retrying source resolution.");
     return {
       paper: refreshedPaper,
       source: await resolvePaperTextSource({
@@ -2196,6 +2295,79 @@ function buildAnalyzeProgressSummary(input: {
   }
 
   return `Analyzed ${input.progress.summaryRows.length} papers into ${input.progress.evidenceRows.length} evidence item(s); ${input.progress.fullTextCount} full-text and ${input.progress.abstractFallbackCount} abstract fallback (mode=${input.analysisMode}).`;
+}
+
+function buildAnalyzeStartSummary(input: {
+  request: AnalysisSelectionRequest;
+  totalCandidates: number;
+}): string {
+  if (input.request.selectionMode === "top_n" && input.request.topN && input.totalCandidates > 0) {
+    return `analyze_papers has started. Ranking ${input.totalCandidates} candidate paper(s) to select top ${input.request.topN}; persisted 0 summary row(s) and 0 evidence row(s).`;
+  }
+  if (input.totalCandidates > 0) {
+    return `analyze_papers has started. Preparing ${input.totalCandidates} candidate paper(s) for analysis; persisted 0 summary row(s) and 0 evidence row(s).`;
+  }
+  return "analyze_papers has started but no corpus rows are currently available.";
+}
+
+async function analyzePaperWithPageImageTimeoutFallback(args: {
+  llm: NodeExecutionDeps["llm"];
+  paper: AnalysisCorpusRow;
+  source: ResolvedPaperSource;
+  abortSignal?: AbortSignal;
+  onProgress?: (message: string) => void;
+}): Promise<{ analysis: PaperAnalysisResult; source: ResolvedPaperSource }> {
+  try {
+    return {
+      analysis: await analyzePaperWithLlm({
+        llm: args.llm,
+        paper: args.paper,
+        source: args.source,
+        maxAttempts: 2,
+        abortSignal: args.abortSignal,
+        onProgress: args.onProgress
+      }),
+      source: args.source
+    };
+  } catch (error) {
+    if (!shouldRetryAnalysisWithoutPageImages(args.source, error)) {
+      throw error;
+    }
+    const downgradedSource = stripSupplementalPageImages(args.source);
+    args.onProgress?.(
+      `Extractor timed out with ${args.source.pageImagePaths?.length ?? 0} rendered PDF page image(s). Retrying once with full text only.`
+    );
+    return {
+      analysis: await analyzePaperWithLlm({
+        llm: args.llm,
+        paper: args.paper,
+        source: downgradedSource,
+        maxAttempts: 1,
+        abortSignal: args.abortSignal,
+        onProgress: args.onProgress
+      }),
+      source: downgradedSource
+    };
+  }
+}
+
+function shouldRetryAnalysisWithoutPageImages(source: ResolvedPaperSource, error: unknown): boolean {
+  if (source.sourceType !== "full_text" || (source.pageImagePaths?.length ?? 0) === 0) {
+    return false;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /^paper_analysis_extractor_timeout_after_\d+ms$/u.test(message);
+}
+
+function stripSupplementalPageImages(source: ResolvedPaperSource): ResolvedPaperSource {
+  if ((source.pageImagePaths?.length ?? 0) === 0) {
+    return source;
+  }
+  return {
+    ...source,
+    pageImagePaths: undefined,
+    pageImagePages: undefined
+  };
 }
 
 async function syncAnalysisProgress(

@@ -34,6 +34,20 @@ class SequenceResponseLlm extends MockLLMClient {
   }
 }
 
+class CapturePromptLlm extends MockLLMClient {
+  prompts: string[] = [];
+
+  override async complete(prompt: string): Promise<{ text: string }> {
+    this.prompts.push(prompt);
+    const candidateCount = prompt.split("\n").filter((line) => /^\d+\. paper_id=/u.test(line)).length;
+    return {
+      text: JSON.stringify({
+        ordered_paper_ids: Array.from({ length: candidateCount }, (_, index) => `p${index + 1}`)
+      })
+    };
+  }
+}
+
 describe("paperSelection", () => {
   it("deterministically favors title similarity, citations, and recency", async () => {
     const selection = await selectPapersForAnalysis({
@@ -242,7 +256,7 @@ describe("paperSelection", () => {
     expect(logs.some((message) => message.includes("Rerank JSON looked truncated; repaired"))).toBe(true);
   });
 
-  it("retries rerank once when Codex only emits benign shell-snapshot cleanup warnings", async () => {
+  it("does not retry rerank when Codex emits only shell-snapshot cleanup warnings", async () => {
     const selection = await selectPapersForAnalysis({
       llm: new SequenceResponseLlm([
         new Error(
@@ -259,9 +273,81 @@ describe("paperSelection", () => {
       ]
     });
 
+    expect(selection.rerankApplied).toBe(false);
+    expect(selection.rerankFallbackReason).toContain("shell snapshot cleanup produced no usable rerank output");
+    expect(selection.selectedPaperIds).toEqual([]);
+  });
+
+  it("uses a dedicated rerank llm when provided", async () => {
+    const rerankLlm = new FixedResponseLlm('{"ordered_paper_ids":["p2","p1","p3"]}');
+
+    const selection = await selectPapersForAnalysis({
+      llm: {
+        complete: async () => {
+          throw new Error("general llm should not be used for rerank");
+        }
+      } as any,
+      rerankLlm,
+      runTitle: "Multi-agent collaboration",
+      runTopic: "Multi-agent collaboration",
+      request: normalizeAnalysisSelectionRequest(2),
+      corpusRows: [
+        { paper_id: "p1", title: "Multi-agent collaboration", abstract: "A", authors: [], citation_count: 10, year: 2025 },
+        { paper_id: "p2", title: "Other collaboration paper", abstract: "B", authors: [], citation_count: 9, year: 2025 },
+        { paper_id: "p3", title: "Legacy retrieval", abstract: "C", authors: [], citation_count: 8, year: 2024 }
+      ]
+    });
+
     expect(selection.rerankApplied).toBe(true);
-    expect(selection.rerankFallbackReason).toBeUndefined();
-    expect(selection.selectedPaperIds).toEqual(["p2"]);
+    expect(selection.selectedPaperIds).toEqual(["p2", "p1"]);
+  });
+
+  it("omits abstracts from large rerank prompts while keeping the pool at 90", async () => {
+    const rerankLlm = new CapturePromptLlm();
+    const corpusRows = Array.from({ length: 90 }, (_, index) => ({
+      paper_id: `p${index + 1}`,
+      title: `Tabular benchmark paper ${index + 1}`,
+      abstract: `This is abstract ${index + 1} for a tabular benchmark paper.`,
+      authors: [],
+      citation_count: 200 - index,
+      year: 2025
+    }));
+
+    const selection = await selectPapersForAnalysis({
+      llm: rerankLlm,
+      runTitle: "Resource-aware benchmarking of tabular baselines",
+      runTopic: "Resource-aware benchmarking of tabular baselines",
+      request: normalizeAnalysisSelectionRequest(30),
+      corpusRows
+    });
+
+    expect(selection.candidatePoolSize).toBe(90);
+    expect(selection.rerankApplied).toBe(true);
+    expect(rerankLlm.prompts).toHaveLength(1);
+    expect(rerankLlm.prompts[0]).not.toContain("abstract=");
+    expect(rerankLlm.prompts[0]).toContain("application-specific prediction");
+    expect(rerankLlm.prompts[0]).toContain("modality_fit=");
+    expect(rerankLlm.prompts[0]).toContain("task_fit=");
+    expect(rerankLlm.prompts[0]).toContain("study_scope=");
+  });
+
+  it("adds single-domain application demotion guidance to rerank prompts", async () => {
+    const rerankLlm = new CapturePromptLlm();
+
+    await selectPapersForAnalysis({
+      llm: rerankLlm,
+      runTitle: "Resource-aware benchmarking of tabular baselines",
+      runTopic: "Resource-aware benchmarking of tabular baselines",
+      request: normalizeAnalysisSelectionRequest(2),
+      corpusRows: [
+        { paper_id: "p1", title: "Tabular benchmark paper 1", abstract: "A", authors: [], citation_count: 10, year: 2025 },
+        { paper_id: "p2", title: "Tabular benchmark paper 2", abstract: "B", authors: [], citation_count: 9, year: 2025 },
+        { paper_id: "p3", title: "Tabular benchmark paper 3", abstract: "C", authors: [], citation_count: 8, year: 2025 }
+      ]
+    });
+
+    expect(rerankLlm.prompts).toHaveLength(1);
+    expect(rerankLlm.prompts[0]).toContain("Strongly demote papers whose main contribution is an application-specific prediction");
   });
 
   it("keeps only the substantive rerank failure when benign cleanup warnings are mixed in", async () => {
@@ -317,6 +403,124 @@ describe("paperSelection", () => {
 
     expect(selection.selectedPaperIds).toEqual(["relevant"]);
     expect(selection.deterministicRankingPreview[0]?.paper_id).toBe("relevant");
+  });
+
+  it("keeps live off-topic benchmark-like and application-domain papers below tabular shortlist candidates", async () => {
+    const selection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm(
+        JSON.stringify({
+          ordered_paper_ids: [
+            "relevant_svm",
+            "relevant_pmlb",
+            "relevant_closer",
+            "relevant_qbo",
+            "relevant_tabm",
+            "off_topic_kyrgyz",
+            "off_topic_ddos",
+            "off_topic_credit",
+            "off_topic_smartgrid",
+            "off_topic_icd10"
+          ]
+        })
+      ),
+      runTitle: "Resource-aware benchmarking of classical and modern tabular classification baselines",
+      runTopic:
+        "Evaluate classical and modern baseline families for tabular classification on small-to-medium public datasets, with emphasis on leakage-safe preprocessing, nested cross-validation, and practical resource-aware benchmarking.",
+      request: normalizeAnalysisSelectionRequest(5),
+      corpusRows: [
+        {
+          paper_id: "relevant_svm",
+          title: "Cross-Dataset Evaluation of Support Vector Machines: A Reproducible, Calibration-Aware Baseline for Tabular Classification",
+          abstract: "A cross-dataset tabular classification benchmark for SVM and classical baselines.",
+          authors: [],
+          citation_count: 5,
+          year: 2025
+        },
+        {
+          paper_id: "relevant_pmlb",
+          title: "PMLBmini: A Tabular Classification Benchmark Suite for Data-Scarce Applications",
+          abstract: "A benchmark suite for small-sample tabular classification.",
+          authors: [],
+          citation_count: 120,
+          year: 2024
+        },
+        {
+          paper_id: "relevant_closer",
+          title: "A Closer Look at Deep Learning Methods on Tabular Datasets",
+          abstract: "A comparison of deep tabular methods on tabular datasets.",
+          authors: [],
+          citation_count: 400,
+          year: 2021
+        },
+        {
+          paper_id: "relevant_qbo",
+          title: "Stability-Aware QUBO Feature Selection for Tabular Classification Under Repeated Nested Cross-Validation",
+          abstract: "Feature selection for tabular classification under repeated nested cross-validation.",
+          authors: [],
+          citation_count: 2,
+          year: 2026
+        },
+        {
+          paper_id: "relevant_tabm",
+          title: "Deterministic Tabular Learning with TabM(Huber) and Out-of-Fold Blending",
+          abstract: "A tabular learning method evaluated on public tabular datasets.",
+          authors: [],
+          citation_count: 1,
+          year: 2026
+        },
+        {
+          paper_id: "off_topic_kyrgyz",
+          title: "Benchmarking Multilabel Topic Classification in the Kyrgyz Language",
+          abstract: "A benchmarking study for topic classification in Kyrgyz text.",
+          authors: [],
+          citation_count: 40,
+          year: 2024,
+          pdf_url: "https://example.com/kyrgyz.pdf"
+        },
+        {
+          paper_id: "off_topic_ddos",
+          title: "A Resource-Efficient Machine Learning Pipeline for DDoS Attack Detection: A Comparative Study on CIC-IDS2018 and CIC-DDoS2019",
+          abstract: "A resource-efficient DDoS detection pipeline using machine learning.",
+          authors: [],
+          citation_count: 20,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_credit",
+          title: "Machine Learning Algorithms for Credit Risk Assessment in Financial Markets: A Comparative Study of Gradient Boosting and Neural Networks",
+          abstract: "A comparative study of gradient boosting and neural networks for credit risk assessment.",
+          authors: [],
+          citation_count: 15,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_smartgrid",
+          title: "QLID-Net: A Hybrid Quantum-Classical Neural Network for Robust and Data-Efficient Smart Grid Load Identification",
+          abstract: "A hybrid quantum-classical network for smart-grid load identification.",
+          authors: [],
+          citation_count: 8,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_icd10",
+          title: "Comparative Evaluation of Logistic Regression for ICD-10 Code Classification Using the CodiEsp Clinical Text Dataset",
+          abstract: "An evaluation of logistic regression for clinical text code classification.",
+          authors: [],
+          citation_count: 11,
+          year: 2024
+        }
+      ]
+    });
+
+    const topFive = selection.deterministicRankingPreview.slice(0, 5).map((row) => row.paper_id);
+    expect(new Set(topFive)).toEqual(
+      new Set(["relevant_svm", "relevant_qbo", "relevant_closer", "relevant_pmlb", "relevant_tabm"])
+    );
+    expect(topFive).not.toContain("off_topic_kyrgyz");
+    expect(topFive).not.toContain("off_topic_ddos");
+    expect(topFive).not.toContain("off_topic_credit");
+    expect(topFive).not.toContain("off_topic_smartgrid");
+    expect(topFive).not.toContain("off_topic_icd10");
   });
 
   it("keeps multi-paper tabular baseline selections ahead of high-citation off-topic classification papers", async () => {
@@ -438,11 +642,186 @@ describe("paperSelection", () => {
     expect(new Set(selection.deterministicRankingPreview.slice(0, 3).map((row) => row.paper_id))).toEqual(
       new Set(["relevant_svm", "relevant_pmlb", "relevant_benchmark"])
     );
-    expect(selection.deterministicRankingPreview.slice(3).map((row) => row.paper_id)).toEqual([
-      "off_topic_secret",
-      "off_topic_music",
-      "off_topic_sentiment"
+    expect(new Set(selection.deterministicRankingPreview.slice(3).map((row) => row.paper_id))).toEqual(
+      new Set(["off_topic_secret", "off_topic_music", "off_topic_sentiment"])
+    );
+  });
+
+  it("demotes live-run false positives that only match broad benchmarking or resource-aware wording", async () => {
+    const selection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm(
+        '{"ordered_paper_ids":["off_topic_kyrgyz","off_topic_privacy","relevant_svm","relevant_pmlb","off_topic_ddos","relevant_tabular","off_topic_credit","relevant_feature"]}'
+      ),
+      runTitle: "Resource-Aware Benchmarking of Classical and Modern Tabular Classification Baselines",
+      runTopic:
+        "Evaluate classical and modern baseline families for tabular classification on small-to-medium public datasets, with emphasis on leakage-safe preprocessing, nested cross-validation, and practical resource-aware benchmarking.",
+      request: normalizeAnalysisSelectionRequest(4),
+      corpusRows: [
+        {
+          paper_id: "relevant_svm",
+          title:
+            "Cross-Dataset Evaluation of Support Vector Machines: A Reproducible, Calibration-Aware Baseline for Tabular Classification",
+          abstract:
+            "A calibration-aware benchmark compares SVM, logistic regression, decision tree, and random forest on small tabular datasets.",
+          authors: [],
+          citation_count: 5,
+          year: 2025
+        },
+        {
+          paper_id: "relevant_pmlb",
+          title: "PMLBmini: A Tabular Classification Benchmark Suite for Data-Scarce Applications",
+          abstract:
+            "A benchmark suite for small tabular classification tasks compares classical linear baselines, AutoML, and tabular deep learning.",
+          authors: [],
+          citation_count: 120,
+          year: 2024
+        },
+        {
+          paper_id: "relevant_tabular",
+          title: "A Closer Look at Deep Learning Methods on Tabular Datasets",
+          abstract: "A direct evaluation of tabular deep learning methods on structured datasets.",
+          authors: [],
+          citation_count: 200,
+          year: 2023
+        },
+        {
+          paper_id: "relevant_feature",
+          title: "Survey on Automatic Feature Construction in Machine Learning on Tabular Data",
+          abstract: "A survey of feature construction methods for tabular data and structured datasets.",
+          authors: [],
+          citation_count: 80,
+          year: 2024
+        },
+        {
+          paper_id: "off_topic_kyrgyz",
+          title: "Benchmarking Multilabel Topic Classification in the Kyrgyz Language",
+          abstract: "A multilingual topic classification benchmark for Kyrgyz text.",
+          authors: [],
+          citation_count: 5,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_privacy",
+          title: "Privacy-Aware Income Prediction Using Deep Neural Networks on the UCI Adult Dataset",
+          abstract: "A privacy-aware income prediction system using deep neural networks.",
+          authors: [],
+          citation_count: 40,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_ddos",
+          title: "A Resource-Efficient Machine Learning Pipeline for DDoS Attack Detection: A Comparative Study on CIC-IDS2018 and CIC-DDoS2019",
+          abstract: "A machine learning benchmark for DDoS detection.",
+          authors: [],
+          citation_count: 30,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_credit",
+          title: "Machine Learning Algorithms for Credit Risk Assessment in Financial Markets: A Comparative Study of Gradient Boosting and Neural Networks",
+          abstract: "A comparative study of gradient boosting and neural networks for credit risk prediction.",
+          authors: [],
+          citation_count: 50,
+          year: 2025
+        }
+      ]
+    });
+
+    expect(selection.selectedPaperIds).toEqual([
+      "relevant_svm",
+      "relevant_pmlb",
+      "relevant_tabular",
+      "relevant_feature"
     ]);
+    expect(selection.rerankedPaperIds.slice(0, 4)).toEqual([
+      "off_topic_kyrgyz",
+      "off_topic_privacy",
+      "relevant_svm",
+      "relevant_pmlb"
+    ]);
+  });
+
+  it("keeps top-n as a quality cap instead of backfilling task-mismatched papers", async () => {
+    const selection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm(
+        JSON.stringify({
+          ordered_paper_ids: [
+            "relevant_svm",
+            "off_topic_detection",
+            "relevant_tabular",
+            "off_topic_regression",
+            "relevant_survey",
+            "off_topic_auth",
+            "off_topic_soil"
+          ]
+        })
+      ),
+      runTitle: "Leakage-safe benchmarking of classical and modern tabular classification baselines",
+      runTopic:
+        "Evaluate classical and modern baseline families for tabular classification on public datasets with leakage-safe preprocessing and cross-dataset evaluation.",
+      request: normalizeAnalysisSelectionRequest(5),
+      corpusRows: [
+        {
+          paper_id: "relevant_svm",
+          title: "Cross-Dataset Evaluation of Support Vector Machines: A Reproducible, Calibration-Aware Baseline for Tabular Classification",
+          abstract: "A cross-dataset tabular classification benchmark for SVM and classical baselines.",
+          authors: [],
+          citation_count: 12,
+          year: 2025
+        },
+        {
+          paper_id: "relevant_tabular",
+          title: "Revisiting Nearest Neighbor for Tabular Data: A Deep Tabular Baseline Two Decades Later",
+          abstract: "A reusable tabular baseline study on public datasets.",
+          authors: [],
+          citation_count: 180,
+          year: 2024
+        },
+        {
+          paper_id: "relevant_survey",
+          title: "Embeddings for Tabular Data: A Survey",
+          abstract: "A survey of reusable methods for tabular data and tabular benchmarks.",
+          authors: [],
+          citation_count: 90,
+          year: 2024
+        },
+        {
+          paper_id: "off_topic_detection",
+          title: "Novel conditional tabular generative adversarial network based image augmentation for railway track fault detection",
+          abstract: "Tabular generative augmentation for railway fault detection.",
+          authors: [],
+          citation_count: 60,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_regression",
+          title: "Learning Interpretable Differentiable Logic Networks for Tabular Regression",
+          abstract: "A tabular regression method.",
+          authors: [],
+          citation_count: 50,
+          year: 2024
+        },
+        {
+          paper_id: "off_topic_auth",
+          title: "Predicting multi-factor authentication uptake using machine learning and the UTAUT Framework",
+          abstract: "An application-specific prediction paper.",
+          authors: [],
+          citation_count: 20,
+          year: 2025
+        },
+        {
+          paper_id: "off_topic_soil",
+          title: "Multi-Class Soil Fertility Classification Using Random Forest and SMOTE for Precision Agriculture",
+          abstract: "A domain-specific classification paper for precision agriculture.",
+          authors: [],
+          citation_count: 25,
+          year: 2025
+        }
+      ]
+    });
+
+    expect(selection.selectedPaperIds).toEqual(["relevant_svm", "relevant_tabular", "relevant_survey"]);
+    expect(selection.selectedPaperIds).toHaveLength(3);
   });
 
   it("drops obviously off-topic tail papers even when lightweight analysis runs in all-mode", async () => {
@@ -527,9 +906,7 @@ describe("paperSelection", () => {
     });
 
     expect(selection.request.selectionMode).toBe("all");
-    expect(new Set(selection.selectedPaperIds)).toEqual(
-      new Set(["relevant_pmlb", "relevant_svm", "relevant_benchmark"])
-    );
+    expect(new Set(selection.selectedPaperIds)).toEqual(new Set(["relevant_pmlb", "relevant_svm"]));
     expect(selection.selectedPaperIds).not.toContain("off_topic_secret");
     expect(selection.selectedPaperIds).not.toContain("off_topic_music");
     expect(selection.selectedPaperIds).not.toContain("off_topic_sentiment");

@@ -34,4 +34,36 @@ describe("normalizeConstraintProfile", () => {
       )
     ).toBeGreaterThan(0);
   });
+
+  it("keeps domain anchors in keyword fallback instead of generic research-planning tokens", () => {
+    const candidates = buildLiteratureQueryCandidates({
+      runTopic:
+        "Research-grade literature review and reproducible benchmarking plan for classical and lightweight modern baselines for tabular classification on public datasets"
+    });
+
+    expect(candidates).toContainEqual({
+      query: "classical modern baselines tabular classification datasets",
+      reason: "keyword_anchor"
+    });
+    expect(candidates).not.toContainEqual({
+      query: "research grade literature review benchmarking plan",
+      reason: "keyword_anchor"
+    });
+  });
+
+  it("drops invalid llm-derived collect date filters instead of treating freeform prose as a date range", () => {
+    const profile = normalizeConstraintProfile(
+      {
+        source: "llm",
+        collect: {
+          dateRange: "recent papers plus core older benchmark/evaluation papers where relevant",
+          year: "recent"
+        }
+      },
+      ["Include both recent papers and core older benchmark or evaluation papers where relevant."]
+    );
+
+    expect(profile.collect.dateRange).toBeUndefined();
+    expect(profile.collect.year).toBeUndefined();
+  });
 });

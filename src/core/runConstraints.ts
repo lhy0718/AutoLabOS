@@ -41,6 +41,9 @@ export interface LiteratureQueryCandidate {
     | "keyword_anchor";
 }
 
+const YEAR_SPEC_RE = /^(\d{4}|(\d{4}-\d{4})|(\d{4}-)|(-\d{4}))$/u;
+const DATE_PART_RE = /^\d{4}(-\d{2}(-\d{2})?)?$/u;
+
 export function buildHeuristicConstraintProfile(constraints: string[]): ConstraintProfile {
   const raw = constraints.map((constraint) => constraint.trim()).filter(Boolean);
   return {
@@ -166,8 +169,8 @@ export function normalizeConstraintProfile(input: Partial<ConstraintProfile> | u
     source: input?.source === "llm" ? "llm" : "heuristic_fallback",
     raw,
     collect: {
-      dateRange: cleanString(collect.dateRange),
-      year: cleanString(collect.year),
+      dateRange: normalizeCollectDateRange(collect.dateRange),
+      year: normalizeCollectYear(collect.year),
       lastYears: normalizePositiveInteger(collect.lastYears),
       fieldsOfStudy: normalizeStringArray(collect.fieldsOfStudy),
       venues: normalizeStringArray(collect.venues),
@@ -362,6 +365,21 @@ function buildKeywordAnchorQuery(value: string | undefined): string | undefined 
     "using",
     "with"
   ]);
+  const genericMetaTokens = new Set([
+    "agenda",
+    "benchmark",
+    "benchmarking",
+    "future",
+    "grade",
+    "literature",
+    "plan",
+    "plans",
+    "research",
+    "review",
+    "reviews",
+    "survey",
+    "systematic"
+  ]);
   const keywords = text
     .toLowerCase()
     .split(/[^a-z0-9]+/iu)
@@ -369,6 +387,7 @@ function buildKeywordAnchorQuery(value: string | undefined): string | undefined 
     .filter(Boolean)
     .filter((token) => !stopwords.has(token))
     .filter((token) => token.length > 2)
+    .filter((token) => !genericMetaTokens.has(token))
     .filter(
       (token) =>
         ![
@@ -496,4 +515,30 @@ function cleanString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function normalizeCollectYear(value: unknown): string | undefined {
+  const cleaned = cleanString(value);
+  if (!cleaned || !YEAR_SPEC_RE.test(cleaned)) {
+    return undefined;
+  }
+  return cleaned;
+}
+
+function normalizeCollectDateRange(value: unknown): string | undefined {
+  const cleaned = cleanString(value);
+  if (!cleaned) {
+    return undefined;
+  }
+  const parts = cleaned.split(":");
+  if (parts.length !== 2) {
+    return undefined;
+  }
+  const [start, end] = parts;
+  const startValid = start === "" || DATE_PART_RE.test(start);
+  const endValid = end === "" || DATE_PART_RE.test(end);
+  if (!startValid || !endValid || (start === "" && end === "")) {
+    return undefined;
+  }
+  return cleaned;
 }

@@ -182,6 +182,74 @@ class TitleSelectiveHangingExtractorLLM extends MockLLMClient {
   }
 }
 
+class RerankHangingLLM extends MockLLMClient {
+  override async complete(_prompt: string, opts?: LLMCompleteOptions): Promise<{ text: string }> {
+    if (opts?.systemPrompt?.includes("You rerank scientific papers")) {
+      return await new Promise<{ text: string }>((_resolve, reject) => {
+        if (opts.abortSignal?.aborted) {
+          reject(new Error("Operation aborted by user"));
+          return;
+        }
+        opts.abortSignal?.addEventListener(
+          "abort",
+          () => reject(new Error("Operation aborted by user")),
+          { once: true }
+        );
+      });
+    }
+    return {
+      text: jsonOutput("summary", "claim")
+    };
+  }
+}
+
+class ImagePayloadTimeoutLLM extends MockLLMClient {
+  extractorCallsWithImages = 0;
+  extractorCallsWithoutImages = 0;
+
+  override async complete(_prompt: string, opts?: LLMCompleteOptions): Promise<{ text: string }> {
+    if (opts?.systemPrompt?.includes("planning agent")) {
+      return {
+        text: JSON.stringify({
+          focus_sections: ["methods"],
+          target_claims: ["claim"],
+          extraction_priorities: ["metrics"],
+          verification_checks: ["source-grounded"],
+          risk_flags: []
+        })
+      };
+    }
+    if (opts?.systemPrompt?.includes("verification agent")) {
+      return {
+        text: jsonOutput("reviewed summary", "reviewed claim")
+      };
+    }
+    if (opts?.systemPrompt?.includes("scientific literature analyst")) {
+      if ((opts.inputImagePaths?.length ?? 0) > 0) {
+        this.extractorCallsWithImages += 1;
+        return await new Promise<{ text: string }>((_resolve, reject) => {
+          if (opts.abortSignal?.aborted) {
+            reject(new Error("Operation aborted by user"));
+            return;
+          }
+          opts.abortSignal?.addEventListener(
+            "abort",
+            () => reject(new Error("Operation aborted by user")),
+            { once: true }
+          );
+        });
+      }
+      this.extractorCallsWithoutImages += 1;
+      return {
+        text: jsonOutput("summary without images", "claim without images")
+      };
+    }
+    return {
+      text: jsonOutput("summary", "claim")
+    };
+  }
+}
+
 function makeRun(runId: string): RunRecord {
   return {
     version: 3,
@@ -255,6 +323,14 @@ function writeCachedPaperTextSync(runId: string, paperId: string, text: string):
   const cacheDir = path.join(".autolabos", "runs", runId, "analysis_cache", "texts");
   mkdirSync(cacheDir, { recursive: true });
   writeFileSync(path.join(cacheDir, `${paperId}.txt`), text, "utf8");
+}
+
+function writeCachedPageImagesSync(runId: string, paperId: string, count: number): void {
+  const cacheDir = path.join(".autolabos", "runs", runId, "analysis_cache", "page_images", paperId);
+  mkdirSync(cacheDir, { recursive: true });
+  for (let index = 1; index <= count; index += 1) {
+    writeFileSync(path.join(cacheDir, `page-${String(index).padStart(3, "0")}.png`), "png");
+  }
 }
 
 function jsonOutput(summary: string, claim: string): string {
@@ -399,6 +475,51 @@ function hypothesisPipelineOutputs(evidenceId = "ev_p1_1"): string[] {
 }
 
 describe("analyzePapers node", () => {
+  it("pauses for manual review when no collected corpus rows are available", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-empty-corpus-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-empty-corpus";
+    const run = makeRun(runId);
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        },
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new SequenceJsonLLM([jsonOutput("summary", "claim")]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(result.summary).toContain("no collected corpus rows are currently available");
+    expect(result.transitionRecommendation?.action).toBe("pause_for_human");
+    expect(result.transitionRecommendation?.reason).toContain("corpus.jsonl is currently missing or empty");
+    expect(result.transitionRecommendation?.suggestedCommands).toContain(
+      `/agent collect --limit 200 --run ${run.id}`
+    );
+    expect(result.transitionRecommendation?.suggestedCommands).toContain(`/agent run collect_papers ${run.id}`);
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(
+      loggedTexts.some((text) => text.includes("No corpus rows are available for analyze_papers"))
+    ).toBe(true);
+  });
+
   it("writes structured summaries, evidence, and manifest for analyzed papers", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-"));
     tempDirs.push(root);
@@ -508,6 +629,69 @@ describe("analyzePapers node", () => {
     expect(updated?.graph.nodeStates.analyze_papers.note).toContain("1 evidence item(s)");
   });
 
+  it("updates runs.json to an analyze-start summary before a long rerank finishes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-start-summary-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const paths = resolveAppPaths(root);
+    await ensureScaffold(paths);
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Tabular Baseline Benchmarking",
+      topic: "Tabular Baseline Benchmarking",
+      constraints: [],
+      objectiveMetric: "accuracy >= 0.9"
+    });
+    run.status = "running";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.analyze_papers = {
+      status: "running",
+      updatedAt: new Date().toISOString()
+    };
+    await runStore.updateRun(run);
+
+    await writeCorpus(
+      run.id,
+      Array.from({ length: 35 }, (_, index) => ({
+        paper_id: `p${index + 1}`,
+        title: `Paper ${index + 1}`,
+        abstract: `Abstract ${index + 1}`,
+        authors: [`Author ${index + 1}`]
+      }))
+    );
+
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore,
+      eventStream: new InMemoryEventStream(),
+      llm: new RerankHangingLLM(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const abortController = new AbortController();
+    const execution = node.execute({ run, graph: run.graph, abortSignal: abortController.signal });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const runsFile = JSON.parse(await readFile(paths.runsFile, "utf8")) as { runs: RunRecord[] };
+    const updated = runsFile.runs.find((candidate) => candidate.id === run.id);
+    expect(updated?.latestSummary).toContain("analyze_papers has started");
+    expect(updated?.latestSummary).toContain("select top 30");
+    expect(updated?.graph.nodeStates.analyze_papers.note).toContain("analyze_papers has started");
+
+    abortController.abort();
+    await expect(execution).rejects.toThrow(/aborted/i);
+  });
+
   it("keeps completed artifacts when post-persist run summary refresh fails", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-post-persist-refresh-"));
     tempDirs.push(root);
@@ -523,7 +707,7 @@ describe("analyzePapers node", () => {
     const runStore = {
       async getRun(id: string) {
         getRunCalls += 1;
-        if (getRunCalls === 1) {
+        if (getRunCalls <= 2) {
           return { ...run, id };
         }
         throw new Error("Unexpected end of JSON input");
@@ -914,6 +1098,78 @@ describe("analyzePapers node", () => {
 
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
     expect(loggedTexts.some((text) => text.includes("Pausing instead of spending the rest of the selection"))).toBe(true);
+  });
+
+  it("retries once without supplemental page images when the full-text extractor times out", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-image-timeout-fallback-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = "5";
+
+    const runId = "run-analyze-image-timeout-fallback";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Paper 1",
+        abstract: "Abstract 1",
+        authors: ["Alice"],
+        pdf_url: "https://example.com/p1.pdf"
+      }
+    ]);
+    writeCachedPaperTextSync(runId, "p1", "Recovered cached full text");
+    writeCachedPageImagesSync(runId, "p1", 3);
+
+    const llm = new ImagePayloadTimeoutLLM();
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: {
+            model: "gpt-5.4",
+            pdf_model: "gpt-5.4"
+          }
+        },
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      pdfTextLlm: llm,
+      codex: {
+        checkCliAvailable: async () => ({ ok: true, detail: "codex available" }),
+        checkLoginStatus: async () => ({ ok: true, detail: "logged in" }),
+        checkEnvironmentReadiness: async () => []
+      } as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(llm.extractorCallsWithImages).toBe(1);
+    expect(llm.extractorCallsWithoutImages).toBe(1);
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw).toContain("reviewed summary");
+    expect(summariesRaw).toContain('"source_type":"full_text"');
+
+    const manifestRaw = await readFile(
+      path.join(".autolabos", "runs", runId, "analysis_manifest.json"),
+      "utf8"
+    );
+    expect(manifestRaw).toContain('"status": "completed"');
+    expect(manifestRaw).toContain('"source_type": "full_text"');
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Retrying once with full text only"))).toBe(true);
   });
 
   it("pauses for human when the requested model hits a usage limit before any outputs are produced", async () => {
@@ -1901,6 +2157,85 @@ describe("analyzePapers node", () => {
     expect(retried.paper.pdf_url).toBe("https://example.com/p1.pdf");
     expect(retried.source.sourceType).toBe("full_text");
     expect(retried.source.pdfUrl).toBe("https://example.com/p1.pdf");
+    expect(retried.source.text).toBe("Recovered cached full text");
+  });
+
+  it("retries source resolution when collect enrichment replaces a stale PDF URL after an initial abstract fallback", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-late-pdf-replacement-"));
+    tempDirs.push(root);
+    process.chdir(root);
+    vi.useFakeTimers();
+
+    const runId = "run-analyze-late-pdf-replacement";
+    const paper = {
+      paper_id: "p1",
+      title: "Paper 1",
+      abstract: "Abstract 1",
+      authors: ["Alice"],
+      pdf_url: "https://broken.example/p1.pdf"
+    };
+    await writeCorpus(runId, [paper]);
+    await writeCollectResult(runId, {
+      stored: 1,
+      pdfRecovered: 0,
+      enrichment: {
+        status: "pending",
+        targetCount: 1,
+        processedCount: 0,
+        attemptedCount: 0,
+        updatedCount: 0
+      }
+    });
+    writeCachedPaperTextSync(runId, "p1", "Recovered cached full text");
+
+    const recoveredPdfUrl = "https://example.com/p1.pdf";
+    setTimeout(() => {
+      overwriteCollectEnrichmentSync(runId, [
+        {
+          paper_id: "p1",
+          pdf_resolution: {
+            source: "landing_page",
+            url: recoveredPdfUrl
+          },
+          attempts: [{ stage: "landing_page", ok: true }],
+          errors: []
+        }
+      ]);
+      overwriteCollectResultSync(runId, {
+        stored: 1,
+        pdfRecovered: 1,
+        enrichment: {
+          status: "completed",
+          targetCount: 1,
+          processedCount: 1,
+          attemptedCount: 1,
+          updatedCount: 1
+        }
+      });
+    }, 100);
+
+    const resultPromise = retryResolvedSourceAfterLatePdfRecovery({
+      runId,
+      paper,
+      source: {
+        sourceType: "abstract",
+        text: "Abstract 1",
+        fullTextAvailable: false,
+        pdfUrl: paper.pdf_url,
+        fallbackReason: "pdf_download_failed:403"
+      },
+      includePageImages: false,
+      selectionMode: "all",
+      selectedCount: 1,
+      totalCandidates: 1
+    });
+
+    await vi.advanceTimersByTimeAsync(250);
+    const retried = await resultPromise;
+
+    expect(retried.paper.pdf_url).toBe(recoveredPdfUrl);
+    expect(retried.source.sourceType).toBe("full_text");
+    expect(retried.source.pdfUrl).toBe(recoveredPdfUrl);
     expect(retried.source.text).toBe("Recovered cached full text");
   });
 

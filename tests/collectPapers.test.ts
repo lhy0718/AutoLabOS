@@ -1015,6 +1015,106 @@ describe("collectPapers bibtex", () => {
     });
   });
 
+  it("drops invalid llm-derived collect date prose before calling Semantic Scholar", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-invalid-date-filter-"));
+    process.chdir(root);
+
+    const runId = "run-collect-invalid-date-filter";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Benchmark Corpus",
+      topic: "tabular classification baselines",
+      constraints: ["Include both recent papers and core older benchmark or evaluation papers where relevant."],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              limit: 10,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const streamSearchPapers = vi.fn(() =>
+      batchStream([
+        {
+          paperId: "paper-1",
+          title: "Benchmark Corpus Paper",
+          authors: ["Alice Kim"]
+        }
+      ])
+    );
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new JsonLLMClient(
+        JSON.stringify({
+          collect: {
+            dateRange: "recent papers plus core older benchmark/evaluation papers where relevant"
+          },
+          writing: {},
+          experiment: {
+            designNotes: [],
+            implementationNotes: [],
+            evaluationNotes: []
+          },
+          assumptions: []
+        })
+      ),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({ attemptCount: 0, attempts: [] }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(streamSearchPapers).toHaveBeenCalledTimes(1);
+    expect(streamSearchPapers.mock.calls[0]?.[0]).toMatchObject({
+      query: "tabular classification baselines"
+    });
+    expect(streamSearchPapers.mock.calls[0]?.[0]?.filters).not.toHaveProperty("publicationDateOrYear");
+  });
+
   it("drops generic publicationTypes like paper before calling Semantic Scholar", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-generic-paper-"));
     process.chdir(root);

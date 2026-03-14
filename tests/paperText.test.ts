@@ -132,7 +132,7 @@ describe("paperText", () => {
     expect(source.fallbackReason).toContain("pdf_download_failed:404");
   });
 
-  it("selects all pages for hybrid image attachment", () => {
+  it("selects all pages for hybrid image attachment when the paper is short", () => {
     const pages = selectHybridPdfPageNumbers({
       pageTexts: [
         "Title and abstract page.",
@@ -145,7 +145,7 @@ describe("paperText", () => {
     expect(pages).toEqual([1, 2, 3, 4]);
   });
 
-  it("uses page count when selecting all pages", () => {
+  it("uses page count when selecting all pages for short papers", () => {
     const pages = selectHybridPdfPageNumbers({
       pageTexts: [
         "Title and abstract page.",
@@ -156,6 +156,25 @@ describe("paperText", () => {
     });
 
     expect(pages).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("caps hybrid page images for long papers while preserving key sections", () => {
+    const pageTexts = Array.from({ length: 20 }, (_, index) => `Appendix filler page ${index + 1}.`);
+    pageTexts[0] = "Title and abstract.";
+    pageTexts[1] = "Introduction and methods.";
+    pageTexts[9] = "Experiments and evaluation.";
+    pageTexts[10] = "Results with Table 3 and Figure 2.";
+    pageTexts[18] = "Conclusion and limitations.";
+    pageTexts[19] = "References.";
+
+    const pages = selectHybridPdfPageNumbers({
+      pageTexts,
+      pageCount: 20,
+      maxImages: 6
+    });
+
+    expect(pages.length).toBeLessThanOrEqual(6);
+    expect(pages).toEqual(expect.arrayContaining([1, 2, 10, 11, 19, 20]));
   });
 
   it("returns a single page when page count is unavailable", () => {

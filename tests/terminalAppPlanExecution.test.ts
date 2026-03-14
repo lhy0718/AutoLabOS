@@ -32,6 +32,9 @@ function makeApp(): any {
   app.render = () => {};
   app.updateSuggestions = () => {};
   app.drainQueuedInputs = async () => {};
+  app.interactiveSupervisor = {
+    getActiveRequest: vi.fn().mockResolvedValue(undefined)
+  };
   return app;
 }
 
@@ -518,36 +521,44 @@ describe("TerminalApp pending natural plan execution", () => {
     app.resolveTargetRun = vi.fn().mockResolvedValue(run);
     app.setActiveRunId = vi.fn();
     app.refreshRunIndex = vi.fn();
-    app.continueSupervisedRun = vi.fn().mockResolvedValue({
-      ...run,
-      graph: {
-        ...run.graph,
-        nodeStates: {
-          ...run.graph.nodeStates,
-          generate_hypotheses: {
-            ...run.graph.nodeStates.generate_hypotheses,
-            status: "completed",
-            note: "hypotheses generated"
-          }
-        }
-      }
-    });
     app.orchestrator = {
-      jumpToNode: vi.fn()
+      runAgentWithOptions: vi.fn().mockResolvedValue({
+        run: {
+          ...run,
+          graph: {
+            ...run.graph,
+            nodeStates: {
+              ...run.graph.nodeStates,
+              generate_hypotheses: {
+                ...run.graph.nodeStates.generate_hypotheses,
+                status: "completed",
+                note: "hypotheses generated"
+              }
+            }
+          }
+        },
+        result: {
+          status: "success",
+          summary: "hypotheses generated"
+        }
+      })
     };
 
     const result = await app.handleAgent(["run", "generate_hypotheses", "--top-k", "3", "--branch-count", "8"]);
 
     expect(result.ok).toBe(true);
-    expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id, undefined);
-    expect(app.orchestrator.jumpToNode).not.toHaveBeenCalled();
+    expect(app.orchestrator.runAgentWithOptions).toHaveBeenCalledWith(
+      run.id,
+      "generate_hypotheses",
+      expect.objectContaining({ abortSignal: undefined })
+    );
 
     const stored = JSON.parse(await readFile(run.memoryRefs.runContextPath, "utf8"));
     const requestItem = stored.items.find((item: { key: string }) => item.key === "generate_hypotheses.request");
     expect(requestItem?.value).toEqual({ topK: 3, branchCount: 8 });
   });
 
-  it("force-jumps to the requested node before continuing the supervised run", async () => {
+  it("delegates manual node runs to orchestrator.runAgentWithOptions", async () => {
     const app = makeApp();
     const run = makeRun("run-force-jump");
     run.currentNode = "analyze_results";
@@ -556,32 +567,40 @@ describe("TerminalApp pending natural plan execution", () => {
     app.resolveTargetRun = vi.fn().mockResolvedValue(run);
     app.setActiveRunId = vi.fn();
     app.refreshRunIndex = vi.fn();
-    app.continueSupervisedRun = vi.fn().mockResolvedValue({
-      ...run,
-      currentNode: "write_paper",
-      graph: {
-        ...run.graph,
-        currentNode: "write_paper",
-        nodeStates: {
-          ...run.graph.nodeStates,
-          write_paper: {
-            ...run.graph.nodeStates.write_paper,
-            status: "completed",
-            note: "paper generated"
-          }
-        }
-      }
-    });
     app.orchestrator = {
-      jumpToNode: vi.fn().mockResolvedValue(run)
+      runAgentWithOptions: vi.fn().mockResolvedValue({
+        run: {
+          ...run,
+          currentNode: "write_paper",
+          graph: {
+            ...run.graph,
+            currentNode: "write_paper",
+            nodeStates: {
+              ...run.graph.nodeStates,
+              write_paper: {
+                ...run.graph.nodeStates.write_paper,
+                status: "completed",
+                note: "paper generated"
+              }
+            }
+          }
+        },
+        result: {
+          status: "success",
+          summary: "paper generated"
+        }
+      })
     };
 
     const result = await app.handleAgent(["run", "write_paper", run.id]);
 
     expect(result.ok).toBe(true);
-    expect(app.orchestrator.jumpToNode).toHaveBeenCalledWith(run.id, "write_paper", "force", "manual node run");
+    expect(app.orchestrator.runAgentWithOptions).toHaveBeenCalledWith(
+      run.id,
+      "write_paper",
+      expect.objectContaining({ abortSignal: undefined })
+    );
     expect(app.refreshRunIndex).toHaveBeenCalled();
-    expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id, undefined);
   });
 
   it("auto-continues after /agent collect recovery advances past collect_papers", async () => {
@@ -689,6 +708,26 @@ describe("TerminalApp pending natural plan execution", () => {
 
     expect(result).toEqual({ ok: true });
     expect(app.continueSupervisedRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects /agent clear_papers while the target run is still running", async () => {
+    const app = makeApp();
+    const run = makeRun("run-clear-papers-running");
+    run.status = "running";
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.graph.nodeStates.generate_hypotheses.status = "running";
+
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.setActiveRunId = vi.fn();
+    app.refreshRunIndex = vi.fn();
+
+    const result = await app.handleAgent(["clear_papers", run.id]);
+
+    expect(result).toEqual({ ok: false, reason: "target run is currently running" });
+    expect(app.logs).toContain(
+      "Cannot clear paper artifacts while the target run is still running. Stop or pause the run first."
+    );
   });
 
   it("summarizes an existing review packet through /agent review", async () => {
@@ -845,6 +884,294 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs.some((line: string) => line.includes("Running queued input: /approve"))).toBe(false);
   });
 
+  it("waits for an aborted busy action to settle before quitting", async () => {
+    const app = makeApp();
+    app.onQuit = vi.fn();
+    app.detachKeyboard = vi.fn();
+
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    let releaseAbortCleanup!: () => void;
+    const abortCleanup = new Promise<void>((resolve) => {
+      releaseAbortCleanup = resolve;
+    });
+    let settled = false;
+
+    const busyPromise = app.runBusyAction(async (abortSignal: AbortSignal) => {
+      resolveStarted();
+      await new Promise<void>((_resolve, reject) => {
+        abortSignal.addEventListener(
+          "abort",
+          () => {
+            void abortCleanup.then(() => {
+              settled = true;
+              reject(new Error("Operation aborted by user"));
+            });
+          },
+          { once: true }
+        );
+      });
+    }, "/brief");
+
+    await started;
+
+    const shutdownPromise = app.shutdown({ abortActive: true });
+    await Promise.resolve();
+
+    expect(app.onQuit).not.toHaveBeenCalled();
+
+    releaseAbortCleanup();
+    await shutdownPromise;
+    await busyPromise;
+
+    expect(settled).toBe(true);
+    expect(app.onQuit).toHaveBeenCalledTimes(1);
+  });
+
+  it("forces the active run into a canceled paused state if shutdown outlives the abort grace period", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-shutdown-cancel-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const runStore = new RunStore(paths);
+      const run = await runStore.createRun({
+        title: "Shutdown run",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      run.status = "running";
+      run.currentNode = "analyze_papers";
+      run.graph.currentNode = "analyze_papers";
+      run.graph.nodeStates.collect_papers.status = "completed";
+      run.graph.nodeStates.analyze_papers.status = "running";
+      run.graph.nodeStates.analyze_papers.note = "Analyzing papers.";
+      await runStore.updateRun(run);
+
+      const app = new TerminalApp({
+        config: {
+          papers: { max_results: 100 },
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          }
+        } as any,
+        runStore,
+        titleGenerator: {} as any,
+        codex: {} as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: {} as any,
+        initialRunId: run.id,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+
+      app.render = () => {};
+      app.updateSuggestions = () => {};
+      app.drainQueuedInputs = async () => {};
+      app.detachKeyboard = vi.fn();
+      app.onQuit = vi.fn();
+      app.shutdownAbortGraceMs = 0;
+      app.activeBusyAbortController = new AbortController();
+      app.activeBusyPromise = new Promise<void>(() => {});
+
+      await app.shutdown({ abortActive: true });
+
+      const persisted = await runStore.getRun(run.id);
+      expect(persisted?.status).toBe("paused");
+      expect(persisted?.graph.nodeStates.analyze_papers.status).toBe("pending");
+      expect(persisted?.graph.nodeStates.analyze_papers.note).toBe("Canceled by user");
+      expect(persisted?.latestSummary).toBe("Canceled by user");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("forces the active run into a canceled paused state even when the run is marked running before the node state flips to running", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-shutdown-pending-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const runStore = new RunStore(paths);
+      const run = await runStore.createRun({
+        title: "Shutdown pending window",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      run.status = "running";
+      run.currentNode = "analyze_papers";
+      run.graph.currentNode = "analyze_papers";
+      run.graph.nodeStates.collect_papers.status = "completed";
+      run.graph.nodeStates.analyze_papers.status = "pending";
+      run.graph.nodeStates.analyze_papers.note = "Ready to analyze.";
+      await runStore.updateRun(run);
+
+      const app = new TerminalApp({
+        config: {
+          papers: { max_results: 100 },
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          }
+        } as any,
+        runStore,
+        titleGenerator: {} as any,
+        codex: {} as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: {} as any,
+        initialRunId: run.id,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+
+      app.render = () => {};
+      app.updateSuggestions = () => {};
+      app.drainQueuedInputs = async () => {};
+      app.detachKeyboard = vi.fn();
+      app.onQuit = vi.fn();
+      app.shutdownAbortGraceMs = 0;
+      app.activeBusyAbortController = new AbortController();
+      app.activeBusyPromise = new Promise<void>(() => {});
+
+      await app.shutdown({ abortActive: true });
+
+      const persisted = await runStore.getRun(run.id);
+      expect(persisted?.status).toBe("paused");
+      expect(persisted?.graph.nodeStates.analyze_papers.status).toBe("pending");
+      expect(persisted?.graph.nodeStates.analyze_papers.note).toBe("Canceled by user");
+      expect(persisted?.latestSummary).toBe("Canceled by user");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("pauses the active run when unexpected process-exit cleanup fires mid-node", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-exit-cleanup-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const runStore = new RunStore(paths);
+      const run = await runStore.createRun({
+        title: "Unexpected exit run",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      run.status = "running";
+      run.currentNode = "analyze_papers";
+      run.graph.currentNode = "analyze_papers";
+      run.graph.nodeStates.collect_papers.status = "completed";
+      run.graph.nodeStates.analyze_papers.status = "running";
+      run.graph.nodeStates.analyze_papers.note = "Analyzing papers.";
+      await runStore.updateRun(run);
+
+      const app = new TerminalApp({
+        config: {
+          papers: { max_results: 100 },
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          }
+        } as any,
+        runStore,
+        titleGenerator: {} as any,
+        codex: {} as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: {} as any,
+        initialRunId: run.id,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+
+      app.shutdownAbortGraceMs = 0;
+      app.activeBusyAbortController = new AbortController();
+      app.activeBusyPromise = new Promise<void>(() => {});
+
+      await app.pauseActiveRunForUnexpectedExit();
+
+      const persisted = await runStore.getRun(run.id);
+      expect(persisted?.status).toBe("paused");
+      expect(persisted?.graph.nodeStates.analyze_papers.status).toBe("pending");
+      expect(persisted?.graph.nodeStates.analyze_papers.note).toBe("Canceled by user");
+      expect(persisted?.latestSummary).toBe("Canceled by user");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("pauses the active run on unexpected exit even when no busy promise is registered", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-exit-cleanup-idle-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const runStore = new RunStore(paths);
+      const run = await runStore.createRun({
+        title: "Unexpected exit idle run",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      run.status = "running";
+      run.currentNode = "analyze_papers";
+      run.graph.currentNode = "analyze_papers";
+      run.graph.nodeStates.collect_papers.status = "completed";
+      run.graph.nodeStates.analyze_papers.status = "running";
+      run.graph.nodeStates.analyze_papers.note = "Analyzing papers.";
+      await runStore.updateRun(run);
+
+      const app = new TerminalApp({
+        config: {
+          papers: { max_results: 100 },
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          }
+        } as any,
+        runStore,
+        titleGenerator: {} as any,
+        codex: {} as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: {} as any,
+        initialRunId: run.id,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+
+      await app.pauseActiveRunForUnexpectedExit();
+
+      const persisted = await runStore.getRun(run.id);
+      expect(persisted?.status).toBe("paused");
+      expect(persisted?.graph.nodeStates.analyze_papers.status).toBe("pending");
+      expect(persisted?.graph.nodeStates.analyze_papers.note).toBe("Canceled by user");
+      expect(persisted?.latestSummary).toBe("Canceled by user");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("removes the bottom composer pane before quitting", async () => {
     const app = makeApp();
     app.onQuit = vi.fn();
@@ -944,6 +1271,26 @@ describe("TerminalApp pending natural plan execution", () => {
 
     expect(app.input).toBe("/brief start --latest");
     expect(app.executeInput).not.toHaveBeenCalled();
+  });
+
+  it("treats a PTY newline on return as submit rather than composer newline", async () => {
+    const app = makeApp();
+    app.input = "/new";
+    app.cursorIndex = 4;
+    app.suggestions = [
+      {
+        key: "new",
+        label: "/new",
+        description: "Create a Markdown Research Brief",
+        applyValue: "/new"
+      }
+    ];
+    app.selectedSuggestion = 0;
+    app.submitInputText = vi.fn().mockResolvedValue(undefined);
+
+    await app.handleKeypress("\n", { name: "return" });
+
+    expect(app.submitInputText).toHaveBeenCalledWith("/new");
   });
 
   it("describes /brief as starting research instead of echoing the slash command", () => {
@@ -1182,12 +1529,115 @@ describe("TerminalApp pending natural plan execution", () => {
     run.graph.nodeStates.analyze_papers.note = "Canceled by user";
     app.resolveTargetRun = vi.fn().mockResolvedValue(run);
     app.setActiveRunId = vi.fn();
-    app.continueSupervisedRun = vi.fn().mockResolvedValue(run);
-    app.orchestrator = { jumpToNode: vi.fn() };
+    app.refreshRunIndex = vi.fn();
+    app.orchestrator = {
+      runAgentWithOptions: vi.fn().mockResolvedValue({
+        run,
+        result: {
+          status: "success",
+          summary: "Canceled by user"
+        }
+      })
+    };
 
     await expect(app.handleAgent(["run", "analyze_papers"], new AbortController().signal)).rejects.toThrow(
       "Operation aborted by user"
     );
+  });
+
+  it("preserves an existing analyze_papers request when /agent run analyze_papers omits --top-n", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-terminal-analyze-request-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const app = makeApp();
+      const run = makeRun("run-preserve-request");
+      run.status = "paused";
+      run.currentNode = "analyze_papers";
+      run.graph.currentNode = "analyze_papers";
+      run.graph.nodeStates.analyze_papers.status = "pending";
+      const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+      await runContext.put("analyze_papers.request", {
+        topN: 30,
+        selectionMode: "top_n",
+        selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+      });
+      app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+      app.setActiveRunId = vi.fn();
+      app.refreshRunIndex = vi.fn();
+      app.orchestrator = {
+        runAgentWithOptions: vi.fn().mockResolvedValue({
+          run: {
+            ...run,
+            graph: {
+              ...run.graph,
+              nodeStates: {
+                ...run.graph.nodeStates,
+                analyze_papers: {
+                  ...run.graph.nodeStates.analyze_papers,
+                  status: "completed",
+                  note: "Analyzed top 30."
+                }
+              }
+            }
+          },
+          result: {
+            status: "success",
+            summary: "Analyzed top 30."
+          }
+        })
+      };
+
+      const result = await app.handleAgent(["run", "analyze_papers"], new AbortController().signal);
+
+      expect(result.ok).toBe(true);
+      expect(await runContext.get("analyze_papers.request")).toMatchObject({
+        topN: 30,
+        selectionMode: "top_n"
+      });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("continues the supervised run after /retry arms the current node", async () => {
+    const app = makeApp();
+    const run = makeRun("run-retry");
+    run.status = "paused";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.analyze_papers.status = "pending";
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.refreshRunIndex = vi.fn();
+    app.setActiveRunId = vi.fn();
+    app.continueSupervisedRun = vi.fn().mockResolvedValue({
+      ...run,
+      status: "paused",
+      graph: {
+        ...run.graph,
+        nodeStates: {
+          ...run.graph.nodeStates,
+          analyze_papers: {
+            ...run.graph.nodeStates.analyze_papers,
+            status: "running",
+            note: "Analyzing papers."
+          }
+        }
+      }
+    });
+    app.orchestrator = {
+      retryCurrent: vi.fn().mockResolvedValue({
+        ...run,
+        currentNode: "analyze_papers"
+      })
+    };
+
+    const result = await (app as any).handleRetry();
+
+    expect(result.ok).toBe(true);
+    expect(app.orchestrator.retryCurrent).toHaveBeenCalledWith(run.id);
+    expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id);
   });
 
   it("does not trim successful node summaries at the old 220-character limit", async () => {
@@ -1198,21 +1648,28 @@ describe("TerminalApp pending natural plan execution", () => {
     app.resolveTargetRun = vi.fn().mockResolvedValue(run);
     app.setActiveRunId = vi.fn();
     app.refreshRunIndex = vi.fn();
-    app.continueSupervisedRun = vi.fn().mockResolvedValue({
-      ...run,
-      graph: {
-        ...run.graph,
-        nodeStates: {
-          ...run.graph.nodeStates,
-          analyze_papers: {
-            ...run.graph.nodeStates.analyze_papers,
-            status: "completed",
-            note: longSummary
+    app.orchestrator = {
+      runAgentWithOptions: vi.fn().mockResolvedValue({
+        run: {
+          ...run,
+          graph: {
+            ...run.graph,
+            nodeStates: {
+              ...run.graph.nodeStates,
+              analyze_papers: {
+                ...run.graph.nodeStates.analyze_papers,
+                status: "completed",
+                note: longSummary
+              }
+            }
           }
+        },
+        result: {
+          status: "success",
+          summary: longSummary
         }
-      }
-    });
-    app.orchestrator = { jumpToNode: vi.fn() };
+      })
+    };
 
     const result = await app.handleAgent(["run", "analyze_papers"], new AbortController().signal);
     const completionLog = app.logs.find((line: string) => line.startsWith("Node analyze_papers finished:"));
@@ -1230,32 +1687,40 @@ describe("TerminalApp pending natural plan execution", () => {
     app.resolveTargetRun = vi.fn().mockResolvedValue(run);
     app.setActiveRunId = vi.fn();
     app.refreshRunIndex = vi.fn();
-    app.orchestrator = { jumpToNode: vi.fn() };
-    app.continueSupervisedRun = vi.fn().mockResolvedValue({
-      ...run,
-      status: "failed",
-      updatedAt: "2026-03-12T12:00:30.000Z",
-      currentNode: "analyze_papers",
-      graph: {
-        ...run.graph,
-        currentNode: "analyze_papers",
-        nodeStates: {
-          ...run.graph.nodeStates,
-          analyze_papers: {
-            ...run.graph.nodeStates.analyze_papers,
-            status: "failed",
-            updatedAt: "2026-03-12T12:00:10.000Z",
-            lastError: "generate_hypotheses requires at least one evidence item from analyze_papers."
-          },
-          generate_hypotheses: {
-            ...run.graph.nodeStates.generate_hypotheses,
-            status: "failed",
-            updatedAt: "2026-03-12T12:00:20.000Z",
-            lastError: "generate_hypotheses requires at least one evidence item from analyze_papers."
+    app.orchestrator = {
+      runAgentWithOptions: vi.fn().mockResolvedValue({
+        run: {
+          ...run,
+          status: "failed",
+          updatedAt: "2026-03-12T12:00:30.000Z",
+          currentNode: "analyze_papers",
+          graph: {
+            ...run.graph,
+            currentNode: "analyze_papers",
+            nodeStates: {
+              ...run.graph.nodeStates,
+              analyze_papers: {
+                ...run.graph.nodeStates.analyze_papers,
+                status: "failed",
+                updatedAt: "2026-03-12T12:00:10.000Z",
+                lastError: "generate_hypotheses requires at least one evidence item from analyze_papers."
+              },
+              generate_hypotheses: {
+                ...run.graph.nodeStates.generate_hypotheses,
+                status: "failed",
+                updatedAt: "2026-03-12T12:00:20.000Z",
+                lastError: "generate_hypotheses requires at least one evidence item from analyze_papers."
+              }
+            }
           }
+        },
+        result: {
+          status: "failure",
+          summary: "generate_hypotheses requires at least one evidence item from analyze_papers.",
+          error: "generate_hypotheses requires at least one evidence item from analyze_papers."
         }
-      }
-    });
+      })
+    };
 
     const result = await app.handleAgent(["run", "analyze_papers"], new AbortController().signal);
 
@@ -1641,6 +2106,66 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.getRenderableLogs(app.runIndex[0])[0]).toContain("Analyzed top 30/200 ranked papers into 12 evidence item(s)");
   });
 
+  it("prefers analyze progress hints over a stale collect summary before the persisted run refresh arrives", async () => {
+    const app = makeApp();
+    const projectedRun = makeRun("run-live-refresh-stale-event");
+    projectedRun.status = "running";
+    projectedRun.currentNode = "analyze_papers";
+    projectedRun.graph.currentNode = "analyze_papers";
+    projectedRun.updatedAt = "2026-03-12T12:40:30.000Z";
+    projectedRun.latestSummary =
+      'Semantic Scholar stored 200 papers for "topic". Deferred enrichment scheduled in background for 171 paper(s).';
+    projectedRun.graph.nodeStates.collect_papers.status = "completed";
+    projectedRun.graph.nodeStates.collect_papers.note = projectedRun.latestSummary;
+    projectedRun.graph.nodeStates.collect_papers.updatedAt = "2026-03-12T12:39:54.428Z";
+    projectedRun.graph.nodeStates.analyze_papers.status = "running";
+    projectedRun.graph.nodeStates.analyze_papers.updatedAt = "2026-03-12T12:40:30.000Z";
+    projectedRun.graph.nodeStates.analyze_papers.note =
+      "Selected top 30/200 ranked papers for analysis. Persisted 0 summary row(s) and 0 evidence row(s).";
+
+    app.runIndex = [projectedRun];
+    app.runProjectionHints.set(projectedRun.id, {
+      analyze: {
+        selectedCount: 30,
+        totalCandidates: 200,
+        summaryCount: 0,
+        evidenceCount: 0
+      }
+    });
+
+    expect(app.getRenderableLogs(projectedRun).join(" ")).not.toContain("Ignoring stale top-level summary");
+    expect(app.getRenderableLogs(projectedRun).join(" ")).toContain(
+      "Selected 30/200 paper(s) for analysis. Persisted 0 summary row(s) and 0 evidence row(s)."
+    );
+
+    const persistedRun = makeRun("run-live-refresh-stale-event");
+    persistedRun.status = "running";
+    persistedRun.currentNode = "analyze_papers";
+    persistedRun.graph.currentNode = "analyze_papers";
+    persistedRun.updatedAt = "2026-03-12T12:40:20.000Z";
+    persistedRun.latestSummary = "Selected top 30/200 ranked papers for analysis. Persisted 0 summary row(s) and 0 evidence row(s).";
+    persistedRun.graph.nodeStates.collect_papers.status = "completed";
+    persistedRun.graph.nodeStates.collect_papers.note =
+      'Semantic Scholar stored 200 papers for "topic". Deferred enrichment scheduled in background for 171 paper(s).';
+    persistedRun.graph.nodeStates.collect_papers.updatedAt = "2026-03-12T12:39:54.428Z";
+    persistedRun.graph.nodeStates.analyze_papers.status = "running";
+    persistedRun.graph.nodeStates.analyze_papers.updatedAt = "2026-03-12T12:40:20.000Z";
+    persistedRun.graph.nodeStates.analyze_papers.note = persistedRun.latestSummary;
+
+    app.runStore = {
+      getRun: vi.fn().mockResolvedValue(persistedRun)
+    } as any;
+
+    await app.refreshRunFromStore(projectedRun.id);
+
+    expect(app.runIndex[0].latestSummary).toBe(persistedRun.latestSummary);
+    expect(app.runIndex[0].graph.nodeStates.analyze_papers.note).toBe(persistedRun.latestSummary);
+    expect(app.getRenderableLogs(app.runIndex[0]).join(" ")).not.toContain("Ignoring stale top-level summary");
+    expect(app.getRenderableLogs(app.runIndex[0])[0]).toContain(
+      "analyze_papers has started but no summaries or evidence are persisted yet."
+    );
+  });
+
   it("renders rollback recovery status without borrowing analyze evidence counts", () => {
     const app = makeApp();
     const run = makeRun("run-rollback");
@@ -1767,6 +2292,7 @@ describe("TerminalApp pending natural plan execution", () => {
       app.render = () => {};
       app.updateSuggestions = () => {};
       app.drainQueuedInputs = async () => {};
+      app.startRun = vi.fn(async (runId: string) => (await runStore.getRun(runId))!);
 
       const briefDir = path.join(cwd, ".autolabos", "briefs");
       await mkdir(briefDir, { recursive: true });
@@ -1802,10 +2328,125 @@ describe("TerminalApp pending natural plan execution", () => {
       expect(runs).toHaveLength(1);
       const run = runs[0];
       expect(run.title).toBe("Brief-driven run");
-      expect(orchestrator.runCurrentAgentWithOptions).toHaveBeenCalledWith(
-        run.id,
-        expect.objectContaining({ abortSignal: undefined })
+      expect(app.startRun).toHaveBeenCalledWith(run.id, undefined);
+      const snapshot = await readFile(path.join(cwd, ".autolabos", "runs", run.id, "brief", "source_brief.md"), "utf8");
+      expect(snapshot).toContain("Multi-agent code repair on SWE-bench");
+      const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
+      expect(await runContext.get("run_brief.source_path")).toBe(await realpath(briefPath));
+      expect(await runContext.get("run_brief.snapshot_path")).toBe(`.autolabos/runs/${run.id}/brief/source_brief.md`);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("treats bare /brief as the latest-brief start alias", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-alias-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+
+      const runStore = new RunStore(paths);
+      const orchestrator = {
+        runCurrentAgentWithOptions: vi.fn(async (runId: string) => {
+          const run = (await runStore.getRun(runId))!;
+          run.status = "paused";
+          run.currentNode = "collect_papers";
+          run.graph.currentNode = "collect_papers";
+          run.graph.nodeStates.collect_papers.status = "pending";
+          run.latestSummary = "collect_papers started";
+          await runStore.updateRun(run);
+          return {
+            run,
+            result: {
+              status: "success" as const,
+              summary: "collect_papers started"
+            }
+          };
+        })
+      };
+
+      const app = new TerminalApp({
+        config: {
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: {
+              model: "gpt-5.4",
+              reasoning_effort: "medium",
+              fast_mode: false,
+              chat_model: "gpt-5.4",
+              chat_reasoning_effort: "medium",
+              chat_fast_mode: false
+            },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          },
+          analysis: {
+            pdf_mode: "codex_text_image_hybrid",
+            responses_model: "gpt-5.4"
+          },
+          research: {
+            default_topic: "Multi-agent collaboration",
+            default_constraints: ["recent papers"],
+            default_objective_metric: "reproducibility"
+          }
+        } as any,
+        runStore,
+        titleGenerator: {
+          generateTitle: vi.fn().mockResolvedValue("Brief alias run")
+        } as any,
+        codex: {
+          runTurnStream: vi.fn(async () => {
+            throw new Error("llm unavailable");
+          })
+        } as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: orchestrator as any,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+      app.render = () => {};
+      app.updateSuggestions = () => {};
+      app.drainQueuedInputs = async () => {};
+      app.startRun = vi.fn(async (runId: string) => (await runStore.getRun(runId))!);
+
+      const briefDir = path.join(cwd, ".autolabos", "briefs");
+      await mkdir(briefDir, { recursive: true });
+      const briefPath = path.join(briefDir, "20260311-190500-agent-study.md");
+      await writeFile(
+        briefPath,
+        [
+          "# Research Brief",
+          "",
+          "## Topic",
+          "",
+          "Multi-agent code repair on SWE-bench",
+          "",
+          "## Objective Metric",
+          "",
+          "pass@1 >= 0.4",
+          "",
+          "## Constraints",
+          "",
+          "- recent papers",
+          "- 6 hour time limit",
+          "",
+          "## Plan",
+          "",
+          "Run baseline, ablation, and confirmatory evaluations."
+        ].join("\n"),
+        "utf8"
       );
+
+      await app.handleBriefCommand([]);
+
+      const runs = await runStore.listRuns();
+      expect(runs).toHaveLength(1);
+      const run = runs[0];
+      expect(run.title).toBe("Brief alias run");
+      expect(app.startRun).toHaveBeenCalledWith(run.id, undefined);
       const snapshot = await readFile(path.join(cwd, ".autolabos", "runs", run.id, "brief", "source_brief.md"), "utf8");
       expect(snapshot).toContain("Multi-agent code repair on SWE-bench");
       const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));

@@ -491,13 +491,7 @@ function shouldSuppressStaleLatestSummaryDetail(run: RunRecord, hints?: RunProje
 
   const analyzeState = run.graph.nodeStates.analyze_papers;
   const collectState = run.graph.nodeStates.collect_papers;
-  if (analyzeState?.status !== "running" || analyzeState.note || analyzeState.lastError) {
-    return false;
-  }
-
-  const summaryCount = hints?.analyze?.summaryCount;
-  const evidenceCount = hints?.analyze?.evidenceCount;
-  if ((typeof summaryCount === "number" && summaryCount > 0) || (typeof evidenceCount === "number" && evidenceCount > 0)) {
+  if (analyzeState?.status !== "running" || analyzeState.lastError) {
     return false;
   }
 

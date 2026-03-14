@@ -103,9 +103,9 @@ const ANALYSIS_REVIEWER_SYSTEM_PROMPT = [
   "Whenever you lower confidence or keep a caveat, fill confidence_reason with a short source-grounded explanation."
 ].join(" ");
 
-const DEFAULT_ANALYSIS_PLANNER_TIMEOUT_MS = 20_000;
-const DEFAULT_ANALYSIS_EXTRACT_TIMEOUT_MS = 45_000;
-const DEFAULT_ANALYSIS_REVIEW_TIMEOUT_MS = 20_000;
+const DEFAULT_ANALYSIS_PLANNER_TIMEOUT_MS = 0;
+const DEFAULT_ANALYSIS_EXTRACT_TIMEOUT_MS = 0;
+const DEFAULT_ANALYSIS_REVIEW_TIMEOUT_MS = 0;
 
 export async function analyzePaperWithLlm(args: {
   llm: LLMClient;
@@ -116,11 +116,12 @@ export async function analyzePaperWithLlm(args: {
   onProgress?: (message: string) => void;
 }): Promise<PaperAnalysisResult> {
   const maxAttempts = Math.max(1, args.maxAttempts ?? 2);
+  const imageBearingAttemptLimit = (args.source.pageImagePaths?.length ?? 0) > 0 ? 1 : maxAttempts;
   let lastError: Error | undefined;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= imageBearingAttemptLimit; attempt += 1) {
     try {
-      args.onProgress?.(`Starting LLM analysis attempt ${attempt}/${maxAttempts}.`);
+      args.onProgress?.(`Starting LLM analysis attempt ${attempt}/${imageBearingAttemptLimit}.`);
       if ((args.source.pageImagePaths?.length ?? 0) > 0) {
         args.onProgress?.(
           `Attaching ${args.source.pageImagePaths?.length ?? 0} rendered PDF page image(s) for hybrid analysis.`
@@ -166,7 +167,7 @@ export async function analyzePaperWithLlm(args: {
       }
       lastError = error instanceof Error ? error : new Error(String(error));
       args.onProgress?.(
-        `Analysis attempt ${attempt}/${maxAttempts} failed: ${describeAnalysisAttemptFailureReason(lastError)}`
+        `Analysis attempt ${attempt}/${imageBearingAttemptLimit} failed: ${describeAnalysisAttemptFailureReason(lastError)}`
       );
     }
   }
@@ -259,13 +260,13 @@ async function planPaperAnalysisWithLlm(args: {
 }): Promise<{ plan: PaperAnalysisPlan; draft?: RawPaperAnalysis }> {
   try {
     const timeoutMs = resolveAnalysisPlannerTimeoutMs();
+    const plannerSource = stripSupplementalPageImages(args.source);
     const completion = await runWithAbortableTimeout(
       timeoutMs,
       args.abortSignal,
       (abortSignal) =>
-        args.llm.complete(buildPaperAnalysisPlannerPrompt(args.paper, args.source), {
+        args.llm.complete(buildPaperAnalysisPlannerPrompt(args.paper, plannerSource), {
           systemPrompt: ANALYSIS_PLANNER_SYSTEM_PROMPT,
-          inputImagePaths: args.source.pageImagePaths,
           abortSignal,
           onProgress: (event) => emitLlmProgress(args.onProgress, event)
         }),
@@ -343,7 +344,6 @@ async function reviewPaperAnalysisWithLlm(args: {
       (abortSignal) =>
         args.llm.complete(buildPaperAnalysisReviewPrompt(args.paper, args.source, args.plan, args.draft), {
           systemPrompt: ANALYSIS_REVIEWER_SYSTEM_PROMPT,
-          inputImagePaths: args.source.pageImagePaths,
           abortSignal,
           onProgress: (event) => emitLlmProgress(args.onProgress, event)
         }),
@@ -1167,6 +1167,17 @@ function describeAnalysisAttemptFailureReason(error: unknown): string {
     return `reviewer exceeded the ${resolveAnalysisReviewTimeoutMs()}ms timeout`;
   }
   return message;
+}
+
+function stripSupplementalPageImages(source: ResolvedPaperSource): ResolvedPaperSource {
+  if ((source.pageImagePaths?.length ?? 0) === 0) {
+    return source;
+  }
+  return {
+    ...source,
+    pageImagePaths: undefined,
+    pageImagePages: undefined
+  };
 }
 
 async function runWithAbortableTimeout<T>(

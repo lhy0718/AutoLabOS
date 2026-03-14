@@ -25,6 +25,7 @@ export interface RankedPaperCandidate {
   selected: boolean;
   rank?: number;
   scoreBreakdown: DeterministicScoreBreakdown;
+  fitSummary?: CandidateFitSummary;
 }
 
 export interface SelectionPreviewRow {
@@ -91,13 +92,92 @@ const GENERIC_REFERENCE_TOKENS = new Set([
 const LOW_SIGNAL_REFERENCE_TOKENS = new Set([
   "baseline",
   "baselines",
+  "benchmark",
+  "benchmarking",
+  "classical",
+  "comparative",
+  "comparison",
   "dataset",
   "datasets",
+  "evaluate",
+  "evaluation",
+  "families",
+  "family",
+  "modern",
+  "practical",
   "public",
+  "resource",
+  "resources",
+  "aware",
   "small"
 ]);
 
-const RERANK_MAX_ATTEMPTS = 2;
+const BENCHMARK_SCOPE_PHRASES = [
+  "benchmark",
+  "benchmarking",
+  "baseline",
+  "baselines",
+  "cross dataset",
+  "cross-dataset",
+  "multi dataset",
+  "multi-dataset",
+  "nested cross validation",
+  "nested cross-validation",
+  "cross validation",
+  "cross-validation",
+  "preprocessing",
+  "calibration",
+  "leakage",
+  "evaluation protocol",
+  "benchmark suite",
+  "dataset suite",
+  "reproducible",
+  "reproducibility",
+  "comparative study",
+  "comparison study"
+];
+
+const METHOD_SCOPE_PHRASES = [
+  "method",
+  "methods",
+  "approach",
+  "approaches",
+  "feature selection",
+  "feature preprocessing",
+  "augmentation",
+  "ensemble",
+  "blending",
+  "learning",
+  "architecture",
+  "framework",
+  "survey"
+];
+
+const APPLICATION_SCOPE_PATTERNS = [
+  /\bfor\s+[a-z0-9\s-]{0,60}\b(prediction|classification|detection|diagnosis|screening|assessment|identification|forecasting)\b/u,
+  /\b(prediction|classification|detection|diagnosis|screening|assessment|identification|forecasting)\b[\s:-]+(of|for)\b/u,
+  /\bpatient\b|\bclinical\b|\bmedical\b|\bcredit\b|\bfraud\b|\battack\b|\bsmart grid\b|\btopic classification\b|\bvideo\b/u
+];
+
+const REFERENCE_MODALITY_SIGNALS = [
+  { key: "tabular", phrases: ["tabular", "structured data", "structured dataset", "structured datasets"] },
+  { key: "text", phrases: ["text", "document", "documents", "language", "clinical text", "nlp"] },
+  { key: "image", phrases: ["image", "images", "vision", "visual", "video", "videos"] },
+  { key: "graph", phrases: ["graph", "graphs", "node classification", "node", "edge"] },
+  { key: "time_series", phrases: ["time series", "timeseries", "temporal", "forecasting"] },
+  { key: "audio", phrases: ["audio", "speech"] },
+  { key: "multimodal", phrases: ["multimodal", "multi modal", "fusion"] }
+] as const;
+
+const REFERENCE_TASK_SIGNALS = [
+  { key: "classification", phrases: ["classification", "classifier", "classifiers"] },
+  { key: "regression", phrases: ["regression", "regressor", "regressors"] },
+  { key: "retrieval", phrases: ["retrieval", "ranking"] },
+  { key: "segmentation", phrases: ["segmentation"] },
+  { key: "detection", phrases: ["detection", "detector", "detectors"] },
+  { key: "anomaly", phrases: ["anomaly detection", "anomaly"] },
+  { key: "survival", phrases: ["survival analysis", "survival"] }
+] as const;
 
 const BENIGN_RERANK_WARNING_PATTERNS = [
   /codex_core::shell_snapshot/i,
@@ -115,6 +195,24 @@ const RERANK_SYSTEM_PROMPT = [
 interface RerankJson {
   ordered_paper_ids?: unknown;
   rationale?: unknown;
+}
+
+interface SelectionProfile {
+  normalizedReferenceText: string;
+  expectedModalities: string[];
+  expectedTasks: string[];
+  expectsReusableScope: boolean;
+}
+
+type FitLevel = "title" | "abstract" | "none";
+type StudyScope = "benchmark_methodology" | "general_method" | "application_specific" | "unclear";
+type TaskRelation = "match" | "mismatch" | "none";
+
+interface CandidateFitSummary {
+  modalityFit: FitLevel;
+  taskFit: FitLevel;
+  studyScope: StudyScope;
+  taskRelation: TaskRelation;
 }
 
 export function normalizeAnalysisSelectionRequest(topN?: number | null): AnalysisSelectionRequest {
@@ -144,6 +242,7 @@ export function buildSelectionRequestFingerprint(
 
 export async function selectPapersForAnalysis(args: {
   llm: LLMClient;
+  rerankLlm?: LLMClient;
   runTitle: string;
   runTopic: string;
   corpusRows: AnalysisCorpusRow[];
@@ -154,8 +253,9 @@ export async function selectPapersForAnalysis(args: {
   args.onProgress?.(
     `Deterministic pre-rank started for ${args.corpusRows.length} paper(s) using title/topic similarity, citation count, recency, and PDF availability.`
   );
-  const referenceTitle = args.runTitle || args.runTopic;
-  const ranked = rankPapersDeterministically(referenceTitle, args.corpusRows);
+  const referenceTitle = [args.runTitle, args.runTopic].filter(Boolean).join(" ").trim();
+  const profile = inferSelectionProfile(referenceTitle, args.runTopic);
+  const ranked = rankPapersDeterministically(referenceTitle, profile, args.corpusRows);
   const totalCandidates = ranked.length;
   args.onProgress?.(`Deterministic pre-rank completed for ${totalCandidates} candidate(s).`);
   if (args.request.selectionMode === "all" || !args.request.topN || args.request.topN >= totalCandidates) {
@@ -199,7 +299,7 @@ export async function selectPapersForAnalysis(args: {
       .join(", ")}`
   );
   const rerank = await rerankCandidates(
-    args.llm,
+    args.rerankLlm || args.llm,
     args.runTitle || args.runTopic,
     args.runTopic,
     args.request.topN,
@@ -237,7 +337,19 @@ export async function selectPapersForAnalysis(args: {
     `LLM rerank completed. Top selection preview: ${rerankedIds.slice(0, Math.min(args.request.topN, 5)).join(", ")}`
   );
 
-  const selectedPaperIds = rerankedIds.slice(0, args.request.topN);
+  const rerankedCandidatesInOrder = rerankedIds
+    .map((paperId) => ranked.find((candidate) => candidate.paper.paper_id === paperId))
+    .filter((candidate): candidate is RankedPaperCandidate => Boolean(candidate));
+  const guardedRerankedCandidates = guardTopNCandidates(referenceTitle, profile, rerankedCandidatesInOrder, args.request.topN);
+  let topRerankedCandidates = rerankedCandidatesInOrder;
+  if (guardedRerankedCandidates.length > 0 && guardedRerankedCandidates.length < rerankedCandidatesInOrder.length) {
+    topRerankedCandidates = guardedRerankedCandidates;
+    args.onProgress?.(
+      `Top-N relevance guard removed ${rerankedCandidatesInOrder.length - guardedRerankedCandidates.length} off-topic rerank candidate(s) before final selection. Keeping ${guardedRerankedCandidates.length} quality-approved candidate(s).`
+    );
+  }
+
+  const selectedPaperIds = topRerankedCandidates.slice(0, args.request.topN).map((candidate) => candidate.paper.paper_id);
   const selectedSet = new Set(selectedPaperIds);
   const rankedCandidates = ranked
     .map((candidate) => {
@@ -286,6 +398,7 @@ export function buildSelectionFingerprint(
 }
 
 function filterAllModeCandidates(referenceTitle: string, ranked: RankedPaperCandidate[]): RankedPaperCandidate[] {
+  const profile = inferSelectionProfile(referenceTitle, referenceTitle);
   if (ranked.length <= 3) {
     return ranked;
   }
@@ -303,7 +416,10 @@ function filterAllModeCandidates(referenceTitle: string, ranked: RankedPaperCand
   const anchored = ranked.filter((candidate) => {
     const titleTokens = new Set(tokenizeTitle(candidate.paper.title));
     const abstractTokens = new Set(tokenizeTitle(candidate.paper.abstract || ""));
-    return thematicTokens.some((token) => titleTokens.has(token) || abstractTokens.has(token));
+    return (
+      thematicTokens.some((token) => titleTokens.has(token) || abstractTokens.has(token)) &&
+      passesReferenceFitGuard(profile, candidate)
+    );
   });
 
   const topScore = ranked[0]?.deterministicScore ?? 0;
@@ -321,7 +437,49 @@ function filterAllModeCandidates(referenceTitle: string, ranked: RankedPaperCand
   return ranked;
 }
 
-function rankPapersDeterministically(referenceTitle: string, corpusRows: AnalysisCorpusRow[]): RankedPaperCandidate[] {
+function guardTopNCandidates(
+  referenceTitle: string,
+  profile: SelectionProfile,
+  rerankedCandidates: RankedPaperCandidate[],
+  topN: number
+): RankedPaperCandidate[] {
+  const anchored = extractAnchoredCandidates(referenceTitle, profile, rerankedCandidates);
+  if (anchored.length >= topN && anchored.length < rerankedCandidates.length) {
+    return anchored;
+  }
+  return filterAllModeCandidates(referenceTitle, rerankedCandidates);
+}
+
+function extractAnchoredCandidates(
+  referenceTitle: string,
+  profile: SelectionProfile,
+  ranked: RankedPaperCandidate[]
+): RankedPaperCandidate[] {
+  const referenceTokens = Array.from(new Set(tokenizeTitle(referenceTitle)));
+  if (referenceTokens.length === 0) {
+    return ranked;
+  }
+
+  const thematicTokens = buildThematicTokens(referenceTokens);
+  if (thematicTokens.length === 0) {
+    return ranked;
+  }
+
+  return ranked.filter((candidate) => {
+    const titleTokens = new Set(tokenizeTitle(candidate.paper.title));
+    const abstractTokens = new Set(tokenizeTitle(candidate.paper.abstract || ""));
+    return (
+      thematicTokens.some((token) => titleTokens.has(token) || abstractTokens.has(token)) &&
+      passesReferenceFitGuard(profile, candidate)
+    );
+  });
+}
+
+function rankPapersDeterministically(
+  referenceTitle: string,
+  profile: SelectionProfile,
+  corpusRows: AnalysisCorpusRow[]
+): RankedPaperCandidate[] {
   const maxCitation = corpusRows.reduce((max, row) => Math.max(max, row.citation_count ?? 0), 0);
   const maxLogCitation = maxCitation > 0 ? Math.log1p(maxCitation) : 0;
   const currentYear = new Date().getUTCFullYear();
@@ -330,6 +488,7 @@ function rankPapersDeterministically(referenceTitle: string, corpusRows: Analysi
 
   return [...corpusRows]
     .map((paper) => {
+      const fitSummary = summarizeCandidateFit(profile, paper.title, paper.abstract);
       const titleSimilarityScore = computeTitleSimilarityScore(
         referenceTokens,
         referenceTokenWeights,
@@ -337,9 +496,11 @@ function rankPapersDeterministically(referenceTitle: string, corpusRows: Analysi
         paper.abstract
       );
       const topicCoverageMultiplier = computeTopicCoverageMultiplier(
+        profile,
         referenceTokens,
         paper.title,
-        paper.abstract
+        paper.abstract,
+        fitSummary
       );
       const citationScore =
         maxLogCitation > 0 && (paper.citation_count ?? 0) > 0
@@ -362,6 +523,7 @@ function rankPapersDeterministically(referenceTitle: string, corpusRows: Analysi
         deterministicScore,
         selectionScore: deterministicScore,
         selected: false,
+        fitSummary,
         scoreBreakdown: {
           title_similarity_score: Number(titleSimilarityScore.toFixed(6)),
           citation_score: Number(citationScore.toFixed(6)),
@@ -382,75 +544,61 @@ async function rerankCandidates(
   onProgress?: (message: string) => void,
   abortSignal?: AbortSignal
 ): Promise<{ orderedPaperIds: string[]; applied: true } | { applied: false; fallbackReason: string }> {
-  for (let attempt = 1; attempt <= RERANK_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      if (attempt > 1) {
-        onProgress?.(`Retrying rerank request (${attempt}/${RERANK_MAX_ATTEMPTS}) after a benign Codex warning.`);
-      }
-      onProgress?.(`Submitting rerank request for ${candidates.length} candidate(s).`);
-      onProgress?.("Rerank progress: 2/4 (50%) waiting for model response.");
-      const response = await llm.complete(buildRerankPrompt(referenceTitle, runTopic, topN, candidates), {
-        systemPrompt: RERANK_SYSTEM_PROMPT,
-        abortSignal,
-        onProgress: (event) => {
-          if (event.type === "delta") {
-            return;
-          }
-          const text = event.text.trim();
-          if (!text) {
-            return;
-          }
-          onProgress?.(text);
+  try {
+    onProgress?.(`Submitting rerank request for ${candidates.length} candidate(s).`);
+    onProgress?.("Rerank progress: 2/4 (50%) waiting for model response.");
+    const response = await llm.complete(buildRerankPrompt(referenceTitle, runTopic, topN, candidates), {
+      systemPrompt: RERANK_SYSTEM_PROMPT,
+      abortSignal,
+      onProgress: (event) => {
+        if (event.type === "delta") {
+          return;
         }
-      });
-      onProgress?.("Rerank progress: 3/4 (75%) parsing model ordering.");
-      onProgress?.("Received rerank response. Parsing JSON ordering.");
-      const { value: parsed, repaired } = parseRerankJson(response.text);
-      if (repaired) {
-        onProgress?.("Rerank JSON looked truncated; repaired the ordering payload before parsing.");
+        const text = event.text.trim();
+        if (!text) {
+          return;
+        }
+        onProgress?.(text);
       }
-      const seen = new Set<string>();
-      const orderedPaperIds = normalizeStringArray(parsed.ordered_paper_ids)
-        .filter((paperId) => candidates.some((candidate) => candidate.paper.paper_id === paperId))
-        .filter((paperId) => {
-          if (seen.has(paperId)) {
-            return false;
-          }
-          seen.add(paperId);
-          return true;
-        });
-      onProgress?.(`Parsed rerank JSON with ${orderedPaperIds.length} explicit paper id(s).`);
-      onProgress?.("Rerank progress: 4/4 (100%) applying rerank order.");
-
-      const fallbackRemainder = candidates
-        .map((candidate) => candidate.paper.paper_id)
-        .filter((paperId) => !seen.has(paperId));
-
-      return {
-        orderedPaperIds: [...orderedPaperIds, ...fallbackRemainder],
-        applied: true
-      };
-    } catch (error) {
-      if (isAbortError(error)) {
-        throw error;
-      }
-      const failure = classifyRerankFailure(error instanceof Error ? error.message : String(error));
-      if (failure.benignOnly && attempt < RERANK_MAX_ATTEMPTS) {
-        onProgress?.("Rerank request emitted only cleanup warnings without usable output. Retrying once before fallback.");
-        continue;
-      }
-      onProgress?.(`Rerank request failed: ${failure.cleanedMessage}`);
-      return {
-        applied: false,
-        fallbackReason: failure.cleanedMessage
-      };
+    });
+    onProgress?.("Rerank progress: 3/4 (75%) parsing model ordering.");
+    onProgress?.("Received rerank response. Parsing JSON ordering.");
+    const { value: parsed, repaired } = parseRerankJson(response.text);
+    if (repaired) {
+      onProgress?.("Rerank JSON looked truncated; repaired the ordering payload before parsing.");
     }
-  }
+    const seen = new Set<string>();
+    const orderedPaperIds = normalizeStringArray(parsed.ordered_paper_ids)
+      .filter((paperId) => candidates.some((candidate) => candidate.paper.paper_id === paperId))
+      .filter((paperId) => {
+        if (seen.has(paperId)) {
+          return false;
+        }
+        seen.add(paperId);
+        return true;
+      });
+    onProgress?.(`Parsed rerank JSON with ${orderedPaperIds.length} explicit paper id(s).`);
+    onProgress?.("Rerank progress: 4/4 (100%) applying rerank order.");
 
-  return {
-    applied: false,
-    fallbackReason: "rerank_failed_without_output"
-  };
+    const fallbackRemainder = candidates
+      .map((candidate) => candidate.paper.paper_id)
+      .filter((paperId) => !seen.has(paperId));
+
+    return {
+      orderedPaperIds: [...orderedPaperIds, ...fallbackRemainder],
+      applied: true
+    };
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+    const failure = classifyRerankFailure(error instanceof Error ? error.message : String(error));
+    onProgress?.(`Rerank request failed: ${failure.cleanedMessage}`);
+    return {
+      applied: false,
+      fallbackReason: failure.cleanedMessage
+    };
+  }
 }
 
 function isAbortError(error: unknown): boolean {
@@ -467,10 +615,14 @@ function buildRerankPrompt(
   topN: number,
   candidates: RankedPaperCandidate[]
 ): string {
+  const abstractSnippetLimit = resolveRerankAbstractSnippetLimit(candidates.length);
   const lines = [
     "Rerank the candidate papers for deep analysis.",
     "Return JSON with this exact shape:",
     '{ "ordered_paper_ids": ["paper_id"], "rationale": "optional short string" }',
+    "Prefer reusable tabular-learning evidence: benchmark suites, benchmark methodology, leakage-safe preprocessing, nested cross-validation, calibration, feature engineering, and broad comparisons of baseline families on structured datasets.",
+    "Strongly demote papers whose main contribution is an application-specific prediction, detection, diagnosis, topic-classification, or domain deployment result unless they clearly add reusable tabular benchmarking or evaluation methodology.",
+    "If a paper does not clearly focus on tabular data, structured datasets, or generalizable evaluation practice, rank it below papers that do.",
     "",
     `Research title: ${referenceTitle || runTopic}`,
     `Research topic: ${runTopic || referenceTitle}`,
@@ -479,21 +631,34 @@ function buildRerankPrompt(
   ];
 
   candidates.forEach((candidate, index) => {
-    const abstractSnippet = truncateForPrompt(candidate.paper.abstract || "Abstract unavailable.", 220);
-    lines.push(
-      [
-        `${index + 1}. paper_id=${candidate.paper.paper_id}`,
-        `title=${candidate.paper.title}`,
-        `year=${candidate.paper.year ?? "unknown"}`,
-        `venue=${candidate.paper.venue ?? "unknown"}`,
-        `citation_count=${candidate.paper.citation_count ?? 0}`,
-        `deterministic_score=${candidate.deterministicScore}`,
-        `abstract=${abstractSnippet}`
-      ].join(" | ")
-    );
+    const fields = [
+      `${index + 1}. paper_id=${candidate.paper.paper_id}`,
+      `title=${candidate.paper.title}`,
+      `year=${candidate.paper.year ?? "unknown"}`,
+      `venue=${candidate.paper.venue ?? "unknown"}`,
+      `citation_count=${candidate.paper.citation_count ?? 0}`,
+      `deterministic_score=${candidate.deterministicScore}`,
+      `modality_fit=${candidate.fitSummary?.modalityFit ?? "none"}`,
+      `task_fit=${candidate.fitSummary?.taskFit ?? "none"}`,
+      `study_scope=${candidate.fitSummary?.studyScope ?? "unclear"}`
+    ];
+    if (abstractSnippetLimit > 0) {
+      fields.push(`abstract=${truncateForPrompt(candidate.paper.abstract || "Abstract unavailable.", abstractSnippetLimit)}`);
+    }
+    lines.push(fields.join(" | "));
   });
 
   return lines.join("\n");
+}
+
+function resolveRerankAbstractSnippetLimit(candidateCount: number): number {
+  if (candidateCount >= 30) {
+    return 0;
+  }
+  if (candidateCount >= 15) {
+    return 80;
+  }
+  return 160;
 }
 
 function parseRerankJson(text: string): { value: RerankJson; repaired: boolean } {
@@ -543,7 +708,7 @@ function buildReferenceTokenWeights(referenceTokens: string[], corpusRows: Analy
     uniqueReferenceTokens.map((token) => {
       const documentFrequency = tokenDocumentFrequency.get(token) ?? 0;
       const baseWeight = 1 + Math.log((corpusSize + 1) / (documentFrequency + 1));
-      const adjustedWeight = GENERIC_REFERENCE_TOKENS.has(token) ? baseWeight * 0.25 : baseWeight;
+      const adjustedWeight = isBroadReferenceToken(token) ? baseWeight * 0.2 : baseWeight;
       return [token, Number(adjustedWeight.toFixed(6))] as const;
     })
   );
@@ -606,7 +771,11 @@ function computeTitleSimilarityScore(
 }
 
 function resolveAbstractMatchWeight(token: string): number {
-  return GENERIC_REFERENCE_TOKENS.has(token) ? 0.2 : 0.55;
+  return isBroadReferenceToken(token) ? 0.15 : 0.55;
+}
+
+function isBroadReferenceToken(token: string): boolean {
+  return GENERIC_REFERENCE_TOKENS.has(token) || LOW_SIGNAL_REFERENCE_TOKENS.has(token);
 }
 
 function selectAnchorTokens(referenceTokens: string[], referenceTokenWeights: Map<string, number>): string[] {
@@ -629,13 +798,45 @@ function selectAnchorTokens(referenceTokens: string[], referenceTokenWeights: Ma
 }
 
 function computeTopicCoverageMultiplier(
+  profile: SelectionProfile,
   referenceTokens: string[],
   paperTitle: string,
-  paperAbstract?: string
+  paperAbstract: string | undefined,
+  fitSummary?: CandidateFitSummary
 ): number {
+  const fit = fitSummary ?? summarizeCandidateFit(profile, paperTitle, paperAbstract);
+
+  let multiplier = 1;
+  if (fit.taskRelation === "mismatch") {
+    multiplier *= 0.12;
+  }
+  if (profile.expectedModalities.length > 0) {
+    if (fit.modalityFit === "none") {
+      multiplier *= 0.2;
+    } else if (fit.modalityFit === "abstract") {
+      multiplier *= 0.72;
+    }
+  }
+  if (profile.expectedTasks.length > 0) {
+    if (fit.taskFit === "none") {
+      multiplier *= 0.4;
+    } else if (fit.taskFit === "abstract") {
+      multiplier *= 0.82;
+    }
+  }
+  if (profile.expectsReusableScope) {
+    if (fit.studyScope === "application_specific") {
+      multiplier *= fit.modalityFit === "none" ? 0.18 : 0.42;
+    } else if (fit.studyScope === "unclear") {
+      multiplier *= 0.78;
+    } else if (fit.studyScope === "benchmark_methodology") {
+      multiplier *= 1.06;
+    }
+  }
+
   const thematicTokens = buildThematicTokens(referenceTokens);
   if (thematicTokens.length === 0) {
-    return 1;
+    return Number(Math.max(0, Math.min(1.2, multiplier)).toFixed(6));
   }
 
   const titleTokens = new Set(tokenizeTitle(paperTitle));
@@ -644,15 +845,15 @@ function computeTopicCoverageMultiplier(
   const abstractHits = thematicTokens.filter((token) => abstractTokens.has(token)).length;
 
   if (titleHits > 0) {
-    return 1;
+    return Number(Math.max(0, Math.min(1.2, multiplier)).toFixed(6));
   }
   if (abstractHits >= 2) {
-    return 0.95;
+    return Number(Math.max(0, Math.min(1.2, multiplier * 0.95)).toFixed(6));
   }
   if (abstractHits === 1) {
-    return 0.72;
+    return Number(Math.max(0, Math.min(1.2, multiplier * 0.72)).toFixed(6));
   }
-  return 0.45;
+  return Number(Math.max(0, Math.min(1.2, multiplier * 0.45)).toFixed(6));
 }
 
 function buildThematicTokens(referenceTokens: string[]): string[] {
@@ -668,6 +869,133 @@ function tokenizeTitle(text: string): string[] {
     .split(/\s+/u)
     .map((token) => token.trim())
     .filter((token) => token && !STOPWORDS.has(token));
+}
+
+function inferSelectionProfile(referenceTitle: string, runTopic: string): SelectionProfile {
+  const normalizedReferenceText = normalizePromptText([referenceTitle, runTopic].filter(Boolean).join(" "));
+  return {
+    normalizedReferenceText,
+    expectedModalities: REFERENCE_MODALITY_SIGNALS
+      .filter((signal) => signal.phrases.some((phrase) => normalizedReferenceText.includes(phrase)))
+      .map((signal) => signal.key),
+    expectedTasks: REFERENCE_TASK_SIGNALS
+      .filter((signal) => signal.phrases.some((phrase) => normalizedReferenceText.includes(phrase)))
+      .map((signal) => signal.key),
+    expectsReusableScope: BENCHMARK_SCOPE_PHRASES.some((phrase) => normalizedReferenceText.includes(phrase))
+  };
+}
+
+function summarizeCandidateFit(profile: SelectionProfile, title: string, abstract?: string): CandidateFitSummary {
+  const normalizedTitle = normalizePromptText(title);
+  const normalizedAbstract = normalizePromptText(abstract || "");
+  const modalityFit = resolveSignalFitLevel(profile.expectedModalities, REFERENCE_MODALITY_SIGNALS, normalizedTitle, normalizedAbstract);
+  const taskFit = resolveSignalFitLevel(profile.expectedTasks, REFERENCE_TASK_SIGNALS, normalizedTitle, normalizedAbstract);
+  const taskRelation = resolveTaskRelation(profile.expectedTasks, normalizedTitle, normalizedAbstract);
+  const hasBenchmarkScope =
+    BENCHMARK_SCOPE_PHRASES.some((phrase) => normalizedTitle.includes(phrase) || normalizedAbstract.includes(phrase)) ||
+    (profile.expectsReusableScope &&
+      modalityFit !== "none" &&
+      taskRelation === "match" &&
+      /multi dataset|multi-dataset|cross dataset|cross-dataset/u.test(`${normalizedTitle} ${normalizedAbstract}`));
+  const hasMethodScope = METHOD_SCOPE_PHRASES.some(
+    (phrase) => normalizedTitle.includes(phrase) || normalizedAbstract.includes(phrase)
+  );
+  const looksApplicationSpecific =
+    APPLICATION_SCOPE_PATTERNS.some((pattern) => pattern.test(`${normalizedTitle} ${normalizedAbstract}`)) ||
+    (taskFit !== "none" && modalityFit === "none" && !hasBenchmarkScope);
+
+  let studyScope: StudyScope = "unclear";
+  if (
+    looksApplicationSpecific &&
+    (modalityFit === "none" || modalityFit === "abstract") &&
+    profile.expectsReusableScope
+  ) {
+    studyScope = "application_specific";
+  } else if (hasBenchmarkScope) {
+    studyScope = "benchmark_methodology";
+  } else if (modalityFit !== "none" && hasMethodScope) {
+    studyScope = "general_method";
+  } else if (looksApplicationSpecific) {
+    studyScope = "application_specific";
+  }
+
+  return {
+    modalityFit,
+    taskFit,
+    studyScope,
+    taskRelation
+  };
+}
+
+function resolveSignalFitLevel(
+  expectedKeys: string[],
+  signalGroups: ReadonlyArray<{ key: string; phrases: readonly string[] }>,
+  normalizedTitle: string,
+  normalizedAbstract: string
+): FitLevel {
+  if (expectedKeys.length === 0) {
+    return "none";
+  }
+  const groups = signalGroups.filter((signal) => expectedKeys.includes(signal.key));
+  const titleHit = groups.some((group) => group.phrases.some((phrase) => normalizedTitle.includes(phrase)));
+  if (titleHit) {
+    return "title";
+  }
+  const abstractHit = groups.some((group) => group.phrases.some((phrase) => normalizedAbstract.includes(phrase)));
+  return abstractHit ? "abstract" : "none";
+}
+
+function resolveTaskRelation(
+  expectedTasks: string[],
+  normalizedTitle: string,
+  normalizedAbstract: string
+): TaskRelation {
+  if (expectedTasks.length === 0) {
+    return "none";
+  }
+  const matchedExpected = REFERENCE_TASK_SIGNALS.some(
+    (group) =>
+      expectedTasks.includes(group.key) &&
+      group.phrases.some((phrase) => normalizedTitle.includes(phrase) || normalizedAbstract.includes(phrase))
+  );
+  if (matchedExpected) {
+    return "match";
+  }
+
+  const matchedOtherTask = REFERENCE_TASK_SIGNALS.some(
+    (group) =>
+      !expectedTasks.includes(group.key) &&
+      group.phrases.some((phrase) => normalizedTitle.includes(phrase) || normalizedAbstract.includes(phrase))
+  );
+  return matchedOtherTask ? "mismatch" : "none";
+}
+
+function passesReferenceFitGuard(profile: SelectionProfile, candidate: RankedPaperCandidate): boolean {
+  const fit = candidate.fitSummary;
+  if (!fit) {
+    return true;
+  }
+  if (fit.taskRelation === "mismatch") {
+    return false;
+  }
+  if (profile.expectedModalities.length > 0 && fit.modalityFit === "none") {
+    return fit.studyScope === "benchmark_methodology";
+  }
+  if (profile.expectedTasks.length > 0 && fit.taskFit === "none" && fit.modalityFit === "none") {
+    return false;
+  }
+  if (profile.expectsReusableScope && fit.studyScope === "application_specific" && fit.modalityFit === "none") {
+    return false;
+  }
+  return true;
+}
+
+function normalizePromptText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function computeBigramDice(left: string, right: string): number {

@@ -8,6 +8,20 @@ import { ensureDir, fileExists } from "../../utils/fs.js";
 const execFileAsync = promisify(execFile);
 const MAX_SOURCE_CHARS = 16_000;
 const THUMBNAIL_SCALE = 160;
+const DEFAULT_HYBRID_PAGE_IMAGE_LIMIT = 12;
+
+const HYBRID_PAGE_PRIORITY_PATTERNS: Array<{ pattern: RegExp; score: number }> = [
+  { pattern: /\babstract\b|\bintroduction\b/i, score: 3 },
+  { pattern: /\bmethod\b|\bmethods\b|\bapproach\b|\bsetup\b|\bpreprocess/i, score: 4 },
+  { pattern: /\bexperiment\b|\bexperiments\b|\bresult\b|\bresults\b|\bevaluation\b|\bbenchmark\b/i, score: 6 },
+  { pattern: /\btable\b|\bfigure\b|\bdataset\b|\bmetric\b|\baccuracy\b|\bf1\b|\bauc\b/i, score: 5 },
+  { pattern: /\bdiscussion\b|\bconclusion\b|\blimitation\b|\blimitations\b/i, score: 3 }
+];
+
+const HYBRID_PAGE_PENALTY_PATTERNS: Array<{ pattern: RegExp; score: number }> = [
+  { pattern: /\breferences?\b|\bbibliography\b/i, score: -4 },
+  { pattern: /\bappendix\b|\bsupplementary\b/i, score: -2 }
+];
 
 export interface AnalysisCorpusRow {
   paper_id: string;
@@ -160,7 +174,7 @@ export async function resolvePaperTextSource(args: {
           pageTexts,
           pageCount
         });
-        args.onProgress?.(`Rendering all ${selectedPages.length} PDF page image(s) for hybrid analysis.`);
+        args.onProgress?.(`Rendering ${selectedPages.length} selected PDF page image(s) for hybrid analysis.`);
         pageImages = await renderPdfPageImages({
           pdfPath: pdfCachePath,
           imageDir: pageImageDir,
@@ -224,7 +238,76 @@ export function selectHybridPdfPageNumbers(args: {
   maxImages?: number;
 }): number[] {
   const totalPages = Math.max(args.pageCount ?? 0, args.pageTexts?.length ?? 0, 1);
-  return Array.from({ length: totalPages }, (_, index) => index + 1);
+  const maxImages = Math.max(1, Math.floor(args.maxImages ?? DEFAULT_HYBRID_PAGE_IMAGE_LIMIT));
+  if (totalPages <= maxImages) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const selected = new Set<number>();
+  const addPage = (page: number) => {
+    if (selected.size >= maxImages || page < 1 || page > totalPages) {
+      return;
+    }
+    selected.add(page);
+  };
+
+  addPage(1);
+  addPage(totalPages);
+
+  const scoredPages = Array.from({ length: totalPages }, (_, index) => {
+    const page = index + 1;
+    const text = args.pageTexts?.[index] ?? "";
+    let score = page === 1 ? 10 : 0;
+    if (page <= 3) {
+      score += 1;
+    }
+    if (page === totalPages) {
+      score += 2;
+    }
+    for (const entry of HYBRID_PAGE_PRIORITY_PATTERNS) {
+      if (entry.pattern.test(text)) {
+        score += entry.score;
+      }
+    }
+    for (const entry of HYBRID_PAGE_PENALTY_PATTERNS) {
+      if (entry.pattern.test(text)) {
+        score += entry.score;
+      }
+    }
+    return { page, score };
+  })
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.page - right.page);
+
+  for (const entry of scoredPages) {
+    addPage(entry.page);
+  }
+
+  for (const page of buildEvenlySpacedPageNumbers(totalPages, maxImages)) {
+    addPage(page);
+  }
+
+  for (let page = 1; page <= totalPages; page += 1) {
+    addPage(page);
+  }
+
+  return Array.from(selected).sort((left, right) => left - right);
+}
+
+function buildEvenlySpacedPageNumbers(totalPages: number, count: number): number[] {
+  if (totalPages <= 0 || count <= 0) {
+    return [];
+  }
+  if (count === 1) {
+    return [1];
+  }
+
+  const pages = new Set<number>();
+  for (let index = 0; index < count; index += 1) {
+    const page = 1 + Math.round((index * (totalPages - 1)) / (count - 1));
+    pages.add(page);
+  }
+  return Array.from(pages).sort((left, right) => left - right);
 }
 
 export function resolvePaperPdfUrl(paper: AnalysisCorpusRow): string | undefined {
