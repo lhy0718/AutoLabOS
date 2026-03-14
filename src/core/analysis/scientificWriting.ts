@@ -19,6 +19,118 @@ import type {
   PaperManuscriptTable
 } from "./paperManuscript.js";
 
+export type NumericFactKind = "metric" | "count";
+export type NumericFactSource =
+  | "artifact"
+  | "abstract"
+  | "method"
+  | "results"
+  | "discussion"
+  | "conclusion"
+  | "table"
+  | "figure"
+  | "appendix_section"
+  | "appendix_table"
+  | "appendix_figure";
+export type NumericFactAggregation = "aggregate" | "dataset" | "repeat" | "fold" | "unknown";
+export type NumericFactUnit = "score" | "delta" | "ci_lower" | "ci_upper" | "seconds" | "mb" | "count";
+export type CountFactKind =
+  | "dataset_count"
+  | "repeat_count"
+  | "outer_fold_count"
+  | "inner_fold_count"
+  | "run_count"
+  | "sample_count";
+export type ScientificFindingKind = "contradiction" | "unverifiable" | "repairable" | "informational";
+export type GateIssueOutcome = "fail" | "warn" | "auto_repair" | "unverifiable";
+
+export interface NormalizedNumericFact {
+  fact_id: string;
+  fact_kind: NumericFactKind;
+  source: NumericFactSource;
+  location: string;
+  raw_text: string;
+  value: number;
+  normalized_value: number;
+  metric_key?: string;
+  metric_label?: string;
+  base_metric_key?: string;
+  comparison_target?: string;
+  count_kind?: CountFactKind;
+  dataset_scope?: string | "aggregate" | "unknown";
+  aggregation_level?: NumericFactAggregation;
+  unit?: NumericFactUnit;
+  source_refs?: PaperSourceRef[];
+}
+
+export interface SectionEvidenceDiagnostic {
+  section: string;
+  thin: boolean;
+  missing_evidence_categories: string[];
+  expandable_from_existing_evidence: boolean;
+  blocked_by_evidence_insufficiency: boolean;
+}
+
+export interface EvidenceInsufficiencyReport {
+  expandable_from_existing_evidence: boolean;
+  missing_evidence_categories: string[];
+  thin_sections: string[];
+  blocked_by_evidence_insufficiency: boolean;
+  section_diagnostics: SectionEvidenceDiagnostic[];
+}
+
+export interface ScientificAutoRepairRecheck {
+  attempted: boolean;
+  page_budget_before: PageBudgetManagerReport["status"];
+  page_budget_after: PageBudgetManagerReport["status"];
+  resolved_headings: string[];
+  unresolved_headings: string[];
+}
+
+export interface ManuscriptProvenanceSectionEntry {
+  section: string;
+  paragraph_anchor_ids: string[];
+  claim_anchor_ids: string[];
+  numeric_fact_ids: string[];
+  source_refs?: PaperSourceRef[];
+}
+
+export interface ManuscriptProvenanceParagraphAnchor {
+  anchor_id: string;
+  section: string;
+  paragraph_index: number;
+  text_preview: string;
+  source_refs?: PaperSourceRef[];
+  claim_ids?: string[];
+  numeric_fact_ids: string[];
+}
+
+export interface ManuscriptProvenanceNumericAnchor {
+  anchor_id: string;
+  source_anchor_id?: string;
+  source: NumericFactSource;
+  location: string;
+  support_status: "supported" | "appendix_only" | "contradiction" | "unverifiable";
+  fact: NormalizedNumericFact;
+  supporting_fact_ids: string[];
+  source_refs?: PaperSourceRef[];
+}
+
+export interface ManuscriptProvenanceVisualEntry {
+  anchor_id: string;
+  kind: "table" | "figure" | "appendix_table" | "appendix_figure";
+  caption: string;
+  source_refs?: PaperSourceRef[];
+  numeric_fact_ids: string[];
+}
+
+export interface ManuscriptProvenanceMap {
+  sections: ManuscriptProvenanceSectionEntry[];
+  paragraph_anchors: ManuscriptProvenanceParagraphAnchor[];
+  numeric_anchors: ManuscriptProvenanceNumericAnchor[];
+  visual_anchors: ManuscriptProvenanceVisualEntry[];
+}
+
 export interface ExperimentArtifactContext {
   method: {
     dataset_names: string[];
@@ -44,6 +156,7 @@ export interface ExperimentArtifactContext {
   };
   results: {
     aggregate_summary: string[];
+    aggregate_metric_facts: NormalizedNumericFact[];
     dataset_summaries: DatasetResultSummary[];
     dispersion_notes: string[];
     ci_notes: string[];
@@ -83,6 +196,8 @@ export interface DatasetResultSummary {
   ci95?: [number, number];
   runtime_seconds_mean?: number;
   peak_memory_mb_mean?: number;
+  pairwise_ranking_agreement?: number;
+  winner_consistency?: number;
   heterogeneity_notes: string[];
   summary: string;
 }
@@ -154,7 +269,9 @@ export interface ConsistencyLintIssue {
   kind:
     | "method_results_mismatch"
     | "numeric_inconsistency"
+    | "numeric_unverifiable"
     | "count_inconsistency"
+    | "count_unverifiable"
     | "caption_internal_name"
     | "reproducibility_claim"
     | "unsupported_strong_claim"
@@ -163,6 +280,11 @@ export interface ConsistencyLintIssue {
     | "main_logic_thin";
   severity: "warning" | "error";
   message: string;
+  finding?: ScientificFindingKind;
+  involved_sections?: string[];
+  normalized_facts?: NormalizedNumericFact[];
+  reason?: string;
+  evidence?: string[];
 }
 
 export interface ConsistencyLintReport {
@@ -177,10 +299,12 @@ export interface ScientificDraftResult {
   results_richness: CompletenessReport;
   related_work_richness: RelatedWorkRichnessReport;
   discussion_richness: CompletenessReport;
+  evidence_diagnostics: EvidenceInsufficiencyReport;
   claim_rewrite_report: ClaimStrengthRewriteReport;
   appendix_plan: AppendixPlan;
   auto_repairs: {
     expanded_sections: string[];
+    expansion_recheck: ScientificAutoRepairRecheck;
   };
 }
 
@@ -188,6 +312,7 @@ export interface ScientificManuscriptResult {
   manuscript: PaperManuscript;
   consistency_lint: ConsistencyLintReport;
   appendix_lint: ConsistencyLintReport;
+  provenance_map: ManuscriptProvenanceMap;
 }
 
 export type PaperValidationMode = "default" | "strict_paper";
@@ -207,8 +332,17 @@ export interface ScientificValidationIssue {
   category: ScientificValidationCategory;
   severity: "warning" | "error";
   policy: ScientificValidationPolicy;
+  finding: ScientificFindingKind;
   message: string;
   details?: string[];
+  involved_sections?: string[];
+  normalized_facts?: NormalizedNumericFact[];
+  reason?: string;
+  evidence?: string[];
+  expandable_from_existing_evidence?: boolean;
+  missing_evidence_categories?: string[];
+  thin_sections?: string[];
+  blocked_by_evidence_insufficiency?: boolean;
 }
 
 export interface ScientificValidationArtifact {
@@ -217,18 +351,21 @@ export interface ScientificValidationArtifact {
   results_richness: CompletenessReport;
   related_work_richness: RelatedWorkRichnessReport;
   discussion_richness: CompletenessReport;
+  evidence_diagnostics: EvidenceInsufficiencyReport;
   claim_rewrite_report: ClaimStrengthRewriteReport;
   appendix_plan: AppendixPlan;
   auto_repairs: {
     claim_rewrite_count: number;
     expanded_sections: string[];
     appendix_route_count: number;
+    expansion_recheck: ScientificAutoRepairRecheck;
   };
   issues: ScientificValidationIssue[];
 }
 
 export interface WritePaperGateDecisionIssue extends ScientificValidationIssue {
   blocking: boolean;
+  outcome: GateIssueOutcome;
 }
 
 export interface WritePaperGateDecision {
@@ -238,6 +375,19 @@ export interface WritePaperGateDecision {
   blocking_issue_count: number;
   warning_count: number;
   failure_reasons: string[];
+  classification_summary: {
+    contradiction_count: number;
+    unverifiable_count: number;
+    repairable_count: number;
+    informational_count: number;
+    auto_repair_count: number;
+  };
+  evidence_summary: {
+    thin_sections: string[];
+    missing_evidence_categories: string[];
+    blocked_by_evidence_insufficiency: boolean;
+    expandable_from_existing_evidence: boolean;
+  };
   summary: string[];
 }
 
@@ -387,6 +537,7 @@ export function experimentArtifactLoader(input: {
       input.objectiveEvaluation,
       input.objectiveMetricProfile
     ),
+    aggregate_metric_facts: collectAggregateMetricFacts(resultAnalysis),
     dataset_summaries: datasetSummaries,
     dispersion_notes: dispersionNotes,
     ci_notes: ciNotes,
@@ -598,7 +749,10 @@ export function datasetResultTableBuilder(context: ExperimentArtifactContext): P
   const rows = context.results.dataset_summaries
     .slice(0, 6)
     .map((item) => ({
-      label: `${item.dataset}: ${item.main_metric_label}`,
+      label:
+        item.delta_value !== undefined
+          ? `${item.dataset}: ${item.main_metric_label} ${item.delta_label || "delta"}`
+          : `${item.dataset}: ${item.main_metric_label}`,
       value: item.delta_value ?? item.main_metric_value
     }))
     .filter((item): item is { label: string; value: number } => typeof item.value === "number");
@@ -622,7 +776,10 @@ export function figureSelectorAndCaptionWriter(context: ExperimentArtifactContex
   const bars = context.results.dataset_summaries
     .slice(0, 5)
     .map((item) => ({
-      label: item.dataset,
+      label:
+        item.delta_value !== undefined
+          ? `${item.dataset}: ${item.main_metric_label} ${item.delta_label || "delta"}`
+          : `${item.dataset}: ${item.main_metric_label}`,
       value: item.delta_value ?? item.main_metric_value
     }))
     .filter((item): item is { label: string; value: number } => typeof item.value === "number");
@@ -805,13 +962,16 @@ export function appendixBuilder(input: {
       });
       const rows = input.context.results.dataset_summaries
         .map((item) => ({
-          label: `${item.dataset}: ${item.delta_label || item.main_metric_label}`,
+          label:
+            item.delta_value !== undefined
+              ? `${item.dataset}: ${item.main_metric_label} ${item.delta_label || "delta"}`
+              : `${item.dataset}: ${item.main_metric_label}`,
           value: item.delta_value ?? item.main_metric_value
         }))
         .filter((item): item is { label: string; value: number } => typeof item.value === "number");
       if (rows.length > 0) {
         tables.push({
-          caption: "Extended dataset-level metrics and deltas retained outside the main paper.",
+          caption: "Extended dataset-level outcomes retained outside the main paper.",
           rows: rows.slice(0, 8)
         });
       }
@@ -895,7 +1055,6 @@ export function manuscriptConsistencyLinter(input: {
   const resultsText = getSectionText(input.manuscript.sections, "Results");
   const discussionText = getSectionText(input.manuscript.sections, "Discussion");
   const conclusionText = getSectionText(input.manuscript.sections, "Conclusion");
-  const appendixText = (input.manuscript.appendix_sections || []).flatMap((section) => section.paragraphs).join(" ");
 
   for (const modelName of input.context.method.model_names) {
     if (
@@ -906,7 +1065,10 @@ export function manuscriptConsistencyLinter(input: {
       issues.push({
         kind: "method_results_mismatch",
         severity: "error",
-        message: `Results or Discussion mention ${modelName}, but Method does not describe it.`
+        finding: "contradiction",
+        message: `Results or Discussion mention ${modelName}, but Method does not describe it.`,
+        involved_sections: ["Method", includesWord(resultsText, modelName) ? "Results" : "Discussion"],
+        reason: "method/results model inventory drift"
       });
     }
   }
@@ -921,7 +1083,9 @@ export function manuscriptConsistencyLinter(input: {
       issues.push({
         kind: "caption_internal_name",
         severity: "error",
-        message: `Caption exposes an internal variable name or artifact token: "${caption}".`
+        finding: "contradiction",
+        message: `Caption exposes an internal variable name or artifact token: "${caption}".`,
+        reason: "caption leaks internal artifact naming"
       });
     }
   }
@@ -934,24 +1098,22 @@ export function manuscriptConsistencyLinter(input: {
     issues.push({
       kind: "reproducibility_claim",
       severity: "error",
-      message: "The manuscript makes a reproducibility-satisfaction claim without supporting artifacts."
+      finding: "contradiction",
+      message: "The manuscript makes a reproducibility-satisfaction claim without supporting artifacts.",
+      involved_sections: ["Abstract"],
+      reason: "reproducibility claim is not backed by reproducibility artifacts"
     });
   }
 
   issues.push(
     ...lintCountConsistency({
-      abstractText,
-      resultsText,
-      conclusionText,
+      manuscript: input.manuscript,
       context: input.context
     })
   );
   issues.push(
     ...lintNumericConsistency({
-      abstractText,
-      resultsText,
-      conclusionText,
-      appendixText,
+      manuscript: input.manuscript,
       context: input.context
     })
   );
@@ -1012,12 +1174,156 @@ export function appendixConsistencyLinter(input: {
   };
 }
 
+function buildEvidenceInsufficiencyReport(input: {
+  pageBudget: PageBudgetManagerReport;
+  methodReport: CompletenessReport;
+  resultsReport: CompletenessReport;
+  relatedWorkReport: RelatedWorkRichnessReport;
+  discussionReport: CompletenessReport;
+}): EvidenceInsufficiencyReport {
+  const thinSectionSet = new Set(
+    uniqueStrings([
+      ...input.pageBudget.sections.filter((section) => section.status !== "ok").map((section) => section.heading),
+      ...(input.methodReport.status === "incomplete" ? ["Method"] : []),
+      ...(input.resultsReport.status === "incomplete" ? ["Results"] : []),
+      ...(input.relatedWorkReport.status === "incomplete" ? ["Related Work"] : []),
+      ...(input.discussionReport.status === "incomplete" ? ["Discussion", "Limitations"] : [])
+    ])
+  );
+  const sectionDiagnostics: SectionEvidenceDiagnostic[] = [
+    buildSectionEvidenceDiagnostic("Method", thinSectionSet, mapMethodMissingToEvidenceCategories(input.methodReport.missing)),
+    buildSectionEvidenceDiagnostic("Results", thinSectionSet, mapResultsMissingToEvidenceCategories(input.resultsReport.missing)),
+    buildSectionEvidenceDiagnostic(
+      "Related Work",
+      thinSectionSet,
+      mapRelatedWorkMissingToEvidenceCategories(input.relatedWorkReport.missing)
+    ),
+    buildSectionEvidenceDiagnostic(
+      "Discussion",
+      thinSectionSet,
+      mapDiscussionMissingToEvidenceCategories(input.discussionReport.missing)
+    ),
+    buildSectionEvidenceDiagnostic(
+      "Limitations",
+      thinSectionSet,
+      input.discussionReport.status === "incomplete" ? ["error analysis / limitations"] : []
+    )
+  ];
+  const missingEvidenceCategories = uniqueStrings(
+    sectionDiagnostics.flatMap((diagnostic) => diagnostic.missing_evidence_categories)
+  );
+  return {
+    expandable_from_existing_evidence: sectionDiagnostics.every(
+      (diagnostic) => !diagnostic.thin || diagnostic.expandable_from_existing_evidence
+    ),
+    missing_evidence_categories: missingEvidenceCategories,
+    thin_sections: sectionDiagnostics.filter((diagnostic) => diagnostic.thin).map((diagnostic) => diagnostic.section),
+    blocked_by_evidence_insufficiency: sectionDiagnostics.some((diagnostic) => diagnostic.blocked_by_evidence_insufficiency),
+    section_diagnostics: sectionDiagnostics.filter(
+      (diagnostic) => diagnostic.thin || diagnostic.missing_evidence_categories.length > 0
+    )
+  };
+}
+
+function buildSectionEvidenceDiagnostic(
+  section: string,
+  thinSectionSet: Set<string>,
+  missingEvidenceCategories: string[]
+): SectionEvidenceDiagnostic {
+  const thin = thinSectionSet.has(section);
+  const normalizedMissing = uniqueStrings(missingEvidenceCategories);
+  return {
+    section,
+    thin,
+    missing_evidence_categories: normalizedMissing,
+    expandable_from_existing_evidence: normalizedMissing.length === 0,
+    blocked_by_evidence_insufficiency: thin && normalizedMissing.length > 0
+  };
+}
+
+function mapMethodMissingToEvidenceCategories(missing: string[]): string[] {
+  const categories: string[] = [];
+  if (
+    missing.some((item) =>
+      [
+        "dataset names",
+        "dataset source",
+        "#samples",
+        "#features",
+        "#classes",
+        "imbalance or missingness"
+      ].includes(item)
+    )
+  ) {
+    categories.push("dataset/task detail");
+  }
+  if (missing.some((item) => ["preprocessing steps/order", "fold-internal fit scope"].includes(item))) {
+    categories.push("method detail");
+  }
+  if (
+    missing.some((item) =>
+      [
+        "outer folds",
+        "inner folds",
+        "repeats",
+        "stratification",
+        "seeds",
+        "hyperparameter search space",
+        "selection/reporting metrics"
+      ].includes(item)
+    )
+  ) {
+    categories.push("experimental setup");
+  }
+  if (missing.some((item) => ["runtime measurement", "memory measurement"].includes(item))) {
+    categories.push("statistical reporting");
+  }
+  return categories;
+}
+
+function mapResultsMissingToEvidenceCategories(missing: string[]): string[] {
+  const categories: string[] = [];
+  if (missing.some((item) => ["aggregate summary", "per-dataset results"].includes(item))) {
+    categories.push("baseline comparison");
+    categories.push("dataset/task detail");
+  }
+  if (
+    missing.some((item) =>
+      [
+        "dispersion estimates",
+        "CI or CI-unavailable rationale",
+        "paired/repeated comparison artifact",
+        "scientific figure with informative caption"
+      ].includes(item)
+    )
+  ) {
+    categories.push("statistical reporting");
+  }
+  return categories;
+}
+
+function mapRelatedWorkMissingToEvidenceCategories(missing: string[]): string[] {
+  return missing.length > 0 ? ["related work specificity"] : [];
+}
+
+function mapDiscussionMissingToEvidenceCategories(missing: string[]): string[] {
+  const categories: string[] = [];
+  if (missing.some((item) => ["result interpretation"].includes(item))) {
+    categories.push("baseline comparison");
+  }
+  if (missing.some((item) => ["generalization/evaluation limits", "practical implication"].includes(item))) {
+    categories.push("error analysis / limitations");
+  }
+  return categories;
+}
+
 function pushCompletenessIssue(
   issues: ScientificValidationIssue[],
   category: Extract<ScientificValidationCategory, "method_completeness" | "results_richness" | "related_work_richness" | "discussion_richness">,
   code: string,
   report: CompletenessReport,
-  fallbackMessage: string
+  fallbackMessage: string,
+  diagnostic?: SectionEvidenceDiagnostic
 ): void {
   if (report.status === "complete") {
     return;
@@ -1029,8 +1335,13 @@ function pushCompletenessIssue(
     category,
     severity: "warning",
     policy: "strict_fail",
+    finding: diagnostic?.blocked_by_evidence_insufficiency ? "unverifiable" : "repairable",
     message: details[0] || fallbackMessage,
-    details: details.slice(1)
+    details: details.slice(1),
+    ...(diagnostic?.missing_evidence_categories.length ? { missing_evidence_categories: diagnostic.missing_evidence_categories } : {}),
+    ...(diagnostic?.thin ? { thin_sections: [diagnostic.section] } : {}),
+    ...(diagnostic ? { expandable_from_existing_evidence: diagnostic.expandable_from_existing_evidence } : {}),
+    ...(diagnostic ? { blocked_by_evidence_insufficiency: diagnostic.blocked_by_evidence_insufficiency } : {})
   });
 }
 
@@ -1043,99 +1354,136 @@ function convertLintIssueToGateIssue(
     source === "appendix_lint" && (issue.kind === "main_logic_thin" || issue.kind === "appendix_reference_missing");
   const policy: ScientificValidationPolicy =
     issue.severity === "error" ? "always_fail" : strictOnly ? "strict_fail" : "warn_only";
+  const blocking = policy === "always_fail" || (policy === "strict_fail" && mode === "strict_paper");
   return {
     code: issue.kind,
     source,
     category: source === "appendix_lint" ? "appendix" : "consistency",
     severity: issue.severity,
     policy,
+    finding: issue.finding || (issue.severity === "error" ? "contradiction" : "informational"),
     message: issue.message,
-    blocking: policy === "always_fail" || (policy === "strict_fail" && mode === "strict_paper")
+    ...(issue.involved_sections?.length ? { involved_sections: issue.involved_sections } : {}),
+    ...(issue.normalized_facts?.length ? { normalized_facts: issue.normalized_facts } : {}),
+    ...(issue.reason ? { reason: issue.reason } : {}),
+    ...(issue.evidence?.length ? { evidence: issue.evidence } : {}),
+    blocking,
+    outcome: blocking ? "fail" : (issue.finding || "informational") === "unverifiable" ? "unverifiable" : "warn"
   };
 }
 
 function lintCountConsistency(input: {
-  abstractText: string;
-  resultsText: string;
-  conclusionText: string;
+  manuscript: PaperManuscript;
   context: ExperimentArtifactContext;
 }): ConsistencyLintIssue[] {
-  const expectations = collectCountExpectations(input.context);
-  const zones = [
-    { label: "Abstract", text: input.abstractText },
-    { label: "Results", text: input.resultsText },
-    { label: "Conclusion", text: input.conclusionText }
-  ];
+  const expectedFacts = collectExpectedCountFacts(input.context);
+  const observedFacts = collectObservedCountFacts(input.manuscript, input.context);
   const issues: ConsistencyLintIssue[] = [];
 
-  for (const expectation of expectations) {
-    for (const zone of zones) {
-      if (!zone.text) {
-        continue;
-      }
-      const observed = extractCountClaims(zone.text, expectation.kind);
-      for (const value of observed) {
-        if (value === expectation.expected) {
-          continue;
-        }
+  issues.push(...buildObservedFactDriftIssues(observedFacts, "count_inconsistency"));
+
+  for (const observedFact of observedFacts) {
+    const comparableFacts = expectedFacts.filter((candidate) => areComparableNumericFacts(observedFact, candidate));
+    if (comparableFacts.length === 0) {
+      if (shouldWarnOnUnverifiableFact(observedFact.source)) {
         issues.push({
-          kind: "count_inconsistency",
-          severity: "error",
-          message: `${zone.label} reports ${value} ${expectation.label}, but upstream artifacts support ${expectation.expected}.`
+          kind: "count_unverifiable",
+          severity: "warning",
+          finding: "unverifiable",
+          message: `${observedFact.location} cites ${formatNumber(observedFact.value)} as a ${humanizeCountKind(observedFact.count_kind)}, but the current artifacts do not expose a comparable structured count.`,
+          involved_sections: [observedFact.location],
+          normalized_facts: [observedFact],
+          reason: "no comparable structured count fact is available for this count claim"
         });
       }
+      continue;
     }
+    if (comparableFacts.some((candidate) => areFactValuesEquivalent(observedFact, candidate))) {
+      continue;
+    }
+    issues.push({
+      kind: "count_inconsistency",
+      severity: "error",
+      finding: "contradiction",
+      message: `${observedFact.location} reports ${formatNumber(observedFact.value)} ${humanizeCountKind(observedFact.count_kind)}, but upstream artifacts support ${formatNumber(comparableFacts[0]?.value)}.`,
+      involved_sections: [observedFact.location],
+      normalized_facts: [observedFact, ...comparableFacts.slice(0, 1)],
+      reason: "comparable structured count facts disagree with the manuscript claim",
+      evidence: comparableFacts.slice(0, 2).map((fact) => `${fact.location}: ${fact.raw_text}`)
+    });
   }
 
-  return issues;
+  return dedupeConsistencyIssues(issues);
 }
 
 function lintNumericConsistency(input: {
-  abstractText: string;
-  resultsText: string;
-  conclusionText: string;
-  appendixText: string;
+  manuscript: PaperManuscript;
   context: ExperimentArtifactContext;
 }): ConsistencyLintIssue[] {
   const issues: ConsistencyLintIssue[] = [];
-  const expectedValues = collectExpectedMetricValues(input.context);
-  if (expectedValues.length === 0) {
+  const expectedFacts = collectExpectedMetricFacts(input.context);
+  if (expectedFacts.length === 0) {
     return issues;
   }
-  const resultsValues = uniqueNumbers([
-    ...extractDecimalValues(input.resultsText),
-    ...expectedValues
-  ]);
-  const appendixValues = extractDecimalValues(input.appendixText);
-  const zones = [
-    { label: "Abstract", text: input.abstractText, allowAppendixWarning: true },
-    { label: "Results", text: input.resultsText, allowAppendixWarning: false },
-    { label: "Conclusion", text: input.conclusionText, allowAppendixWarning: true }
-  ];
+  const observedFacts = collectObservedMetricFacts(input.manuscript, input.context);
+  const mainFacts = observedFacts.filter((fact) => !isAppendixFactSource(fact.source));
+  const appendixFacts = observedFacts.filter((fact) => isAppendixFactSource(fact.source));
 
-  for (const zone of zones) {
-    const values = extractDecimalValues(zone.text).slice(0, 8);
-    for (const value of values) {
-      if (matchesAnyExpectedValue(value, resultsValues)) {
-        continue;
-      }
-      if (zone.allowAppendixWarning && matchesAnyExpectedValue(value, appendixValues)) {
-        issues.push({
-          kind: "appendix_only_numeric_reference",
-          severity: "warning",
-          message: `${zone.label} cites ${formatNumber(value)}, but that value appears only in appendix-level detail rather than the main Results section.`
-        });
-        continue;
-      }
-      issues.push({
-        kind: "numeric_inconsistency",
-        severity: "error",
-        message: `${zone.label} cites ${formatNumber(value)}, but the structured results do not support that numeric claim.`
-      });
+  issues.push(...buildObservedFactDriftIssues(mainFacts, "numeric_inconsistency"));
+
+  for (const observedFact of observedFacts) {
+    if (isObjectiveThresholdFact(observedFact)) {
+      continue;
     }
+    const comparableFacts = expectedFacts.filter((candidate) => areComparableNumericFacts(observedFact, candidate));
+    if (comparableFacts.length === 0) {
+      if (shouldWarnOnUnverifiableFact(observedFact.source)) {
+        issues.push({
+          kind: "numeric_unverifiable",
+          severity: "warning",
+          finding: "unverifiable",
+          message: `${observedFact.location} cites ${formatNumber(observedFact.value)}, but the current artifacts do not expose a comparable structured numeric fact for ${observedFact.metric_key || "that metric"}.`,
+          involved_sections: [observedFact.location],
+          normalized_facts: [observedFact],
+          reason: "no comparable structured metric fact is available at the same metric/scope/aggregation level"
+        });
+      }
+      continue;
+    }
+    if (comparableFacts.some((candidate) => areFactValuesEquivalent(observedFact, candidate))) {
+      continue;
+    }
+    const appendixMatch = appendixFacts.find(
+      (candidate) =>
+        candidate.fact_id !== observedFact.fact_id
+        && areComparableNumericFacts(observedFact, candidate)
+        && areFactValuesEquivalent(observedFact, candidate)
+    );
+    if (appendixMatch && allowsAppendixOnlyWarning(observedFact.source)) {
+      issues.push({
+        kind: "appendix_only_numeric_reference",
+        severity: "warning",
+        finding: "unverifiable",
+        message: `${observedFact.location} cites ${formatNumber(observedFact.value)}, but that comparable value appears only in appendix-level detail rather than the main Results evidence.`,
+        involved_sections: [observedFact.location, appendixMatch.location],
+        normalized_facts: [observedFact, appendixMatch],
+        reason: "the comparable value is only recoverable from appendix-level detail"
+      });
+      continue;
+    }
+    issues.push({
+      kind: "numeric_inconsistency",
+      severity: "error",
+      finding: "contradiction",
+      message: `${observedFact.location} cites ${formatNumber(observedFact.value)}, but the comparable structured results support ${formatNumber(comparableFacts[0]?.value)} for ${observedFact.metric_key || "that metric"}.`,
+      involved_sections: [observedFact.location],
+      normalized_facts: [observedFact, ...comparableFacts.slice(0, 2)],
+      reason: "comparable structured numeric facts disagree with the manuscript claim",
+      evidence: comparableFacts.slice(0, 2).map((fact) => `${fact.location}: ${fact.raw_text}`)
+    });
   }
 
-  return issues;
+  return dedupeConsistencyIssues(issues);
 }
 
 function lintStrongClaimWording(input: {
@@ -1166,20 +1514,29 @@ function lintStrongClaimWording(input: {
       issues.push({
         kind: "unsupported_strong_claim",
         severity: "error",
-        message: `${zone.label} uses "state-of-the-art" language without structured support for that positioning.`
+        finding: "contradiction",
+        message: `${zone.label} uses "state-of-the-art" language without structured support for that positioning.`,
+        involved_sections: [zone.label],
+        reason: "state-of-the-art framing has no supporting structured evidence"
       });
     }
     if (/\bsignificant(?:ly)? improvement\b/iu.test(zone.text)) {
       issues.push({
         kind: "unsupported_strong_claim",
         severity: "error",
-        message: `${zone.label} claims significant improvement without an explicit significance-testing artifact in the available results.`
+        finding: "contradiction",
+        message: `${zone.label} claims significant improvement without an explicit significance-testing artifact in the available results.`,
+        involved_sections: [zone.label],
+        reason: "significance wording exceeds available statistical evidence"
       });
     } else if (/\bsubstantial improvement\b|\blarge improvement\b/iu.test(zone.text) && maxDelta <= 0.05) {
       issues.push({
         kind: "unsupported_strong_claim",
         severity: "warning",
-        message: `${zone.label} uses strong improvement language even though the observed delta remains small.`
+        finding: "unverifiable",
+        message: `${zone.label} uses strong improvement language even though the observed delta remains small.`,
+        involved_sections: [zone.label],
+        reason: "wording is stronger than the observed effect size"
       });
     }
   }
@@ -1188,111 +1545,1277 @@ function lintStrongClaimWording(input: {
     issues.push({
       kind: "unsupported_strong_claim",
       severity: "warning",
-      message: "Results retain strong improvement language without enough statistical support."
+      finding: "unverifiable",
+      message: "Results retain strong improvement language without enough statistical support.",
+      involved_sections: ["Results"],
+      reason: "statistical support is incomplete for the retained claim wording"
     });
   }
 
   return issues;
 }
 
-function collectCountExpectations(context: ExperimentArtifactContext): Array<{
-  kind: "dataset_count" | "repeat_count" | "outer_fold_count" | "inner_fold_count";
-  expected: number;
-  label: string;
-}> {
-  const expectations: Array<{
-    kind: "dataset_count" | "repeat_count" | "outer_fold_count" | "inner_fold_count";
-    expected: number;
-    label: string;
-  }> = [];
-  if (context.method.dataset_names.length > 0) {
-    expectations.push({
-      kind: "dataset_count",
-      expected: context.method.dataset_names.length,
-      label: "datasets"
-    });
+function collectExpectedCountFacts(context: ExperimentArtifactContext): NormalizedNumericFact[] {
+  const facts: NormalizedNumericFact[] = [];
+  const datasetCount =
+    uniqueStrings(context.results.dataset_summaries.map((item) => cleanString(item.dataset)).filter(Boolean)).length
+    || context.method.dataset_names.length;
+  if (datasetCount > 0) {
+    facts.push(
+      buildStructuredNumericFact({
+        factKind: "count",
+        source: "artifact",
+        location: "artifact.method.dataset_names",
+        rawText: `${datasetCount} datasets`,
+        value: datasetCount,
+        countKind: "dataset_count",
+        aggregationLevel: "aggregate",
+        unit: "count",
+        sourceRefs: buildArtifactSourceRefs(["experiment_plan.selected_design.datasets", "latest_results.protocol.datasets"])
+      })
+    );
   }
-  const repeatCount = extractNumericNoteCount(context.method.repeat_notes) || (context.method.seeds.length > 1 ? context.method.seeds.length : undefined);
+  const repeatCount =
+    extractNumericNoteCount(context.method.repeat_notes) || (context.method.seeds.length > 1 ? context.method.seeds.length : undefined);
   if (repeatCount) {
-    expectations.push({
-      kind: "repeat_count",
-      expected: repeatCount,
-      label: "repeats"
-    });
+    facts.push(
+      buildStructuredNumericFact({
+        factKind: "count",
+        source: "artifact",
+        location: "artifact.method.repeats",
+        rawText: `${repeatCount} repeats`,
+        value: repeatCount,
+        countKind: "repeat_count",
+        aggregationLevel: "repeat",
+        unit: "count",
+        sourceRefs: buildArtifactSourceRefs(["experiment_plan.selected_design.evaluation_steps", "latest_results.protocol.repeats"])
+      })
+    );
   }
-  const outerFoldCount = extractNumericNoteCount(context.method.outer_fold_notes);
+  const outerFoldCount = extractExpectedCountFromNotes(context.method.outer_fold_notes, "outer_fold_count");
   if (outerFoldCount) {
-    expectations.push({
-      kind: "outer_fold_count",
-      expected: outerFoldCount,
-      label: "outer folds"
-    });
+    facts.push(
+      buildStructuredNumericFact({
+        factKind: "count",
+        source: "artifact",
+        location: "artifact.method.outer_folds",
+        rawText: `${outerFoldCount} outer folds`,
+        value: outerFoldCount,
+        countKind: "outer_fold_count",
+        aggregationLevel: "fold",
+        unit: "count",
+        sourceRefs: buildArtifactSourceRefs(["experiment_plan.selected_design.evaluation_steps"])
+      })
+    );
   }
-  const innerFoldCount = extractNumericNoteCount(context.method.inner_fold_notes);
+  const innerFoldCount = extractExpectedCountFromNotes(context.method.inner_fold_notes, "inner_fold_count");
   if (innerFoldCount) {
-    expectations.push({
-      kind: "inner_fold_count",
-      expected: innerFoldCount,
-      label: "inner folds"
+    facts.push(
+      buildStructuredNumericFact({
+        factKind: "count",
+        source: "artifact",
+        location: "artifact.method.inner_folds",
+        rawText: `${innerFoldCount} inner folds`,
+        value: innerFoldCount,
+        countKind: "inner_fold_count",
+        aggregationLevel: "fold",
+        unit: "count",
+        sourceRefs: buildArtifactSourceRefs(["experiment_plan.selected_design.evaluation_steps"])
+      })
+    );
+  }
+  const sampleCount = extractNumericNoteCount(context.method.sample_size_notes);
+  if (sampleCount) {
+    facts.push(
+      buildStructuredNumericFact({
+        factKind: "count",
+        source: "artifact",
+        location: "artifact.method.samples",
+        rawText: `${sampleCount} samples`,
+        value: sampleCount,
+        countKind: "sample_count",
+        aggregationLevel: "aggregate",
+        unit: "count",
+        sourceRefs: buildArtifactSourceRefs(["experiment_plan.selected_design.implementation_notes", "latest_results.protocol"])
+      })
+    );
+  }
+  return facts;
+}
+
+function collectObservedCountFacts(
+  manuscript: PaperManuscript,
+  context: ExperimentArtifactContext
+): NormalizedNumericFact[] {
+  return dedupeNumericFacts([
+    ...extractCountFactsFromText({
+      text: manuscript.abstract,
+      source: "abstract",
+      location: "Abstract",
+      sourceRefs: undefined
+    }),
+    ...manuscript.sections.flatMap((section) =>
+      section.paragraphs.flatMap((paragraph) =>
+        extractCountFactsFromText({
+          text: paragraph,
+          source: mapSectionHeadingToNumericFactSource(section.heading),
+          location: section.heading,
+          sourceRefs: section.source_refs
+        })
+      )
+    ),
+    ...((manuscript.appendix_sections || []).flatMap((section) =>
+      section.paragraphs.flatMap((paragraph) =>
+        extractCountFactsFromText({
+          text: paragraph,
+          source: "appendix_section",
+          location: section.heading,
+          sourceRefs: section.source_refs
+        })
+      )
+    ) || [])
+  ]);
+}
+
+function inferDatasetDeltaMetricKey(
+  item: DatasetResultSummary,
+  mainMetricKey: string | undefined
+): string {
+  const explicitLabel = normalizeMetricIdentifier(item.delta_label || "");
+  if (explicitLabel && explicitLabel.includes("delta")) {
+    return explicitLabel;
+  }
+  const composedLabel = normalizeMetricIdentifier(`${item.main_metric_label} ${item.delta_label || "delta vs logistic regression"}`);
+  if (composedLabel) {
+    return composedLabel;
+  }
+  if (mainMetricKey === "macro_f1") {
+    return "macro_f1_delta_vs_logreg";
+  }
+  return "score_delta_vs_baseline";
+}
+
+function collectExpectedMetricFacts(context: ExperimentArtifactContext): NormalizedNumericFact[] {
+  return dedupeNumericFacts([
+    ...context.results.aggregate_metric_facts,
+    ...context.results.dataset_summaries.flatMap((item) => {
+      const datasetScope = cleanString(item.dataset) || "unknown";
+      const facts: NormalizedNumericFact[] = [];
+      const mainMetricKey = normalizeMetricIdentifier(item.main_metric_label);
+      const deltaMetricKey = inferDatasetDeltaMetricKey(item, mainMetricKey);
+      if (typeof item.main_metric_value === "number" && mainMetricKey) {
+        facts.push(
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.dataset.${datasetScope}`,
+            rawText: `${item.main_metric_label} ${formatNumber(item.main_metric_value)}`,
+            value: item.main_metric_value,
+            metricKey: mainMetricKey,
+            metricLabel: item.main_metric_label,
+            datasetScope,
+            aggregationLevel: "dataset",
+            unit: "score",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
+          })
+        );
+      }
+      if (typeof item.delta_value === "number") {
+        facts.push(
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.dataset.${datasetScope}.delta`,
+            rawText: `${item.delta_label || "delta"} ${formatNumber(item.delta_value)}`,
+            value: item.delta_value,
+            metricKey: deltaMetricKey,
+            metricLabel: item.delta_label || "delta",
+            datasetScope,
+            aggregationLevel: "dataset",
+            unit: "delta",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
+          })
+        );
+      }
+      if (item.ci95) {
+        facts.push(
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.dataset.${datasetScope}.ci.lower`,
+            rawText: `${item.dataset} CI lower ${formatNumber(item.ci95[0])}`,
+            value: item.ci95[0],
+            metricKey: deltaMetricKey,
+            metricLabel: `${item.delta_label || item.main_metric_label} CI lower`,
+            datasetScope,
+            aggregationLevel: "dataset",
+            unit: "ci_lower",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.repeat_records", "result_analysis.statistical_summary.confidence_intervals"])
+          }),
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.dataset.${datasetScope}.ci.upper`,
+            rawText: `${item.dataset} CI upper ${formatNumber(item.ci95[1])}`,
+            value: item.ci95[1],
+            metricKey: deltaMetricKey,
+            metricLabel: `${item.delta_label || item.main_metric_label} CI upper`,
+            datasetScope,
+            aggregationLevel: "dataset",
+            unit: "ci_upper",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.repeat_records", "result_analysis.statistical_summary.confidence_intervals"])
+          })
+        );
+      }
+      if (typeof item.pairwise_ranking_agreement === "number") {
+        facts.push(
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.dataset.${datasetScope}.pairwise_ranking_agreement`,
+            rawText: `${item.dataset} ranking agreement ${formatNumber(item.pairwise_ranking_agreement)}`,
+            value: item.pairwise_ranking_agreement,
+            metricKey: "pairwise_ranking_agreement",
+            metricLabel: "pairwise ranking agreement",
+            datasetScope,
+            aggregationLevel: "dataset",
+            unit: "score",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
+          })
+        );
+      }
+      if (typeof item.winner_consistency === "number") {
+        facts.push(
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.dataset.${datasetScope}.winner_consistency`,
+            rawText: `${item.dataset} winner consistency ${formatNumber(item.winner_consistency)}`,
+            value: item.winner_consistency,
+            metricKey: "winner_consistency",
+            metricLabel: "winner consistency",
+            datasetScope,
+            aggregationLevel: "dataset",
+            unit: "score",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
+          })
+        );
+      }
+      if (typeof item.runtime_seconds_mean === "number") {
+        facts.push(
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.dataset.${datasetScope}.runtime`,
+            rawText: `${item.dataset} runtime ${formatNumber(item.runtime_seconds_mean)}s`,
+            value: item.runtime_seconds_mean,
+            metricKey: "runtime_seconds",
+            metricLabel: "runtime",
+            datasetScope,
+            aggregationLevel: "dataset",
+            unit: "seconds",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries", "result_analysis.metric_table"])
+          })
+        );
+      }
+      if (typeof item.peak_memory_mb_mean === "number") {
+        facts.push(
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.dataset.${datasetScope}.memory`,
+            rawText: `${item.dataset} memory ${formatNumber(item.peak_memory_mb_mean)} MB`,
+            value: item.peak_memory_mb_mean,
+            metricKey: "peak_memory_mb",
+            metricLabel: "peak memory",
+            datasetScope,
+            aggregationLevel: "dataset",
+            unit: "mb",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries", "result_analysis.metric_table"])
+          })
+        );
+      }
+      if (item.heterogeneity_notes.length > 0) {
+        facts.push(
+          ...extractMetricFactsFromText({
+            text: `On ${datasetScope}, ${item.heterogeneity_notes.join(" ")}.`,
+            source: "artifact",
+            location: `artifact.dataset.${datasetScope}.heterogeneity`,
+            context,
+            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
+          })
+        );
+        const rankingAgreement = extractFirstMetricValue(
+          item.heterogeneity_notes,
+          /\branking agreement\s*=\s*(-?\d+(?:\.\d+)?)/iu
+        );
+        if (typeof rankingAgreement === "number") {
+          facts.push(
+            buildStructuredNumericFact({
+              factKind: "metric",
+              source: "artifact",
+              location: `artifact.dataset.${datasetScope}.heterogeneity`,
+              rawText: `ranking agreement=${formatNumber(rankingAgreement)}`,
+              value: rankingAgreement,
+              metricKey: "pairwise_ranking_agreement",
+              metricLabel: "pairwise ranking agreement",
+              datasetScope,
+              aggregationLevel: "dataset",
+              unit: "score",
+              sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
+            })
+          );
+        }
+      }
+      return facts;
+    })
+  ]);
+}
+
+function collectObservedMetricFacts(
+  manuscript: PaperManuscript,
+  context: ExperimentArtifactContext
+): NormalizedNumericFact[] {
+  const sections = manuscript.sections;
+  const appendixSections = manuscript.appendix_sections || [];
+  return dedupeNumericFacts([
+    ...extractMetricFactsFromText({
+      text: manuscript.abstract,
+      source: "abstract",
+      location: "Abstract",
+      context,
+      sourceRefs: undefined
+    }),
+    ...sections.flatMap((section) =>
+      section.paragraphs.flatMap((paragraph) =>
+        extractMetricFactsFromText({
+          text: paragraph,
+          source: mapSectionHeadingToNumericFactSource(section.heading),
+          location: section.heading,
+          context,
+          sourceRefs: section.source_refs
+        })
+      )
+    ),
+    ...(manuscript.tables || []).flatMap((table, index) =>
+      extractMetricFactsFromVisual({
+        source: "table",
+        location: `Table ${index + 1}`,
+        caption: table.caption,
+        rows: table.rows,
+        context,
+        sourceRefs: table.source_refs
+      })
+    ),
+    ...(manuscript.figures || []).flatMap((figure, index) =>
+      extractMetricFactsFromVisual({
+        source: "figure",
+        location: `Figure ${index + 1}`,
+        caption: figure.caption,
+        rows: figure.bars,
+        context,
+        sourceRefs: figure.source_refs
+      })
+    ),
+    ...appendixSections.flatMap((section) =>
+      section.paragraphs.flatMap((paragraph) =>
+        extractMetricFactsFromText({
+          text: paragraph,
+          source: "appendix_section",
+          location: section.heading,
+          context,
+          sourceRefs: section.source_refs
+        })
+      )
+    ),
+    ...((manuscript.appendix_tables || []).flatMap((table, index) =>
+      extractMetricFactsFromVisual({
+        source: "appendix_table",
+        location: `Appendix Table ${index + 1}`,
+        caption: table.caption,
+        rows: table.rows,
+        context,
+        sourceRefs: table.source_refs
+      })
+    ) || []),
+    ...((manuscript.appendix_figures || []).flatMap((figure, index) =>
+      extractMetricFactsFromVisual({
+        source: "appendix_figure",
+        location: `Appendix Figure ${index + 1}`,
+        caption: figure.caption,
+        rows: figure.bars,
+        context,
+        sourceRefs: figure.source_refs
+      })
+    ) || [])
+  ]);
+}
+
+function buildObservedFactDriftIssues(
+  facts: NormalizedNumericFact[],
+  kind: "numeric_inconsistency" | "count_inconsistency"
+): ConsistencyLintIssue[] {
+  const issues: ConsistencyLintIssue[] = [];
+  const groups = new Map<string, NormalizedNumericFact[]>();
+  for (const fact of facts) {
+    if (fact.fact_kind === "metric" && isObjectiveThresholdFact(fact)) {
+      continue;
+    }
+    if (!fact.metric_key && !fact.count_kind) {
+      continue;
+    }
+    const key = buildComparableFactKey(fact);
+    if (!key) {
+      continue;
+    }
+    const bucket = groups.get(key) || [];
+    bucket.push(fact);
+    groups.set(key, bucket);
+  }
+  for (const bucket of groups.values()) {
+    const mainSectionFacts = bucket.filter((fact) =>
+      ["abstract", "method", "results", "conclusion", "table", "figure"].includes(fact.source)
+    );
+    const distinctLocations = uniqueStrings(mainSectionFacts.map((fact) => fact.location));
+    const distinctValues = mainSectionFacts.reduce<number[]>((values, fact) => {
+      if (!values.some((value) => areApproxEqual(value, fact.normalized_value, fact.unit))) {
+        values.push(fact.normalized_value);
+      }
+      return values;
+    }, []);
+    if (mainSectionFacts.length < 2 || distinctLocations.length < 2 || distinctValues.length < 2) {
+      continue;
+    }
+    issues.push({
+      kind,
+      severity: "error",
+      finding: "contradiction",
+      message: `${joinHumanList(uniqueStrings(mainSectionFacts.map((fact) => fact.location)))} report conflicting ${humanizeComparableFactKey(bucket[0])} values.`,
+      involved_sections: uniqueStrings(mainSectionFacts.map((fact) => fact.location)),
+      normalized_facts: mainSectionFacts.slice(0, 4),
+      reason: "comparable normalized facts disagree across main-manuscript sections",
+      evidence: mainSectionFacts.slice(0, 4).map((fact) => `${fact.location}: ${fact.raw_text}`)
     });
   }
-  return expectations;
+  return issues;
 }
 
-function extractCountClaims(
-  text: string,
-  kind: "dataset_count" | "repeat_count" | "outer_fold_count" | "inner_fold_count"
-): number[] {
-  const patterns: Record<"dataset_count" | "repeat_count" | "outer_fold_count" | "inner_fold_count", RegExp[]> = {
-    dataset_count: [/\b(\d+)\s+datasets?\b/giu],
-    repeat_count: [/\b(\d+)\s+(?:repeats?|repeated evaluations?|seeds?)\b/giu],
-    outer_fold_count: [/\bouter\s+(\d+)[-\s]?fold\b/giu, /\b(\d+)[-\s]?fold outer\b/giu],
-    inner_fold_count: [/\binner\s+(\d+)[-\s]?fold\b/giu, /\b(\d+)[-\s]?fold inner\b/giu]
-  };
-  return patterns[kind].flatMap((pattern) => collectNumbersFromMatches(text, pattern));
-}
-
-function collectExpectedMetricValues(context: ExperimentArtifactContext): number[] {
-  return uniqueNumbers([
-    ...context.results.dataset_summaries.flatMap((item) => [
-      item.main_metric_value,
-      item.delta_value,
-      item.ci95?.[0],
-      item.ci95?.[1],
-      item.runtime_seconds_mean,
-      item.peak_memory_mb_mean
-    ]),
-    ...context.results.ci_notes.flatMap((note) => collectDecimalValuesFromText(note))
-  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value)));
-}
-
-function extractDecimalValues(text: string): number[] {
-  const cleaned = cleanString(text);
+function extractCountFactsFromText(input: {
+  text: string;
+  source: NumericFactSource;
+  location: string;
+  sourceRefs?: PaperSourceRef[];
+}): NormalizedNumericFact[] {
+  const cleaned = cleanString(input.text);
   if (!cleaned) {
     return [];
   }
-  return collectDecimalValuesFromText(cleaned).slice(0, 12);
+  const patternEntries: Array<{ kind: CountFactKind; pattern: RegExp }> = [
+    { kind: "dataset_count", pattern: /\b(\d+)\s+datasets?\b/giu },
+    { kind: "repeat_count", pattern: /\b(\d+)\s+(?:repeats?|repeated evaluations?|seeds?)\b/giu },
+    { kind: "run_count", pattern: /\b(\d+)\s+runs?\b/giu },
+    { kind: "outer_fold_count", pattern: /\bouter\s+(\d+)[-\s]?fold\b/giu },
+    { kind: "outer_fold_count", pattern: /\b(\d+)[-\s]?fold outer\b/giu },
+    { kind: "inner_fold_count", pattern: /\binner\s+(\d+)[-\s]?fold\b/giu },
+    { kind: "inner_fold_count", pattern: /\b(\d+)[-\s]?fold inner\b/giu },
+    { kind: "sample_count", pattern: /\b(\d+)\s+(?:samples?|instances?|rows)\b/giu },
+    { kind: "sample_count", pattern: /\bn\s*=\s*(\d+)(?=[^.!?]{0,24}\b(?:samples?|instances?|rows)\b)/giu }
+  ];
+  return dedupeNumericFacts(
+    patternEntries.flatMap(({ kind, pattern }) =>
+      [...cleaned.matchAll(pattern)].map((match) =>
+        buildStructuredNumericFact({
+          factKind: "count",
+          source: input.source,
+          location: input.location,
+          rawText: cleanString(match[0]),
+          value: Number(match[1]),
+          countKind: kind,
+          aggregationLevel:
+            kind === "outer_fold_count" || kind === "inner_fold_count"
+              ? "fold"
+              : kind === "repeat_count" || kind === "run_count"
+                ? "repeat"
+                : "aggregate",
+          unit: "count",
+          sourceRefs: input.sourceRefs
+        })
+      )
+    )
+  );
 }
 
-function collectDecimalValuesFromText(text: string): number[] {
-  return [...cleanString(text).matchAll(/(?<![A-Za-z0-9])(-?\d+\.\d+)(?![A-Za-z0-9])/gu)]
-    .map((match) => Number(match[1]))
-    .filter((value) => Number.isFinite(value))
-    .map((value) => roundMetric(value));
+function extractMetricFactsFromText(input: {
+  text: string;
+  source: NumericFactSource;
+  location: string;
+  context: ExperimentArtifactContext;
+  sourceRefs?: PaperSourceRef[];
+}): NormalizedNumericFact[] {
+  const cleaned = cleanString(input.text);
+  if (!cleaned) {
+    return [];
+  }
+  const paragraphMetricKey = inferPrimaryMetricKeyFromText(cleaned) || normalizeMetricIdentifier(cleaned);
+  const paragraphDatasetScope = inferDatasetScope(cleaned, input.context.method.dataset_names, input.source);
+  const fragments = cleaned
+    .split(/(?<=[.!?])\s+/u)
+    .map((fragment) => cleanString(fragment))
+    .filter(Boolean);
+  const facts: NormalizedNumericFact[] = [];
+  for (const fragment of fragments) {
+    if (isObjectiveThresholdFragment(fragment)) {
+      continue;
+    }
+    const fragmentDatasetScope = inferDatasetScope(fragment, input.context.method.dataset_names, input.source);
+    const datasetScope =
+      paragraphDatasetScope !== "aggregate" && paragraphDatasetScope !== "unknown" && fragmentDatasetScope === "aggregate"
+        ? paragraphDatasetScope
+        : fragmentDatasetScope === "unknown"
+          ? paragraphDatasetScope
+          : fragmentDatasetScope;
+    const aggregationLevel = inferAggregationLevel(fragment, datasetScope);
+    const numberMatches = collectNumericLiteralMatches(fragment);
+    const retainedMatches = numberMatches.filter((match) => !shouldSkipMetricToken(fragment, match.raw, match.index));
+    if (retainedMatches.length === 0) {
+      continue;
+    }
+    for (let index = 0; index < retainedMatches.length; index += 1) {
+      const match = retainedMatches[index];
+      const rawValue = match.raw;
+      const value = Number(rawValue);
+      if (!Number.isFinite(value)) {
+        continue;
+      }
+      const metricKey = inferMetricKeyNearNumber(fragment, match.index, paragraphMetricKey);
+      const unit = inferMetricUnit(fragment, metricKey, index, retainedMatches.length, match.index);
+      if (!unit) {
+        continue;
+      }
+      if (!rawValue.includes(".") && !["seconds", "mb"].includes(unit)) {
+        continue;
+      }
+      const normalizedMetricKey = normalizeMetricKeyForUnit(metricKey || normalizeMetricIdentifierForUnit(unit), unit);
+      if (!normalizedMetricKey) {
+        continue;
+      }
+      if (shouldSkipAmbiguousMetricFact(fragment, normalizedMetricKey, datasetScope, input.source)) {
+        continue;
+      }
+      facts.push(
+        buildStructuredNumericFact({
+          factKind: "metric",
+          source: input.source,
+          location: input.location,
+          rawText: fragment,
+          value,
+          metricKey: normalizedMetricKey,
+          metricLabel: humanizeToken(normalizedMetricKey),
+          datasetScope,
+          aggregationLevel,
+          unit,
+          sourceRefs: input.sourceRefs
+        })
+      );
+    }
+  }
+  return dedupeNumericFacts(facts);
 }
 
-function matchesAnyExpectedValue(value: number, expected: number[]): boolean {
-  return expected.some((candidate) => Math.abs(candidate - value) <= Math.max(0.005, Math.abs(candidate) * 0.03));
+function inferVisualMetricKey(text: string): string | undefined {
+  const normalized = normalizeMetricIdentifier(text);
+  if (normalized) {
+    return normalized;
+  }
+  const cleaned = normalizeMetricText(text);
+  if (/\bdeltas?\b.*\blog(?:istic regression|reg)\b/iu.test(cleaned)) {
+    if (/\bmacro f1\b/iu.test(cleaned)) {
+      return "macro_f1_delta_vs_logreg";
+    }
+    return "score_delta_vs_baseline";
+  }
+  return undefined;
+}
+
+function inferVisualMetricDescriptor(input: {
+  row: { label: string; value: number };
+  caption: string;
+  datasetScope: string | "aggregate" | "unknown";
+  context: ExperimentArtifactContext;
+}): {
+  metricKey?: string;
+  metricLabel?: string;
+  unit?: NumericFactUnit;
+  aggregationLevel?: NumericFactAggregation;
+} {
+  const datasetSummary =
+    input.datasetScope !== "aggregate" && input.datasetScope !== "unknown"
+      ? input.context.results.dataset_summaries.find((item) => cleanString(item.dataset).toLowerCase() === input.datasetScope)
+      : undefined;
+
+  if (!datasetSummary) {
+    return {};
+  }
+
+  if (
+    typeof datasetSummary.delta_value === "number"
+    && areApproxEqual(input.row.value, datasetSummary.delta_value, "delta")
+  ) {
+    return {
+      metricKey: inferDatasetDeltaMetricKey(datasetSummary, normalizeMetricIdentifier(datasetSummary.main_metric_label)),
+      metricLabel: datasetSummary.delta_label || `${datasetSummary.main_metric_label} delta`,
+      unit: "delta",
+      aggregationLevel: "dataset"
+    };
+  }
+
+  if (
+    typeof datasetSummary.main_metric_value === "number"
+    && areApproxEqual(input.row.value, datasetSummary.main_metric_value, "score")
+  ) {
+    return {
+      metricKey: normalizeMetricIdentifier(datasetSummary.main_metric_label),
+      metricLabel: datasetSummary.main_metric_label,
+      unit: "score",
+      aggregationLevel: "dataset"
+    };
+  }
+
+  if (
+    typeof datasetSummary.runtime_seconds_mean === "number"
+    && areApproxEqual(input.row.value, datasetSummary.runtime_seconds_mean, "seconds")
+  ) {
+    return {
+      metricKey: "runtime_seconds",
+      metricLabel: "runtime",
+      unit: "seconds",
+      aggregationLevel: "dataset"
+    };
+  }
+
+  if (
+    typeof datasetSummary.peak_memory_mb_mean === "number"
+    && areApproxEqual(input.row.value, datasetSummary.peak_memory_mb_mean, "mb")
+  ) {
+    return {
+      metricKey: "peak_memory_mb",
+      metricLabel: "peak memory",
+      unit: "mb",
+      aggregationLevel: "dataset"
+    };
+  }
+
+  return {};
+}
+
+function extractMetricFactsFromVisual(input: {
+  source: Extract<NumericFactSource, "table" | "figure" | "appendix_table" | "appendix_figure">;
+  location: string;
+  caption: string;
+  rows: Array<{ label: string; value: number }>;
+  context: ExperimentArtifactContext;
+  sourceRefs?: PaperSourceRef[];
+}): NormalizedNumericFact[] {
+  return dedupeNumericFacts(
+    input.rows.flatMap((row) => {
+      const contextText = `${input.caption} ${row.label}`;
+      const datasetScope = inferDatasetScope(contextText, input.context.method.dataset_names, input.source);
+      const descriptor = inferVisualMetricDescriptor({
+        row,
+        caption: input.caption,
+        datasetScope,
+        context: input.context
+      });
+      const metricKey = descriptor.metricKey || inferVisualMetricKey(contextText);
+      const aggregationLevel = descriptor.aggregationLevel || inferAggregationLevel(contextText, datasetScope);
+      const unit = descriptor.unit || inferMetricUnit(contextText, metricKey, 0, 1);
+      if (!metricKey || !unit || !Number.isFinite(row.value)) {
+        return [];
+      }
+      return [
+        buildStructuredNumericFact({
+          factKind: "metric",
+          source: input.source,
+          location: input.location,
+          rawText: `${row.label}: ${formatNumber(row.value)} (${cleanString(input.caption)})`,
+          value: row.value,
+          metricKey,
+          metricLabel: descriptor.metricLabel || row.label,
+          datasetScope,
+          aggregationLevel,
+          unit,
+          sourceRefs: input.sourceRefs
+        })
+      ];
+    })
+  );
+}
+
+function buildStructuredNumericFact(input: {
+  factKind: NumericFactKind;
+  source: NumericFactSource;
+  location: string;
+  rawText: string;
+  value: number;
+  metricKey?: string;
+  metricLabel?: string;
+  countKind?: CountFactKind;
+  datasetScope?: string | "aggregate" | "unknown";
+  aggregationLevel?: NumericFactAggregation;
+  unit?: NumericFactUnit;
+  sourceRefs?: PaperSourceRef[];
+}): NormalizedNumericFact {
+  const normalizedValue = roundMetric(input.value);
+  const metricKey = input.metricKey ? normalizeMetricIdentifier(input.metricKey) || input.metricKey : undefined;
+  const semantics = inferMetricSemantics(metricKey);
+  const rawText = cleanString(input.rawText);
+  const location = cleanString(input.location);
+  return {
+    fact_id: [
+      input.source,
+      location || "location",
+      input.factKind,
+      metricKey || input.countKind || "value",
+      cleanString(`${input.datasetScope || "scope"}:${input.aggregationLevel || "agg"}:${normalizedValue}`)
+    ]
+      .join("|")
+      .toLowerCase(),
+    fact_kind: input.factKind,
+    source: input.source,
+    location,
+    raw_text: rawText,
+    value: input.value,
+    normalized_value: normalizedValue,
+    ...(metricKey ? { metric_key: metricKey } : {}),
+    ...(input.metricLabel ? { metric_label: cleanString(input.metricLabel) } : {}),
+    ...(semantics.baseMetricKey ? { base_metric_key: semantics.baseMetricKey } : {}),
+    ...(semantics.comparisonTarget ? { comparison_target: semantics.comparisonTarget } : {}),
+    ...(input.countKind ? { count_kind: input.countKind } : {}),
+    ...(input.datasetScope ? { dataset_scope: input.datasetScope } : {}),
+    ...(input.aggregationLevel ? { aggregation_level: input.aggregationLevel } : {}),
+    ...(input.unit ? { unit: input.unit } : {}),
+    ...(input.sourceRefs?.length ? { source_refs: input.sourceRefs } : {})
+  };
+}
+
+function buildComparableFactKey(fact: NormalizedNumericFact): string | undefined {
+  if (fact.fact_kind === "count") {
+    return fact.count_kind ? `count|${fact.count_kind}` : undefined;
+  }
+  const metricKey = fact.base_metric_key || fact.metric_key;
+  if (!metricKey) {
+    return undefined;
+  }
+  return [
+    "metric",
+    metricKey,
+    fact.dataset_scope || "unknown",
+    fact.aggregation_level || "unknown",
+    fact.unit || "score"
+  ].join("|");
+}
+
+function humanizeComparableFactKey(fact: NormalizedNumericFact | undefined): string {
+  if (!fact) {
+    return "numeric facts";
+  }
+  if (fact.fact_kind === "count") {
+    return humanizeCountKind(fact.count_kind);
+  }
+  const scope =
+    fact.dataset_scope && fact.dataset_scope !== "aggregate" && fact.dataset_scope !== "unknown"
+      ? `${fact.dataset_scope} `
+      : fact.dataset_scope === "aggregate"
+        ? "aggregate "
+        : "";
+  return `${scope}${humanizeToken(fact.metric_key || "metric")}`.trim();
+}
+
+function humanizeCountKind(kind: CountFactKind | undefined): string {
+  switch (kind) {
+    case "dataset_count":
+      return "datasets";
+    case "repeat_count":
+      return "repeats";
+    case "outer_fold_count":
+      return "outer folds";
+    case "inner_fold_count":
+      return "inner folds";
+    case "run_count":
+      return "runs";
+    case "sample_count":
+      return "samples";
+    default:
+      return "counts";
+  }
+}
+
+function areComparableNumericFacts(left: NormalizedNumericFact, right: NormalizedNumericFact): boolean {
+  if (left.fact_kind !== right.fact_kind) {
+    return false;
+  }
+  if (left.fact_kind === "count") {
+    return Boolean(left.count_kind && left.count_kind === right.count_kind);
+  }
+  const leftMetricKey = left.base_metric_key || left.metric_key;
+  const rightMetricKey = right.base_metric_key || right.metric_key;
+  if (!leftMetricKey || !rightMetricKey || leftMetricKey !== rightMetricKey) {
+    return false;
+  }
+  if ((left.unit || "score") !== (right.unit || "score")) {
+    return false;
+  }
+  if ((left.aggregation_level || "unknown") !== (right.aggregation_level || "unknown")) {
+    return false;
+  }
+  if ((left.dataset_scope || "unknown") !== (right.dataset_scope || "unknown")) {
+    return false;
+  }
+  if (!areComparisonTargetsCompatible(left.comparison_target, right.comparison_target, left.unit || "score")) {
+    return false;
+  }
+  return true;
+}
+
+function areFactValuesEquivalent(left: NormalizedNumericFact, right: NormalizedNumericFact): boolean {
+  return areApproxEqual(left.normalized_value, right.normalized_value, left.unit || right.unit);
+}
+
+function areApproxEqual(left: number, right: number, unit: NumericFactUnit | undefined): boolean {
+  const tolerance =
+    unit === "seconds"
+      ? Math.max(0.05, Math.max(Math.abs(left), Math.abs(right)) * 0.01)
+      : unit === "mb"
+        ? Math.max(0.5, Math.max(Math.abs(left), Math.abs(right)) * 0.01)
+        : unit === "count"
+          ? 0
+          : Math.max(0.0005, Math.max(Math.abs(left), Math.abs(right)) * 0.001);
+  return Math.abs(left - right) <= tolerance;
+}
+
+function dedupeNumericFacts(facts: NormalizedNumericFact[]): NormalizedNumericFact[] {
+  const seen = new Set<string>();
+  const unique: NormalizedNumericFact[] = [];
+  for (const fact of facts) {
+    const key = `${fact.fact_id}|${fact.normalized_value}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(fact);
+  }
+  return unique;
+}
+
+function dedupeConsistencyIssues(issues: ConsistencyLintIssue[]): ConsistencyLintIssue[] {
+  const seen = new Set<string>();
+  const unique: ConsistencyLintIssue[] = [];
+  for (const issue of issues) {
+    const key = `${issue.kind}|${issue.severity}|${issue.message}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(issue);
+  }
+  return unique;
+}
+
+function inferDatasetScope(
+  text: string,
+  datasetNames: string[],
+  source: NumericFactSource
+): string | "aggregate" | "unknown" {
+  const cleaned = cleanString(text).toLowerCase();
+  const matchedDataset = datasetNames.find((dataset) => cleaned.includes(cleanString(dataset).toLowerCase()));
+  if (matchedDataset) {
+    return matchedDataset;
+  }
+  if (
+    source === "table"
+    || source === "figure"
+    || source === "appendix_table"
+    || source === "appendix_figure"
+    || /\bacross datasets\b|\baverage across datasets\b|\bmean across datasets\b|\boverall\b|\baggregate\b|\bstrongest workflow\b/iu.test(cleaned)
+  ) {
+    return "aggregate";
+  }
+  return ["abstract", "results", "conclusion", "appendix_section"].includes(source) ? "aggregate" : "unknown";
+}
+
+function inferAggregationLevel(text: string, datasetScope: string | "aggregate" | "unknown"): NumericFactAggregation {
+  const cleaned = cleanString(text).toLowerCase();
+  if (datasetScope !== "aggregate" && datasetScope !== "unknown") {
+    return "dataset";
+  }
+  if (/\brepeat|run\b/iu.test(cleaned)) {
+    return "repeat";
+  }
+  if (/\bfold\b/iu.test(cleaned)) {
+    return "fold";
+  }
+  return datasetScope === "aggregate" ? "aggregate" : "unknown";
+}
+
+function inferMetricUnit(
+  text: string,
+  metricKey: string | undefined,
+  index: number,
+  totalMatches: number,
+  rawIndex?: number
+): NumericFactUnit | undefined {
+  const cleaned = cleanString(text).toLowerCase();
+  const normalized = normalizeMetricText(text);
+  const searchText = normalizeMetricSearchText(text);
+  const memoryDistance = typeof rawIndex === "number" ? nearestKeywordDistance(searchText, rawIndex, ["memory", "mb", "ram", "gib"]) : undefined;
+  const runtimeDistance =
+    typeof rawIndex === "number" ? nearestKeywordDistance(searchText, rawIndex, ["runtime", "latency", "second", "seconds", "sec"]) : undefined;
+  if (typeof memoryDistance === "number" && (typeof runtimeDistance !== "number" || memoryDistance < runtimeDistance)) {
+    return "mb";
+  }
+  if (typeof runtimeDistance === "number" || metricKey === "runtime_seconds") {
+    return "seconds";
+  }
+  if (metricKey === "peak_memory_mb" || /\bmemory\b|\bram\b|\bmb\b|\bgib\b/iu.test(normalized)) {
+    return "mb";
+  }
+  if (/\bci\b|\bconfidence interval\b|\binterval\b.*\bspan/iu.test(normalized) || cleaned.includes("95%")) {
+    if (totalMatches >= 2) {
+      return index === 0 ? "ci_lower" : "ci_upper";
+    }
+    return "score";
+  }
+  if (metricKey?.includes("delta") || /\bdeltas?\b|\bimprov(?:e|ed|es|ement)\b|\bgain\b|\bvs\b|\bby\b/iu.test(normalized)) {
+    return "delta";
+  }
+  return metricKey ? "score" : undefined;
+}
+
+function inferMetricKeyNearNumber(
+  fragment: string,
+  rawIndex: number,
+  paragraphMetricKey: string | undefined
+): string | undefined {
+  const nearestMetricKey = inferMetricKeyByDistance(fragment, rawIndex);
+  if (nearestMetricKey) {
+    return nearestMetricKey;
+  }
+  if (/\bmain score\b|\bmain metric\b|\bdeltas?\b|\binterval spans\b|\bconfidence interval\b/iu.test(fragment)) {
+    return paragraphMetricKey;
+  }
+  return undefined;
+}
+
+function nearestKeywordDistance(text: string, rawIndex: number, keywords: string[]): number | undefined {
+  let best: number | undefined;
+  for (const keyword of keywords) {
+    const pattern = new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
+    for (const match of text.matchAll(pattern)) {
+      const distance = Math.abs((match.index || 0) - rawIndex);
+      if (best === undefined || distance < best) {
+        best = distance;
+      }
+    }
+  }
+  return best;
+}
+
+function inferMetricKeyByDistance(text: string, rawIndex: number): string | undefined {
+  const cleaned = normalizeMetricSearchText(text);
+  const candidates: Array<{ key: string; distance: number }> = [];
+  const patternSpecs: Array<{ key: string; patterns: string[] }> = [
+    {
+      key: "macro_f1_delta_vs_logreg",
+      patterns: [
+        "macro f1 delta vs logistic regression",
+        "macro f1 delta versus logistic regression",
+        "macro f1 delta vs logreg"
+      ]
+    },
+    { key: "macro_f1_delta", patterns: ["macro f1 delta", "macro f1 deltas"] },
+    { key: "macro_f1", patterns: ["macro f1"] },
+    { key: "pairwise_ranking_agreement", patterns: ["pairwise ranking agreement", "ranking agreement"] },
+    { key: "winner_consistency", patterns: ["winner consistency"] },
+    { key: "runtime_seconds", patterns: ["runtime", "latency", "second", "seconds", "sec"] },
+    { key: "peak_memory_mb", patterns: ["peak memory", "memory", "ram", "mb"] },
+    { key: "top1_accuracy", patterns: ["top 1 accuracy", "top-1 accuracy"] },
+    { key: "accuracy", patterns: ["accuracy"] }
+  ];
+  for (const spec of patternSpecs) {
+    const distance = nearestKeywordDistance(cleaned, rawIndex, spec.patterns);
+    if (typeof distance === "number") {
+      candidates.push({ key: spec.key, distance });
+    }
+  }
+  return candidates.sort((left, right) => left.distance - right.distance || right.key.length - left.key.length)[0]?.key;
+}
+
+function normalizeMetricIdentifier(value: string): string | undefined {
+  const cleaned = normalizeMetricText(value);
+  if (!cleaned) {
+    return undefined;
+  }
+  if (/\bmacro f1\b.*\bdeltas?\b.*\blogistic regression\b|\bmacro f1 delta vs logreg\b|\bmacro_f1_delta_vs_logreg\b/iu.test(cleaned)) {
+    return "macro_f1_delta_vs_logreg";
+  }
+  if (/\bmacro f1\b.*\bdeltas?\b/iu.test(cleaned)) {
+    return "macro_f1_delta";
+  }
+  if (/\bpairwise ranking agreement\b/iu.test(cleaned)) {
+    return "pairwise_ranking_agreement";
+  }
+  if (/\bwinner consistency\b/iu.test(cleaned)) {
+    return "winner_consistency";
+  }
+  if (/\bruntime\b|\blatency\b/.test(cleaned)) {
+    return "runtime_seconds";
+  }
+  if (/\bpeak memory\b|\bmemory\b|\bram\b/.test(cleaned)) {
+    return "peak_memory_mb";
+  }
+  if (/\btop[- ]?1 accuracy\b/iu.test(cleaned)) {
+    return "top1_accuracy";
+  }
+  if (/\baccuracy\b/iu.test(cleaned)) {
+    return "accuracy";
+  }
+  if (/\bmacro f1\b/iu.test(cleaned)) {
+    return "macro_f1";
+  }
+  if (/\bf1\b/iu.test(cleaned)) {
+    return "f1";
+  }
+  return undefined;
+}
+
+function inferPrimaryMetricKeyFromText(value: string): string | undefined {
+  const cleaned = normalizeMetricText(value);
+  const normalized = normalizeMetricIdentifier(cleaned);
+  if (normalized && normalized !== "macro_f1" && normalized !== "accuracy" && normalized !== "f1") {
+    return normalized;
+  }
+  const candidates: Array<{ key: string; index: number }> = [
+    { key: "macro_f1_delta_vs_logreg", index: cleaned.search(/\bmacro f1\b.*\bdeltas?\b.*\blog(?:istic regression|reg)\b/u) },
+    { key: "macro_f1_delta", index: cleaned.search(/\bmacro f1\b.*\bdeltas?\b/u) },
+    { key: "macro_f1", index: cleaned.search(/\bmacro f1\b/u) },
+    { key: "top1_accuracy", index: cleaned.search(/\btop[- ]?1 accuracy\b/u) },
+    { key: "accuracy", index: cleaned.search(/\baccuracy\b/u) },
+    { key: "pairwise_ranking_agreement", index: cleaned.search(/\bpairwise ranking agreement\b/u) },
+    { key: "winner_consistency", index: cleaned.search(/\bwinner consistency\b/u) },
+    { key: "runtime_seconds", index: cleaned.search(/\bruntime\b|\blatency\b/u) },
+    { key: "peak_memory_mb", index: cleaned.search(/\bmemory\b|\bram\b/u) }
+  ].filter((candidate) => candidate.index >= 0);
+  return candidates.sort((left, right) => left.index - right.index)[0]?.key;
+}
+
+function normalizeMetricText(value: string): string {
+  return cleanString(value)
+    .toLowerCase()
+    .replace(/[_./-]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function normalizeMetricSearchText(value: string): string {
+  return cleanString(value)
+    .toLowerCase()
+    .replace(/[_./-]/gu, " ");
+}
+
+function inferMetricSemantics(metricKey: string | undefined): {
+  baseMetricKey?: string;
+  comparisonTarget?: string;
+} {
+  if (!metricKey) {
+    return {};
+  }
+  if (metricKey === "macro_f1_delta_vs_logreg") {
+    return {
+      baseMetricKey: "macro_f1",
+      comparisonTarget: "logreg"
+    };
+  }
+  if (metricKey === "macro_f1_delta") {
+    return {
+      baseMetricKey: "macro_f1"
+    };
+  }
+  if (metricKey === "f1_delta") {
+    return {
+      baseMetricKey: "f1"
+    };
+  }
+  const baseMetricKey = metricKey.replace(/_delta(?:_vs_[a-z0-9_]+)?$/u, "");
+  const comparisonTarget = metricKey.match(/_vs_([a-z0-9_]+)$/u)?.[1];
+  return {
+    ...(baseMetricKey ? { baseMetricKey } : {}),
+    ...(comparisonTarget ? { comparisonTarget } : {})
+  };
+}
+
+function areComparisonTargetsCompatible(
+  left: string | undefined,
+  right: string | undefined,
+  unit: NumericFactUnit
+): boolean {
+  if (!["delta", "ci_lower", "ci_upper"].includes(unit)) {
+    return true;
+  }
+  return !left || !right || left === right;
+}
+
+function normalizeMetricIdentifierForUnit(unit: NumericFactUnit): string | undefined {
+  switch (unit) {
+    case "seconds":
+      return "runtime_seconds";
+    case "mb":
+      return "peak_memory_mb";
+    default:
+      return undefined;
+  }
+}
+
+function normalizeMetricKeyForUnit(metricKey: string | undefined, unit: NumericFactUnit): string | undefined {
+  if (!metricKey || unit !== "delta") {
+    return metricKey;
+  }
+  if (metricKey === "macro_f1") {
+    return "macro_f1_delta";
+  }
+  if (metricKey === "f1") {
+    return "f1_delta";
+  }
+  if (metricKey === "accuracy") {
+    return "accuracy_delta";
+  }
+  if (metricKey === "top1_accuracy") {
+    return "top1_accuracy_delta";
+  }
+  return metricKey;
+}
+
+function shouldSkipMetricToken(fragment: string, rawToken: string, index: number): boolean {
+  const nextChar = fragment[index + rawToken.length];
+  if (nextChar === "%") {
+    return true;
+  }
+  const window = fragment.slice(Math.max(0, index - 8), Math.min(fragment.length, index + rawToken.length + 12));
+  if (/\btop[- ]?1 accuracy\b/iu.test(window) && rawToken === "1") {
+    return true;
+  }
+  const widerWindow = fragment.slice(Math.max(0, index - 20), Math.min(fragment.length, index + rawToken.length + 20));
+  if (/(?:>=|<=|>|<)\s*$/.test(fragment.slice(Math.max(0, index - 4), index))) {
+    return true;
+  }
+  if (/\b(?:target|threshold|objective|goal|constraint|minimum|at least|at most)\b/iu.test(widerWindow)) {
+    return true;
+  }
+  return false;
+}
+
+function isObjectiveThresholdFragment(fragment: string): boolean {
+  const normalized = normalizeMetricText(fragment);
+  return (
+    /(?:>=|<=|>|<)/u.test(fragment)
+    && /\bobjective\b|\bconstraint\b|\btarget\b|\bthreshold\b|\baround\b|\bposition(?:s|ed|ing)?\b|\bscope(?:d)?\b/iu.test(normalized)
+  );
+}
+
+function isObjectiveThresholdFact(fact: NormalizedNumericFact): boolean {
+  return fact.fact_kind === "metric" && isObjectiveThresholdFragment(fact.raw_text);
+}
+
+function shouldSkipAmbiguousMetricFact(
+  fragment: string,
+  metricKey: string,
+  datasetScope: string | "aggregate" | "unknown",
+  source: NumericFactSource
+): boolean {
+  if (
+    datasetScope === "aggregate"
+    && ["discussion", "appendix_section"].includes(source)
+    && ["pairwise_ranking_agreement", "winner_consistency"].includes(metricKey)
+    && !/\bacross datasets\b|\baggregate\b|\boverall\b|\bmean\b/iu.test(fragment)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function shouldWarnOnUnverifiableFact(source: NumericFactSource): boolean {
+  return source !== "artifact";
+}
+
+function allowsAppendixOnlyWarning(source: NumericFactSource): boolean {
+  return source === "abstract" || source === "conclusion";
+}
+
+function isAppendixFactSource(source: NumericFactSource): boolean {
+  return source === "appendix_section" || source === "appendix_table" || source === "appendix_figure";
 }
 
 function extractNumericNoteCount(notes: string[]): number | undefined {
   for (const note of notes) {
-    const first = collectNumbersFromMatches(note, /\b(\d+)(?:[-\s]?fold|\s+repeated|\s+repeats?|\s+seeds?)\b/giu)[0];
+    const first = collectNumbersFromMatches(
+      note,
+      /\b(\d+)(?:[-\s]?fold|\s+repeated|\s+repeats?|\s+seeds?|\s+samples?|\s+instances?|\s+rows?)\b/giu
+    )[0];
     if (typeof first === "number") {
       return first;
     }
   }
   return undefined;
+}
+
+function extractFirstMetricValue(notes: string[], pattern: RegExp): number | undefined {
+  for (const note of notes) {
+    const match = cleanString(note).match(pattern);
+    if (!match) {
+      continue;
+    }
+    const value = Number(match[1]);
+    if (Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function extractExpectedCountFromNotes(notes: string[], kind: CountFactKind): number | undefined {
+  const patterns: Record<CountFactKind, RegExp[]> = {
+    dataset_count: [/\b(\d+)\s+datasets?\b/giu],
+    repeat_count: [/\b(\d+)\s+(?:repeats?|repeated evaluations?|seeds?)\b/giu],
+    run_count: [/\b(\d+)\s+runs?\b/giu],
+    outer_fold_count: [/\bouter\s+(\d+)[-\s]?fold\b/giu, /\b(\d+)[-\s]?fold outer\b/giu],
+    inner_fold_count: [/\binner\s+(\d+)[-\s]?fold\b/giu, /\b(\d+)[-\s]?fold inner\b/giu],
+    sample_count: [/\b(\d+)\s+(?:samples?|instances?|rows)\b/giu]
+  };
+  for (const note of notes) {
+    for (const pattern of patterns[kind]) {
+      const first = collectNumbersFromMatches(note, pattern)[0];
+      if (typeof first === "number") {
+        return first;
+      }
+    }
+  }
+  return undefined;
+}
+
+function collectNumericLiteralMatches(text: string): Array<{ raw: string; index: number }> {
+  const cleaned = cleanString(text);
+  const matches: Array<{ raw: string; index: number }> = [];
+  const pattern = /-?\d+(?:\.\d+)?/gu;
+  let match = pattern.exec(cleaned);
+  while (match) {
+    const raw = match[0] || "";
+    const index = match.index || 0;
+    const before = cleaned[index - 1] || "";
+    if (!/[A-Za-z0-9]/u.test(before) && !/[A-Za-z]/u.test(before)) {
+      matches.push({ raw, index });
+    }
+    match = pattern.exec(cleaned);
+  }
+  return matches;
 }
 
 function collectNumbersFromMatches(text: string, pattern: RegExp): number[] {
@@ -1323,10 +2846,18 @@ export function applyScientificWritingPolicy(input: {
   const rewritten = claimStrengthRewriter({ draft: upgradedDraft, context });
   upgradedDraft = rewritten.draft;
   let expandedSections: string[] = [];
-  let pageBudget = pageBudgetManager({
+  const pageBudgetBeforeExpansion = pageBudgetManager({
     draft: upgradedDraft,
     profile
   });
+  let pageBudget = pageBudgetBeforeExpansion;
+  let expansionRecheck: ScientificAutoRepairRecheck = {
+    attempted: false,
+    page_budget_before: pageBudgetBeforeExpansion.status,
+    page_budget_after: pageBudgetBeforeExpansion.status,
+    resolved_headings: [],
+    unresolved_headings: pageBudgetBeforeExpansion.auto_expand_headings
+  };
   if (pageBudget.auto_expand_headings.length > 0) {
     expandedSections = [...pageBudget.auto_expand_headings];
     upgradedDraft = expandDraftAgainstBudget(upgradedDraft, input.bundle, context, pageBudget.auto_expand_headings);
@@ -1334,7 +2865,23 @@ export function applyScientificWritingPolicy(input: {
       draft: upgradedDraft,
       profile
     });
+    expansionRecheck = {
+      attempted: true,
+      page_budget_before: pageBudgetBeforeExpansion.status,
+      page_budget_after: pageBudget.status,
+      resolved_headings: expandedSections.filter(
+        (heading) => !pageBudget.auto_expand_headings.some((candidate) => normalizeHeading(candidate) === normalizeHeading(heading))
+      ),
+      unresolved_headings: pageBudget.auto_expand_headings
+    };
   }
+  const evidenceDiagnostics = buildEvidenceInsufficiencyReport({
+    pageBudget,
+    methodReport,
+    resultsReport,
+    relatedWorkReport,
+    discussionReport
+  });
   const appendixPlan = appendixBuilder({
     context,
     profile
@@ -1347,10 +2894,12 @@ export function applyScientificWritingPolicy(input: {
     results_richness: resultsReport,
     related_work_richness: relatedWorkReport,
     discussion_richness: discussionReport,
+    evidence_diagnostics: evidenceDiagnostics,
     claim_rewrite_report: rewritten.report,
     appendix_plan: appendixPlan,
     auto_repairs: {
-      expanded_sections: expandedSections
+      expanded_sections: expandedSections,
+      expansion_recheck: expansionRecheck
     }
   };
 }
@@ -1364,39 +2913,51 @@ export function buildScientificValidationArtifact(input: ScientificDraftResult):
       category: "page_budget",
       severity: "warning",
       policy: "strict_fail",
+      finding: input.evidence_diagnostics.blocked_by_evidence_insufficiency ? "unverifiable" : "repairable",
       message:
         input.page_budget.warnings[0]
         || `Main-body length remains below the venue-aware ${input.page_budget.main_page_limit}-page target.`,
-      details: input.page_budget.warnings.slice(1)
+      details: input.page_budget.warnings.slice(1),
+      thin_sections: input.evidence_diagnostics.thin_sections,
+      missing_evidence_categories: input.evidence_diagnostics.missing_evidence_categories,
+      expandable_from_existing_evidence: input.evidence_diagnostics.expandable_from_existing_evidence,
+      blocked_by_evidence_insufficiency: input.evidence_diagnostics.blocked_by_evidence_insufficiency
     });
   }
+  const sectionDiagnostics = new Map(
+    input.evidence_diagnostics.section_diagnostics.map((diagnostic) => [normalizeHeading(diagnostic.section), diagnostic] as const)
+  );
   pushCompletenessIssue(
     issues,
     "method_completeness",
     "method_completeness_incomplete",
     input.method_completeness,
-    "Method remains incomplete for scientific reporting."
+    "Method remains incomplete for scientific reporting.",
+    sectionDiagnostics.get("method")
   );
   pushCompletenessIssue(
     issues,
     "results_richness",
     "results_richness_incomplete",
     input.results_richness,
-    "Results remain too thin for a full paper."
+    "Results remain too thin for a full paper.",
+    sectionDiagnostics.get("results")
   );
   pushCompletenessIssue(
     issues,
     "related_work_richness",
     "related_work_richness_incomplete",
     input.related_work_richness,
-    "Related Work lacks enough clustering or positioning detail."
+    "Related Work lacks enough clustering or positioning detail.",
+    sectionDiagnostics.get("related work")
   );
   pushCompletenessIssue(
     issues,
     "discussion_richness",
     "discussion_richness_incomplete",
     input.discussion_richness,
-    "Discussion or Limitations remain too thin."
+    "Discussion or Limitations remain too thin.",
+    sectionDiagnostics.get("discussion")
   );
 
   return {
@@ -1405,12 +2966,14 @@ export function buildScientificValidationArtifact(input: ScientificDraftResult):
     results_richness: input.results_richness,
     related_work_richness: input.related_work_richness,
     discussion_richness: input.discussion_richness,
+    evidence_diagnostics: input.evidence_diagnostics,
     claim_rewrite_report: input.claim_rewrite_report,
     appendix_plan: input.appendix_plan,
     auto_repairs: {
       claim_rewrite_count: input.claim_rewrite_report.rewrites.length,
       expanded_sections: input.auto_repairs.expanded_sections,
-      appendix_route_count: input.appendix_plan.cross_references.length
+      appendix_route_count: input.appendix_plan.cross_references.length,
+      expansion_recheck: input.auto_repairs.expansion_recheck
     },
     issues
   };
@@ -1423,18 +2986,46 @@ export function buildWritePaperGateDecision(input: {
   appendixLint: ConsistencyLintReport;
 }): WritePaperGateDecision {
   const issues: WritePaperGateDecisionIssue[] = [
-    ...input.scientificValidation.issues.map((issue) => ({
-      ...issue,
-      blocking: issue.policy === "always_fail" || (issue.policy === "strict_fail" && input.mode === "strict_paper")
-    })),
+    ...input.scientificValidation.issues.map((issue) => {
+      const blocking = issue.policy === "always_fail" || (issue.policy === "strict_fail" && input.mode === "strict_paper");
+      const outcome: GateIssueOutcome = blocking ? "fail" : issue.finding === "unverifiable" ? "unverifiable" : "warn";
+      return {
+        ...issue,
+        blocking,
+        outcome
+      };
+    }),
     ...input.consistencyLint.issues.map((issue) => convertLintIssueToGateIssue(issue, "consistency_lint", input.mode)),
     ...input.appendixLint.issues.map((issue) => convertLintIssueToGateIssue(issue, "appendix_lint", input.mode))
   ];
   const blockingIssues = issues.filter((issue) => issue.blocking);
   const warningCount = issues.filter((issue) => !issue.blocking).length;
   const failureReasons = blockingIssues.map((issue) => issue.message);
+  const classificationSummary = {
+    contradiction_count: issues.filter((issue) => issue.finding === "contradiction").length,
+    unverifiable_count: issues.filter((issue) => issue.finding === "unverifiable").length,
+    repairable_count: issues.filter((issue) => issue.finding === "repairable").length,
+    informational_count: issues.filter((issue) => issue.finding === "informational").length,
+    auto_repair_count:
+      input.scientificValidation.auto_repairs.claim_rewrite_count
+      + input.scientificValidation.auto_repairs.expanded_sections.length
+  };
+  const evidenceSummary = {
+    thin_sections: input.scientificValidation.evidence_diagnostics.thin_sections,
+    missing_evidence_categories: input.scientificValidation.evidence_diagnostics.missing_evidence_categories,
+    blocked_by_evidence_insufficiency: input.scientificValidation.evidence_diagnostics.blocked_by_evidence_insufficiency,
+    expandable_from_existing_evidence: input.scientificValidation.evidence_diagnostics.expandable_from_existing_evidence
+  };
   const summary = blockingIssues.length > 0
-    ? [`write_paper quality gate failed in ${input.mode} mode.`, ...failureReasons]
+    ? [
+        `write_paper quality gate failed in ${input.mode} mode.`,
+        ...failureReasons,
+        ...(evidenceSummary.blocked_by_evidence_insufficiency
+          ? [
+              `Evidence insufficiency blocks recovery for ${joinHumanList(evidenceSummary.thin_sections)} because ${joinHumanList(evidenceSummary.missing_evidence_categories)} remain missing.`
+            ]
+          : [])
+      ]
     : issues.length > 0
       ? [
           `write_paper quality gate emitted ${issues.length} non-blocking validation issue(s) in ${input.mode} mode.`,
@@ -1449,6 +3040,8 @@ export function buildWritePaperGateDecision(input: {
     blocking_issue_count: blockingIssues.length,
     warning_count: warningCount,
     failure_reasons: failureReasons,
+    classification_summary: classificationSummary,
+    evidence_summary: evidenceSummary,
     summary
   };
 }
@@ -1536,12 +3129,254 @@ export function materializeScientificManuscript(input: {
     appendixPlan: input.appendixPlan,
     pageBudget: input.pageBudget
   });
+  const provenanceMap = buildManuscriptProvenanceMap({
+    manuscript,
+    draft: input.draft,
+    context,
+    expectedMetricFacts: collectExpectedMetricFacts(context)
+  });
 
   return {
     manuscript,
     consistency_lint: consistency,
-    appendix_lint: appendixLint
+    appendix_lint: appendixLint,
+    provenance_map: provenanceMap
   };
+}
+
+function buildManuscriptProvenanceMap(input: {
+  manuscript: PaperManuscript;
+  draft: PaperDraft;
+  context: ExperimentArtifactContext;
+  expectedMetricFacts: NormalizedNumericFact[];
+}): ManuscriptProvenanceMap {
+  const sectionClaimIds = new Map<string, string[]>();
+  for (const claim of input.draft.claims) {
+    const key = normalizeHeading(claim.section_heading || "");
+    if (!key) {
+      continue;
+    }
+    sectionClaimIds.set(key, uniqueStrings([...(sectionClaimIds.get(key) || []), claim.claim_id]));
+  }
+
+  const allObservedMetricFacts = collectObservedMetricFacts(input.manuscript, input.context);
+  const appendixFacts = allObservedMetricFacts.filter((fact) => isAppendixFactSource(fact.source));
+  const paragraphAnchors: ManuscriptProvenanceParagraphAnchor[] = [];
+  const numericAnchors: ManuscriptProvenanceNumericAnchor[] = [];
+  const sections: ManuscriptProvenanceSectionEntry[] = [];
+
+  const abstractAnchorId = buildManuscriptParagraphAnchorId("Abstract", 0);
+  const abstractFacts = extractMetricFactsFromText({
+    text: input.manuscript.abstract,
+    source: "abstract",
+    location: "Abstract",
+    context: input.context,
+    sourceRefs: undefined
+  });
+  paragraphAnchors.push({
+    anchor_id: abstractAnchorId,
+    section: "Abstract",
+    paragraph_index: 0,
+    text_preview: truncatePreview(input.manuscript.abstract),
+    numeric_fact_ids: abstractFacts.map((fact) => fact.fact_id)
+  });
+  numericAnchors.push(
+    ...abstractFacts.map((fact) =>
+      buildProvenanceNumericAnchor(fact, abstractAnchorId, input.expectedMetricFacts, appendixFacts)
+    )
+  );
+  sections.push({
+    section: "Abstract",
+    paragraph_anchor_ids: [abstractAnchorId],
+    claim_anchor_ids: [],
+    numeric_fact_ids: abstractFacts.map((fact) => fact.fact_id)
+  });
+
+  for (const section of input.manuscript.sections) {
+    const normalizedHeading = normalizeHeading(section.heading);
+    const claimIds = sectionClaimIds.get(normalizedHeading) || [];
+    const sectionParagraphAnchors: string[] = [];
+    const sectionNumericFactIds: string[] = [];
+
+    for (let index = 0; index < section.paragraphs.length; index += 1) {
+      const paragraph = section.paragraphs[index] || "";
+      const anchorId = buildManuscriptParagraphAnchorId(section.heading, index);
+      const facts = extractMetricFactsFromText({
+        text: paragraph,
+        source: mapSectionHeadingToNumericFactSource(section.heading),
+        location: section.heading,
+        context: input.context,
+        sourceRefs: section.source_refs
+      });
+      sectionParagraphAnchors.push(anchorId);
+      sectionNumericFactIds.push(...facts.map((fact) => fact.fact_id));
+      paragraphAnchors.push({
+        anchor_id: anchorId,
+        section: section.heading,
+        paragraph_index: index,
+        text_preview: truncatePreview(paragraph),
+        ...(section.source_refs?.length ? { source_refs: section.source_refs } : {}),
+        ...(claimIds.length ? { claim_ids: claimIds } : {}),
+        numeric_fact_ids: facts.map((fact) => fact.fact_id)
+      });
+      numericAnchors.push(
+        ...facts.map((fact) =>
+          buildProvenanceNumericAnchor(fact, anchorId, input.expectedMetricFacts, appendixFacts)
+        )
+      );
+    }
+
+    sections.push({
+      section: section.heading,
+      paragraph_anchor_ids: sectionParagraphAnchors,
+      claim_anchor_ids: claimIds.map((claimId) => `claim:${claimId}`),
+      numeric_fact_ids: uniqueStrings(sectionNumericFactIds),
+      ...(section.source_refs?.length ? { source_refs: section.source_refs } : {})
+    });
+  }
+
+  const visualAnchors = buildProvenanceVisualEntries(input, numericAnchors);
+
+  return {
+    sections,
+    paragraph_anchors: paragraphAnchors,
+    numeric_anchors: dedupeProvenanceNumericAnchors(numericAnchors),
+    visual_anchors: visualAnchors
+  };
+}
+
+function buildProvenanceVisualEntries(
+  input: {
+    manuscript: PaperManuscript;
+    context: ExperimentArtifactContext;
+    expectedMetricFacts: NormalizedNumericFact[];
+  },
+  numericAnchors: ManuscriptProvenanceNumericAnchor[]
+): ManuscriptProvenanceVisualEntry[] {
+  const appendixFacts = numericAnchors
+    .filter((anchor) => anchor.fact.source === "appendix_section" || anchor.fact.source === "appendix_table" || anchor.fact.source === "appendix_figure")
+    .map((anchor) => anchor.fact);
+  const entries: ManuscriptProvenanceVisualEntry[] = [];
+  const pushEntry = (
+    kind: ManuscriptProvenanceVisualEntry["kind"],
+    caption: string,
+    rows: Array<{ label: string; value: number }>,
+    index: number,
+    source: Extract<NumericFactSource, "table" | "figure" | "appendix_table" | "appendix_figure">,
+    sourceRefs?: PaperSourceRef[]
+  ) => {
+    const anchorId = `${kind}:${index}`;
+    const facts = extractMetricFactsFromVisual({
+      source,
+      location: anchorId,
+      caption,
+      rows,
+      context: input.context,
+      sourceRefs
+    });
+    numericAnchors.push(
+      ...facts.map((fact) =>
+        buildProvenanceNumericAnchor(fact, anchorId, input.expectedMetricFacts, appendixFacts)
+      )
+    );
+    entries.push({
+      anchor_id: anchorId,
+      kind,
+      caption,
+      ...(sourceRefs?.length ? { source_refs: sourceRefs } : {}),
+      numeric_fact_ids: facts.map((fact) => fact.fact_id)
+    });
+  };
+
+  (input.manuscript.tables || []).forEach((table, index) => {
+    pushEntry("table", table.caption, table.rows, index + 1, "table", table.source_refs);
+  });
+  (input.manuscript.figures || []).forEach((figure, index) => {
+    pushEntry("figure", figure.caption, figure.bars, index + 1, "figure", figure.source_refs);
+  });
+  (input.manuscript.appendix_tables || []).forEach((table, index) => {
+    pushEntry("appendix_table", table.caption, table.rows, index + 1, "appendix_table", table.source_refs);
+  });
+  (input.manuscript.appendix_figures || []).forEach((figure, index) => {
+    pushEntry("appendix_figure", figure.caption, figure.bars, index + 1, "appendix_figure", figure.source_refs);
+  });
+
+  return entries;
+}
+
+function buildProvenanceNumericAnchor(
+  fact: NormalizedNumericFact,
+  sourceAnchorId: string,
+  expectedMetricFacts: NormalizedNumericFact[],
+  appendixFacts: NormalizedNumericFact[]
+): ManuscriptProvenanceNumericAnchor {
+  const comparableExpected = expectedMetricFacts.filter((candidate) => areComparableNumericFacts(fact, candidate));
+  const supportedFacts = comparableExpected.filter((candidate) => areFactValuesEquivalent(fact, candidate));
+  const appendixOnlyFacts = appendixFacts.filter(
+    (candidate) =>
+      candidate.fact_id !== fact.fact_id
+      && areComparableNumericFacts(fact, candidate)
+      && areFactValuesEquivalent(fact, candidate)
+  );
+  const supportStatus: ManuscriptProvenanceNumericAnchor["support_status"] =
+    supportedFacts.length > 0
+      ? "supported"
+      : appendixOnlyFacts.length > 0 && allowsAppendixOnlyWarning(fact.source)
+        ? "appendix_only"
+        : comparableExpected.length > 0
+          ? "contradiction"
+          : "unverifiable";
+
+  return {
+    anchor_id: `numeric:${fact.fact_id}`,
+    source_anchor_id: sourceAnchorId,
+    source: fact.source,
+    location: fact.location,
+    support_status: supportStatus,
+    fact,
+    supporting_fact_ids: [...supportedFacts, ...appendixOnlyFacts].map((candidate) => candidate.fact_id),
+    ...(fact.source_refs?.length ? { source_refs: fact.source_refs } : {})
+  };
+}
+
+function dedupeProvenanceNumericAnchors(
+  anchors: ManuscriptProvenanceNumericAnchor[]
+): ManuscriptProvenanceNumericAnchor[] {
+  const seen = new Set<string>();
+  const unique: ManuscriptProvenanceNumericAnchor[] = [];
+  for (const anchor of anchors) {
+    if (seen.has(anchor.anchor_id)) {
+      continue;
+    }
+    seen.add(anchor.anchor_id);
+    unique.push(anchor);
+  }
+  return unique;
+}
+
+function buildManuscriptParagraphAnchorId(sectionHeading: string, paragraphIndex: number): string {
+  const heading = normalizeHeading(sectionHeading).replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "");
+  return `paragraph:${heading || "section"}:${paragraphIndex}`;
+}
+
+function mapSectionHeadingToNumericFactSource(heading: string): NumericFactSource {
+  switch (normalizeHeading(heading)) {
+    case "method":
+      return "method";
+    case "results":
+      return "results";
+    case "discussion":
+      return "discussion";
+    case "conclusion":
+      return "conclusion";
+    default:
+      return "results";
+  }
+}
+
+function truncatePreview(text: string): string {
+  const cleaned = cleanString(text);
+  return cleaned.length <= 160 ? cleaned : `${cleaned.slice(0, 157)}...`;
 }
 
 function attachAppendixCrossReferences(
@@ -1551,23 +3386,28 @@ function attachAppendixCrossReferences(
   if (appendixPlan.cross_references.length === 0) {
     return;
   }
-  const preferredTargets: Array<{ heading: string; reference: AppendixReference["label"]; sentence: string }> = [
-    {
-      heading: "Method",
-      reference: appendixPlan.cross_references[0]?.label || "Appendix",
-      sentence: `Additional protocol detail is summarized in ${appendixPlan.cross_references[0]?.label || "the appendix"}.`
-    },
-    {
-      heading: "Results",
-      reference: appendixPlan.cross_references[0]?.label || "Appendix",
-      sentence: `Extended repeat-level and dataset-level slices are reported in ${appendixPlan.cross_references[0]?.label || "the appendix"}.`
-    },
-    {
-      heading: "Limitations",
-      reference: appendixPlan.cross_references[appendixPlan.cross_references.length - 1]?.label || "Appendix",
-      sentence: `Supporting caveats and extended failure analysis appear in ${appendixPlan.cross_references[appendixPlan.cross_references.length - 1]?.label || "the appendix"}.`
-    }
-  ];
+  const preferredTargets: Array<{ heading: string; reference: AppendixReference["label"]; sentence: string }> =
+    appendixPlan.cross_references.map((reference) => {
+      if (/hyperparameter|protocol|environment|reproducibility/iu.test(reference.reason)) {
+        return {
+          heading: "Method",
+          reference: reference.label || "Appendix",
+          sentence: `${cleanString(reference.reason).charAt(0).toUpperCase()}${cleanString(reference.reason).slice(1)} are summarized in ${reference.label || "the appendix"}.`
+        };
+      }
+      if (/repeat-level|per-dataset/iu.test(reference.reason)) {
+        return {
+          heading: "Results",
+          reference: reference.label || "Appendix",
+          sentence: `Extended repeat-level and dataset-level slices are reported in ${reference.label || "the appendix"}.`
+        };
+      }
+      return {
+        heading: "Limitations",
+        reference: reference.label || "Appendix",
+        sentence: `Supporting caveats and extended failure analysis appear in ${reference.label || "the appendix"}.`
+      };
+    });
 
   for (const target of preferredTargets) {
     const section = findSection(manuscript.sections, target.heading);
@@ -1580,6 +3420,54 @@ function attachAppendixCrossReferences(
     }
     section.paragraphs[lastIndex] = `${section.paragraphs[lastIndex]} ${target.sentence}`.trim();
   }
+
+  for (const reference of appendixPlan.cross_references) {
+    const heading = inferAppendixReferenceSection(reference.reason, manuscript.sections);
+    const section = findSection(manuscript.sections, heading);
+    if (!section || section.paragraphs.length === 0) {
+      continue;
+    }
+    const lastIndex = section.paragraphs.length - 1;
+    if (
+      section.paragraphs[lastIndex]?.includes(reference.label)
+      || section.paragraphs[lastIndex]?.includes(reference.target_heading)
+    ) {
+      continue;
+    }
+    section.paragraphs[lastIndex] = `${section.paragraphs[lastIndex]} ${buildAppendixReferenceSentence(reference)}`.trim();
+  }
+}
+
+function inferAppendixReferenceSection(
+  reason: string,
+  sections: PaperManuscriptSection[]
+): string {
+  if (/repeat-level|per-dataset/iu.test(reason)) {
+    return "Results";
+  }
+  if (/hyperparameter|reproducibility-oriented environment/iu.test(reason)) {
+    return "Method";
+  }
+  if (/failure analysis|limitation/iu.test(reason)) {
+    return findSection(sections, "Limitations") ? "Limitations" : "Discussion";
+  }
+  return "Results";
+}
+
+function buildAppendixReferenceSentence(reference: AppendixReference): string {
+  if (/repeat-level|per-dataset/iu.test(reference.reason)) {
+    return `Extended dataset slices are cross-referenced in ${reference.label}.`;
+  }
+  if (/hyperparameter/iu.test(reference.reason)) {
+    return `Search-space detail is summarized in ${reference.label}.`;
+  }
+  if (/reproducibility-oriented environment/iu.test(reference.reason)) {
+    return `Environment and reproducibility notes are summarized in ${reference.label}.`;
+  }
+  if (/failure analysis|limitation/iu.test(reference.reason)) {
+    return `Extended caveats and failure cases are summarized in ${reference.label}.`;
+  }
+  return `Supporting detail is summarized in ${reference.label}.`;
 }
 
 function ensureDraftSections(
@@ -1663,7 +3551,7 @@ function buildSectionParagraphCandidates(
           [
             `This study addresses ${bundle.topic}.`,
             context.results.aggregate_summary[0] || "",
-            bundle.objectiveMetric ? `The paper is scoped around ${describeObjectiveMetricForNarrative(bundle.objectiveMetric)}.` : ""
+            bundle.objectiveMetric ? `The paper is scoped around ${bundle.objectiveMetric}.` : ""
           ],
           [
             `The main gap is that current artifacts often expose headline outcomes without a venue-aware writing structure that separates core claims from supporting detail.`,
@@ -1689,7 +3577,7 @@ function buildSectionParagraphCandidates(
             context.related_work.closest_titles.length > 0
               ? `The closest prior work includes ${joinHumanList(context.related_work.closest_titles)}.`
               : "The closest prior work still leaves open a direct positioning gap for the current study.",
-            `${bundle.objectiveMetric ? `The present paper positions itself around ${describeObjectiveMetricForNarrative(bundle.objectiveMetric)}` : "The present paper positions itself around the stated empirical objective"} while keeping claims limited to the available artifacts.`
+            `${bundle.objectiveMetric ? `The present paper positions itself around ${bundle.objectiveMetric}` : "The present paper positions itself around the stated empirical objective"} while keeping claims limited to the available artifacts.`
           ],
           expanded
             ? [
@@ -1861,20 +3749,27 @@ function collectDatasetResultSummaries(input: {
         difference(score, asNumber(asRecord(asRecord(bestWorkflow.value.models).logreg).mean_test_macro_f1));
       const runtime = asNumber(bestWorkflow.value.runtime_seconds_mean);
       const memory = asNumber(bestWorkflow.value.peak_memory_mb_mean);
+      const pairwiseRankingAgreement = asNumber(bestWorkflow.value.pairwise_ranking_agreement);
+      const winnerConsistency = asNumber(bestWorkflow.value.winner_consistency);
+      const mainMetricLabel = inferDatasetMainMetricLabel(input.objectiveMetricProfile, bestModel?.value);
       summaries.push({
         dataset: datasetName,
         label: `${datasetName} (${bestWorkflow.name})`,
-        main_metric_label: humanizeToken(input.objectiveMetricProfile?.primaryMetric || "main score"),
+        main_metric_label: mainMetricLabel,
         main_metric_value: score,
         delta_label: "delta vs logistic regression",
         delta_value: delta,
         ...(ci95 ? { ci95 } : {}),
         ...(typeof runtime === "number" ? { runtime_seconds_mean: runtime } : {}),
         ...(typeof memory === "number" ? { peak_memory_mb_mean: memory } : {}),
+        ...(typeof pairwiseRankingAgreement === "number" ? { pairwise_ranking_agreement: pairwiseRankingAgreement } : {}),
+        ...(typeof winnerConsistency === "number" ? { winner_consistency: winnerConsistency } : {}),
         heterogeneity_notes: heterogeneityNotes,
         summary: buildDatasetSummaryText({
           dataset: datasetName,
           workflow: bestWorkflow.name,
+          mainMetricLabel,
+          deltaLabel: "macro-F1 delta versus logistic regression",
           mainScore: score,
           delta,
           ci95,
@@ -1898,10 +3793,11 @@ function collectDatasetResultSummaries(input: {
     const delta = asNumber(bestModel.value.macro_f1_delta_vs_logreg);
     const runtime = asNumber(bestModel.value.runtime_seconds) ?? asNumber(bestModel.value.runtime_seconds_mean);
     const memory = asNumber(bestModel.value.peak_memory_mb) ?? asNumber(bestModel.value.peak_memory_mb_mean);
+    const mainMetricLabel = inferDatasetMainMetricLabel(input.objectiveMetricProfile, bestModel.value);
     summaries.push({
       dataset: datasetName,
       label: `${datasetName} (${bestModel.name})`,
-      main_metric_label: humanizeToken(input.objectiveMetricProfile?.primaryMetric || "main score"),
+      main_metric_label: mainMetricLabel,
       main_metric_value: score,
       delta_label: "delta vs logistic regression",
       delta_value: delta,
@@ -1911,6 +3807,8 @@ function collectDatasetResultSummaries(input: {
       summary: buildDatasetSummaryText({
         dataset: datasetName,
         workflow: bestModel.name,
+        mainMetricLabel,
+        deltaLabel: "macro-F1 delta versus logistic regression",
         mainScore: score,
         delta,
         runtime,
@@ -1938,6 +3836,51 @@ function collectAggregateResults(
       ? `The main reported metric remains ${humanizeToken(objectiveMetricProfile.primaryMetric)}.`
       : ""
   ]).filter(Boolean).slice(0, 4);
+}
+
+function inferDatasetMainMetricLabel(
+  objectiveMetricProfile: ObjectiveMetricProfile | undefined,
+  modelEntry: Record<string, unknown> | undefined
+): string {
+  const entry = modelEntry || {};
+  if (typeof asNumber(entry.mean_test_macro_f1) === "number" || typeof asNumber(entry.test_macro_f1) === "number" || typeof asNumber(entry.macro_f1) === "number") {
+    return "macro-F1";
+  }
+  if (typeof asNumber(entry.top1_accuracy) === "number") {
+    return "top-1 accuracy";
+  }
+  if (typeof asNumber(entry.accuracy) === "number") {
+    return "accuracy";
+  }
+  return humanizeToken(objectiveMetricProfile?.primaryMetric || "main score");
+}
+
+function collectAggregateMetricFacts(
+  resultAnalysis: ResultAnalysisArtifact | undefined
+): NormalizedNumericFact[] {
+  return dedupeNumericFacts(
+    (resultAnalysis?.metric_table || [])
+      .map((entry) => {
+        const metricKey = normalizeMetricIdentifier(entry.key);
+        if (!metricKey || typeof entry.value !== "number" || !Number.isFinite(entry.value)) {
+          return undefined;
+        }
+        return buildStructuredNumericFact({
+          factKind: "metric",
+          source: "artifact",
+          location: "artifact.result_analysis.metric_table",
+          rawText: `${entry.key}=${formatNumber(entry.value)}`,
+          value: entry.value,
+          metricKey,
+          metricLabel: entry.key,
+          datasetScope: "aggregate",
+          aggregationLevel: "aggregate",
+          unit: inferMetricUnit(entry.key, metricKey, 0, 1),
+          sourceRefs: buildArtifactSourceRefs(["result_analysis.metric_table"])
+        });
+      })
+      .filter((item): item is NormalizedNumericFact => Boolean(item))
+  );
 }
 
 function collectCiNotes(
@@ -2038,7 +3981,9 @@ function collectHeterogeneityNotes(
   resultAnalysis: ResultAnalysisArtifact | undefined
 ): string[] {
   const notes = uniqueStrings([
-    ...datasetSummaries.flatMap((item) => item.heterogeneity_notes),
+    ...datasetSummaries.flatMap((item) =>
+      item.heterogeneity_notes.map((note) => `${item.dataset} ${note}`)
+    ),
     ...(resultAnalysis?.statistical_summary?.notes || []).filter((item) => /heterogeneity|across datasets|across runs|consistency/iu.test(item))
   ]).filter(Boolean);
   return notes.slice(0, 4);
@@ -2097,14 +4042,19 @@ function collectDatasetNames(
 ): string[] {
   const selectedDesign = asRecord(parsedPlan.selected_design);
   const protocol = asRecord(latestResults.protocol);
-  return uniqueStrings([
-    ...bundle.paperSummaries.flatMap((item) => item.datasets || []),
-    ...bundle.evidenceRows.map((item) => item.dataset_slot).filter((item): item is string => Boolean(item)),
+  const runScopedNames = uniqueStrings([
     ...asStringArray(selectedDesign.datasets),
     ...asStringArray(protocol.datasets),
     ...asArray(latestResults.dataset_summaries)
       .map((item) => asString(asRecord(item).dataset))
       .filter((item): item is string => Boolean(item))
+  ]);
+  if (runScopedNames.length > 0) {
+    return runScopedNames.slice(0, 10);
+  }
+  return uniqueStrings([
+    ...bundle.evidenceRows.map((item) => item.dataset_slot).filter((item): item is string => Boolean(item)),
+    ...bundle.paperSummaries.flatMap((item) => item.datasets || [])
   ]).slice(0, 10);
 }
 
@@ -2196,6 +4146,8 @@ function hasMemoryMeasurement(
 function buildDatasetSummaryText(input: {
   dataset: string;
   workflow: string;
+  mainMetricLabel: string;
+  deltaLabel: string;
   mainScore?: number;
   delta?: number;
   ci95?: [number, number];
@@ -2205,13 +4157,13 @@ function buildDatasetSummaryText(input: {
 }): string {
   const parts = [`On ${input.dataset}, ${humanizeToken(input.workflow)} is the strongest reported condition.`];
   if (typeof input.mainScore === "number") {
-    parts.push(`The main score is ${formatNumber(input.mainScore)}.`);
+    parts.push(`The reported ${cleanString(input.mainMetricLabel) || "main metric"} is ${formatNumber(input.mainScore)}.`);
   }
   if (typeof input.delta === "number") {
-    parts.push(`The delta versus logistic regression is ${formatNumber(input.delta)}.`);
+    parts.push(`${cleanString(input.deltaLabel) || "The delta versus logistic regression"} is ${formatNumber(input.delta)}.`);
   }
   if (input.ci95) {
-    parts.push(`A normal-approximation 95% interval spans ${formatNumber(input.ci95[0])} to ${formatNumber(input.ci95[1])}.`);
+    parts.push(`A normal-approximation 95% interval for ${cleanString(input.deltaLabel) || "the reported delta"} spans ${formatNumber(input.ci95[0])} to ${formatNumber(input.ci95[1])}.`);
   }
   if (typeof input.runtime === "number" || typeof input.memory === "number") {
     parts.push(
@@ -2536,16 +4488,6 @@ function asNumber(value: unknown): number | undefined {
 
 function cleanString(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/gu, " ").trim() : "";
-}
-
-function describeObjectiveMetricForNarrative(value: unknown): string {
-  const cleaned = cleanString(value)
-    .replace(/\bstate[- ]of[- ]the[- ]art\b/giu, "")
-    .replace(/\bsignificant(?:ly)?\b/giu, "")
-    .replace(/\bsubstantial\b/giu, "")
-    .replace(/\s+/gu, " ")
-    .trim();
-  return cleaned || "the stated empirical objective";
 }
 
 function isSafeMetricLabel(value: string): boolean {

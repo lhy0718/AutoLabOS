@@ -349,8 +349,12 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         results_status: scientificDraft.results_richness.status,
         related_work_status: scientificDraft.related_work_richness.status,
         discussion_status: scientificDraft.discussion_richness.status,
+        evidence_blocked: scientificDraft.evidence_diagnostics.blocked_by_evidence_insufficiency,
+        missing_evidence_categories: scientificDraft.evidence_diagnostics.missing_evidence_categories,
+        thin_sections: scientificDraft.evidence_diagnostics.thin_sections,
         appendix_reference_count: scientificDraft.appendix_plan.cross_references.length,
         claim_rewrite_count: scientificDraft.claim_rewrite_report.rewrites.length,
+        expansion_recheck: scientificDraft.auto_repairs.expansion_recheck,
         issue_count: scientificValidationArtifact.issues.length
       });
       if (scientificDraft.page_budget.warnings.length > 0) {
@@ -403,6 +407,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const evidenceMap = JSON.stringify(buildPaperEvidenceMap(paperDraft), null, 2);
       const traceabilityJson = `${JSON.stringify(traceability, null, 2)}\n`;
       const manuscriptJson = `${JSON.stringify(manuscript, null, 2)}\n`;
+      const provenanceMapJson = `${JSON.stringify(scientificManuscript.provenance_map, null, 2)}\n`;
       const submissionValidation = buildPaperSubmissionValidation({
         manuscript,
         tex,
@@ -417,6 +422,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await writeRunArtifact(run, "paper/draft.json", `${JSON.stringify(paperDraft, null, 2)}\n`);
       await writeRunArtifact(run, "paper/manuscript.json", manuscriptJson);
       await writeRunArtifact(run, "paper/traceability.json", traceabilityJson);
+      await writeRunArtifact(run, "paper/provenance_map.json", provenanceMapJson);
       await writeRunArtifact(run, "paper/validation.json", `${JSON.stringify(validation, null, 2)}\n`);
       await writeRunArtifact(
         run,
@@ -452,6 +458,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await fs.writeFile(path.join(publicPaperDir, "references.bib"), bibtex.references, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "manuscript.json"), manuscriptJson, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "traceability.json"), traceabilityJson, "utf8");
+      await fs.writeFile(path.join(publicPaperDir, "provenance_map.json"), provenanceMapJson, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "evidence_links.json"), evidenceMap, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "gate_decision.json"), `${JSON.stringify(gateDecision, null, 2)}\n`, "utf8");
 
@@ -463,6 +470,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.last_draft", paperDraft);
       await runContextMemory.put("write_paper.last_manuscript", manuscript);
       await runContextMemory.put("write_paper.traceability", traceability);
+      await runContextMemory.put("write_paper.provenance_map", scientificManuscript.provenance_map);
       await runContextMemory.put("write_paper.validation", validation);
       await runContextMemory.put("write_paper.consistency_lint", {
         manuscript: scientificManuscript.consistency_lint,
@@ -535,6 +543,10 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
             targetRelativePath: "traceability.json"
           },
           {
+            sourcePath: path.join(runPaperDir, "provenance_map.json"),
+            targetRelativePath: "provenance_map.json"
+          },
+          {
             sourcePath: path.join(runPaperDir, "gate_decision.json"),
             targetRelativePath: "gate_decision.json"
           },
@@ -582,6 +594,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
             "paper/references.bib",
             "paper/manuscript.json",
             "paper/traceability.json",
+            "paper/provenance_map.json",
             ...(compileResult.pdf_path ? ["paper/main.pdf"] : []),
             publicPaperDir
           ]
@@ -1236,10 +1249,19 @@ function buildCompileFailureError(result: PaperCompileResult): string {
 function buildScientificGateFailureError(report: {
   mode: "default" | "strict_paper";
   failure_reasons: string[];
+  evidence_summary?: {
+    thin_sections: string[];
+    missing_evidence_categories: string[];
+    blocked_by_evidence_insufficiency: boolean;
+  };
 }): string {
   const leadDetail = report.failure_reasons[0] || "scientific quality gate failed";
   const qualifier = report.mode === "strict_paper" ? "strict-paper mode" : "default mode";
-  return `write_paper generated manuscript artifacts but stopped before PDF build because the scientific quality gate failed in ${qualifier}: ${leadDetail}`;
+  const evidenceDetail =
+    report.evidence_summary?.blocked_by_evidence_insufficiency
+      ? ` Evidence insufficiency remains in ${report.evidence_summary.thin_sections.join(", ") || "core sections"}; missing categories: ${report.evidence_summary.missing_evidence_categories.join(", ")}.`
+      : "";
+  return `write_paper generated manuscript artifacts but stopped before PDF build because the scientific quality gate failed in ${qualifier}: ${leadDetail}${evidenceDetail}`;
 }
 
 function resolvePaperValidationMode(value: unknown): "default" | "strict_paper" {

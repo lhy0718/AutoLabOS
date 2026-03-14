@@ -508,6 +508,156 @@ describe("scientificWriting", () => {
     expect(manuscript.manuscript.sections.find((section) => section.heading === "Results")?.paragraphs.at(-1)).toMatch(/Appendix/i);
     expect(manuscript.consistency_lint.ok).toBe(true);
     expect(manuscript.appendix_lint.ok).toBe(true);
+    expect(manuscript.provenance_map.paragraph_anchors.length).toBeGreaterThan(0);
+    expect(manuscript.provenance_map.numeric_anchors.some((anchor) => anchor.support_status === "supported")).toBe(true);
+  });
+
+  it("records auto-repair recheck state after expanding thin sections", () => {
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle: makeRichBundle(),
+      profile: PAPER_PROFILE
+    });
+
+    expect(scientific.auto_repairs.expansion_recheck.attempted).toBe(true);
+    expect(scientific.auto_repairs.expanded_sections.length).toBeGreaterThan(0);
+    expect(
+      scientific.auto_repairs.expansion_recheck.resolved_headings.length
+      + scientific.auto_repairs.expansion_recheck.unresolved_headings.length
+    ).toBe(scientific.auto_repairs.expanded_sections.length);
+  });
+
+  it("does not flag equivalent numeric formatting as a contradiction", () => {
+    const bundle = makeRichBundle();
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const baseSections = scientific.draft.sections.map((section) => ({
+      heading: section.heading,
+      paragraphs: section.paragraphs.map((paragraph) => paragraph.text)
+    }));
+    const candidate: PaperManuscript = {
+      title: "Repeated Tabular Benchmark",
+      abstract: "A short abstract.",
+      keywords: ["tabular"],
+      sections: baseSections.map((section) =>
+        section.heading === "Results"
+          ? {
+              ...section,
+              paragraphs: ["The observed macro-F1 delta vs logistic regression is 0.0260 across 2 datasets."]
+            }
+          : section
+      )
+    };
+
+    const manuscript = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    expect(manuscript.consistency_lint.issues.some((issue) => issue.kind === "numeric_inconsistency")).toBe(false);
+    expect(manuscript.consistency_lint.issues.some((issue) => issue.kind === "numeric_unverifiable")).toBe(false);
+  });
+
+  it("does not treat objective threshold text as a measured result fact", () => {
+    const bundle = makeRichBundle();
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Repeated Tabular Benchmark",
+      abstract: "The writing objective remains macro_f1_delta_vs_logreg >= 0.02.",
+      keywords: ["tabular"],
+      sections: [
+        {
+          heading: "Introduction",
+          paragraphs: ["The paper positions itself around macro_f1_delta_vs_logreg >= 0.02 while keeping claims cautious."]
+        },
+        {
+          heading: "Method",
+          paragraphs: ["We evaluate 2 datasets with outer 5-fold CV and inner 3-fold tuning."]
+        },
+        {
+          heading: "Results",
+          paragraphs: ["The observed macro-F1 delta vs logistic regression is 0.026 across 2 datasets."]
+        },
+        {
+          heading: "Conclusion",
+          paragraphs: ["The empirical claim remains narrow."]
+        }
+      ]
+    };
+
+    const manuscript = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    expect(
+      manuscript.consistency_lint.issues.some(
+        (issue) =>
+          ["numeric_inconsistency", "numeric_unverifiable"].includes(issue.kind)
+          && (issue.involved_sections || []).some((section) => ["Abstract", "Introduction"].includes(section))
+      )
+    ).toBe(false);
+  });
+
+  it("distinguishes aggregate metrics from per-dataset values when checking numeric consistency", () => {
+    const bundle = makeRichBundle();
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Repeated Tabular Benchmark",
+      abstract: "Average across datasets, the macro-F1 delta vs logistic regression is 0.012.",
+      keywords: ["tabular"],
+      sections: [
+        {
+          heading: "Introduction",
+          paragraphs: ["This benchmark studies repeated tabular evaluation."]
+        },
+        {
+          heading: "Method",
+          paragraphs: ["We evaluate 2 datasets with outer 5-fold CV and inner 3-fold tuning."]
+        },
+        {
+          heading: "Results",
+          paragraphs: ["The observed macro-F1 delta vs logistic regression is 0.026 across 2 datasets."]
+        },
+        {
+          heading: "Conclusion",
+          paragraphs: ["The aggregate result remains modest."]
+        }
+      ]
+    };
+
+    const manuscript = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const numericIssue = manuscript.consistency_lint.issues.find((issue) => issue.kind === "numeric_inconsistency");
+    expect(numericIssue).toBeTruthy();
+    expect(numericIssue?.involved_sections).toContain("Abstract");
+    expect(numericIssue?.reason).toMatch(/structured numeric facts disagree|main-manuscript sections/i);
   });
 
   it("rewrites over-strong performance claims when statistical support is missing", () => {
@@ -573,6 +723,10 @@ describe("scientificWriting", () => {
     expect(defaultDecision.status).toBe("warn");
     expect(strictDecision.status).toBe("fail");
     expect(strictDecision.failure_reasons.some((message) => /target budget|too thin|incomplete/i.test(message))).toBe(true);
+    expect(defaultDecision.evidence_summary.blocked_by_evidence_insufficiency).toBe(false);
+    expect(defaultDecision.evidence_summary.expandable_from_existing_evidence).toBe(true);
+    expect(defaultDecision.classification_summary.repairable_count).toBeGreaterThan(0);
+    expect(scientificValidation.evidence_diagnostics.thin_sections.length).toBeGreaterThan(0);
   });
 
   it("flags numeric contradictions between abstract/conclusion and structured results", () => {
@@ -618,5 +772,10 @@ describe("scientificWriting", () => {
     expect(manuscript.consistency_lint.issues.some((issue) => issue.kind === "numeric_inconsistency")).toBe(true);
     expect(manuscript.consistency_lint.issues.some((issue) => issue.kind === "count_inconsistency")).toBe(true);
     expect(manuscript.consistency_lint.issues.some((issue) => issue.kind === "unsupported_strong_claim")).toBe(true);
+    expect(
+      manuscript.consistency_lint.issues.some(
+        (issue) => issue.kind === "numeric_inconsistency" && (issue.involved_sections || []).includes("Abstract")
+      )
+    ).toBe(true);
   });
 });

@@ -77,6 +77,7 @@ export interface PaperManuscript {
 }
 
 export interface PaperTraceabilityEntry {
+  anchor_id?: string;
   manuscript_section: string;
   paragraph_index: number;
   source_draft_section: string;
@@ -386,6 +387,7 @@ export function buildPaperTraceability(input: {
           claimIds
         });
         return {
+          anchor_id: buildParagraphAnchorId(section.heading, paragraphIndex),
           manuscript_section: section.heading,
           paragraph_index: paragraphIndex,
           source_draft_section: sourceSection?.heading || "",
@@ -1105,6 +1107,11 @@ function uniqueStrings(values: string[]): string[] {
 
 function normalizeHeadingKey(value: string): string {
   return cleanString(value).toLowerCase();
+}
+
+function buildParagraphAnchorId(sectionHeading: string, paragraphIndex: number): string {
+  const heading = normalizeHeadingKey(sectionHeading).replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "");
+  return `paragraph:${heading || "section"}:${paragraphIndex}`;
 }
 
 function lowercaseLeadingWord(value: string): string {

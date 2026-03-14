@@ -1652,16 +1652,22 @@ describe("writePaper PDF build", () => {
     expect(result.summary).toContain("Scientific gate: warn");
     const gateDecision = JSON.parse(await readFile(path.join(runDir, "paper", "gate_decision.json"), "utf8")) as {
       status: string;
-      issues: Array<{ code: string; message: string }>;
+      issues: Array<{ code: string; message: string; outcome?: string }>;
+      evidence_summary: { blocked_by_evidence_insufficiency: boolean; thin_sections: string[] };
     };
     expect(gateDecision.status).toBe("warn");
     expect(gateDecision.issues.some((issue) => issue.code.includes("page_budget"))).toBe(true);
+    expect(gateDecision.evidence_summary.blocked_by_evidence_insufficiency).toBe(true);
+    expect(gateDecision.evidence_summary.thin_sections.length).toBeGreaterThan(0);
     const scientificValidation = JSON.parse(
       await readFile(path.join(runDir, "paper", "scientific_validation.json"), "utf8")
     ) as {
       auto_repairs: { claim_rewrite_count: number };
+      evidence_diagnostics: { blocked_by_evidence_insufficiency: boolean; missing_evidence_categories: string[] };
     };
     expect(scientificValidation.auto_repairs.claim_rewrite_count).toBeGreaterThanOrEqual(0);
+    expect(scientificValidation.evidence_diagnostics.blocked_by_evidence_insufficiency).toBe(true);
+    expect(scientificValidation.evidence_diagnostics.missing_evidence_categories.length).toBeGreaterThan(0);
     const manuscript = JSON.parse(await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8")) as {
       abstract: string;
       sections: Array<{ heading: string; paragraphs: string[] }>;
@@ -1724,11 +1730,14 @@ describe("writePaper PDF build", () => {
       mode: string;
       status: string;
       failure_reasons: string[];
+      evidence_summary: { blocked_by_evidence_insufficiency: boolean };
     };
     expect(gateDecision.mode).toBe("strict_paper");
     expect(gateDecision.status).toBe("fail");
     expect(gateDecision.failure_reasons.length).toBeGreaterThan(0);
+    expect(gateDecision.evidence_summary.blocked_by_evidence_insufficiency).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "provenance_map.json"))).toBe(true);
   });
 
   it("routes medium-quality runs through main paper plus appendix without failing the default gate", async () => {
@@ -1768,8 +1777,10 @@ describe("writePaper PDF build", () => {
     expect(result.status).toBe("success");
     const gateDecision = JSON.parse(await readFile(path.join(runDir, "paper", "gate_decision.json"), "utf8")) as {
       status: string;
+      classification_summary: { auto_repair_count: number };
     };
     expect(gateDecision.status).not.toBe("fail");
+    expect(gateDecision.classification_summary.auto_repair_count).toBeGreaterThan(0);
     const manuscript = JSON.parse(await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8")) as {
       sections: Array<{ heading: string; paragraphs: string[] }>;
       appendix_sections?: Array<{ heading: string }>;
@@ -1781,6 +1792,12 @@ describe("writePaper PDF build", () => {
       paragraphs: Array<{ source_refs?: Array<{ kind: string; id: string }> }>;
     };
     expect(traceability.paragraphs.some((paragraph) => (paragraph.source_refs || []).length > 0)).toBe(true);
+    const provenanceMap = JSON.parse(await readFile(path.join(runDir, "paper", "provenance_map.json"), "utf8")) as {
+      paragraph_anchors: Array<{ anchor_id: string; numeric_fact_ids: string[] }>;
+      numeric_anchors: Array<{ support_status: string }>;
+    };
+    expect(provenanceMap.paragraph_anchors.length).toBeGreaterThan(0);
+    expect(provenanceMap.numeric_anchors.some((anchor) => anchor.support_status === "supported")).toBe(true);
   });
 
   it("hard-fails inconsistent manuscripts when abstract/results/conclusion numbers diverge", async () => {
@@ -1822,13 +1839,20 @@ describe("writePaper PDF build", () => {
     const gateDecision = JSON.parse(await readFile(path.join(runDir, "paper", "gate_decision.json"), "utf8")) as {
       status: string;
       failure_reasons: string[];
+      classification_summary: { contradiction_count: number };
     };
     expect(gateDecision.status).toBe("fail");
     expect(gateDecision.failure_reasons.some((message) => /structured results|datasets|significant improvement/i.test(message))).toBe(true);
+    expect(gateDecision.classification_summary.contradiction_count).toBeGreaterThan(0);
     const consistency = JSON.parse(await readFile(path.join(runDir, "paper", "consistency_lint.json"), "utf8")) as {
-      manuscript: { issues: Array<{ kind: string }> };
+      manuscript: { issues: Array<{ kind: string; involved_sections?: string[] }> };
     };
     expect(consistency.manuscript.issues.some((issue) => issue.kind === "numeric_inconsistency")).toBe(true);
     expect(consistency.manuscript.issues.some((issue) => issue.kind === "count_inconsistency")).toBe(true);
+    expect(
+      consistency.manuscript.issues.some(
+        (issue) => issue.kind === "numeric_inconsistency" && (issue.involved_sections || []).length > 0
+      )
+    ).toBe(true);
   });
 });
