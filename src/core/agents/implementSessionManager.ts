@@ -1424,11 +1424,31 @@ export class ImplementSessionManager {
       return report;
     }
 
-    const missingArtifacts = await collectMissingVerificationArtifacts({
+    const verificationWorkspaceRoot = await resolveLocalVerificationWorkspaceRoot(
+      this.deps.workspaceRoot
+    );
+    const executionCommand = rewriteWorkspacePathsForExecution(
       command,
-      cwd: attempt.workingDir,
-      workspaceRoot: this.deps.workspaceRoot,
-      scriptPath: attempt.scriptPath
+      this.deps.workspaceRoot,
+      verificationWorkspaceRoot
+    );
+    const executionCwd =
+      rewriteWorkspacePathsForExecution(
+        attempt.workingDir,
+        this.deps.workspaceRoot,
+        verificationWorkspaceRoot
+      ) || attempt.workingDir;
+    const executionScriptPath = rewriteWorkspacePathsForExecution(
+      attempt.scriptPath,
+      this.deps.workspaceRoot,
+      verificationWorkspaceRoot
+    );
+
+    const missingArtifacts = await collectMissingVerificationArtifacts({
+      command: executionCommand,
+      cwd: executionCwd,
+      workspaceRoot: verificationWorkspaceRoot,
+      scriptPath: executionScriptPath
     });
     if (missingArtifacts.length > 0) {
       const report = buildMissingArtifactVerifyReport(true, {
@@ -1468,7 +1488,7 @@ export class ImplementSessionManager {
       }
     });
 
-    const obs = await this.deps.aci.runTests(command, attempt.workingDir, abortSignal);
+    const obs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
     const baseReport = summarizeVerification(command, attempt.workingDir, obs, attempt.localization);
 
     if (baseReport.status === "fail") {
@@ -1814,6 +1834,62 @@ function rewriteWorkspaceStringToPrimary(value: string | undefined, workspaceRoo
   let rewritten = value;
   for (const alias of aliases) {
     rewritten = replaceWorkspaceRootReference(rewritten, alias, workspaceRoot);
+  }
+  return rewritten;
+}
+
+async function resolveLocalVerificationWorkspaceRoot(workspaceRoot: string): Promise<string> {
+  for (const alias of resolveWorkspaceRootAliases(workspaceRoot)) {
+    if (await fileExists(alias)) {
+      return alias;
+    }
+  }
+  return toSandboxFriendlyWorkspaceRoot(workspaceRoot);
+}
+
+function rewriteWorkspacePathsForExecution<T>(
+  value: T,
+  workspaceRoot: string,
+  executionWorkspaceRoot: string
+): T {
+  if (typeof value === "string") {
+    return rewriteWorkspaceStringForExecution(
+      value,
+      workspaceRoot,
+      executionWorkspaceRoot
+    ) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      rewriteWorkspacePathsForExecution(item, workspaceRoot, executionWorkspaceRoot)
+    ) as T;
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
+      key,
+      rewriteWorkspacePathsForExecution(nested, workspaceRoot, executionWorkspaceRoot)
+    ])
+  ) as T;
+}
+
+function rewriteWorkspaceStringForExecution(
+  value: string | undefined,
+  workspaceRoot: string,
+  executionWorkspaceRoot: string
+): string | undefined {
+  if (!value) {
+    return value;
+  }
+  const aliases = resolveWorkspaceRootAliases(workspaceRoot)
+    .filter((alias) => alias !== executionWorkspaceRoot)
+    .sort((left, right) => right.length - left.length);
+
+  let rewritten = value;
+  for (const alias of aliases) {
+    rewritten = replaceWorkspaceRootReference(rewritten, alias, executionWorkspaceRoot);
   }
   return rewritten;
 }
