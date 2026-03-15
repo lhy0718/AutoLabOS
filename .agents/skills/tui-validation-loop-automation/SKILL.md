@@ -1,215 +1,234 @@
 ---
 name: tui-validation-loop-automation
-description: 작업이 test/ 하위 실제 TUI 검증을 반복 수행하면서, 문제를 기록하고, 최소 수정 후 재검증하고, ISSUES.md를 갱신하는 자동화 루프일 때 이 스킬을 사용합니다.
+description: Use this skill when the task is to repeatedly run real TUI validation inside test/ workspaces, log issues, apply the smallest possible fix, re-validate, and keep ISSUES.md updated as part of an automation loop.
 ---
 
-# TUI 검증루프 자동화
+# TUI Validation Loop Automation
 
-## 목적
-`test/` 하위 워크스페이스에서 실제 TUI 검증을 반복 실행하여,
-문제를 재현하고,
-`ISSUES.md`에 구조적으로 기록하고,
-가장 작은 수정만 적용한 뒤,
-같은 플로우를 다시 검증하고,
-인접 회귀까지 확인하는 자동화 루프를 수행합니다.
+## Purpose
 
-이 스킬의 핵심은 **“수정”보다 “실검증 기반 재현-기록-재검증 루프”를 우선**하는 것입니다.
+Run a repeated live-validation loop in a `test/` workspace: reproduce the issue, record it structurally in `ISSUES.md`, apply the smallest plausible fix, re-run the same flow, and check adjacent regressions.
 
-중요:
-이 스킬의 1차 목적은 **실제 TUI/workflow/상태/아티팩트 일관성 검증**입니다.
-`cycle completed`, `write_paper completed`, `PDF built successfully`는 시스템 실행 완주를 의미할 뿐,
-논문 제출 가능 수준의 연구 완성을 의미하지 않습니다.
-실험 논문 수준의 산출물이 목표일 경우 반드시 `paper-scale-research-loop`와 함께 사용해야 합니다.
+The core principle is to prioritize a **live-validation-based reproduce → record → re-validate loop** over “just fixing the code.”
 
-## 이 스킬을 사용하는 경우
-다음과 같은 요청일 때 사용합니다:
+Important: the primary goal of this skill is **real TUI / workflow / state / artifact consistency validation**.
 
-- "TUI 실검증을 계속 반복해줘"
-- "문제 해결될 때까지 TUI 검증 루프를 자동화해줘"
-- "test/ 에서 실검증 → 수정 → 재검증을 반복해줘"
-- "ISSUES.md를 갱신하면서 라이브 검증 루프를 돌려줘"
-- "fresh session / existing session 비교까지 포함해서 반복 검증해줘"
-- "실제 TUI 기준으로 고착 지점을 찾아서 계속 줄여줘"
+`cycle completed`, `write_paper completed`, and `PDF built successfully` only mean the system run finished.
+They do **not** mean the work has reached paper-ready research quality.
 
-대표적인 트리거 문구:
-- "검증루프 자동화"
-- "TUI 검증 반복"
-- "실검증 사이클"
-- "재현하고 고치고 다시 검증"
-- "ISSUES.md 업데이트하면서 진행"
-- "test/ 기준 라이브 검증"
+If the goal includes experimental-paper quality output, this skill must be used together with `paper-scale-research-loop`.
 
-## 이 스킬이 다루지 않는 것
-다음은 이 스킬만으로 보장되지 않습니다:
+## When to use this skill
 
-- 연구 주제의 학술적 타당성
-- 논문 작성 가능 스케일의 corpus adequacy
-- 반증 가능한 가설 품질
-- baseline/ablation이 포함된 실험 설계 충분성
-- 수치 결과와 표를 갖춘 paper-ready 원고
+Use this skill for requests like:
 
-위 목표가 포함되면 반드시 `paper-scale-research-loop`를 함께 사용하십시오.
+- “Keep repeating TUI live validation.”
+- “Automate the TUI validation loop until the issue is solved.”
+- “Repeat validate → fix → re-validate inside test/.”
+- “Run the live-validation loop while updating ISSUES.md.”
+- “Keep comparing fresh and existing sessions in the loop.”
+- “Use the real TUI as ground truth and keep narrowing the stuck point.”
 
-## 기본 작업 디렉토리 규칙
-- 실검증용 워크스페이스는 반드시 `test/` 하위에 둡니다.
-- 실검증 중 생성되는 임시 연구 워크스페이스, 산출물, 로그, 실행 흔적도 `test/` 기준으로 관리합니다.
-- 애플리케이션 소스 수정은 루트 소스에 반영하되, 검증 실행 자체는 `test/` 컨텍스트를 기준으로 수행합니다.
+Typical trigger phrases:
 
-예시:
-- `test/tui-live-cycle-<timestamp>-iterN`
-- `test/<issue-slug>-live-loop`
-- `test/<brief-name>-validation`
+- “validation loop automation”
+- “repeat TUI validation”
+- “live-validation cycle”
+- “reproduce, fix, and validate again”
+- “update ISSUES.md while doing it”
+- “test/-based live validation”
 
-## 루프 계약
-한 번의 루프(iteration)는 항상 아래 순서를 따릅니다.
+## What this skill does not guarantee
 
-1. **검증 목표 고정**
-   - 이번 반복에서 확인할 플로우를 한 문장으로 고정합니다.
-   - 예: `/new -> /brief start --latest -> implement_experiments -> run_experiments`
+This skill alone does not guarantee:
 
-2. **현재 상태 수집**
-   - 세션 종류(fresh / existing)
-   - 워크스페이스 경로
+- academic validity of the research topic
+- corpus adequacy at paper-writing scale
+- quality of falsifiable hypotheses
+- sufficiency of experiment design with baselines or ablations
+- a paper-ready manuscript with numerical results and tables
+
+If those goals matter, use `paper-scale-research-loop` together with this skill.
+
+## Default working-directory rule
+
+- Live-validation workspaces must live under `test/`.
+- Temporary research workspaces, artifacts, logs, and execution traces created during live validation must also be managed under `test/`.
+- Application source changes may be applied to the main source tree, but the validation run itself must be executed from the `test/` context.
+
+Examples:
+
+- `test/tui-live-cycle--iterN`
+- `test/live-loop`
+- `test/validation`
+
+## Loop contract
+
+One iteration must always follow this order:
+
+1. **Fix the validation target**
+   - Lock the flow being checked in one sentence.
+   - Example: `/new -> /brief start --latest -> implement_experiments -> run_experiments`
+
+2. **Collect current state**
+   - session type (fresh / existing)
+   - workspace path
    - run id
-   - 관련 artifact
-   - 현재 화면 증상
-   - 최근 실패 지점
+   - relevant artifacts
+   - current screen symptom
+   - latest failure point
 
-3. **실제 재현**
-   - 가능한 한 같은 명령, 같은 순서, 같은 조건으로 재현합니다.
-   - 재현 절차는 다른 에이전트가 그대로 따라 할 수 있을 정도로 구체적으로 남깁니다.
+3. **Reproduce for real**
+   - Reproduce with the same command sequence and conditions whenever possible.
+   - Leave steps detailed enough that another agent can follow them exactly.
 
-4. **구조적 기록**
-   - `ISSUES.md`에 아래 항목을 append-only 방식으로 기록합니다.
-   - 필수 항목:
-     - Validation target
-     - Environment/session context
-     - Reproduction steps
-     - Expected behavior
-     - Actual behavior
-     - Fresh vs existing session comparison
-     - Artifact vs UI comparison
-     - Root cause hypothesis
-     - Code/test changes
-     - Regression status
-     - Follow-up risks
+4. **Record structurally**
+   - Append a structured entry to `ISSUES.md`.
 
-5. **문제 분류**
-   - 아래 중 하나의 지배적 분류를 반드시 명시합니다:
+   Required fields:
+
+   - Validation target
+   - Environment / session context
+   - Reproduction steps
+   - Expected behavior
+   - Actual behavior
+   - Fresh vs existing session comparison
+   - Artifact vs UI comparison
+   - Root cause hypothesis
+   - Code/test changes
+   - Regression status
+   - Follow-up risks
+
+5. **Classify the issue**
+   - Always assign one dominant class:
      - `persisted_state_bug`
      - `in_memory_projection_bug`
      - `refresh_render_bug`
      - `resume_reload_bug`
      - `race_timing_bug`
 
-6. **최소 수정**
-   - 가장 작은 원인 경계만 수정합니다.
-   - 넓은 리팩터링, UX 계약 변경, 상태모델 재설계는 금지합니다.
-   - 수정 목적은 “현재 루프의 단일 실패 경계 축소”여야 합니다.
+6. **Apply the smallest fix**
+   - Fix only the smallest plausible failure boundary.
+   - Broad refactors, UX contract changes, and state-model redesigns are prohibited.
+   - The purpose of the edit is to narrow the current loop’s single failure boundary.
 
-7. **테스트 보강**
-   - 가능하면 해당 경계를 잡는 단위 테스트 또는 회귀 테스트를 추가합니다.
-   - 단, 테스트 추가만으로 live 검증을 대체하지 않습니다.
+7. **Strengthen tests**
+   - Add a unit or regression test for that boundary when feasible.
+   - Do not treat test coverage as a replacement for live validation.
 
-8. **동일 플로우 재검증**
-   - 반드시 같은 흐름으로 다시 실행합니다.
-   - 해결 여부는 재실행 결과로만 판단합니다.
+8. **Re-validate the same flow**
+   - Re-run the exact same flow.
+   - Judge success only from the rerun result.
 
-9. **인접 회귀 확인**
-   - 바로 인접한 재개/새 세션/화면 갱신/아티팩트 반영 흐름을 점검합니다.
+9. **Check adjacent regressions**
+   - Inspect nearby flows such as resume, fresh session, screen refresh, and artifact reflection.
 
-10. **반복 여부 결정**
-   - 성공: 다음 병목으로 이동
-   - 실패: 같은 이슈를 더 좁은 가설로 계속 반복
-   - 불확실: 계측 추가 후 다시 반복
+10. **Decide whether to continue**
+    - success: move to the next bottleneck
+    - failure: continue on the same issue with a narrower hypothesis
+    - uncertainty: add instrumentation, then repeat
 
-## 출력 형식
-각 반복 결과는 항상 다음 섹션으로 요약합니다.
+## Output format
 
-1. 이번 반복 목표
-2. 워크스페이스 / 세션 컨텍스트
-3. 실행한 실제 절차
-4. 기대 동작
-5. 실제 동작
-6. fresh vs existing 비교
-7. artifact vs UI 비교
-8. 원인 가설
-9. 적용한 수정
-10. 추가/수정한 테스트
-11. 재검증 결과
-12. 남은 리스크
-13. 다음 반복 결정
+Summarize every iteration with these sections:
 
-## ISSUES.md 갱신 규칙
-- `ISSUES.md`는 append-only 라이브 검증 기록으로 취급합니다.
-- 기존 항목을 지우기보다:
-  - 새 iteration log를 추가하고
-  - 상태(open / re-validating / blocked / fixed)를 갱신하고
-  - 관련 코드/테스트 변경과 재검증 결과를 누적합니다.
-- “고쳤다”가 아니라 **“같은 플로우 재검증에서 미재현”**으로 기록합니다.
+1. Iteration target
+2. Workspace / session context
+3. Actual steps executed
+4. Expected behavior
+5. Actual behavior
+6. Fresh vs existing comparison
+7. Artifact vs UI comparison
+8. Root-cause hypothesis
+9. Applied fix
+10. Added or updated tests
+11. Re-validation result
+12. Remaining risks
+13. Next-iteration decision
 
-## fresh vs existing session 규칙
-다음 상황에서는 비교를 생략하지 마십시오:
+## ISSUES.md update rule
 
-- 기존 세션에서만 stale 해 보이는 경우
-- resume 후 표시가 이상한 경우
-- artifact는 맞는데 UI summary가 틀린 경우
-- 재시작하면 증상이 사라지는 경우
-- refresh / subscription / projection 문제가 의심되는 경우
+- Treat `ISSUES.md` as an append-only live-validation log.
+- Instead of deleting old entries:
+  - add a new iteration log
+  - update status (`open`, `re-validating`, `blocked`, `fixed`)
+  - accumulate related code/test changes and re-validation results
+- Do not write “fixed.”
+  Write **“not reproduced in re-validation of the same flow”** instead.
 
-비교 시 반드시 기록할 것:
-- fresh session 결과
-- existing session 결과
-- divergence 유무
-- divergence가 시작되는 단계
+## Fresh vs existing session rule
 
-## artifact vs UI 비교 규칙
-항상 다음을 분리해서 봅니다:
+Do not skip the comparison when:
+
+- the issue appears stale only in an existing session
+- the display becomes wrong after resume
+- the artifact is correct but the UI summary is wrong
+- restarting makes the symptom disappear
+- refresh / subscription / projection issues are suspected
+
+When comparing, always record:
+
+- fresh session result
+- existing session result
+- whether divergence exists
+- the step where divergence begins
+
+## Artifact vs UI comparison rule
+
+Always separate:
+
 - persisted artifact
-- 런타임 메모리 상태
-- 최상위 UI summary
-- 상세 화면/세부 출력
+- runtime in-memory state
+- top-level UI summary
+- detailed screen / detailed output
 
-다음 착각을 금지합니다:
-- artifact가 맞으니 UI도 맞을 것이라는 가정
-- 화면이 맞아 보이니 persisted 상태도 맞을 것이라는 가정
+Do not make either of these assumptions:
 
-## 허용되는 수정 방식
-우선순위:
-1. 경계 조건 수정
-2. resume/load 경로 수정
-3. projection/aggregation 수정
-4. refresh/render 연결 수정
-5. 최소 계측 추가
+- “the artifact is correct, so the UI must also be correct”
+- “the screen looks correct, so persisted state must also be correct”
 
-신중해야 하는 것:
-- 상태 구조 전면 변경
-- slash command 계약 변경
-- 9-node 워크플로우 의미 변경
-- TUI/web UX 계약 변경
+## Allowed fix priority
 
-## 금지사항
-- 재현 전에 바로 수정하지 마십시오.
-- `test/` 밖의 임시 검증 워크스페이스를 만들지 마십시오.
-- live 검증 없이 테스트 통과만으로 해결 선언하지 마십시오.
-- 관찰과 추측을 섞어 쓰지 마십시오.
-- 한 번에 여러 실패 경계를 동시에 고치지 마십시오.
-- unrelated refactor를 끼워 넣지 마십시오.
-- `write_paper completed`만으로 paper-ready를 선언하지 마십시오.
+Prefer fixes in this order:
 
-## 좋은 완료 기준
-다음 조건을 만족하면 한 이슈에 대한 루프를 종료할 수 있습니다:
+1. boundary-condition fix
+2. resume / load path fix
+3. projection / aggregation fix
+4. refresh / render wiring fix
+5. minimal instrumentation
 
-- 증상이 재현 가능하게 기록되어 있고
-- 원인 경계가 하나의 주요 분류로 좁혀졌고
-- 최소 수정이 적용되었고
-- 관련 테스트가 보강되었거나 기존 테스트가 갱신되었고
-- 같은 TUI 플로우 재검증에서 더 이상 재현되지 않고
-- 인접 흐름에서 치명적 회귀가 보이지 않고
-- `ISSUES.md`에 재현, 수정, 재검증, 남은 리스크가 모두 기록됨
+Be cautious with:
 
-## 권장 실행 태도
-- 한 번에 완벽히 고치려 하지 말고 병목을 한 단계씩 줄입니다.
-- 각 반복은 “무엇을 배웠는가”를 남겨야 합니다.
-- 실패한 반복도 가치가 있으며, 반드시 다음 가설의 입력으로 축적합니다.
-- 연구 완성도가 목적이면 반드시 `paper-scale-research-loop`를 함께 호출합니다.
+- large state-structure changes
+- slash-command contract changes
+- changing the meaning of the 9-node workflow
+- changing the TUI/web UX contract
+
+## Prohibitions
+
+- Do not patch before reproduction.
+- Do not create temporary validation workspaces outside `test/`.
+- Do not declare success from passing tests alone without live validation.
+- Do not mix observations with speculation.
+- Do not fix multiple failure boundaries at once.
+- Do not slip in unrelated refactors.
+- Do not declare paper-readiness just because `write_paper` completed.
+
+## Good completion standard
+
+A loop for one issue may stop only when:
+
+- the symptom has been recorded in reproducible form
+- the failure boundary has been narrowed to one dominant class
+- the smallest plausible fix has been applied
+- relevant tests were added or updated
+- the same TUI flow no longer reproduces the issue in re-validation
+- adjacent flows show no critical regression
+- `ISSUES.md` records the reproduction, fix, re-validation, and remaining risks
+
+## Recommended execution attitude
+
+- Do not try to fix everything at once; reduce the bottleneck one layer at a time.
+- Every iteration should leave behind “what was learned.”
+- Failed iterations still have value and must feed the next hypothesis.
+- If research completeness is also a goal, always invoke `paper-scale-research-loop` together with this skill.

@@ -1,54 +1,60 @@
 ---
 name: tui-live-validation
-description: 작업이 실제 TUI 검증을 실행하거나 분석하는 것일 때, 인터랙티브 이슈를 재현할 때, fresh 세션과 기존 세션을 비교할 때, 또는 수정안을 제시하기 전에 구조화된 검증 보고서를 만들어야 할 때 이 스킬을 사용합니다.
+description: Use this skill when the task is to run or analyze real TUI validation, reproduce an interactive issue, compare a fresh session against an existing one, or produce a structured validation report before proposing a fix.
 ---
 
 # TUI Live Validation
 
-## 목적
-코드 변경을 제안하거나 평가하기 전에, 실제 TUI 워크플로우에 대한 구조화된 검증 결과를 생성합니다.
+## Purpose
 
-## 이 스킬을 사용하는 경우
-사용자가 다음을 요청할 때 이 스킬을 사용합니다:
-- TUI 실검증 실행
-- 인터랙티브 버그 재현
-- fresh TUI 세션과 이미 실행 중인 세션 비교
-- persisted output이 UI에 표시되는 내용과 일치하는지 확인
-- 수정이 실제 live 증상을 해결했는지 검증
+Produce a structured validation result for a real TUI workflow before proposing or evaluating a code change.
 
-대표적인 트리거 문구:
-- "TUI 실검증"
-- "live validation"
-- "interactive bug 재현"
-- "fresh session이랑 비교"
-- "기존 세션만 stale"
-- "실제로 실행해서 확인"
-- "화면 표시가 이상함"
+## When to use this skill
 
-## 출력 형식
-항상 다음 섹션을 출력합니다:
+Use this skill when the user wants to:
 
-1. 검증 대상
-2. 환경 / 세션 컨텍스트
-3. 재현 절차
-4. 기대 동작
-5. 실제 동작
-6. fresh 세션 vs 기존 세션 비교
-7. persisted artifact vs UI 비교
-8. 가능성이 높은 문제 영역
-9. 권장되는 다음 단계
+- run real TUI validation
+- reproduce an interactive bug
+- compare a fresh TUI session with an already running session
+- verify whether persisted output matches what the UI shows
+- confirm whether a fix actually solved the live symptom
 
-## 방법
-1. 검증 대상을 한 문장으로 다시 정리합니다.
-2. 관련된 흐름, 명령, 세션 모드, 또는 화면을 식별합니다.
-3. 동작을 재현하거나 제공된 근거를 점검합니다.
-4. 정확한 절차와 관찰 내용을 기록합니다.
-5. 다음을 비교합니다:
-   - fresh 세션 동작
-   - 기존 세션 동작
-   - persisted artifact
-   - 화면에 보이는 최상위 summary 또는 projection
-6. 이슈를 하나의 주요 범주로 분류합니다:
+Typical trigger phrases:
+
+- “TUI live validation”
+- “run live validation”
+- “reproduce the interactive bug”
+- “compare it with a fresh session”
+- “only the existing session is stale”
+- “run it for real and check”
+- “the screen output looks wrong”
+
+## Output format
+
+Always produce these sections:
+
+1. Validation target
+2. Environment / session context
+3. Reproduction steps
+4. Expected behavior
+5. Actual behavior
+6. Fresh session vs existing session comparison
+7. Persisted artifact vs UI comparison
+8. Most likely failure area
+9. Recommended next step
+
+## Method
+
+1. Restate the validation target in one sentence.
+2. Identify the relevant flow, command, session mode, or screen.
+3. Reproduce the behavior or inspect the evidence provided.
+4. Record the exact steps and observations.
+5. Compare:
+   - fresh session behavior
+   - existing session behavior
+   - persisted artifacts
+   - top-level summary or projection shown on screen
+6. Classify the issue into one dominant category:
    - persistence bug
    - loader bug
    - projection / aggregation bug
@@ -56,22 +62,25 @@ description: 작업이 실제 TUI 검증을 실행하거나 분석하는 것일 
    - resume / session bug
    - timing / race bug
    - renderer-only bug
-7. 다음 행동을 권장합니다:
-   - 경계 조사
-   - 패치
-   - 계측 추가
-   - 더 좁은 가설로 재실행
+7. Recommend the next action:
+   - boundary investigation
+   - patch
+   - instrumentation
+   - rerun with a narrower hypothesis
 
-## 가드레일
-- 검증 기록을 작성하기 전에 바로 수정에 들어가지 마십시오.
-- persisted 상태가 올바르다고 해서 live UI도 올바르다고 간주하지 마십시오.
-- fresh reopen으로 문제가 해결된다면, in-memory projection, refresh 연결, resume 처리, 또는 세션 로컬 캐시를 명시적으로 의심하십시오.
-- 관찰된 사실과 가설을 분리하십시오.
-- 넓은 결론보다 정확한 재현 기록을 우선하십시오.
+## Guardrails
 
-## 좋은 완료 기준
-다음 조건을 만족하면 이 스킬은 완료입니다:
-- 다른 에이전트가 재현할 수 있을 정도로 증상이 충분히 명확하게 기술되었고
-- 필요할 때 fresh 세션과 기존 세션 동작이 명시적으로 비교되었으며
-- 필요할 때 persisted 상태와 화면 표시 상태가 명시적으로 비교되었고
-- 실패했을 가능성이 높은 경계가 좁혀졌음
+- Do not jump into a fix before writing the validation record.
+- Do not assume the live UI is correct just because persisted state is correct.
+- If a fresh reopen resolves the issue, explicitly suspect in-memory projection, refresh wiring, resume handling, or session-local cache.
+- Separate observed facts from hypotheses.
+- Prefer precise reproduction records over broad conclusions.
+
+## Good completion standard
+
+This skill is complete when:
+
+- the symptom is described clearly enough for another agent to reproduce
+- fresh-session and existing-session behavior are explicitly compared when relevant
+- persisted state and displayed UI state are explicitly compared when relevant
+- the most likely failing boundary has been narrowed down
