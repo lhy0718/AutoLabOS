@@ -8,6 +8,7 @@ import {
   AnalysisCorpusRow,
   isLikelyVisualPdfThumbnail,
   resolvePaperTextSource,
+  sanitizePdfText,
   selectHybridPdfPageNumbers
 } from "../src/core/analysis/paperText.js";
 
@@ -216,6 +217,37 @@ describe("paperText", () => {
     });
 
     expect(isLikelyVisualPdfThumbnail(buffer)).toBe(false);
+  });
+});
+
+describe("sanitizePdfText", () => {
+  it("strips null bytes from PDF text", () => {
+    const input = "Hello\x00 world\x00\x00!";
+    expect(sanitizePdfText(input)).toBe("Hello world!");
+  });
+
+  it("strips carriage returns", () => {
+    expect(sanitizePdfText("line1\r\nline2")).toBe("line1\nline2");
+  });
+
+  it("collapses excessive blank lines", () => {
+    expect(sanitizePdfText("a\n\n\n\nb")).toBe("a\n\nb");
+  });
+
+  it("trims trailing whitespace on lines", () => {
+    expect(sanitizePdfText("hello   \nworld")).toBe("hello\nworld");
+  });
+
+  it("handles combined null bytes, carriage returns, and whitespace", () => {
+    const input = "Title\x00\r\n\r\nAbstract\x00   \n\n\n\nBody";
+    const result = sanitizePdfText(input);
+    expect(result).not.toContain("\x00");
+    expect(result).not.toContain("\r");
+    expect(result).toBe("Title\n\nAbstract\n\nBody");
+  });
+
+  it("returns empty string for null-byte-only input", () => {
+    expect(sanitizePdfText("\x00\x00\x00")).toBe("");
   });
 });
 

@@ -314,6 +314,17 @@ export function resolvePaperPdfUrl(paper: AnalysisCorpusRow): string | undefined
   return toNonEmptyString(paper.pdf_url) || extractPdfLikeUrl(paper.url);
 }
 
+
+/** Strip null bytes and normalize whitespace from PDF-extracted text. */
+export function sanitizePdfText(text: string): string {
+  return text
+    .replace(/\x00/g, "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function buildAbstractFallbackText(paper: AnalysisCorpusRow): string {
   const parts = [
     `Title: ${paper.title || "Untitled"}`,
@@ -394,6 +405,7 @@ async function extractPdfPageTexts(filePath: string, abortSignal?: AbortSignal):
       maxBuffer: 16 * 1024 * 1024
     });
     return stdout
+      .replace(/\x00/g, "")
       .replace(/\r/g, "")
       .split("\f")
       .map((page) => normalizeWhitespace(page))
@@ -747,6 +759,7 @@ function truncateText(text: string, maxChars: number): string {
 
 function normalizeWhitespace(text: string): string {
   return text
+    .replace(/\x00/g, "")
     .replace(/\r/g, "")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
