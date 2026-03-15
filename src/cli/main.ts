@@ -9,7 +9,7 @@ function printHelp(): void {
   process.stdout.write([
     "autolabos",
     "",
-    "Single entrypoint for the AutoLabOS slash-first TUI.",
+    "Single entrypoint for the AutoLabOS brief-first TUI.",
     "All operations are available inside the app via /commands.",
     "",
     "Usage:",

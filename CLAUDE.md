@@ -37,7 +37,7 @@ Smoke test env vars: `AUTOLABOS_FAKE_CODEX_RESPONSE=1`, `AUTOLABOS_FAKE_SEMANTIC
 
 ## Architecture Overview
 
-AutoLabOS is a TypeScript/ESM CLI (`npm run build` → `dist/cli/main.js`) that automates the full scientific research loop through a **fixed 9-node state graph**. Two UI surfaces share the same runtime: a **slash-first TUI** and a **local web ops UI** (`autolabos web`, default port 4317). Workspace state lives under `.autolabos/` in the user's research project directory.
+AutoLabOS is a TypeScript/ESM CLI (`npm run build` → `dist/cli/main.js`) that automates the full scientific research loop through a **fixed 9-node state graph**. Two UI surfaces share the same runtime: a **brief-first TUI** and a **local web ops UI** (`autolabos web`, default port 4317). Workspace state lives under `.autolabos/` in the user's research project directory.
 
 ### Source Layout
 

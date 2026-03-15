@@ -1,6 +1,6 @@
 <div align="center">
   <h1>AutoLabOS</h1>
-  <p><strong>AI 에이전트 기반 연구 자동화를 위한 slash-first TUI와 로컬 web ops UI</strong></p>
+  <p><strong>논문 수집부터 실험 실행, 논문 초안 작성까지 이어지는 AI 에이전트 기반 연구 자동화를 위한 로컬 TUI와 web ops UI</strong></p>
   <p>
     논문 수집과 근거 분석부터 실험 실행, 논문 초안 작성까지 이어지는 흐름을
     워크스페이스 로컬에 머무는 체크포인트 가능한 워크플로로 묶습니다.
@@ -42,7 +42,7 @@
 
 | 기능 | 제공하는 가치 |
 | --- | --- |
-| Slash-first TUI | `/new`로 brief 파일을 만들고 `/brief start`로 실행한 뒤 `/agent ...`, `/model`, `/settings`, `/doctor`로 흐름을 조작 |
+| 브리프 중심 TUI | `/new`로 brief를 만들고 `/brief start`로 실행한 뒤 `/agent ...`, `/model`, `/settings`, `/doctor`로 브리프 중심 워크플로를 터미널에서 제어 |
 | 로컬 Web Ops UI | `autolabos web`으로 브라우저 온보딩, 대시보드 제어, 아티팩트, 체크포인트, 라이브 세션 상태를 확인 |
 | 결정적 자연어 라우팅 | 자주 쓰는 의도는 LLM fallback 전에 로컬 핸들러나 슬래시 명령으로 우선 처리 |
 | 하이브리드 provider | Codex 로그인 기반 흐름과 OpenAI API 기반 흐름을 상황에 맞게 선택 |
@@ -53,7 +53,7 @@
 ## 여기서 시작하세요
 
 - 처음 써본다면 `autolabos web`부터 추천합니다. 온보딩, 대시보드, 로그, 체크포인트, 아티팩트 브라우징을 한 화면에서 볼 수 있습니다.
-- 터미널 중심으로 쓰고 싶다면 `autolabos`로 시작하면 됩니다.
+- 터미널 중심, 브리프 기반 워크플로를 선호한다면 `autolabos`로 시작하면 됩니다.
 - 두 명령 모두 AutoLabOS가 관리할 연구 프로젝트 폴더에서 실행하세요. 워크스페이스 상태는 `.autolabos/` 아래에 저장됩니다.
 
 ## 준비물
@@ -86,7 +86,7 @@ cd /path/to/your-research-project
 autolabos web
 ```
 
-기본 주소는 `http://127.0.0.1:4317`입니다. TUI부터 시작하고 싶다면 `autolabos`를 실행하면 됩니다.
+기본 주소는 `http://127.0.0.1:4317`입니다. TUI에서 먼저 시작하고 싶다면 `autolabos`를 실행하면 됩니다.
 
 4. 온보딩을 완료합니다. 아직 `.autolabos/config.yaml`이 없다면 웹에서는 onboarding이, TUI에서는 setup wizard가 열리며 같은 워크스페이스 스캐폴드와 설정을 작성합니다.
 
@@ -412,7 +412,7 @@ TUI brief 흐름으로 시작한 run은 source Markdown brief를 `.autolabos/run
 
 ```mermaid
 flowchart TB
-    TUI["Slash-first TUI<br/>/new + /brief start + /agent + /model + /doctor"] --> Session["인터랙션 세션"]
+    TUI["브리프 중심 TUI<br/>/new + /brief start + /agent + /model + /doctor"] --> Session["인터랙션 세션"]
     Web["로컬 Web Ops UI<br/>온보딩 + 대시보드 + 컴포저 + 아티팩트 브라우저"] --> Session
     Natural["자연어 라우팅<br/>먼저 deterministic, 이후 LLM fallback"] --> Session
 

@@ -42,7 +42,7 @@
 
 | Capability | What it gives you |
 | --- | --- |
-| Slash-first TUI | Create a brief with `/new`, launch it with `/brief start`, then steer the run with `/agent ...`, `/model`, `/settings`, and `/doctor` |
+| Brief-first TUI | Create a brief with `/new`, launch it with `/brief start`, then steer the run with `/agent ...`, `/model`, `/settings`, and `/doctor` in a brief-driven terminal workflow. |
 | Local Web Ops UI | Run `autolabos web` for onboarding, dashboard controls, artifacts, checkpoints, and live session state in the browser |
 | Deterministic natural-language routing | Common intents map to local handlers or slash commands before LLM fallback |
 | Hybrid provider model | Default to Codex login for the primary flow, or move to OpenAI API models when you want explicit API-backed execution |
@@ -61,7 +61,7 @@
 ## Start Here
 
 - If this is your first time, start with `autolabos web`. It gives you guided onboarding, the dashboard, logs, checkpoints, and artifact browsing in one place.
-- Use `autolabos` when you prefer a terminal-first loop with slash commands.
+- Use `autolabos` when you prefer a terminal-first, brief-driven workflow.
 - Run either command from the research project directory you want AutoLabOS to manage. Workspace state lives under `.autolabos/`.
 
 ## What You Need
@@ -94,7 +94,7 @@ cd /path/to/your-research-project
 autolabos web
 ```
 
-The web server listens on `http://127.0.0.1:4317` by default. Use `autolabos` instead if you want the TUI first.
+The web server listens on `http://127.0.0.1:4317` by default. Use `autolabos` instead if you want to start in the TUI.
 
 4. Finish onboarding. If `.autolabos/config.yaml` does not exist yet, the web app opens onboarding and the TUI opens the setup wizard. Both flows write the same workspace scaffold and config.
 
@@ -420,7 +420,7 @@ When a run starts from the TUI brief flow, AutoLabOS snapshots the source Markdo
 
 ```mermaid
 flowchart TB
-    TUI["Slash-first TUI<br/>/new + /brief start + /agent + /model + /doctor"] --> Session["Interaction session"]
+    TUI["Brief-first TUI<br/>/new + /brief start + /agent + /model + /doctor"] --> Session["Interaction session"]
     Web["Local Web Ops UI<br/>onboarding + dashboard + composer + artifact browser"] --> Session
     Natural["Natural-language routing<br/>deterministic first, LLM fallback second"] --> Session
 
