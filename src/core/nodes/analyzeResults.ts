@@ -146,16 +146,14 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           : objectiveProfileBase;
       const cachedEvaluation =
         await runContextMemory.get<ObjectiveMetricEvaluation>("objective_metric.last_evaluation");
-      const shouldRefreshObjectiveEvaluation =
-        !cachedEvaluation || cachedEvaluation.status === "unknown" || cachedEvaluation.status === "missing";
-      const objectiveEvaluation = shouldRefreshObjectiveEvaluation
-        ? evaluateObjectiveMetric(metrics, objectiveProfile, effectiveObjectiveMetric)
-        : cachedEvaluation;
+      // Always re-evaluate in analyze_results: the metrics here are enriched
+      // with AOCS-derived condition_metrics and top-level aggregates that
+      // run_experiments did not have, so the cached metric match may be stale.
+      const objectiveEvaluation = evaluateObjectiveMetric(metrics, objectiveProfile, effectiveObjectiveMetric);
       if (
-        shouldRefreshObjectiveEvaluation &&
-        (!cachedEvaluation ||
-          cachedEvaluation.status !== objectiveEvaluation.status ||
-          cachedEvaluation.matchedMetricKey !== objectiveEvaluation.matchedMetricKey)
+        !cachedEvaluation ||
+        cachedEvaluation.status !== objectiveEvaluation.status ||
+        cachedEvaluation.matchedMetricKey !== objectiveEvaluation.matchedMetricKey
       ) {
         await runContextMemory.put("objective_metric.last_evaluation", objectiveEvaluation);
         if (cachedEvaluation?.status === "unknown" || cachedEvaluation?.status === "missing") {
@@ -576,7 +574,8 @@ async function hydrateDetailedExperimentMetrics(
 
   const resultsPath = resolveDetailedResultsPath(metrics, publicDir);
   if (!resultsPath) {
-    return aliasCompactMetrics(metrics);
+    const aliased = aliasCompactMetrics(metrics);
+    return deriveConditionMetricsFromAOCSIfNeeded(aliased);
   }
 
   const detailedResults = await readJsonObject<Record<string, unknown>>(
@@ -585,7 +584,8 @@ async function hydrateDetailedExperimentMetrics(
     path.basename(resultsPath) || "latest_results.json"
   );
   if (!detailedResults) {
-    return aliasCompactMetrics(metrics);
+    const aliased = aliasCompactMetrics(metrics);
+    return deriveConditionMetricsFromAOCSIfNeeded(aliased);
   }
 
   return enrichMetricsWithDetailedResults(aliasCompactMetrics(metrics), detailedResults);
@@ -670,6 +670,21 @@ function enrichMetricsWithDetailedResults(
       ...asRecord(next.condition_metrics),
       ...derived.conditionMetrics
     };
+  }
+  // Fallback: derive condition_metrics from aggregate_overall_condition_summary
+  // when the standard derivation produced nothing but the experiment left an AOCS array.
+  if (Object.keys(asRecord(next.condition_metrics)).length === 0) {
+    const aocs = asArray(next.aggregate_overall_condition_summary);
+    const fallback = deriveConditionMetricsFromAOCS(aocs);
+    if (Object.keys(fallback.conditionMetrics).length >= 2) {
+      next.condition_metrics = fallback.conditionMetrics;
+      if (fallback.primaryCondition && !asString(next.primary_condition)) {
+        derived.primaryCondition = fallback.primaryCondition;
+      }
+      if (fallback.baselineCondition && !asString(next.baseline_condition)) {
+        derived.baselineCondition = fallback.baselineCondition;
+      }
+    }
   }
   if (Object.keys(derived.samplingProfile).length > 0) {
     next.sampling_profile = {
@@ -1133,6 +1148,106 @@ function compactNumericRecord(value: Record<string, number | undefined>): Record
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => typeof entry === "number" && Number.isFinite(entry))
   ) as Record<string, number>;
+}
+
+/**
+ * Derives condition_metrics from aggregate_overall_condition_summary (AOCS).
+ * AOCS is an array of objects where each entry has a model_family + calibration combo
+ * and associated metric values. We convert to the condition_metrics dict format
+ * expected by the governance baseline comparison contract.
+ */
+
+/**
+ * Applies AOCS→condition_metrics fallback to a metrics object when condition_metrics
+ * is absent but aggregate_overall_condition_summary is present.
+ */
+function deriveConditionMetricsFromAOCSIfNeeded(
+  metrics: Record<string, unknown>
+): Record<string, unknown> {
+  if (Object.keys(asRecord(metrics.condition_metrics)).length > 0) {
+    return metrics;
+  }
+  const aocs = asArray(metrics.aggregate_overall_condition_summary);
+  if (aocs.length === 0) {
+    return metrics;
+  }
+  const fallback = deriveConditionMetricsFromAOCS(aocs);
+  if (Object.keys(fallback.conditionMetrics).length < 2) {
+    return metrics;
+  }
+  const next = { ...metrics };
+  next.condition_metrics = fallback.conditionMetrics;
+  if (fallback.primaryCondition) {
+    next.primary_condition = fallback.primaryCondition;
+  }
+  if (fallback.baselineCondition) {
+    next.baseline_condition = fallback.baselineCondition;
+  }
+  // Surface primary condition's key metrics as top-level scalars so the
+  // objective metric resolver can find e.g. macro_f1 before rank_reversal_count.
+  if (fallback.primaryCondition) {
+    const primary = fallback.conditionMetrics[fallback.primaryCondition];
+    if (primary) {
+      const surfaceKeys = [
+        "macro_f1", "brier_score", "ece", "ece_adaptive",
+        "ece_equal_width_10", "ece_equal_frequency_10", "auroc",
+        "runtime_seconds", "peak_memory_mb"
+      ];
+      for (const k of surfaceKeys) {
+        if (typeof primary[k] === "number" && next[k] === undefined) {
+          next[k] = primary[k];
+        }
+      }
+    }
+  }
+  return next;
+}
+/** @internal exported for testing */
+export function deriveConditionMetricsFromAOCS(aocs: unknown[]): {
+  conditionMetrics: Record<string, Record<string, unknown>>;
+  primaryCondition?: string;
+  baselineCondition?: string;
+} {
+  const conditionMetrics: Record<string, Record<string, unknown>> = {};
+  const skipKeys = new Set(["model_family", "calibration", "outer_fold_count"]);
+
+  for (const raw of aocs) {
+    const entry = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : undefined;
+    if (!entry) continue;
+
+    const model = typeof entry.model_family === "string" ? entry.model_family : undefined;
+    const cal = typeof entry.calibration === "string" ? entry.calibration : undefined;
+    if (!model) continue;
+
+    const conditionName = cal ? `${model}_${cal}` : model;
+    const metrics: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(entry)) {
+      if (skipKeys.has(key)) continue;
+      // Strip _mean suffix for metric key compatibility
+      const cleanKey = key.endsWith("_mean") ? key.slice(0, -5) : key;
+      metrics[cleanKey] = value;
+    }
+    if (Object.keys(metrics).length > 0) {
+      conditionMetrics[conditionName] = metrics;
+    }
+  }
+
+  // Pick primary (best macro_f1) and baseline (worst macro_f1)
+  let primaryCondition: string | undefined;
+  let baselineCondition: string | undefined;
+  let bestF1 = -Infinity;
+  let worstF1 = Infinity;
+  for (const [name, m] of Object.entries(conditionMetrics)) {
+    const f1 = typeof m.macro_f1 === "number" ? m.macro_f1 : undefined;
+    if (f1 !== undefined) {
+      if (f1 > bestF1) { bestF1 = f1; primaryCondition = name; }
+      if (f1 < worstF1) { worstF1 = f1; baselineCondition = name; }
+    }
+  }
+
+  return { conditionMetrics, primaryCondition, baselineCondition };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

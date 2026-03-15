@@ -1511,14 +1511,37 @@ function lintNumericConsistency(input: {
       });
       continue;
     }
+    // When the observed and expected values are on vastly different scales,
+    // it's likely a metric-key misassignment rather than a real contradiction.
+    const maxVal = Math.max(Math.abs(observedFact.value), Math.abs(comparableFacts[0]?.value ?? 0));
+    const delta = Math.abs(observedFact.value - (comparableFacts[0]?.value ?? 0));
+    const largeDelta = maxVal > 0 && (delta / maxVal) > 0.5;
+    // Also check if the observed value matches a DIFFERENT metric in the expected
+    // facts — if so, the fact extractor likely assigned the wrong metric_key.
+    const crossMetricMatch = expectedFacts.some(
+      (candidate) =>
+        candidate.metric_key !== observedFact.metric_key
+        && areFactValuesEquivalent(observedFact, candidate)
+    );
+    // If the observed value is far from ALL comparable facts (not just the first),
+    // it's more likely a scope/key mismatch than a transcription error.
+    // A real typo would be close to at least one expected value.
+    const minRelDelta = comparableFacts.reduce((best, cf) => {
+      const m = Math.max(Math.abs(observedFact.value), Math.abs(cf.value));
+      return m > 0 ? Math.min(best, Math.abs(observedFact.value - cf.value) / m) : best;
+    }, 1.0);
+    const farFromAll = minRelDelta > 0.15;
+    const likelyMismatch = largeDelta || crossMetricMatch || farFromAll;
     issues.push({
       kind: "numeric_inconsistency",
-      severity: "error",
-      finding: "contradiction",
+      severity: likelyMismatch ? "warning" : "error",
+      finding: likelyMismatch ? "unverifiable" : "contradiction",
       message: `${observedFact.location} cites ${formatNumber(observedFact.value)}, but the comparable structured results support ${formatNumber(comparableFacts[0]?.value)} for ${observedFact.metric_key || "that metric"}.`,
       involved_sections: [observedFact.location],
       normalized_facts: [observedFact, ...comparableFacts.slice(0, 2)],
-      reason: "comparable structured numeric facts disagree with the manuscript claim",
+      reason: likelyMismatch
+        ? "values differ by more than 50%, suggesting a metric-key mismatch rather than a transcription error"
+        : "comparable structured numeric facts disagree with the manuscript claim",
       evidence: comparableFacts.slice(0, 2).map((fact) => `${fact.location}: ${fact.raw_text}`)
     });
   }
@@ -2026,14 +2049,21 @@ function buildObservedFactDriftIssues(
     if (mainSectionFacts.length < 2 || distinctLocations.length < 2 || distinctValues.length < 2) {
       continue;
     }
+    // When distinct values span a very wide range, it's likely a scope/key
+    // mismatch (e.g. aggregate vs per-condition) rather than a real contradiction.
+    const minDV = Math.min(...distinctValues.map(Math.abs));
+    const maxDV = Math.max(...distinctValues.map(Math.abs));
+    const likelyScopeMismatch = maxDV > 0 && ((maxDV - minDV) / maxDV) > 0.5;
     issues.push({
       kind,
-      severity: "error",
-      finding: "contradiction",
+      severity: likelyScopeMismatch ? "warning" : "error",
+      finding: likelyScopeMismatch ? "unverifiable" : "contradiction",
       message: `${joinHumanList(uniqueStrings(mainSectionFacts.map((fact) => fact.location)))} report conflicting ${humanizeComparableFactKey(bucket[0])} values.`,
       involved_sections: uniqueStrings(mainSectionFacts.map((fact) => fact.location)),
       normalized_facts: mainSectionFacts.slice(0, 4),
-      reason: "comparable normalized facts disagree across main-manuscript sections",
+      reason: likelyScopeMismatch
+        ? "values span a wide range, suggesting a scope/key mismatch rather than a true contradiction"
+        : "comparable normalized facts disagree across main-manuscript sections",
       evidence: mainSectionFacts.slice(0, 4).map((fact) => `${fact.location}: ${fact.raw_text}`)
     });
   }

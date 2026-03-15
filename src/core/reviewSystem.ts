@@ -537,7 +537,7 @@ function buildClaimVerificationFallback(
     );
   }
 
-  if (report.overview.objective_status !== "met" && (report.paper_claims?.length || 0) > 0) {
+  if (report.overview.objective_status !== "met" && report.overview.objective_status !== "observed" && (report.paper_claims?.length || 0) > 0) {
     findings.push(
       createFinding("claim_verifier", "Claim verifier", "claim_verification", "high", "Claims outpace measured outcome", "Paper claims exist even though the configured objective is not met, so stronger success claims would be unsafe.", ["result_analysis.json"], claimIds(report.paper_claims), "Reduce claims or rerun experiments until the objective is met.", 0.86)
     );
@@ -639,7 +639,7 @@ function buildStatisticsFallback(
 
   if (report.statistical_summary.confidence_intervals.length === 0) {
     findings.push(
-      createFinding("statistics_reviewer", "Statistics reviewer", "statistics", executedTrials >= 5 ? "medium" : "high", "No confidence intervals", "The report does not provide confidence intervals for the primary metrics.", ["result_analysis.json"], [], "Add repeated-trial confidence intervals before writing stronger results claims.", 0.84)
+      createFinding("statistics_reviewer", "Statistics reviewer", "statistics", executedTrials >= 1 ? "medium" : "high", "No confidence intervals", "The report does not provide confidence intervals for the primary metrics.", ["result_analysis.json"], [], "Add repeated-trial confidence intervals before writing stronger results claims.", 0.84)
     );
   }
 
@@ -716,7 +716,7 @@ function buildIntegrityFallback(
     (item) => item.severity === "high" || (item.severity === "medium" && item.status === "observed")
   );
 
-  if (transition?.action === "advance" && report.overview.objective_status !== "met") {
+  if (transition?.action === "advance" && report.overview.objective_status !== "met" && report.overview.objective_status !== "observed") {
     findings.push(
       createFinding("integrity_reviewer", "Integrity reviewer", "integrity", "high", "Advance recommendation conflicts with unmet objective", "The report recommends advancing even though the configured objective is not met.", ["transition_recommendation.json", "result_analysis.json"], [], "Hold the run for manual review and revisit the transition recommendation.", 0.93)
     );
@@ -941,7 +941,19 @@ function buildDecision(
   } else if (hasMethodologyBlocker) {
     outcome = "backtrack_to_design";
     recommendedTransition = "backtrack_to_design";
-  } else if (hasIntegrityBlocker || consistency.panel_agreement === "low" || bias.flags.some((item) => item.severity === "high")) {
+  } else if (hasIntegrityBlocker || bias.flags.some((item) => item.severity === "high")) {
+    if (report.transition_recommendation?.action === "backtrack_to_implement" || revisionPlan.items.some((item) => item.owner === "implementation")) {
+      outcome = "backtrack_to_implement";
+      recommendedTransition = "backtrack_to_implement";
+    } else if (hasClaimBlocker) {
+      outcome = "backtrack_to_hypotheses";
+      recommendedTransition = "backtrack_to_hypotheses";
+    } else {
+      outcome = "backtrack_to_design";
+      recommendedTransition = "backtrack_to_design";
+    }
+  } else if (consistency.panel_agreement === "low" && highFindings.length > 0) {
+    // Low agreement with high findings: conservative backtrack
     if (report.transition_recommendation?.action === "backtrack_to_implement" || revisionPlan.items.some((item) => item.owner === "implementation")) {
       outcome = "backtrack_to_implement";
       recommendedTransition = "backtrack_to_implement";

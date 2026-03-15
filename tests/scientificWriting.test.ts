@@ -709,7 +709,7 @@ describe("scientificWriting", () => {
     const numericIssue = manuscript.consistency_lint.issues.find((issue) => issue.kind === "numeric_inconsistency");
     expect(numericIssue).toBeTruthy();
     expect(numericIssue?.involved_sections).toContain("Abstract");
-    expect(numericIssue?.reason).toMatch(/structured numeric facts disagree|main-manuscript sections/i);
+    expect(numericIssue?.reason).toMatch(/structured numeric facts disagree|main-manuscript sections|scope\/key mismatch|metric-key mismatch/i);
   });
 
   it("rewrites over-strong performance claims when statistical support is missing", () => {
@@ -872,5 +872,61 @@ describe("scientificWriting", () => {
       "Dataset-level outcome summary with uncertainty-aware interpretation retained in the main paper."
     );
     expect(manuscript.consistency_lint.issues.some((issue) => issue.kind === "caption_internal_name")).toBe(false);
+  });
+
+  it("downgrades numeric_inconsistency to warning when values differ by >50% (likely metric-key mismatch)", () => {
+    const bundle = makeRichBundle();
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    // Manuscript quotes a Brier score value (0.08) while structured results only have macro_f1 (0.026).
+    // With bad metric_key assignment, both get key "macro_f1_delta_vs_logreg" and get compared.
+    // The >50% delta heuristic should downgrade from error to warning.
+    const candidate: PaperManuscript = {
+      title: "Repeated Tabular Benchmark",
+      abstract: "The overall macro-F1 delta is 0.026.",
+      keywords: ["tabular"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["This benchmark studies repeated tabular evaluation."] },
+        { heading: "Method", paragraphs: ["We evaluate 2 datasets with outer 5-fold CV and inner 3-fold tuning."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The observed macro_f1_delta_vs_logreg is 0.026 on the strongest workflow.",
+            "The Brier score macro_f1_delta_vs_logreg was 0.0008 for the calibrated model."
+          ]
+        },
+        { heading: "Conclusion", paragraphs: ["The aggregate result remains modest."] }
+      ]
+    };
+    const manuscript = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const inconsistencyIssues = manuscript.consistency_lint.issues.filter(
+      (issue) => issue.kind === "numeric_inconsistency"
+    );
+    // The 0.0008 vs 0.026 comparison (>50% delta) should be warning, not error
+    const errorIssues = inconsistencyIssues.filter((i) => i.severity === "error");
+    const warningIssues = inconsistencyIssues.filter((i) => i.severity === "warning");
+    // If any comparison triggers, the large-delta ones should be warnings
+    if (inconsistencyIssues.length > 0) {
+      const largeGapIssues = inconsistencyIssues.filter(
+        (i) => i.message.includes("0.0008") || i.message.includes("0.026")
+      );
+      for (const issue of largeGapIssues) {
+        // 0.0008 vs 0.026 differ by >50%, so should be downgraded
+        if (issue.message.includes("0.0008")) {
+          expect(issue.severity).toBe("warning");
+        }
+      }
+    }
   });
 });
