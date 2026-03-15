@@ -51,6 +51,39 @@
 - Tests: `tests/scientificWriting.test.ts` (11 tests, added metric-key mismatch downgrade test)
 - Evidence: Gate changed from `fail (14 blocking)` → `warn (0 blocking, 28 warnings)`. Run completed at ckpt 179 with PDF built successfully.
 
+## Issue: LV-003 — write_paper scientific gate false-positive blocking
+
+- Status: resolved
+- Validation target: calibration research run `review -> write_paper -> PDF build`
+- Environment/session context: workspace `test/tui-calibration-20260315`, run `8abd033e-3b81-4b76-8106-869b17454d90`, calibration topic on imbalanced tabular data, local TUI validation with checkpointed run resume
+
+- Reproduction steps:
+  1. Start the calibration brief run and advance it through `review`.
+  2. Let the workflow enter `write_paper` with completed experiment artifacts and manuscript inputs.
+  3. Observe the scientific gate fail with repeated `numeric_inconsistency` blockers despite successful experiment execution.
+
+- Expected behavior: the scientific gate should only block true claim/evidence contradictions and allow consistent cross-metric manuscript facts through to draft completion.
+- Actual behavior: the gate treated Brier score, ECE, AUROC, runtime, and memory values as macro-F1 contradictions and repeatedly blocked `write_paper`.
+- Fresh vs existing session comparison:
+  - Fresh session: resuming the checkpointed run reproduced the same blocking gate findings before the patch.
+  - Existing session: the active session reproduced repeated `write_paper` failure before the patch.
+  - Divergence: no; both paths hit the same false-positive gate behavior.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: manuscript fact collection assigned the wrong `metric_key`, causing cross-metric values to be compared as if they were macro-F1 observations.
+
+- Code/test changes:
+  - Code: `src/core/analysis/scientificWriting.ts`
+  - Tests: `tests/scientificWriting.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes — `tests/scientificWriting.test.ts`
+  - Re-validation result: pass; the gate changed from `fail (14 blocking)` to `warn (0 blocking, 28 warnings)` and the run completed with PDF output.
+
+- Follow-up risks: warning-only scientific gate findings still need manuscript review before claiming paper-ready quality.
+- Evidence/artifacts: `paper/consistency_lint.json`, completed run checkpoint 179, output bundle `outputs/calibration-trade-offs-...`
+
 ## Research completion risks
 
 ### R-001 — Paper-ready evidence still weaker than workflow completion evidence

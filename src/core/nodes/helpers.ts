@@ -12,21 +12,31 @@ function resolveRunArtifactPath(run: RunRecord, relativePath: string): string {
   return normalizeFsPath(path.join(runArtifactsDir(run), relativePath));
 }
 
+async function writeTextArtifactAtomic(outputPath: string, content: string): Promise<void> {
+  await ensureDir(path.dirname(outputPath));
+  const tempPath = `${outputPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  try {
+    await fs.writeFile(tempPath, content, "utf8");
+    await fs.rename(tempPath, outputPath);
+  } catch (error) {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function writeRunArtifact(run: RunRecord, relativePath: string, content: string): Promise<string> {
   const outputPath = resolveRunArtifactPath(run, relativePath);
   const artifactPath = path.join(runArtifactsDir(run), relativePath);
-  await ensureDir(path.dirname(outputPath));
-  await fs.writeFile(outputPath, content, "utf8");
+  await writeTextArtifactAtomic(outputPath, content);
   return artifactPath;
 }
 
 export async function appendJsonl(run: RunRecord, relativePath: string, items: unknown[]): Promise<string> {
   const outputPath = resolveRunArtifactPath(run, relativePath);
   const artifactPath = path.join(runArtifactsDir(run), relativePath);
-  await ensureDir(path.dirname(outputPath));
   const lines = items.map((item) => JSON.stringify(item)).join("\n");
   const trailing = lines ? `${lines}\n` : "";
-  await fs.writeFile(outputPath, trailing, "utf8");
+  await writeTextArtifactAtomic(outputPath, trailing);
   return artifactPath;
 }
 
