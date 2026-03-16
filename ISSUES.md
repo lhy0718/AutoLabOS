@@ -1,13 +1,13 @@
 # ISSUES.md
 
 ## Current status
-- Last updated: 2026-03-16T03:45:00 KST
+- Last updated: 2026-03-16T09:10:00 KST
 - Current validation target: adaptive test-time compute experiment — full `/brief start --latest` cycle
-- Current test/ workspace: `test/tui-adaptive-ttc-20260316-000530`
-- Current active run: `93b5d617-8950-4394-87c4-ef14c642afc1`
-- Current overall state: paused at design_experiments (blocked by ChatGPT usage limit)
+- Current test/ workspace: `test/tui-adaptive-ttc-20260316-073416`
+- Current active run: `db7035d3-cc98-4dff-9303-214de6cdefd0`
+- Current overall state: paused at design_experiments (backtrack from analyze_results, rate-limited)
 - Current paper-scale target: adaptive test-time compute for small reasoning LLMs
-- Current paper readiness state: blocked (cannot reach review/write_paper nodes due to API quota)
+- Current paper readiness state: blocked (cannot reach review/write_paper due to rate limits; experiment ran but objective not met)
 - Previous validation target: calibration research run (completed, paper_scale_candidate)
 
 ## Active live-validation issues
@@ -33,12 +33,22 @@
 - Files changed: `src/core/analysis/paperText.ts`
 - Tests: 6 new tests in `tests/paperText.test.ts` (null bytes, carriage returns, combined sanitization)
 
-### LV-013 — ChatGPT usage limit blocks implement_experiments (ENVIRONMENT)
-- Status: open (environment limitation, not a code bug)
+### LV-013 — ChatGPT usage limit blocks progress (ENVIRONMENT)
+- Status: recurring (environment limitation, not a code bug)
 - Root cause taxonomy: N/A (external service quota)
-- Symptom: All implement_experiments attempts fail with "codex exec failed (exit 1)". Codex CLI reports "You've hit your usage limit."
-- Impact: Cannot progress past implement_experiments → cannot validate review/write_paper critique system in live TUI.
+- Symptom: Codex CLI rate-limits or exhausts daily quota, stalling node execution (observed at implement_experiments and design_experiments).
+- Impact: Cannot complete full 9-node cycle in one session. Workflow pauses when quota runs out.
 - Mitigation: Wait for quota reset, or switch to API key auth. Not a code fix.
+- Note: Quota did reset between sessions — run progressed through implement_experiments, run_experiments, and analyze_results before hitting limits again at design_experiments (backtrack iteration).
+
+### LV-014 — Objective evaluation misparses relative improvement target (OPEN)
+- Status: open
+- Root cause taxonomy: `in_memory_projection_bug`
+- Symptom: Objective metric string "at least +1.5 accuracy points over single-pass baseline" is parsed as `accuracy_pass_at_1 >= 1.5` (absolute), but accuracy is 0-1 scale. The target should be `best - baseline >= 0.015` (relative improvement). With this bug, no accuracy value can ever satisfy the threshold.
+- Impact: The backtrack from analyze_results to design_experiments is triggered correctly in spirit (experiment didn't improve over baseline), but the specific comparison is technically impossible to satisfy.
+- Root cause: `objective_evaluation.json` shows `targetValue: 1.5, observedValue: 0.22, comparator: ">="` — the LLM-based objective parsing extracted 1.5 as an absolute value instead of understanding it as a relative delta.
+- Files likely affected: wherever objective metric evaluation is built (probably in `src/core/nodes/analyzeResults.ts` or `resultAnalysis*.ts`)
+- Suggested fix: Allow objective targets to express relative comparisons (e.g., "improve by X over baseline") or clamp absolute targets to plausible ranges.
 
 ### LV-001 — analyze_results → implement_experiments backtrack loop (RESOLVED)
 - Status: resolved
