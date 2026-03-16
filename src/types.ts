@@ -152,7 +152,7 @@ export interface AppConfig {
   version: 1;
   project_name: string;
   providers: {
-    llm_mode: "codex_chatgpt_only" | "openai_api";
+    llm_mode: "codex_chatgpt_only" | "openai_api" | "ollama";
     codex: {
       model: string;
       chat_model?: string;
@@ -181,9 +181,18 @@ export interface AppConfig {
       command_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       api_key_required: true;
     };
+    ollama?: {
+      base_url: string;
+      chat_model: string;
+      research_model: string;
+      experiment_model?: string;
+      vision_model?: string;
+      chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+      research_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+    };
   };
   analysis: {
-    pdf_mode: "codex_text_image_hybrid" | "responses_api_pdf";
+    pdf_mode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
     responses_model: string;
     responses_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   };

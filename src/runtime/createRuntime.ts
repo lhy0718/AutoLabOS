@@ -15,7 +15,7 @@ import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
 import { InMemoryEventStream } from "../core/events.js";
-import { CodexLLMClient, OpenAiResponsesLLMClient, RoutedLLMClient } from "../core/llm/client.js";
+import { CodexLLMClient, OllamaLLMClient, OpenAiResponsesLLMClient, RoutedLLMClient } from "../core/llm/client.js";
 import { LocalAciAdapter } from "../tools/aciLocalAdapter.js";
 import { SemanticScholarClient } from "../tools/semanticScholar.js";
 import { DefaultNodeRegistry } from "../core/stateGraph/nodeRegistry.js";
@@ -24,6 +24,9 @@ import { StateGraphRuntime } from "../core/stateGraph/runtime.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { ResponsesPdfAnalysisClient } from "../integrations/openai/responsesPdfAnalysisClient.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
+import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
+import { OllamaPdfAnalysisClient } from "../integrations/ollama/ollamaPdfAnalysisClient.js";
+import { DEFAULT_OLLAMA_BASE_URL } from "../integrations/ollama/modelCatalog.js";
 
 export interface AutoLabOSRuntime {
   paths: AppPaths;
@@ -103,6 +106,25 @@ export async function createAutoLabOSRuntime(
     model: config.providers.openai.pdf_model || config.providers.openai.model,
     reasoningEffort: config.providers.openai.pdf_reasoning_effort || config.providers.openai.reasoning_effort
   });
+
+  // Ollama clients
+  const ollamaConfig = config.providers.ollama;
+  const ollamaBaseUrl = ollamaConfig?.base_url || DEFAULT_OLLAMA_BASE_URL;
+  const ollamaHttpClient = new OllamaClient(ollamaBaseUrl);
+  const ollamaTaskLlm = new OllamaLLMClient(ollamaHttpClient, {
+    model: ollamaConfig?.research_model || "qwen3.5:35b-a3b"
+  });
+  const ollamaChatLlm = new OllamaLLMClient(ollamaHttpClient, {
+    model: ollamaConfig?.chat_model || "qwen3.5:27b"
+  });
+  const ollamaPdfLlm = new OllamaLLMClient(ollamaHttpClient, {
+    model: ollamaConfig?.vision_model || "qwen3.5:35b-a3b"
+  });
+  const ollamaPdfAnalysis = new OllamaPdfAnalysisClient(
+    ollamaHttpClient,
+    ollamaConfig?.vision_model || "qwen3.5:35b-a3b"
+  );
+
   const titleGenerator = new TitleGenerator(() => {
     if (config.providers.llm_mode === "openai_api") {
       return {
@@ -116,6 +138,12 @@ export async function createAutoLabOSRuntime(
               config.providers.openai.chat_reasoning_effort ||
               config.providers.openai.command_reasoning_effort
           })
+      };
+    }
+    if (config.providers.llm_mode === "ollama") {
+      return {
+        runForText: async ({ prompt, systemPrompt, abortSignal }) =>
+          (await ollamaChatLlm.complete(prompt, { systemPrompt, abortSignal })).text
       };
     }
     return {
@@ -145,12 +173,16 @@ export async function createAutoLabOSRuntime(
   });
 
   const eventStream = new InMemoryEventStream();
-  const llm = new RoutedLLMClient(() =>
-    config.providers.llm_mode === "openai_api" ? openAiTaskLlm : codexTaskLlm
-  );
-  const pdfTextLlm = new RoutedLLMClient(() =>
-    config.providers.llm_mode === "openai_api" ? openAiPdfLlm : codexPdfLlm
-  );
+  const llm = new RoutedLLMClient(() => {
+    if (config.providers.llm_mode === "openai_api") return openAiTaskLlm;
+    if (config.providers.llm_mode === "ollama") return ollamaTaskLlm;
+    return codexTaskLlm;
+  });
+  const pdfTextLlm = new RoutedLLMClient(() => {
+    if (config.providers.llm_mode === "openai_api") return openAiPdfLlm;
+    if (config.providers.llm_mode === "ollama") return ollamaPdfLlm;
+    return codexPdfLlm;
+  });
   const aci = new LocalAciAdapter({
     allowNetwork: config.experiments.allow_network === true
   });
@@ -171,7 +203,8 @@ export async function createAutoLabOSRuntime(
     codex,
     aci,
     semanticScholar,
-    responsesPdfAnalysis
+    responsesPdfAnalysis,
+    ollamaPdfAnalysis
   });
 
   const checkpointStore = new CheckpointStore(paths);

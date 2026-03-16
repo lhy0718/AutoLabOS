@@ -1,5 +1,6 @@
 import { CodexCliClient } from "../../integrations/codex/codexCliClient.js";
 import { OpenAiResponsesTextClient } from "../../integrations/openai/responsesTextClient.js";
+import { OllamaClient } from "../../integrations/ollama/ollamaClient.js";
 
 export interface LLMCompletionUsage {
   inputTokens?: number;
@@ -96,6 +97,54 @@ export class OpenAiResponsesLLMClient implements LLMClient {
       text,
       usage: {
         costUsd: undefined
+      }
+    };
+  }
+}
+
+interface OllamaClientDefaults {
+  model?: string;
+}
+
+export class OllamaLLMClient implements LLMClient {
+  constructor(
+    private readonly ollama: OllamaClient,
+    private readonly defaults: OllamaClientDefaults = {}
+  ) {}
+
+  async complete(
+    prompt: string,
+    opts?: LLMCompleteOptions
+  ): Promise<LLMCompletion> {
+    const model = this.defaults.model || "qwen3.5:35b-a3b";
+    opts?.onProgress?.({ type: "status", text: `Submitting request to Ollama (${model}).` });
+
+    const hasImages = opts?.inputImagePaths && opts.inputImagePaths.length > 0;
+    const result = hasImages
+      ? await this.ollama.chatWithImages({
+          model,
+          prompt,
+          systemPrompt: opts?.systemPrompt,
+          imagePaths: opts!.inputImagePaths!,
+          abortSignal: opts?.abortSignal
+        })
+      : await this.ollama.chat({
+          model,
+          messages: [
+            ...(opts?.systemPrompt ? [{ role: "system" as const, content: opts.systemPrompt }] : []),
+            { role: "user" as const, content: prompt }
+          ],
+          abortSignal: opts?.abortSignal
+        });
+
+    opts?.onProgress?.({ type: "status", text: "Received Ollama output." });
+
+    return {
+      text: result.text,
+      usage: {
+        inputTokens: result.promptEvalCount,
+        outputTokens: result.evalCount,
+        costUsd: 0
       }
     };
   }

@@ -40,3 +40,6 @@ pnpm-debug.log*
 
 # Generated media / local previews
 output/
+
+# Claude Code
+.claude

@@ -69,7 +69,7 @@ interface AnalysisManifestEntry {
   summary_count: number;
   evidence_count: number;
   analysis_attempts: number;
-  analysis_mode?: "codex_text_image_hybrid" | "responses_api_pdf";
+  analysis_mode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   pdf_url?: string;
   pdf_cache_path?: string;
   text_cache_path?: string;
@@ -186,7 +186,7 @@ interface AnalysisQuarantineRow {
   title: string;
   reason: string;
   source_type: "full_text" | "abstract";
-  analysis_mode: "codex_text_image_hybrid" | "responses_api_pdf";
+  analysis_mode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   fallback_reason?: string;
   summary_preview?: string;
   source_excerpt?: string;
@@ -719,7 +719,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           startingProgress.summaryRows.length === 0 &&
           startingProgress.evidenceRows.length === 0 &&
           (selection.selectedPaperIds.length >= ZERO_OUTPUT_EARLY_PAUSE_MIN_SELECTED ||
-            (analysisMode === "codex_text_image_hybrid" &&
+            ((analysisMode === "codex_text_image_hybrid" || analysisMode === "ollama_vision") &&
               request.selectionMode === "all" &&
               selection.selectedPaperIds.length <= SMALL_SELECTION_SERIAL_WARM_START_MAX));
         const analysisConcurrency = warmStartSerial ? 1 : getAnalysisConcurrency(analysisMode);
@@ -788,9 +788,9 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
                 });
 
-            let analysisModeUsed: "responses_api_pdf" | "codex_text_image_hybrid" = useResponsesPdf
+            let analysisModeUsed: "responses_api_pdf" | "codex_text_image_hybrid" | "ollama_vision" = useResponsesPdf
               ? "responses_api_pdf"
-              : "codex_text_image_hybrid";
+              : (analysisMode === "responses_api_pdf" ? "codex_text_image_hybrid" : analysisMode);
             if (!useResponsesPdf) {
               const retriedSource = await retryResolvedSourceAfterLatePdfRecovery({
                 runId: run.id,
@@ -1405,7 +1405,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
   };
 }
 
-function getAnalysisConcurrency(analysisMode: "codex_text_image_hybrid" | "responses_api_pdf"): number {
+function getAnalysisConcurrency(analysisMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision"): number {
   return analysisMode === "responses_api_pdf" ? 2 : 3;
 }
 
@@ -2235,7 +2235,7 @@ async function bootstrapManifestFromExistingOutputs(
 }
 
 function buildAnalysisFingerprint(args: {
-  analysisMode: "codex_text_image_hybrid" | "responses_api_pdf";
+  analysisMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   responsesModel?: string;
   responsesReasoningEffort?: string;
   includePageImages: boolean;
@@ -2871,7 +2871,7 @@ async function runAnalyzeCodexPreflight(input: {
   if (input.researchModel) {
     checks.push(buildAnalyzeCodexModelCheck("codex-research-model", "research", input.researchModel));
   }
-  if (input.analysisMode === "codex_text_image_hybrid" && input.pdfModel) {
+  if ((input.analysisMode === "codex_text_image_hybrid" || input.analysisMode === "ollama_vision") && input.pdfModel) {
     checks.push(buildAnalyzeCodexModelCheck("codex-pdf-model", "PDF analysis", input.pdfModel));
   }
   return checks.filter((check) => !check.ok);
@@ -3115,7 +3115,7 @@ function validateAnalysisBeforePersist(
 function buildAnalysisQuarantineRow(input: {
   paper: AnalysisCorpusRow;
   source: ResolvedPaperSource;
-  analysisMode: "codex_text_image_hybrid" | "responses_api_pdf";
+  analysisMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   reason: string;
   analysis?: {
     summaryRow: PaperSummaryRow;

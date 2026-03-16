@@ -34,6 +34,21 @@ import {
 } from "./integrations/openai/modelCatalog.js";
 import { ensureDir, fileExists, writeJsonFile } from "./utils/fs.js";
 import { askChoice, askLine, askRequiredLine, PromptReader } from "./utils/prompt.js";
+import {
+  DEFAULT_OLLAMA_BASE_URL,
+  DEFAULT_OLLAMA_CHAT_MODEL,
+  DEFAULT_OLLAMA_RESEARCH_MODEL,
+  DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+  DEFAULT_OLLAMA_VISION_MODEL,
+  OLLAMA_CHAT_MODEL_OPTIONS,
+  OLLAMA_RESEARCH_MODEL_OPTIONS,
+  OLLAMA_EXPERIMENT_MODEL_OPTIONS,
+  OLLAMA_VISION_MODEL_OPTIONS,
+  buildOllamaChatModelChoices,
+  buildOllamaResearchModelChoices,
+  buildOllamaExperimentModelChoices,
+  buildOllamaVisionModelChoices
+} from "./integrations/ollama/modelCatalog.js";
 
 export const DEFAULT_PRIMARY_LLM_MODE = "codex_chatgpt_only" as const;
 export const DEFAULT_PDF_ANALYSIS_MODE = "codex_text_image_hybrid" as const;
@@ -44,9 +59,11 @@ export const DEFAULT_RESEARCH_CONSTRAINTS = ["recent papers", "last 5 years"] as
 export const DEFAULT_RESEARCH_OBJECTIVE_METRIC = "state-of-the-art reproducibility" as const;
 
 export function getDefaultPdfAnalysisModeForLlmMode(
-  llmMode: "codex_chatgpt_only" | "openai_api"
-): "codex_text_image_hybrid" | "responses_api_pdf" {
-  return llmMode === "openai_api" ? "responses_api_pdf" : DEFAULT_PDF_ANALYSIS_MODE;
+  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama"
+): "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision" {
+  if (llmMode === "openai_api") return "responses_api_pdf";
+  if (llmMode === "ollama") return "ollama_vision";
+  return DEFAULT_PDF_ANALYSIS_MODE;
 }
 
 export interface AppPaths {
@@ -64,8 +81,8 @@ export interface NonInteractiveSetupInput {
   defaultTopic?: string;
   defaultConstraints?: string[];
   defaultObjectiveMetric?: string;
-  llmMode?: "codex_chatgpt_only" | "openai_api";
-  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf";
+  llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   semanticScholarApiKey: string;
   openAiApiKey?: string;
   codexChatModelChoice?: string;
@@ -86,6 +103,11 @@ export interface NonInteractiveSetupInput {
   openAiPdfReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
   responsesPdfModel?: string;
   responsesPdfReasoningEffort?: AppConfig["analysis"]["responses_reasoning_effort"];
+  ollamaBaseUrl?: string;
+  ollamaChatModel?: string;
+  ollamaResearchModel?: string;
+  ollamaExperimentModel?: string;
+  ollamaVisionModel?: string;
 }
 
 export interface SetupWizardOptions {
@@ -128,7 +150,7 @@ function buildConfigFromWizardAnswers(answers: {
   defaultTopic: string;
   defaultConstraints: string[];
   defaultObjectiveMetric: string;
-  llmMode: "codex_chatgpt_only" | "openai_api";
+  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
   codexChatModelChoice: string;
   codexChatReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
   codexTaskModelChoice: string;
@@ -145,9 +167,14 @@ function buildConfigFromWizardAnswers(answers: {
   openAiExperimentReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
   openAiPdfModel: string;
   openAiPdfReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
-  pdfAnalysisMode: "codex_text_image_hybrid" | "responses_api_pdf";
+  pdfAnalysisMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   responsesPdfModel: string;
   responsesPdfReasoningEffort: AppConfig["analysis"]["responses_reasoning_effort"];
+  ollamaBaseUrl?: string;
+  ollamaChatModel?: string;
+  ollamaResearchModel?: string;
+  ollamaExperimentModel?: string;
+  ollamaVisionModel?: string;
 }): AppConfig {
   const codexChatSelection = resolveCodexModelSelection(answers.codexChatModelChoice);
   const codexTaskSelection = resolveCodexModelSelection(answers.codexTaskModelChoice);
@@ -184,7 +211,18 @@ function buildConfigFromWizardAnswers(answers: {
         pdf_reasoning_effort: answers.openAiPdfReasoningEffort,
         command_reasoning_effort: answers.openAiChatReasoningEffort,
         api_key_required: true
-      }
+      },
+      ...(answers.llmMode === "ollama"
+        ? {
+            ollama: {
+              base_url: answers.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL,
+              chat_model: answers.ollamaChatModel || DEFAULT_OLLAMA_CHAT_MODEL,
+              research_model: answers.ollamaResearchModel || DEFAULT_OLLAMA_RESEARCH_MODEL,
+              experiment_model: answers.ollamaExperimentModel || DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+              vision_model: answers.ollamaVisionModel || DEFAULT_OLLAMA_VISION_MODEL
+            }
+          }
+        : {})
     },
     analysis: {
       pdf_mode: answers.pdfAnalysisMode,
@@ -252,6 +290,21 @@ export async function runSetupWizard(
   const defaultObjectiveMetric = DEFAULT_RESEARCH_OBJECTIVE_METRIC;
   const llmMode = await askPrimaryLlmMode(promptReader);
   await maybeNotifyCodexLoginStatus(paths, llmMode, promptReader, opts);
+
+  // Ollama-specific setup
+  let ollamaBaseUrl: string | undefined;
+  let ollamaChatModel: string | undefined;
+  let ollamaResearchModel: string | undefined;
+  let ollamaExperimentModel: string | undefined;
+  let ollamaVisionModel: string | undefined;
+  if (llmMode === "ollama") {
+    ollamaBaseUrl = await askOllamaBaseUrl(promptReader);
+    ollamaChatModel = await askOllamaModel("Chat model", OLLAMA_CHAT_MODEL_OPTIONS, DEFAULT_OLLAMA_CHAT_MODEL, promptReader);
+    ollamaResearchModel = await askOllamaModel("Research model", OLLAMA_RESEARCH_MODEL_OPTIONS, DEFAULT_OLLAMA_RESEARCH_MODEL, promptReader);
+    ollamaExperimentModel = await askOllamaModel("Experiment/code model", OLLAMA_EXPERIMENT_MODEL_OPTIONS, DEFAULT_OLLAMA_EXPERIMENT_MODEL, promptReader);
+    ollamaVisionModel = await askOllamaModel("Vision/PDF model", OLLAMA_VISION_MODEL_OPTIONS, DEFAULT_OLLAMA_VISION_MODEL, promptReader);
+  }
+
   const defaultCodexChatSetupModel = DEFAULT_CODEX_CHAT_SETUP_MODEL;
   const defaultCodexBackendSetupModel = RECOMMENDED_CODEX_MODEL;
   const codexChatModelChoice =
@@ -263,13 +316,16 @@ export async function runSetupWizard(
           DEFAULT_CODEX_CHAT_SETUP_MODEL
         )
       : DEFAULT_CODEX_MODEL;
-  const codexChatReasoningEffort = await askCodexReasoningEffort(
-    "General chat reasoning effort",
-    resolveCodexModelSelection(codexChatModelChoice).model,
-    DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
-    DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
-    promptReader
-  );
+  const codexChatReasoningEffort =
+    llmMode !== "ollama"
+      ? await askCodexReasoningEffort(
+          "General chat reasoning effort",
+          resolveCodexModelSelection(codexChatModelChoice).model,
+          DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
+          DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
+          promptReader
+        )
+      : DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT;
   const researchBackendModelChoice =
     llmMode === "codex_chatgpt_only"
       ? await askCodexModel(
@@ -278,18 +334,23 @@ export async function runSetupWizard(
           promptReader,
           RECOMMENDED_CODEX_MODEL
         )
-      : await askOpenAiResponsesModel("Research backend selection", DEFAULT_OPENAI_RESPONSES_MODEL, promptReader);
+      : llmMode === "openai_api"
+        ? await askOpenAiResponsesModel("Research backend selection", DEFAULT_OPENAI_RESPONSES_MODEL, promptReader)
+        : DEFAULT_CODEX_MODEL;
   const codexTaskModelChoice =
     llmMode === "codex_chatgpt_only"
       ? researchBackendModelChoice
       : DEFAULT_CODEX_MODEL;
-  const codexTaskReasoningEffort = await askCodexReasoningEffort(
-    "Research backend reasoning effort",
-    resolveCodexModelSelection(codexTaskModelChoice).model,
-    "xhigh",
-    "xhigh",
-    promptReader
-  );
+  const codexTaskReasoningEffort =
+    llmMode !== "ollama"
+      ? await askCodexReasoningEffort(
+          "Research backend reasoning effort",
+          resolveCodexModelSelection(codexTaskModelChoice).model,
+          "xhigh",
+          "xhigh",
+          promptReader
+        )
+      : ("xhigh" as AppConfig["providers"]["codex"]["reasoning_effort"]);
   const codexExperimentModelChoice = codexTaskModelChoice;
   const codexExperimentReasoningEffort = codexTaskReasoningEffort;
   const openAiChatModel =
@@ -375,7 +436,12 @@ export async function runSetupWizard(
     openAiPdfReasoningEffort,
     pdfAnalysisMode,
     responsesPdfModel,
-    responsesPdfReasoningEffort
+    responsesPdfReasoningEffort,
+    ollamaBaseUrl,
+    ollamaChatModel,
+    ollamaResearchModel,
+    ollamaExperimentModel,
+    ollamaVisionModel
   });
 
   await saveConfig(paths, config);
@@ -429,7 +495,12 @@ export async function runNonInteractiveSetup(
       (DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]),
     pdfAnalysisMode,
     responsesPdfModel: input.responsesPdfModel || DEFAULT_RESPONSES_PDF_MODEL,
-    responsesPdfReasoningEffort: input.responsesPdfReasoningEffort || "xhigh"
+    responsesPdfReasoningEffort: input.responsesPdfReasoningEffort || "xhigh",
+    ollamaBaseUrl: input.ollamaBaseUrl,
+    ollamaChatModel: input.ollamaChatModel,
+    ollamaResearchModel: input.ollamaResearchModel,
+    ollamaExperimentModel: input.ollamaExperimentModel,
+    ollamaVisionModel: input.ollamaVisionModel
   });
 
   await saveConfig(paths, config);
@@ -473,7 +544,12 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     throw new Error("Invalid config: providers is missing");
   }
   if (!config.providers.codex) {
-    throw new Error("Invalid config: providers.codex is missing");
+    config.providers.codex = {
+      model: DEFAULT_CODEX_MODEL,
+      reasoning_effort: "xhigh",
+      fast_mode: false,
+      auth_required: true
+    };
   }
   if (!config.providers.openai) {
     config.providers.openai = {
@@ -489,6 +565,23 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
       command_reasoning_effort: "low",
       api_key_required: true
     };
+  }
+  if (config.providers.llm_mode === "ollama" && !config.providers.ollama) {
+    config.providers.ollama = {
+      base_url: DEFAULT_OLLAMA_BASE_URL,
+      chat_model: DEFAULT_OLLAMA_CHAT_MODEL,
+      research_model: DEFAULT_OLLAMA_RESEARCH_MODEL,
+      experiment_model: DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+      vision_model: DEFAULT_OLLAMA_VISION_MODEL
+    };
+  }
+  if (config.providers.ollama) {
+    const ollama = config.providers.ollama;
+    ollama.base_url = ollama.base_url?.trim() || DEFAULT_OLLAMA_BASE_URL;
+    ollama.chat_model = ollama.chat_model?.trim() || DEFAULT_OLLAMA_CHAT_MODEL;
+    ollama.research_model = ollama.research_model?.trim() || DEFAULT_OLLAMA_RESEARCH_MODEL;
+    ollama.experiment_model = ollama.experiment_model?.trim() || ollama.research_model;
+    ollama.vision_model = ollama.vision_model?.trim() || DEFAULT_OLLAMA_VISION_MODEL;
   }
   if (!config.papers) {
     throw new Error("Invalid config: papers is missing");
@@ -726,12 +819,18 @@ function quoteEnvValue(value: string): string {
   return JSON.stringify(value);
 }
 
-function normalizePdfAnalysisMode(value: unknown): "codex_text_image_hybrid" | "responses_api_pdf" {
-  return value === "responses_api_pdf" ? value : DEFAULT_PDF_ANALYSIS_MODE;
+function normalizePdfAnalysisMode(
+  value: unknown
+): "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision" {
+  if (value === "responses_api_pdf" || value === "ollama_vision") return value;
+  return DEFAULT_PDF_ANALYSIS_MODE;
 }
 
-function normalizePrimaryLlmMode(value: unknown): "codex_chatgpt_only" | "openai_api" {
-  return value === "openai_api" ? value : DEFAULT_PRIMARY_LLM_MODE;
+function normalizePrimaryLlmMode(
+  value: unknown
+): "codex_chatgpt_only" | "openai_api" | "ollama" {
+  if (value === "openai_api" || value === "ollama") return value;
+  return DEFAULT_PRIMARY_LLM_MODE;
 }
 
 function normalizeWorkflowApprovalMode(value: unknown): WorkflowApprovalMode {
@@ -775,7 +874,7 @@ function normalizePaperProfileConfig(value: AppConfig["paper_profile"] | undefin
 
 async function askPrimaryLlmMode(
   promptReader: PromptReader = askLine
-): Promise<"codex_chatgpt_only" | "openai_api"> {
+): Promise<"codex_chatgpt_only" | "openai_api" | "ollama"> {
   if (promptReader === askLine) {
     const answer = await askChoice(
       "Primary LLM provider",
@@ -789,23 +888,63 @@ async function askPrimaryLlmMode(
           label: "api",
           value: "openai_api",
           description: "(OpenAI API backend, OPENAI_API_KEY required)"
+        },
+        {
+          label: "ollama",
+          value: "ollama",
+          description: "(Local Ollama backend, no API key needed)"
         }
       ],
       "codex_chatgpt_only"
     );
-    return answer === "openai_api" ? "openai_api" : "codex_chatgpt_only";
+    if (answer === "openai_api") return "openai_api";
+    if (answer === "ollama") return "ollama";
+    return "codex_chatgpt_only";
   }
 
   while (true) {
-    const answer = (await promptReader("Primary LLM provider (codex/api)", "codex")).trim().toLowerCase();
+    const answer = (await promptReader("Primary LLM provider (codex/api/ollama)", "codex")).trim().toLowerCase();
     if (!answer || answer === "codex" || answer === "chatgpt" || answer === "codex_chatgpt_only") {
       return "codex_chatgpt_only";
     }
     if (answer === "api" || answer === "openai" || answer === "openai_api") {
       return "openai_api";
     }
-    output.write("Primary LLM provider must be 'codex' or 'api'.\n");
+    if (answer === "ollama" || answer === "local") {
+      return "ollama";
+    }
+    output.write("Primary LLM provider must be 'codex', 'api', or 'ollama'.\n");
   }
+}
+
+async function askOllamaBaseUrl(
+  promptReader: PromptReader = askLine
+): Promise<string> {
+  const answer = (
+    await promptReader(`Ollama base URL (${DEFAULT_OLLAMA_BASE_URL})`, DEFAULT_OLLAMA_BASE_URL)
+  ).trim();
+  return answer || DEFAULT_OLLAMA_BASE_URL;
+}
+
+async function askOllamaModel(
+  label: string,
+  options: Array<{ value: string; label: string; description: string }>,
+  defaultValue: string,
+  promptReader: PromptReader = askLine
+): Promise<string> {
+  if (promptReader === askLine) {
+    return askChoice(
+      label,
+      options.map((o) => ({ label: o.label, value: o.value, description: o.description })),
+      defaultValue
+    );
+  }
+
+  const optionValues = options.map((o) => o.value);
+  const answer = (await promptReader(`${label} (${defaultValue})`, defaultValue)).trim();
+  if (!answer) return defaultValue;
+  // Accept exact match or custom model name
+  return optionValues.includes(answer) ? answer : answer;
 }
 
 async function askOpenAiResponsesModel(
@@ -996,7 +1135,7 @@ function buildRecommendedPromptDescription(base: string | undefined, recommended
 
 async function maybeNotifyCodexLoginStatus(
   paths: AppPaths,
-  llmMode: "codex_chatgpt_only" | "openai_api",
+  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama",
   promptReader: PromptReader,
   opts: SetupWizardOptions
 ): Promise<void> {

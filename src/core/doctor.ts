@@ -3,17 +3,22 @@ import { spawn } from "node:child_process";
 import { DoctorCheck } from "../types.js";
 import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
 import { RECOMMENDED_CODEX_MODEL } from "../integrations/codex/modelCatalog.js";
+import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
 import {
   HarnessValidationReport,
   runHarnessValidation
 } from "./validation/harnessValidationService.js";
 
 export interface DoctorRunOptions {
-  llmMode?: "codex_chatgpt_only" | "openai_api";
-  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf";
+  llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   openAiApiKeyConfigured?: boolean;
   codexResearchModel?: string;
   codexPdfModel?: string;
+  ollamaBaseUrl?: string;
+  ollamaChatModel?: string;
+  ollamaResearchModel?: string;
+  ollamaVisionModel?: string;
   workspaceRoot?: string;
   includeHarnessValidation?: boolean;
   includeHarnessTestRecords?: boolean;
@@ -74,6 +79,56 @@ export async function runDoctorReport(
             ? "OPENAI_API_KEY missing (required for OpenAI API provider mode)"
             : "OPENAI_API_KEY missing (required for Responses API PDF analysis)"
     });
+  }
+
+  if (opts?.llmMode === "ollama" || opts?.pdfAnalysisMode === "ollama_vision") {
+    const ollamaUrl = opts?.ollamaBaseUrl || "http://127.0.0.1:11434";
+    checks.push({
+      name: "ollama-base-url",
+      ok: Boolean(ollamaUrl),
+      detail: `Ollama base URL: ${ollamaUrl}`
+    });
+
+    const ollamaClient = new OllamaClient(ollamaUrl);
+    const health = await ollamaClient.checkHealth();
+    checks.push({
+      name: "ollama-server",
+      ok: health.reachable,
+      detail: health.reachable
+        ? `Ollama server reachable${health.version ? ` (${health.version})` : ""}`
+        : `Ollama server unreachable at ${ollamaUrl}: ${health.error || "unknown error"}. Run 'ollama serve' to start.`
+    });
+
+    if (health.reachable) {
+      try {
+        const models = await ollamaClient.listModels();
+        const modelNames = models.map((m) => m.name);
+        const modelsToCheck = [
+          { name: "ollama-chat-model", model: opts?.ollamaChatModel, label: "chat" },
+          { name: "ollama-research-model", model: opts?.ollamaResearchModel, label: "research" },
+          { name: "ollama-vision-model", model: opts?.ollamaVisionModel, label: "vision" }
+        ];
+        for (const { name, model, label } of modelsToCheck) {
+          if (!model) continue;
+          const found = modelNames.some(
+            (n) => n === model || n === `${model}:latest` || n.startsWith(`${model}:`)
+          );
+          checks.push({
+            name,
+            ok: found,
+            detail: found
+              ? `Ollama ${label} model '${model}' is available`
+              : `Ollama ${label} model '${model}' not found. Run 'ollama pull ${model}' to install.`
+          });
+        }
+      } catch (err) {
+        checks.push({
+          name: "ollama-models",
+          ok: false,
+          detail: `Could not list Ollama models: ${err instanceof Error ? err.message : String(err)}`
+        });
+      }
+    }
   }
 
   const includeHarnessValidation = opts?.includeHarnessValidation !== false;

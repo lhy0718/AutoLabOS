@@ -192,7 +192,7 @@ describe("config .env overrides", () => {
     const config = await runSetupWizard(
       paths,
       makePromptReaderFromQuestionMap({
-        "Primary LLM provider (codex/api)": "codex",
+        "Primary LLM provider (codex/api/ollama)": "codex",
         "General chat model": "gpt-5.3-codex",
         "General chat reasoning effort": "low",
         "Research backend selection": "gpt-5.3-codex",
@@ -221,7 +221,7 @@ describe("config .env overrides", () => {
     const config = await runSetupWizard(
       paths,
       makePromptReaderFromQuestionMap({
-        "Primary LLM provider (codex/api)": "api",
+        "Primary LLM provider (codex/api/ollama)": "api",
         "OpenAI API general chat model": "gpt-5.4",
         "General chat reasoning effort": "low",
         "Research backend selection": "gpt-5-mini",
@@ -245,7 +245,7 @@ describe("config .env overrides", () => {
     const config = await runSetupWizard(
       paths,
       makePromptReaderFromQuestionMap({
-        "Primary LLM provider (codex/api)": "codex",
+        "Primary LLM provider (codex/api/ollama)": "codex",
         "General chat model": "",
         "General chat reasoning effort": "",
         "Research backend selection": "",
@@ -273,7 +273,7 @@ describe("config .env overrides", () => {
     await runSetupWizard(
       paths,
       makePromptReaderFromQuestionMap({
-        "Primary LLM provider (codex/api)": "codex",
+        "Primary LLM provider (codex/api/ollama)": "codex",
         "General chat model": "gpt-5.3-codex-spark",
         "General chat reasoning effort": "low",
         "Research backend selection": "gpt-5.4",
@@ -297,6 +297,7 @@ describe("config .env overrides", () => {
   });
 
   it("supports non-interactive setup for the web onboarding flow", async () => {
+    delete process.env.OPENAI_API_KEY;
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-web-setup-"));
     const paths = resolveAppPaths(cwd);
 
@@ -343,6 +344,7 @@ describe("config .env overrides", () => {
   });
 
   it("still asks for API keys during setup even when existing .env keys are present", async () => {
+    delete process.env.OPENAI_API_KEY;
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-existing-keys-"));
     const paths = resolveAppPaths(cwd);
     await fs.writeFile(
@@ -355,7 +357,7 @@ describe("config .env overrides", () => {
     const config = await runSetupWizard(paths, async (question, defaultValue = "") => {
       asked.push(question);
       return makePromptReaderFromQuestionMap({
-        "Primary LLM provider (codex/api)": "api",
+        "Primary LLM provider (codex/api/ollama)": "api",
         "OpenAI API general chat model": "gpt-5.4",
         "General chat reasoning effort": "low",
         "Research backend selection": "gpt-5-mini",
@@ -385,7 +387,7 @@ describe("config .env overrides", () => {
     const config = await runSetupWizard(
       paths,
       makePromptReaderFromQuestionMap({
-        "Primary LLM provider (codex/api)": "api",
+        "Primary LLM provider (codex/api/ollama)": "api",
         "OpenAI API general chat model": "gpt-5-mini",
         "General chat reasoning effort": "low",
         "Research backend selection": "gpt-5-mini",

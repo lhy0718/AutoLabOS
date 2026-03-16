@@ -5,16 +5,16 @@ export interface ConfigSummary {
   projectName: string;
   workflowMode: "agent_approval";
   approvalMode: "manual" | "minimal";
-  llmMode: "codex_chatgpt_only" | "openai_api";
-  pdfMode: "codex_text_image_hybrid" | "responses_api_pdf";
+  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
+  pdfMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   taskModel: string;
   chatModel: string;
   experimentModel: string;
   pdfModel: string;
-  taskReasoning: string;
-  chatReasoning: string;
-  experimentReasoning: string;
-  pdfReasoning: string;
+  taskReasoning: string | undefined;
+  chatReasoning: string | undefined;
+  experimentReasoning: string | undefined;
+  pdfReasoning: string | undefined;
 }
 
 export interface WebConfigFormData {
@@ -22,8 +22,8 @@ export interface WebConfigFormData {
   defaultTopic: string;
   defaultConstraints: string;
   defaultObjectiveMetric: string;
-  llmMode: "codex_chatgpt_only" | "openai_api";
-  pdfAnalysisMode: "codex_text_image_hybrid" | "responses_api_pdf";
+  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
+  pdfAnalysisMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   codexChatModelChoice: string;
   codexChatReasoningEffort: string;
   codexTaskModelChoice: string;
@@ -42,6 +42,11 @@ export interface WebConfigFormData {
   openAiPdfReasoningEffort: string;
   responsesPdfModel: string;
   responsesPdfReasoningEffort: string;
+  ollamaBaseUrl: string;
+  ollamaChatModel: string;
+  ollamaResearchModel: string;
+  ollamaExperimentModel: string;
+  ollamaVisionModel: string;
 }
 
 export interface WebConfigOptions {
@@ -51,6 +56,10 @@ export interface WebConfigOptions {
   openAiReasoningByModel: Record<string, string[]>;
   responsesPdfModels: string[];
   responsesPdfReasoning: string[];
+  ollamaChatModels: string[];
+  ollamaResearchModels: string[];
+  ollamaExperimentModels: string[];
+  ollamaVisionModels: string[];
 }
 
 export interface BootstrapResponse {

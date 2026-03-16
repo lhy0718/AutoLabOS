@@ -7,6 +7,7 @@ import { SemanticScholarClient } from "../../tools/semanticScholar.js";
 import { GraphNodeHandler, GraphNodeResult } from "../stateGraph/types.js";
 import { CodexCliClient } from "../../integrations/codex/codexCliClient.js";
 import { ResponsesPdfAnalysisClient } from "../../integrations/openai/responsesPdfAnalysisClient.js";
+import { OllamaPdfAnalysisClient } from "../../integrations/ollama/ollamaPdfAnalysisClient.js";
 
 export interface NodeExecutionDeps {
   config: AppConfig;
@@ -18,6 +19,7 @@ export interface NodeExecutionDeps {
   aci: AgentComputerInterface;
   semanticScholar: SemanticScholarClient;
   responsesPdfAnalysis: ResponsesPdfAnalysisClient;
+  ollamaPdfAnalysis?: OllamaPdfAnalysisClient;
 }
 
 export type NodeFactory = (deps: NodeExecutionDeps) => GraphNodeHandler;

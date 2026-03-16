@@ -15,9 +15,9 @@ import { ResponsesPdfAnalysisClient } from "../integrations/openai/responsesPdfA
 const RELATED_WORK_ENRICHMENT_MAX_PAPERS = 2;
 
 interface RelatedWorkEnrichmentAnalysisSignature {
-  pdf_mode: "codex_text_image_hybrid" | "responses_api_pdf";
-  llm_mode?: "codex_chatgpt_only" | "openai_api";
-  backend: "responses_api_pdf" | "codex_pdf_model" | "openai_pdf_model";
+  pdf_mode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
+  llm_mode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+  backend: "responses_api_pdf" | "codex_pdf_model" | "openai_pdf_model" | "ollama_pdf_model";
   model?: string;
   reasoning_effort?: string;
 }
@@ -406,6 +406,16 @@ function buildEnrichmentAnalysisSignature(config: AppConfig): RelatedWorkEnrichm
     };
   }
 
+  if (llmMode === "ollama") {
+    return {
+      pdf_mode: pdfMode,
+      llm_mode: llmMode,
+      backend: "ollama_pdf_model",
+      model: config.providers?.ollama?.chat_model,
+      reasoning_effort: undefined
+    };
+  }
+
   return {
     pdf_mode: pdfMode,
     llm_mode: llmMode,
@@ -422,6 +432,9 @@ function describeAnalysisSignature(signature: RelatedWorkEnrichmentAnalysisSigna
   }
   if (signature.backend === "openai_pdf_model") {
     return `local/full-text PDF mode with OpenAI PDF model${signature.model ? ` (${signature.model})` : ""}`;
+  }
+  if (signature.backend === "ollama_pdf_model") {
+    return `local/full-text PDF mode with Ollama${signature.model ? ` (${signature.model})` : ""}`;
   }
   return `local/full-text PDF mode with Codex PDF model${signature.model ? ` (${signature.model})` : ""}`;
 }

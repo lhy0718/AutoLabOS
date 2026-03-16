@@ -15,6 +15,17 @@ import {
 } from "../integrations/openai/modelCatalog.js";
 import { buildResponsesPdfModelChoices } from "../integrations/openai/pdfModelCatalog.js";
 import {
+  DEFAULT_OLLAMA_BASE_URL,
+  DEFAULT_OLLAMA_CHAT_MODEL,
+  DEFAULT_OLLAMA_RESEARCH_MODEL,
+  DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+  DEFAULT_OLLAMA_VISION_MODEL,
+  buildOllamaChatModelChoices,
+  buildOllamaResearchModelChoices,
+  buildOllamaExperimentModelChoices,
+  buildOllamaVisionModelChoices
+} from "../integrations/ollama/modelCatalog.js";
+import {
   DEFAULT_CODEX_CHAT_SETUP_MODEL,
   DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
   DEFAULT_PDF_ANALYSIS_MODE,
@@ -54,8 +65,8 @@ interface SetupRequestBody {
   defaultTopic?: string;
   defaultConstraints?: string[];
   defaultObjectiveMetric?: string;
-  llmMode?: "codex_chatgpt_only" | "openai_api";
-  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf";
+  llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   codexChatModelChoice?: string;
   codexChatReasoningEffort?: string;
   codexTaskModelChoice?: string;
@@ -74,6 +85,11 @@ interface SetupRequestBody {
   openAiPdfReasoningEffort?: string;
   responsesPdfModel?: string;
   responsesPdfReasoningEffort?: string;
+  ollamaBaseUrl?: string;
+  ollamaChatModel?: string;
+  ollamaResearchModel?: string;
+  ollamaExperimentModel?: string;
+  ollamaVisionModel?: string;
   semanticScholarApiKey?: string;
   openAiApiKey?: string;
 }
@@ -208,7 +224,12 @@ class AutoLabOSWebController {
           openAiPdfModel: body.openAiPdfModel,
           openAiPdfReasoningEffort: body.openAiPdfReasoningEffort as any,
           responsesPdfModel: body.responsesPdfModel,
-          responsesPdfReasoningEffort: body.responsesPdfReasoningEffort as any
+          responsesPdfReasoningEffort: body.responsesPdfReasoningEffort as any,
+          ollamaBaseUrl: body.ollamaBaseUrl,
+          ollamaChatModel: body.ollamaChatModel,
+          ollamaResearchModel: body.ollamaResearchModel,
+          ollamaExperimentModel: body.ollamaExperimentModel,
+          ollamaVisionModel: body.ollamaVisionModel
         });
         await ensureScaffold(this.paths);
         const runtime = (
@@ -237,6 +258,10 @@ class AutoLabOSWebController {
           openAiApiKeyConfigured: await hasOpenAiApiKey(this.cwd),
           codexResearchModel: this.runtime.config.providers.codex.model,
           codexPdfModel: this.runtime.config.providers.codex.pdf_model || this.runtime.config.providers.codex.model,
+          ollamaBaseUrl: this.runtime.config.providers.ollama?.base_url,
+          ollamaChatModel: this.runtime.config.providers.ollama?.chat_model,
+          ollamaResearchModel: this.runtime.config.providers.ollama?.research_model,
+          ollamaVisionModel: this.runtime.config.providers.ollama?.vision_model,
           workspaceRoot: this.cwd,
           includeHarnessValidation: true,
           includeHarnessTestRecords: false,
@@ -588,39 +613,55 @@ function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
     taskModel:
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.model
-        : config.providers.codex.model,
+        : config.providers.llm_mode === "ollama"
+          ? config.providers.ollama?.research_model || config.providers.ollama?.chat_model || "ollama"
+          : config.providers.codex.model,
     chatModel:
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.chat_model || config.providers.openai.model
-        : config.providers.codex.chat_model || config.providers.codex.model,
+        : config.providers.llm_mode === "ollama"
+          ? config.providers.ollama?.chat_model || "ollama"
+          : config.providers.codex.chat_model || config.providers.codex.model,
     experimentModel:
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.experiment_model || config.providers.openai.model
-        : config.providers.codex.experiment_model || config.providers.codex.model,
+        : config.providers.llm_mode === "ollama"
+          ? config.providers.ollama?.experiment_model || config.providers.ollama?.research_model || "ollama"
+          : config.providers.codex.experiment_model || config.providers.codex.model,
     pdfModel:
       config.analysis.pdf_mode === "responses_api_pdf"
         ? config.analysis.responses_model
         : config.providers.llm_mode === "openai_api"
           ? config.providers.openai.pdf_model || config.providers.openai.model
-          : config.providers.codex.pdf_model || config.providers.codex.model,
+          : config.providers.llm_mode === "ollama"
+            ? config.providers.ollama?.vision_model || config.providers.ollama?.research_model || "ollama"
+            : config.providers.codex.pdf_model || config.providers.codex.model,
     taskReasoning:
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.reasoning_effort
-        : config.providers.codex.reasoning_effort,
+        : config.providers.llm_mode === "ollama"
+          ? undefined
+          : config.providers.codex.reasoning_effort,
     chatReasoning:
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.chat_reasoning_effort || config.providers.openai.reasoning_effort
-        : config.providers.codex.chat_reasoning_effort || config.providers.codex.reasoning_effort,
+        : config.providers.llm_mode === "ollama"
+          ? undefined
+          : config.providers.codex.chat_reasoning_effort || config.providers.codex.reasoning_effort,
     experimentReasoning:
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.experiment_reasoning_effort || config.providers.openai.reasoning_effort
-        : config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort,
+        : config.providers.llm_mode === "ollama"
+          ? undefined
+          : config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort,
     pdfReasoning:
       config.analysis.pdf_mode === "responses_api_pdf"
         ? config.analysis.responses_reasoning_effort || "xhigh"
         : config.providers.llm_mode === "openai_api"
           ? config.providers.openai.pdf_reasoning_effort || config.providers.openai.reasoning_effort
-          : config.providers.codex.pdf_reasoning_effort || config.providers.codex.reasoning_effort
+          : config.providers.llm_mode === "ollama"
+            ? undefined
+            : config.providers.codex.pdf_reasoning_effort || config.providers.codex.reasoning_effort
   };
 }
 
@@ -672,7 +713,12 @@ function buildConfigFormData(
     openAiPdfReasoningEffort:
       config?.providers.openai.pdf_reasoning_effort || config?.providers.openai.reasoning_effort || "medium",
     responsesPdfModel: config?.analysis.responses_model || "gpt-5.4",
-    responsesPdfReasoningEffort: config?.analysis.responses_reasoning_effort || "xhigh"
+    responsesPdfReasoningEffort: config?.analysis.responses_reasoning_effort || "xhigh",
+    ollamaBaseUrl: config?.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL,
+    ollamaChatModel: config?.providers.ollama?.chat_model || DEFAULT_OLLAMA_CHAT_MODEL,
+    ollamaResearchModel: config?.providers.ollama?.research_model || DEFAULT_OLLAMA_RESEARCH_MODEL,
+    ollamaExperimentModel: config?.providers.ollama?.experiment_model || DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+    ollamaVisionModel: config?.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL
   };
 }
 
@@ -694,7 +740,11 @@ function buildConfigOptions(config?: AutoLabOSRuntime["config"]): WebConfigOptio
     openAiModels,
     openAiReasoningByModel,
     responsesPdfModels: buildResponsesPdfModelChoices(),
-    responsesPdfReasoning: [...buildOpenAiResponsesReasoningChoices(config?.analysis.responses_model || "gpt-5.4")]
+    responsesPdfReasoning: [...buildOpenAiResponsesReasoningChoices(config?.analysis.responses_model || "gpt-5.4")],
+    ollamaChatModels: buildOllamaChatModelChoices(),
+    ollamaResearchModels: buildOllamaResearchModelChoices(),
+    ollamaExperimentModels: buildOllamaExperimentModelChoices(),
+    ollamaVisionModels: buildOllamaVisionModelChoices()
   };
 }
 
