@@ -93,6 +93,7 @@ import {
   repairPythonCleanupModelArtifactsAliasSurface,
   repairPythonLockedRecipeWorkflowInputMaterializationSurface,
   repairPythonMetricsPayloadMappingResultSurface,
+  repairPythonClassificationMetricsRecordsArgumentSurface,
   repairPythonMetricsWriterAdapterPathSurface,
   repairPythonMetricsWriterDispatcherPayloadAliasSurface,
   repairPythonDeviceHelperAliasSurface,
@@ -23973,6 +23974,55 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_original_select_deterministic_subset = select_deterministic_subset");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs classification metrics helpers when generated call sites omit records", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-classification-metrics-records-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_retrieval_feature_block_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Mapping, Sequence",
+        "",
+        "LABELS = ('background', 'method')",
+        "",
+        "def summarize_classification_errors(records, gold_labels, predicted_labels, labels):",
+        "    if len(records) != len(gold_labels) or len(records) != len(predicted_labels):",
+        "        raise ValueError('records, gold_labels, and predicted_labels must have identical lengths')",
+        "    return {'record_count': len(records)}",
+        "",
+        "def compute_classification_metrics(gold_labels, predicted_labels, labels, records):",
+        "    error_summary = summarize_classification_errors(records, gold_labels, predicted_labels, labels)",
+        "    return {'macro_f1': 1.0, 'error_summary': error_summary}",
+        "",
+        "def _condition_metrics(y_true, y_pred):",
+        "    helper = compute_classification_metrics",
+        "    return helper(y_true, y_pred, LABELS)",
+        "",
+        "def main():",
+        "    payload = _condition_metrics(['background', 'method'], ['background', 'method'])",
+        "    assert payload['error_summary']['record_count'] == 2",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing 1 required positional argument: 'records'/
+    );
+
+    const repair = await repairPythonClassificationMetricsRecordsArgumentSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_classification_metrics_records_marker");
+    expect(repairedSource).toContain("_autolabos_original_compute_classification_metrics");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 

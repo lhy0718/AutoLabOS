@@ -7509,6 +7509,51 @@ export class ImplementSessionManager {
       }
     }
 
+    const classificationMetricsRecordsRepair =
+      await repairPythonClassificationMetricsRecordsArgumentSurface(executionScriptPath);
+    if (classificationMetricsRecordsRepair.repaired) {
+      onProgress?.(
+        classificationMetricsRecordsRepair.message ||
+          "Aligned classification metrics records argument before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            classificationMetricsRecordsRepair.message ||
+            "Aligned classification metrics records argument before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const causalLmLabelPaddingRepair =
       await repairPythonCausalLmLabelPaddingSurface(executionScriptPath);
     if (causalLmLabelPaddingRepair.repaired) {
@@ -15758,6 +15803,118 @@ export async function repairPythonMetricsPayloadMappingResultSurface(
   };
 }
 
+export async function repairPythonClassificationMetricsRecordsArgumentSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_classification_metrics_records_marker";
+  if (
+    source.includes(marker) ||
+    !pythonSourceDefinesName(source, "compute_classification_metrics") ||
+    !/\bcompute_classification_metrics\s*\(/u.test(source)
+  ) {
+    return { repaired: false };
+  }
+
+  const signature = extractPythonFunctionSignature(source, "compute_classification_metrics");
+  if (!signature || !extractPythonRequiredParameterNames(signature).includes("records")) {
+    return { repaired: false };
+  }
+
+  const functionEndIndex = findPythonTopLevelFunctionEndIndex(source, "compute_classification_metrics");
+  if (functionEndIndex === undefined) {
+    return { repaired: false };
+  }
+
+  const wrapper = [
+    "",
+    `# ${marker}`,
+    "_autolabos_original_compute_classification_metrics = compute_classification_metrics",
+    "",
+    "def _autolabos_synthesize_classification_records(positional, keyword):",
+    "    records = keyword.get(\"records\") if hasattr(keyword, \"get\") else None",
+    "    if records is not None:",
+    "        return records",
+    "    if len(positional) >= 4 and positional[3] is not None:",
+    "        return positional[3]",
+    "    gold_labels = keyword.get(\"gold_labels\") if hasattr(keyword, \"get\") else None",
+    "    if gold_labels is None:",
+    "        gold_labels = keyword.get(\"y_true\") if hasattr(keyword, \"get\") else None",
+    "    if gold_labels is None:",
+    "        gold_labels = keyword.get(\"true_labels\") if hasattr(keyword, \"get\") else None",
+    "    if gold_labels is None and len(positional) >= 1:",
+    "        gold_labels = positional[0]",
+    "    predicted_labels = keyword.get(\"predicted_labels\") if hasattr(keyword, \"get\") else None",
+    "    if predicted_labels is None:",
+    "        predicted_labels = keyword.get(\"y_pred\") if hasattr(keyword, \"get\") else None",
+    "    if predicted_labels is None:",
+    "        predicted_labels = keyword.get(\"predictions\") if hasattr(keyword, \"get\") else None",
+    "    if predicted_labels is None and len(positional) >= 2:",
+    "        predicted_labels = positional[1]",
+    "    try:",
+    "        gold_count = len(gold_labels) if gold_labels is not None else 0",
+    "    except TypeError:",
+    "        gold_count = 0",
+    "    try:",
+    "        pred_count = len(predicted_labels) if predicted_labels is not None else 0",
+    "    except TypeError:",
+    "        pred_count = 0",
+    "    row_count = max(gold_count, pred_count)",
+    "    synthesized = []",
+    "    for index in range(row_count):",
+    "        try:",
+    "            gold_value = gold_labels[index] if index < gold_count else None",
+    "        except Exception:",
+    "            gold_value = None",
+    "        try:",
+    "            pred_value = predicted_labels[index] if index < pred_count else None",
+    "        except Exception:",
+    "            pred_value = None",
+    "        synthesized.append({",
+    "            \"index\": index,",
+    "            \"gold_label\": gold_value,",
+    "            \"predicted_label\": pred_value,",
+    "            \"source\": \"autolabos_generated_metric_record\",",
+    "        })",
+    "    return synthesized",
+    "",
+    "def compute_classification_metrics(*positional, **keyword):",
+    "    try:",
+    "        return _autolabos_original_compute_classification_metrics(*positional, **keyword)",
+    "    except TypeError as exc:",
+    "        if \"records\" not in str(exc):",
+    "            raise",
+    "        if \"records\" in keyword or len(positional) >= 4:",
+    "            raise",
+    "        records = _autolabos_synthesize_classification_records(positional, keyword)",
+    "        return _autolabos_original_compute_classification_metrics(*positional, records=records, **keyword)",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, functionEndIndex)}${wrapper}${source.slice(functionEndIndex)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Wrapped compute_classification_metrics records argument compatibility in ${path.basename(
+      scriptPath
+    )} before handoff.`
+  };
+}
+
 export async function repairPythonAggregateMetricsPluralFinalizerSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
@@ -19858,6 +20015,40 @@ function findPythonTopLevelClassEndIndex(source: string, className: string): num
 
   offset += lines[classLineIndex].length + 1;
   for (let index = classLineIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (
+      trimmed.length === 0 ||
+      trimmed.startsWith("#") ||
+      line.startsWith(" ") ||
+      line.startsWith("\t")
+    ) {
+      offset += line.length + 1;
+      continue;
+    }
+    return offset;
+  }
+  return source.length;
+}
+
+function findPythonTopLevelFunctionEndIndex(source: string, functionName: string): number | undefined {
+  const lines = source.split("\n");
+  let offset = 0;
+  let functionLineIndex = -1;
+  const functionPattern = new RegExp(`^def\\s+${escapeRegex(functionName)}\\b`, "u");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (functionPattern.test(lines[index])) {
+      functionLineIndex = index;
+      break;
+    }
+    offset += lines[index].length + 1;
+  }
+  if (functionLineIndex < 0) {
+    return undefined;
+  }
+
+  offset += lines[functionLineIndex].length + 1;
+  for (let index = functionLineIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
     const trimmed = line.trim();
     if (
