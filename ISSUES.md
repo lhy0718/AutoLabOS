@@ -9,6 +9,10 @@ Usage rules:
 - `TODO.md` is for forward-looking follow-ups, proposal-only work, and backlog items.
 - Canonical workflow and policy still live in `AGENTS.md` and `docs/`.
 
+Path placeholders:
+- `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
+- `<repo-root>` means the local AutoLabOS implementation checkout.
+
 ---
 
 ## Current active status
@@ -136,7 +140,7 @@ Usage rules:
 - Status: mitigated and same-flow live revalidated on 2026-04-28
 - Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-194 verifier repair.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -190,7 +194,7 @@ Usage rules:
 - Status: mitigated and same-flow live revalidated on 2026-04-28
 - Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-193 verifier repair.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -232,7 +236,7 @@ Usage rules:
 - Status: mitigated and same-flow live revalidated on 2026-04-28
 - Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-192 verifier repair.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -272,7 +276,7 @@ Usage rules:
 - Status: mitigated and same-flow live revalidated on 2026-04-28
 - Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-191 verifier repair.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -313,7 +317,7 @@ Usage rules:
 - Status: active, fix implemented and awaiting same-flow live revalidation
 - Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-190 verifier repair.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -366,7 +370,7 @@ Usage rules:
 - Status: active, fix implemented and awaiting same-flow live revalidation
 - Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-189 verifier repair.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -424,7 +428,7 @@ Usage rules:
 - Status: active, fix implemented and awaiting same-flow live revalidation
 - Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-187/LV-188 verifier repairs.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -481,7 +485,7 @@ Usage rules:
 - Status: active, fix implemented and awaiting same-flow live revalidation
 - Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-187 repair.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -534,7 +538,7 @@ Usage rules:
 - Status: active, fix implemented and awaiting same-flow live revalidation
 - Validation target: same-flow `design_experiments -> implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the objective-gap backtrack selected `LoRA family retry with replicated best-practical variants`.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -589,7 +593,7 @@ Usage rules:
 - Status: resolved by same-flow live revalidation
 - Validation target: same-flow `run_experiments -> analyze_results` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the repaired PEFT runner completed real GPU execution.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -644,7 +648,7 @@ Usage rules:
 - Status: resolved by same-flow live revalidation
 - Validation target: same-flow `backtrack_to_design -> design_experiments -> implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the objective-gap backtrack selected the LoRA rank and target-module efficiency sweep.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -697,7 +701,7 @@ Usage rules:
 - Status: resolved by same-flow live revalidation
 - Validation target: same-flow `run_experiments -> analyze_results` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after real PEFT execution completed all baseline/comparator conditions.
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -754,7 +758,7 @@ Usage rules:
 - Status: resolved by same-flow retry; real PEFT execution completed after the repair, exposing `LV-184`
 - Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after `LV-182` failed-recipe metrics gating and indirect `TrainingArguments` repair
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -807,7 +811,7 @@ Usage rules:
 - Status: resolved for failed-comparator pass-through; same-flow retries narrowed through `LV-183` and then completed real PEFT execution
 - Validation target: same-flow `run_experiments -> analyze_results` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `LV-181` duplicate-argument boundary was repaired
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -865,7 +869,7 @@ Usage rules:
 - Status: resolved for duplicate-argument boundary; same-flow retries narrowed through `LV-182` and later completed real PEFT execution
 - Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after source-side repair for `LV-180`
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -920,7 +924,7 @@ Usage rules:
 - Status: resolved for `model_id=None` boundary; same-flow retries narrowed through `LV-181`/`LV-182`/`LV-183` and later completed real PEFT execution
 - Validation target: same-flow `design_experiments -> implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after backtracking from `analyze_results`
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
@@ -977,13 +981,13 @@ Usage rules:
 - Status: resolved
 - Validation target: same-flow `implement_experiments -> run_experiments -> analyze_results` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after native-Codex implementation repair
 - Environment/session context:
-  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - validation workspace: `<validation-workspace>`
   - Web API: `127.0.0.1:4317`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
 
 - Reproduction steps:
-  1. Rebuild and run the local Web API from `/home/hanyong/.autolabos-validation`.
+  1. Rebuild and run the local Web API from `<validation-workspace>`.
   2. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
   3. Let `implement_experiments` complete and auto-handoff through `run_experiments` and `analyze_results`.
   4. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`.
@@ -1039,9 +1043,9 @@ Usage rules:
   - The result table repair does not by itself satisfy confidence interval or repeated-trial evidence requirements.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/analysis/result_analysis.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/analysis/result_analysis.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
 
 ---
 
@@ -1379,9 +1383,9 @@ Usage rules:
   - Adjacent `json.dump(...)` and `json.dumps(...)` repairs should still make non-finite values safe without breaking nested literals.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-170
 
@@ -1446,9 +1450,9 @@ Usage rules:
   - The compatibility class must support the actual `_make_recipe(...)` payload rather than a brittle alias to an incompatible dataclass.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-171
 
@@ -1514,9 +1518,9 @@ Usage rules:
   - Parameter annotation parsing should be broad enough for common `typing` shapes without overfitting to `ExperimentConfig`.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-172
 
@@ -1577,9 +1581,9 @@ Usage rules:
   - The fix should be general enough for dynamic research-purpose chunking and should not hard-code only this single run's full helper body.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-173
 
@@ -1640,10 +1644,10 @@ Usage rules:
   - Recovery should require evidence that the public artifact was modified during the current attempt, then still run normal local verification before handoff.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/bootstrap_contract.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/bootstrap_contract.json`
 
 ## Issue: LV-169
 
@@ -1714,7 +1718,7 @@ Usage rules:
   - Additional generated-runner contract drift may appear after this boundary is fixed.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
   - Web API run-node response showing `get_runtime_device_info()` arity failure and undefined `normalize_for_json`
 
 ## Issue: LV-168
@@ -1780,8 +1784,8 @@ Usage rules:
   - Additional generated-runner contract drift may appear after this boundary is fixed.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
   - Web API run state showing `run_experiments` failed with missing instruction dataset helpers and failure metrics writer call-order mismatch
 
 ## Issue: LV-167
@@ -1849,7 +1853,7 @@ Usage rules:
   - The generated runner may expose additional model/evaluation contract mismatches after this boundary is fixed.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
   - real Web API `run_experiments` response showing `AttributeError: 'EvaluationSample' object has no attribute 'get'`
   - real Web API `run_experiments` response showing failure metrics writer collapse with `PosixPath`/`metrics_path` signature mismatch
 
@@ -1915,9 +1919,9 @@ Usage rules:
   - This fix blocks one class of CLI-shape drift; future generated runners may still expose deeper runtime/data-loading issues once CLI compatibility is enforced earlier.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-165
 
@@ -1981,16 +1985,16 @@ Usage rules:
   - The broader PEFT evidence-quality issue remains separate: deterministic fallback rows are still a last resort and should not be treated as paper-scale evidence.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
 
 ## Issue: LV-164
 
 - Status: resolved
 - Validation target: repository-wide `npm test` after stricter implement-stage non-executable runner validation
 - Environment/session context:
-  - repository root: `/home/hanyong/AutoLabOS`
+  - repository root: `<repo-root>`
   - command: `npm test`
   - date: 2026-04-27
 
@@ -2164,9 +2168,9 @@ Usage rules:
 - Follow-up risks:
   - The current live blocker is no longer the locked baseline ID. The next blocker is `LV-156`: ragged `labels` in the tuned training collator plus failure-metrics JSON serialization for `PathLike` values.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
 
 ## Issue: LV-161
 
@@ -4821,7 +4825,7 @@ Usage rules:
 
 - Actual behavior:
   - `implement_experiments` completed and reported local verification passed via:
-    - `python3 -m py_compile "/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py"`
+    - `python3 -m py_compile "<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py"`
   - Immediate `run_experiments` execution failed while importing/evaluating function annotations:
     - `NameError: name 'RecipeSpec' is not defined. Did you mean: 'PeftRecipeSpec'?`
   - Latest checkpoint:
@@ -5841,7 +5845,7 @@ The resolved entries below are kept as recent validation history and regression 
     - the request waited through heartbeat observations up to `539s`, then returned streamed Codex OAuth output
     - `unit_chunk_responses/peft_runner__peft_runner__d0__chunk_1_1.txt` was written
     - the public runner was rewritten to `690` lines
-    - local verification passed via `python -m py_compile /home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+    - local verification passed via `python -m py_compile <validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
     - `implement_experiments/status.json` ended with `status: "completed"` and `verifyStatus: "pass"`
   - A remaining observability gap was found during this same live retry:
     - the Codex OAuth SSE parser accumulated `response.output_text.delta` internally, but the generic `CodexOAuthResponsesLLMClient` forwarded all progress as `status`
@@ -6864,10 +6868,10 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: resolved
 - Validation target: localhost-only WebUI reachability and visible loading state
-- Environment/session context: WebUI process for `/home/hanyong/.autolabos-validation` on 2026-04-27, intentionally bound to `127.0.0.1:4317`
+- Environment/session context: WebUI process for `<validation-workspace>` on 2026-04-27, intentionally bound to `127.0.0.1:4317`
 
 - Reproduction steps:
-  1. Start WebUI from `/home/hanyong/.autolabos-validation` with `web --host 127.0.0.1 --port 4317`.
+  1. Start WebUI from `<validation-workspace>` with `web --host 127.0.0.1 --port 4317`.
   2. Check binding with `lsof -i :4317`.
   3. Request `http://127.0.0.1:4317` with `curl`.
   4. Request `http://165.194.34.92:4317` with `curl` to confirm it is not externally exposed.
@@ -6889,7 +6893,7 @@ The resolved entries below are kept as recent validation history and regression 
     - Chromium renders the Research Workbench on localhost after bootstrap, and the app now has an explicit loading card while bootstrap is pending.
 
 - Fresh vs existing session comparison:
-  - Fresh session: restarted the server from `/home/hanyong/.autolabos-validation` with `web --host 127.0.0.1 --port 4317`
+  - Fresh session: restarted the server from `<validation-workspace>` with `web --host 127.0.0.1 --port 4317`
   - Existing session: earlier process was temporarily opened on `0.0.0.0`, then corrected back to loopback-only
   - Divergence: the actionable localhost symptom was a visible loading-state/render timing issue, not a port reachability failure
 
@@ -6919,7 +6923,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: resolved
 - Validation target: `analyze_results` should not pause with `incomplete_results_table` when real PEFT metrics contain executed `metrics.conditions` and `condition_summaries`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, revalidated on 2026-04-29 with a rebuilt localhost-only Web API on `127.0.0.1:4318`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, revalidated on 2026-04-29 with a rebuilt localhost-only Web API on `127.0.0.1:4318`
 
 - Reproduction steps:
   1. Use a run whose `metrics.json` has executed rows for `base_unmodified`, `lora_r8`, and `lora_r16`.
@@ -6948,7 +6952,7 @@ The resolved entries below are kept as recent validation history and regression 
     - The run still correctly backtracks to `design_experiments` because the brief required all planned tuned conditions to execute, while the evidence assessment observed `executed_condition_count=2` against `minimum_condition_count=4`.
 
 - Fresh vs existing session comparison:
-  - Fresh session: started a rebuilt local-only Web API on `127.0.0.1:4318` from `/home/hanyong/.autolabos-validation`.
+  - Fresh session: started a rebuilt local-only Web API on `127.0.0.1:4318` from `<validation-workspace>`.
   - Existing session: original run artifacts had already reached `analyze_results` with a pause.
   - Divergence: persisted experiment metrics were sufficient, but the in-memory/persisted analysis projection did not recognize the current metrics shape before the fix.
 
@@ -6991,7 +6995,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: resolved
 - Validation target: `run_experiments` should not accept a completed metrics payload when a brief/design requires all planned tuned conditions but the runner only executed a subset
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, investigated on 2026-04-29 with run artifacts, generated runner source, and a rebuilt localhost-only Web API on `127.0.0.1:4318`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, investigated on 2026-04-29 with run artifacts, generated runner source, and a rebuilt localhost-only Web API on `127.0.0.1:4318`
 
 - Reproduction steps:
   1. Use a brief whose minimum evidence requires all planned conditions to execute.
@@ -7056,7 +7060,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: resolved
 - Validation target: governed backtrack from `analyze_results` to `design_experiments` should produce a runner whose `implement_experiments` handoff is executable by `run_experiments`, not only Python-compilable
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Apply the pending `backtrack_to_design` transition for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
@@ -7097,7 +7101,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: resolved
 - Validation target: generated PEFT runner should expose its generated workflow implementation under the final workflow dispatcher names and preserve diagnostic metrics writing on failure
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-102 baseline evaluator argument repair.
@@ -7143,7 +7147,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: resolved
 - Validation target: generated PEFT runner should tokenize instruction-tuning labels so real `Trainer` batches can be collated during second-stage `run_experiments` verification
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-103 workflow/metrics writer repairs.
@@ -7182,14 +7186,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should preserve real node-owned execution and not replace the training/evaluation artifacts manually. The next rerun may surface a later runtime or quality gate after collation is fixed.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-267
 
 - Status: in_progress; code/test/build complete, pending same-flow Web API re-validation.
 - Validation target: regenerated PEFT runner should expose dataset-loading and failure-serialization helpers accepted by its final entrypoint
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Apply the objective/resource-regression backtrack and rerun `design_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
@@ -7224,15 +7228,15 @@ The resolved entries below are kept as recent validation history and regression 
   - A broader generated-function inventory check may be needed if new alias families continue to appear after this repair.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-268
 
 - Status: in_progress
 - Validation target: generated baseline-first PEFT orchestration helper should be invoked through a signature-compatible bridge before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-267 alias repairs
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-267 alias repairs
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with LV-267 helper alias repairs.
@@ -7267,16 +7271,16 @@ The resolved entries below are kept as recent validation history and regression 
   - The repair should adapt invocation only when the target helper exists and the call surface is incompatible; it must not fabricate condition outputs or convert real runtime failures into completed metrics.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-269
 
 - Status: in_progress
 - Validation target: generated PEFT runner should expose a singular condition-result normalization helper when final metrics assembly calls it
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-268 invocation repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-268 invocation repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-268 baseline-first invocation repair.
@@ -7312,15 +7316,15 @@ The resolved entries below are kept as recent validation history and regression 
   - If a generated plural helper has incompatible semantics, the safe behavior is to normalize the single record through that plural helper and return the first normalized row, preserving failure status for missing required records.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-270
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should expose a top-level experiment orchestration callable that connects the generated locked-condition executor to final metrics emission
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-269 normalization-alias repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-269 normalization-alias repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-269 condition-normalizer alias repair.
@@ -7356,19 +7360,19 @@ The resolved entries below are kept as recent validation history and regression 
   - If the generated locked-condition executor itself later fails while loading datasets, models, or executing training, that should remain visible as real failure evidence rather than being hidden by the top-level alias.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-271
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should materialize instruction-training examples and benchmark samples before calling the generated baseline-first condition executor
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-270 top-level orchestration-callable repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-270 top-level orchestration-callable repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-270 top-level orchestration callable bridge.
-  2. Restart the localhost-only Web API from `/home/hanyong/.autolabos-validation` on `127.0.0.1:4318`.
+  2. Restart the localhost-only Web API from `<validation-workspace>` on `127.0.0.1:4318`.
   3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
   4. Let native Codex regenerate all chunks, pass local `py_compile`, and enter second-stage `run_experiments`.
   5. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`.
@@ -7400,16 +7404,16 @@ The resolved entries below are kept as recent validation history and regression 
   - Once these inputs are supplied, the next real boundary may be external model/dataset availability, tokenizer/model loading, or actual training/evaluation runtime.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-222
 
 - Status: resolved
 - Validation target: generated PEFT runner should support dict-style access for object-backed recipe definition registries during second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
@@ -7442,14 +7446,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must only add dictionary-style access to generated recipe-definition value objects and must not mask genuinely missing recipe fields.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-223
 
 - Status: resolved
 - Validation target: generated PEFT runner should reconcile final recipe catalog lookup aliases with the generated recipe registry names before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-222 object-backed recipe-definition subscript repair.
@@ -7484,14 +7488,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must only bridge equivalent generated recipe registries and must not fabricate missing recipes or weaken the baseline-first contract.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-224
 
 - Status: in_progress; same-flow revalidation passed the original arity boundary and is now blocked by LV-245
 - Validation target: generated PEFT runner entrypoint should resolve generated ARC-Challenge/HellaSwag evaluation dataset loader aliases before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-223 recipe-catalog alias repair.
@@ -7526,15 +7530,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must only bridge existing generated public evaluation dataset loaders and must not fabricate evaluation rows or bypass node-owned dataset loading/execution.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-225
 
 - Status: resolved
 - Validation target: generated PEFT runner dataset-loading bridge should pass compatible bounded-sample arguments to generated ARC-Challenge/HellaSwag loaders during second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-224 evaluation dataset helper alias repair.
@@ -7568,15 +7572,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must only translate equivalent bounded-sample argument names and must not fabricate dataset rows, bypass network/data loading failures, or weaken the baseline-first experiment contract.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-226
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: generated PEFT runner orchestration should recognize semantically equivalent benchmark evaluator function names before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-225 dataset-loader argument alias repair.
@@ -7611,15 +7615,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must only bridge existing generated evaluator functions and must not fabricate benchmark metrics, bypass model evaluation, or weaken the baseline-first experiment contract.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-227
 
 - Status: resolved
 - Validation target: generated PEFT runner CLI validation should resolve locked recipe IDs against the generated recipe registry without rejecting semantically equivalent baseline-first IDs
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-226 benchmark-evaluator alias repair.
@@ -7653,14 +7657,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must only align existing generated recipe registries/aliases and must not fabricate missing recipes, skip the baseline-first recipe validation contract, or convert a parser failure into fake experiment completion.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-228
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: generated PEFT runner orchestration should use an existing generated device-discovery helper before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-227 `PEFT_RECIPES` registry lookup repair.
@@ -7695,15 +7699,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must only alias or bridge existing generated device helper functions and must not bypass actual CUDA/CPU detection, fabricate successful metrics, or skip second-stage experiment execution.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-229
 
 - Status: in_progress
 - Validation target: generated PEFT runner entrypoint should use an existing generated reproducibility/seed helper before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-228 `detect_device` helper alias repair.
@@ -7737,15 +7741,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must only alias existing generated seeding helpers and must not skip seeding, fabricate successful metrics, or bypass second-stage experiment execution.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-230
 
 - Status: in_progress
 - Validation target: generated benchmark evaluator dispatch should filter unsupported evaluator kwargs before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-229 `set_reproducible_seed` alias repair.
@@ -7779,15 +7783,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must filter or alias evaluator arguments without bypassing real benchmark evaluation, fabricating metrics, or weakening the baseline-first comparison contract.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-231
 
 - Status: resolved
 - Validation target: generated device helper aliases should cover `get_device()` calls before local verification handoff
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-230 signature-aware evaluator kwarg repair.
@@ -7821,15 +7825,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must return a real runtime device from generated helpers and must not skip model/device initialization or fabricate experiment metrics.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-232
 
 - Status: resolved
 - Validation target: generated `RecipeSpec` compatibility properties should cover locked-order recipe assertions before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-231 `get_device()` alias repair.
@@ -7863,15 +7867,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must preserve the baseline-first locked comparison and must not convert an untuned base row into a trained adapter condition.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-233
 
 - Status: resolved
 - Validation target: runtime dependency helper aliases should cover underscore and non-underscore generated helper names before second-stage execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-232 `RecipeSpec.train_adapter` compatibility repair.
@@ -7905,15 +7909,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must still validate real runtime dependencies and must not skip missing package checks.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-234
 
 - Status: resolved
 - Validation target: generated status-output helper calls should resolve before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-233 runtime dependency helper alias repair.
@@ -7947,16 +7951,16 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must only provide status output compatibility and must not skip real experiment execution, dependency validation, model loading, benchmark evaluation, or metrics writing.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-235
 
 - Status: in_progress
 - Validation target: all planned PEFT recipe conditions should produce comparable evaluation metrics, not hide one failed condition under a completed top-level metrics status
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-234 `print_status(...)` compatibility repair.
@@ -7992,15 +7996,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must preserve real continuation scoring and planned recipe comparison semantics; it must not mark prompt-tuning as successful without actually evaluating it.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-236
 
 - Status: resolved
 - Validation target: ExperimentConfig metadata compatibility repair should leave generated Python runners importable before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-235 prompt-tuning logits alignment and condition-runner alias repairs.
@@ -8035,15 +8039,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should only make `dataclasses.field` available when generated code actually uses `field(...)`; it must not rewrite experiment configuration semantics or substitute node-owned experiment artifacts.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-237
 
 - Status: resolved
 - Validation target: generated CLI parser should expose every argument namespace field read by generated config builders before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-236 dataclasses `field` import repair.
@@ -8078,15 +8082,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - Similar internally-read parser fields may need a general namespace-field reconciliation pass; the first fix should stay bounded to `private_run_dir` unless more fields are observed.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-239
 
 - Status: in_progress
 - Validation target: generated PEFT runner workflow dispatch should pass parsed CLI/config state without reparsing an `argparse.Namespace` as if it were an argv iterable
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-238 IA3 feedforward subset repair.
@@ -8121,15 +8125,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should normalize `argparse.Namespace` inputs without hiding genuine required CLI argument failures when raw argv lists are supplied.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-240
 
 - Status: in_progress
 - Validation target: generated PEFT runner helper dispatch should pass filesystem path aliases to helpers whose parameter is named `path_like`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-239 Namespace-aware parse repair.
@@ -8166,19 +8170,19 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should only bridge equivalent path aliases and should not bypass genuine missing metrics-path failures.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-241
 
 - Status: resolved
 - Validation target: generated PEFT runner runtime setup should resolve equivalent directory-creation helper names before second-stage execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-240 `path_like` helper-dispatch alias repair.
-  2. Start the localhost-only Web API on `127.0.0.1:4318` from `/home/hanyong/.autolabos-validation`.
+  2. Start the localhost-only Web API on `127.0.0.1:4318` from `<validation-workspace>`.
   3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
   4. Let local `py_compile` verification pass and second-stage `run_experiments` invoke the generated runner.
 
@@ -8211,15 +8215,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should only bridge directory-creation helper aliases and should not treat file paths as directories when a parent-directory helper is required.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-242
 
 - Status: resolved
 - Validation target: generated PEFT runner CLI parsing should make optional path arguments safe before second-stage execution when the run command omits those optional flags
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-221 objective/condition repairs.
@@ -8259,15 +8263,15 @@ The resolved entries below are kept as recent validation history and regression 
   - The repair is intentionally narrow for known optional generated path fields; it should not hide genuinely required missing path arguments or fabricate experiment outputs.
   - Same-flow revalidation is now blocked by LV-243/LV-221 after real baseline execution: all tuned PEFT conditions failed in the generated runner's scheduler call before producing `accuracy_delta_vs_baseline`.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-243
 
 - Status: in_progress
 - Validation target: generated PEFT runners should call Transformers scheduler helpers with the signature that matches the imported helper so tuned conditions can train and produce baseline-relative metrics.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and second-stage execution on the local RTX 4090 environment.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and second-stage execution on the local RTX 4090 environment.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-242 optional path repair.
@@ -8306,16 +8310,16 @@ The resolved entries below are kept as recent validation history and regression 
   - The repair must not mark failed tuned rows as successful or fabricate deltas; it should only let the generated runner call the installed scheduler API correctly so the workflow can observe real training outcomes.
   - After LV-243 is cleared, LV-221 still requires same-flow confirmation that all planned conditions successfully execute and satisfy the objective metrics contract.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-244
 
 - Status: in_progress
 - Validation target: generated PEFT runners should validate the locked four-condition contract without crashing on an internal helper arity mismatch before second-stage condition execution begins.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-243 scheduler repair.
@@ -8354,16 +8358,16 @@ The resolved entries below are kept as recent validation history and regression 
   - The repair must only pass the real generated condition spec sequence into the validator. It must not fabricate successful condition rows or bypass the governed condition contract.
   - After this arity boundary is cleared, LV-243 still needs same-flow confirmation because the current rerun failed before any tuned scheduler call was reached.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-245
 
 - Status: in_progress; fix implemented and same-flow boundary partially revalidated, now blocked by LV-246
 - Validation target: generated PEFT runners should execute the generated baseline-first condition loop through the final entrypoint and should persist failure metrics even when a later runtime boundary fails.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-244 locked-condition contract repair.
@@ -8410,15 +8414,15 @@ The resolved entries below are kept as recent validation history and regression 
   - The resolver repair must only connect to a real generated execution helper. It must not fabricate condition rows or bypass the governed baseline-first loop.
   - After this entrypoint boundary is cleared, LV-243/LV-221 still require same-flow confirmation that tuned conditions execute and produce baseline-relative metrics.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-246
 
 - Status: in_progress; fix implemented and same-flow boundary partially revalidated, now blocked by LV-247
 - Validation target: generated PEFT runners should use the semantic condition identifiers from dict-backed `LOCKED_CONDITIONS` when validating the locked baseline-first condition order.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-245 entrypoint resolver and atomic writer call-order repairs.
@@ -8463,15 +8467,15 @@ The resolved entries below are kept as recent validation history and regression 
   - The repair must only extract existing condition identifiers from generated condition records. It must not reorder conditions, fabricate missing rows, or bypass the baseline-first contract.
   - After this parser boundary is cleared, LV-243/LV-221 still require same-flow confirmation that tuned conditions execute and produce baseline-relative metrics.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-247
 
 - Status: in_progress; fix implemented and same-flow boundary partially revalidated, now blocked by LV-248
 - Validation target: generated PEFT runners should connect final entrypoint aggregation and fatal metrics command metadata to the helper names generated in earlier staged chunks.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-246 dict-backed locked-condition projection repair.
@@ -8518,15 +8522,15 @@ The resolved entries below are kept as recent validation history and regression 
   - The repair must only bridge to real generated helpers and real raw condition outcomes. It must not fabricate aggregate metrics or mark failed condition execution as successful.
   - After this aggregation-entrypoint boundary is cleared, LV-243/LV-221 still require same-flow confirmation that tuned conditions execute and produce baseline-relative metrics.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-248
 
 - Status: in_progress; fix implemented and same-flow boundary partially revalidated, now blocked by LV-249
 - Validation target: generated PEFT runners should resolve their generated CLI parser regardless of whether staged chunks name it `build_arg_parser(...)`, `create_arg_parser(...)`, or the final entrypoint's longer `build_argument_parser(...)` family.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-247 final-entrypoint metrics aggregation bridge.
@@ -8567,16 +8571,16 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must only alias to a real generated `argparse.ArgumentParser` builder. It must not ignore CLI arguments, bypass parser validation, or inject hidden defaults that conflict with the generated parser.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-249
 
 - Status: in_progress; fix implemented and same-flow boundary partially revalidated, now blocked by LV-250
 - Validation target: generated PEFT runners should allow shared `common_kwargs` payloads containing `args` to be forwarded through helper-call adapters without colliding with the adapter's own positional Namespace argument.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and LV-248 code in place.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and LV-248 code in place.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-248 generated parser-builder alias repair.
@@ -8617,16 +8621,16 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must preserve downstream helpers' ability to receive an `args` keyword. It should rename only the adapter's internal formal parameter or otherwise remove only the adapter-bound duplicate, not strip semantically meaningful CLI arguments from workflow calls.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-250
 
 - Status: mitigated and same-flow live revalidated on 2026-04-30
 - Validation target: generated PEFT runners should expose device detection helpers under the names used by the final CLI orchestration entrypoint.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and LV-249 code in place.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and LV-249 code in place.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-249 supported-args adapter repair.
@@ -8669,15 +8673,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must preserve existing `device = detect_device()` use cases while returning metadata for `device_info = detect_device()` generated entrypoints.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-251
 
 - Status: mitigated and same-flow live revalidated on 2026-04-30
 - Validation target: generated PEFT runners should bridge final condition dispatch to the selected generated condition executor signature and provide any final aggregation helpers they reference.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and LV-250 code in place.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and LV-250 code in place.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-250 `detect_execution_device` alias repair.
@@ -8733,16 +8737,16 @@ The resolved entries below are kept as recent validation history and regression 
   - `analyze_results` still reports an incomplete results table and recommends manual review before progression; this is now a research-quality gate, not the LV-251 runtime failure.
   - The repair passes through real runtime context and extracts numeric values from actual generated result payloads. It must continue to avoid fabricating condition rows or marking failed execution as successful.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-252
 
 - Status: mitigated and same-flow live revalidated on 2026-04-30
 - Validation target: `analyze_results` should build condition comparisons and a populated results table from completed generated PEFT metrics regardless of whether the runner names the row array `conditions`, `condition_summaries`, or `condition_results`.
-- Environment/session context: same-flow rerun for existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation` on 2026-04-30, after LV-251 was mitigated and `run_experiments` completed all four locked PEFT conditions.
+- Environment/session context: same-flow rerun for existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>` on 2026-04-30, after LV-251 was mitigated and `run_experiments` completed all four locked PEFT conditions.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS and rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` through the localhost Web API.
@@ -8797,7 +8801,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: `implement_experiments -> run_experiments` should hand off a generated PEFT runner whose final workflow dispatcher can resolve the actual generated baseline-first experiment function.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
 
 - Reproduction steps:
   1. Rebuild and run the localhost-only Web API from `dist/cli/main.js`.
@@ -8847,15 +8851,15 @@ The resolved entries below are kept as recent validation history and regression 
   - Once the dispatcher alias is repaired, execution may advance into real PEFT/model/dataset runtime and expose dependency, cache, or scientific-evidence issues. Those should be logged separately rather than hidden by fallback rows.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-262
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: generated Python runners should not fail at module load because type annotation names are missing from imports.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-261 verifier repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-261 verifier repair.
 
 - Reproduction steps:
   1. Rebuild and restart the localhost-only Web API.
@@ -8908,16 +8912,16 @@ The resolved entries below are kept as recent validation history and regression 
   - Once annotation repair catches this, execution should proceed into actual model/dataset loading or condition execution. Those may surface external dependency/cache/model runtime issues that should be logged separately.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-263
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: `analyze_results` should build a complete baseline/comparator `results_table` from real completed condition metrics even when `metrics.conditions` is stored as an object map keyed by condition name.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-262 annotation repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-262 annotation repair.
 
 - Reproduction steps:
   1. Rebuild and restart the localhost-only Web API.
@@ -8972,16 +8976,16 @@ The resolved entries below are kept as recent validation history and regression 
   - After object-map conditions are recognized, the analysis gate may still pause for a valid scientific reason such as weak evidence scale, missing repeated trials, or a baseline/comparator naming mismatch. Those should remain governed review signals rather than be suppressed.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
 
 ## Issue: LV-264
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: `analyze_results` should recognize confidence intervals stored inside object-map condition metrics, including `metrics.conditions.*.evaluation.pooled_bootstrap.ci95_low/high`.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-263 results-table repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-263 results-table repair.
 
 - Reproduction steps:
   1. Rebuild and restart the localhost-only Web API.
@@ -9036,16 +9040,16 @@ The resolved entries below are kept as recent validation history and regression 
   - Recognizing per-condition CIs may clear the structural evidence gate, but the run still has only one recorded standard execution observation and no managed quick-check/confirmatory profiles. Review/paper gates may still correctly downgrade the output.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/analysis/evidence_scale_assessment.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/analysis/evidence_scale_assessment.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
 
 ## Issue: LV-266
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: objective evaluation should enforce resource-regression clauses when the objective says a PEFT alternative must improve the primary metric without an unacceptable runtime or memory regression.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-265 relative-comparison repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-265 relative-comparison repair.
 
 - Reproduction steps:
   1. Re-run `run_experiments` against the real PEFT runner.
@@ -9089,17 +9093,17 @@ The resolved entries below are kept as recent validation history and regression 
   - The resource-regression tolerance is intentionally conservative and deterministic. Future work can make the threshold an explicit brief/design field if users need domain-specific cost budgets.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/objective_evaluation.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/objective_evaluation.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
 
 ## Issue: LV-265
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: relative objective evaluation should not mark a PEFT-alternative objective as met by comparing an unmodified/pretrained baseline-like condition against the named tuned baseline.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-264 confidence-interval repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-264 confidence-interval repair.
 
 - Reproduction steps:
   1. Re-run `analyze_results` against the real PEFT `metrics.json`.
@@ -9141,15 +9145,15 @@ The resolved entries below are kept as recent validation history and regression 
   - Resource clauses such as runtime and memory regression are tracked separately as `LV-266`.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/review/decision.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/review/readiness_risks.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/review/decision.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/review/readiness_risks.json`
 
 ## Issue: LV-261
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: implement-stage local verification should reject generated experiment runners that cannot execute any real planned condition because no concrete per-condition train/evaluate worker exists.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-260 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-260 repair.
 
 - Reproduction steps:
   1. Rebuild and restart the localhost-only Web API.
@@ -9201,16 +9205,16 @@ The resolved entries below are kept as recent validation history and regression 
   - After verifier rejection is added, the next native-Codex attempt should regenerate a runner with real worker functions. That may then expose model/dataset/cache/PEFT runtime errors, which should be logged separately rather than hidden by synthetic/fallback metrics.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-260
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: final experiment condition-plan dispatch should call generated condition runners with a signature-compatible argument shape before model/dataset work starts.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-259 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-259 repair.
 
 - Reproduction steps:
   1. Rebuild and restart the localhost-only Web API.
@@ -9263,15 +9267,15 @@ The resolved entries below are kept as recent validation history and regression 
   - After condition-plan runner dispatch is repaired, execution should advance into actual per-condition model/dataset work. Dependency, cache, GPU, or evidence-quality failures should be logged separately.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-259
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: final experiment entrypoint should call an existing seed/runtime initializer before model or dataset work starts.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-258 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-258 repair.
 
 - Reproduction steps:
   1. Rebuild and restart the localhost-only Web API.
@@ -9322,15 +9326,15 @@ The resolved entries below are kept as recent validation history and regression 
   - After seed alias repair, execution should advance into actual condition orchestration/model loading. Dataset/cache/network/GPU blockers or evidence-quality issues should be logged separately.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-258
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: generated PEFT condition descriptor construction should use a class name that exists at module import time.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-257 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-257 repair.
 
 - Reproduction steps:
   1. Rebuild and restart the localhost-only Web API.
@@ -9381,15 +9385,15 @@ The resolved entries below are kept as recent validation history and regression 
   - After class-name alias repair, execution should advance into actual condition orchestration and model/dataset loading. Any dependency, cache, GPU/runtime, or evidence-quality blocker should be logged separately.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-257
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: final condition-suite dispatcher should find the baseline-first condition executor generated by earlier sections.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-256 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-256 repair.
 
 - Reproduction steps:
   1. Rebuild and restart the localhost-only Web API.
@@ -9449,16 +9453,16 @@ The resolved entries below are kept as recent validation history and regression 
   - After alias repair, the same flow should advance into actual dataset/model loading and PEFT condition execution. Real dependency, cache, GPU/runtime, or scientific-evidence blockers should be logged separately.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-256
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: generated condition-study dispatch should pass the parsed CLI namespace to orchestrators that require `args`, while still allowing keyword-filtered orchestrators to ignore it.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-255 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-255 repair.
 
 - Reproduction steps:
   1. Rebuild and restart the localhost-only Web API.
@@ -9505,16 +9509,16 @@ The resolved entries below are kept as recent validation history and regression 
   - After condition-dispatch repair, the same flow should advance into actual condition execution. It may then expose real Hugging Face/model/dataset/cache, GPU/runtime, or scientific-evidence blockers that should be logged separately rather than hidden by fallback rows.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-255
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: generated runner helper dispatch should tolerate small signature differences without passing unsupported keyword arguments into resolved helpers.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-254 code repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-254 code repair.
 
 - Reproduction steps:
   1. Rebuild and restart the localhost-only Web API.
@@ -9563,15 +9567,15 @@ The resolved entries below are kept as recent validation history and regression 
   - After helper-call filtering is repaired, the same flow should advance into real Hugging Face/model/dataset loading. Any subsequent dependency, cache, GPU/runtime, or scientific-evidence issue should be logged separately and not hidden by fallback rows.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-254
 
 - Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
 - Validation target: second-stage `run_experiments` should pass generated runner CLI flags that the active argparse parser accepts, or handoff repair should add explicit aliases before execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-253 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-253 repair.
 
 - Reproduction steps:
   1. Rebuild and restart the localhost-only Web API.
@@ -9615,16 +9619,16 @@ The resolved entries below are kept as recent validation history and regression 
   - After CLI alias repair, the same flow should advance into real model/dataset loading. Any subsequent missing cache, dependency, or real PEFT runtime issue should be logged separately.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments_retry_2.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments_retry_2.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-238
 
 - Status: in_progress
 - Validation target: generated IA3 PEFT recipe configuration should satisfy PEFT's `feedforward_modules` subset contract during real second-stage execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-237 `--private-run-dir` repair.
@@ -9659,15 +9663,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must preserve real IA3 execution and must not drop the IA3 condition or silently convert it into LoRA/baseline behavior.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-197
 
 - Status: resolved
 - Validation target: staged native-Codex `implement_experiments` should recover a valid bootstrap contract when the provider response contains extra tool-like JSON before the actual contract object
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-196 parent-directory helper alias repair.
@@ -9707,15 +9711,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The parser must remain schema-gated so it does not silently accept unrelated JSON such as command snippets as bootstrap contracts.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/partial_response.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_raw_response.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/partial_response.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_raw_response.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
 
 ## Issue: LV-198
 
 - Status: resolved
 - Validation target: generated PEFT runner entrypoints should tolerate already parsed `argparse.Namespace` values and dependency checker helpers with required dependency-list arguments during second-stage `run_experiments` verification
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-197 noisy-bootstrap-contract recovery.
@@ -9761,14 +9765,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The dependency checker repair should not suppress genuine missing dependency failures; it should only supply the generated required dependency list when a helper requires it.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-199
 
 - Status: resolved
 - Validation target: generated PEFT runner should align its final baseline-first study resolver with the helper names materialized by earlier chunks before second-stage `run_experiments` verification
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-198 `parse_args()` and dependency-checker compatibility repairs.
@@ -9813,14 +9817,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - A repair must not fabricate experiment metrics or bypass node-owned execution; it should only align resolver names or expose a wrapper that invokes existing generated helper functions.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-200
 
 - Status: in_progress
 - Validation target: generated PEFT runner should preserve callable argument compatibility and metrics failure reporting when it reaches second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-199 missing baseline-first runner detector.
@@ -9868,14 +9872,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The fix should only add argument/alias compatibility and must not fabricate successful experiment metrics or bypass `run_experiments`.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-201
 
 - Status: in_progress
 - Validation target: generated PEFT runner should align benchmark evaluator resolver names with the evaluator functions materialized by earlier chunks before second-stage execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-200 model-loader and metrics-writer alias repairs.
@@ -9920,14 +9924,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The fix should force name alignment or LLM retry before handoff; it must not invent benchmark metrics or skip real evaluator execution.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-202
 
 - Status: in_progress
 - Validation target: generated PEFT runner should align benchmark dataset loader resolver names with the loader functions materialized by earlier chunks before second-stage execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-201 benchmark evaluator resolver detection changes.
@@ -9972,14 +9976,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The fix should only force name alignment or LLM retry before handoff; it must not fabricate benchmark examples, substitute metrics, or bypass `run_experiments`.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-203
 
 - Status: in_progress
 - Validation target: generated PEFT runner should align run-level ARC-Challenge/HellaSwag benchmark bundle resolver names with the benchmark loading helpers materialized by earlier chunks before second-stage execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-202 benchmark loader resolver detection changes.
@@ -10023,14 +10027,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The fix should only force name alignment or LLM retry before handoff; it must not fabricate benchmark rows, substitute metrics, or bypass `run_experiments`.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-204
 
 - Status: in_progress
 - Validation target: generated PEFT runner should align ARC-Challenge/HellaSwag benchmark resolver names and failure-metrics device helper calls before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-203 benchmark bundle resolver detection changes.
@@ -10077,14 +10081,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The fix should preserve node-owned execution and only force Codex to align helper names or signatures before handoff; it must not fabricate benchmark examples, substitute metrics, or bypass `run_experiments`.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-205
 
 - Status: resolved
 - Validation target: generated PEFT runner should expose instruction-tuning dataset loaders under names searched by final orchestration before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-204 benchmark resolver and device-metrics arity guards.
@@ -10128,14 +10132,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The fix should only align loader aliases or force Codex retry before handoff; it must not fabricate instruction examples, substitute training data, or bypass `run_experiments`.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-206
 
 - Status: resolved
 - Validation target: generated PEFT runner should not mutate frozen dataclass argument/config objects while preparing filesystem paths before second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-205 instruction dataset helper alias repair.
@@ -10178,16 +10182,16 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The fix should only make entrypoint path normalization compatible with immutable config objects; it must not bypass `run_experiments`, fabricate metrics, or replace node-owned execution.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-207
 
 - Status: resolved
 - Validation target: generated PEFT runner repair helpers should insert JSON-safe compatibility functions at a syntactically valid top-level position before local verification
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-206 frozen argument path-normalization repair.
@@ -10230,14 +10234,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The fix should only make helper insertion syntax-safe; it must not change generated experiment semantics or manually substitute node-owned artifacts.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_attempts.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_attempts.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
 
 ## Issue: LV-208
 
 - Status: resolved
 - Validation target: generated PEFT runner should expose JSON writer and log-message helper aliases consistently in the entrypoint and failure-metrics path during second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-207 import-block-aware JSON-safe alias repair.
@@ -10281,15 +10285,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The fix should only reconcile generated helper aliases for logging and JSON writing; it must not fabricate experiment metrics, hide dependency/model failures, or bypass node-owned `run_experiments` execution.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-209
 
 - Status: in_progress
 - Validation target: generated PEFT runner should normalize CandidateSpec-style baseline recipes into the later PeftRecipe schema before module-level locked recipe validation
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-208 logging/JSON-writer alias repair.
@@ -10333,14 +10337,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The fix must preserve the locked baseline-first contract rather than deleting validation or reordering candidates cosmetically; it must not fabricate experiment results or bypass `run_experiments`.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-210
 
 - Status: resolved
 - Validation target: generated PEFT runner should expose a module-level `logger` before entrypoint logging during second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-209 CandidateSpec-to-PeftRecipe normalization repair.
@@ -10382,14 +10386,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should only expose a standard Python logger alias; it must not mask real experiment failures or substitute node-owned metrics/results.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-211
 
 - Status: resolved
 - Validation target: generated PEFT runner should call deterministic subset helpers with a signature compatible with their generated keyword-only parameters during second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-210 module-level logger alias repair.
@@ -10431,15 +10435,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should only reconcile deterministic subset helper call arity; it must not replace the public dataset loading or fabricate instruction records.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-212
 
 - Status: resolved
 - Validation target: generated PEFT runner should preserve required `RecipeSpec` fields when coercing alias-heavy recipe definitions during second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-211 deterministic subset helper arity repair.
@@ -10481,15 +10485,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should restore required-field detection or fill `recipe_type` from semantically compatible aliases; it must not hide unrelated missing required recipe fields or fabricate experiment results.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-213
 
 - Status: in_progress
 - Validation target: generated PEFT runner should pad causal-LM training labels consistently with tokenizer inputs before `Trainer.train()`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-212 `RecipeSpec` dataclasses import repair.
@@ -10529,14 +10533,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should target the tokenizer call paired with the generated labels assignment, not unrelated function signatures or evaluation tokenization calls.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-214
 
 - Status: resolved
 - Validation target: generated PEFT runner should normalize tuple-returning CLI parsers before main orchestration mutates parsed args
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-213 inline causal-LM label padding repair.
@@ -10578,14 +10582,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should unwrap parser tuples only at the main-args bridge and should not discard runtime path preparation when the namespace already contains normalized `metrics_path` and `output_dir`.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-215
 
 - Status: in_progress
 - Validation target: generated PEFT runner should preserve baseline-first recipe order when recipe registries use run-specific candidate IDs, and should not mask execution failures with aggregate-metrics arity errors
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-214 tuple-returning parser repair.
@@ -10622,14 +10626,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair must preserve the baseline-first contract and should normalize generated recipe registry metadata, not delete validation or fabricate successful metrics.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-216
 
 - Status: in_progress
 - Validation target: generated PEFT runner should coerce locked recipe metadata into the active `PEFTRecipeConfig` schema before module-level recipe tuples are constructed
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-215 locked recipe catalog / aggregate finalizer repairs.
@@ -10672,15 +10676,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should translate metadata into the active dataclass schema without changing the locked baseline-first order or fabricating metrics.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-217
 
 - Status: in_progress
 - Validation target: generated PEFT runner should define or alias canonical string normalization before locked recipe identity helpers execute at module import time
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-216 `PEFTRecipeConfig` metadata alias repair.
@@ -10723,15 +10727,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should provide only a small normalization helper and should not relax the locked baseline-first contract or fabricate recipe/metric outputs.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-218
 
 - Status: in_progress
 - Validation target: generated PEFT runner should call candidate executor helpers with semantically correct runtime/index arguments so planned condition coverage can produce successful tuned rows and the configured objective metric
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-217 `_canonical_string` helper repair.
@@ -10774,16 +10778,16 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should preserve candidate execution and planned coverage checks; it must not convert failed candidate rows into successful rows or fabricate objective metrics.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-219
 
 - Status: in_progress
 - Validation target: generated PEFT runner entrypoint should resolve the concrete study workflow and call the final metrics schema helper with both `args` and `study_result`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-218 candidate executor argument bridge repair.
@@ -10826,15 +10830,15 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should only widen resolver/call compatibility; it must not synthesize study results or bypass metrics contract validation.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-220
 
 - Status: in_progress
 - Validation target: generated PEFT runner final metrics assembly should pass only supported keyword arguments to the generated schema helper and should not jump to undefined helper calls
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-219 entrypoint workflow/signature bridge repair.
@@ -10880,16 +10884,16 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The repair should be a signature/compatibility bridge only; it must not invent objective metrics or mark failed candidate rows as successful.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-221
 
 - Status: in_progress
 - Validation target: `run_experiments` metrics contract should accurately count executed nested study recipe rows and `implement_experiments` should produce all planned PEFT conditions required by the governed design
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation and second-stage execution on local GPU
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation and second-stage execution on local GPU
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-220 final metrics schema compatibility repair.
@@ -10941,16 +10945,16 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - Counting nested rows will improve diagnostic honesty but will not by itself satisfy the governed experiment design; a subsequent live rerun must still confirm that the node executes all required planned conditions rather than merely reshaping metrics.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/experiment_portfolio.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/experiment_portfolio.json`
 
 ## Issue: ARCHIVE-20260429-DIRECTORY-HELPER-ALIAS
 
 - Status: in_progress
 - Validation target: generated PEFT runner should expose directory helper aliases consistently during second-stage `run_experiments` verification
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-104 causal-LM label padding repair.
@@ -10983,8 +10987,8 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The alias repair should only bridge helper naming and should not create or substitute node-owned experiment artifacts.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 - Evidence/artifacts:
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
@@ -10994,7 +10998,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: generated PEFT runner CLI defaults should include every field referenced by the generated argument parser before second-stage execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-100 candidate orchestration alias repair.
@@ -11034,7 +11038,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: generated PEFT runner should pass the resolved model, tokenizer, and benchmark datasets into the generated baseline zero-shot evaluator during second-stage execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-101 `ExperimentDefaults.trust_remote_code` repair.
@@ -11075,7 +11079,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: generated PEFT runner should allow an untuned no-training baseline recipe to use inert training hyperparameters without failing at module import time
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-094 recipe-loop alias repair.
@@ -11115,7 +11119,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should expose its candidate orchestration implementation under one of the names required by the final candidate execution bridge
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-099 tokenizer helper alias repair.
@@ -11156,7 +11160,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: generated PEFT runner should resolve its instruction-tuning dataset loader helper during second-stage execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-097 baseline recipe-ID repair.
@@ -11196,7 +11200,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: `implement_experiments` bootstrap planning should not hard-block code generation for network/cache uncertainty when the run is allowed to use public Hugging Face model and dataset downloads
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-095 RecipeSpec no-training baseline repair.
@@ -11242,7 +11246,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: generated PEFT runner should keep the baseline-first recipe ID used by CLI defaults, validation, and the recipe registry consistent
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-096 bootstrap blocker normalization.
@@ -11283,7 +11287,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: `implement_experiments` second-stage verification should reject or repair a generated metrics builder that turns an executed study payload into placeholder `unknown` candidate rows
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the chunk-5a dispatcher repair.
@@ -11324,7 +11328,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should dispatch to the generated baseline-first condition execution function during second-stage `run_experiments`
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-092 mapping/evaluation repair.
@@ -11366,7 +11370,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should expose its generated tokenizer loader under one of the names searched by the workflow tokenizer-loading bridge
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-098 instruction dataset helper alias repair.
@@ -11406,7 +11410,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should expose the generated recipe execution loop under one of the names searched by the final recipe-runner dispatcher
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-093 condition-dispatcher alias repair.
@@ -11446,7 +11450,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: resolved
 - Validation target: generated PEFT runner should expose parent-directory helper aliases consistently during second-stage `run_experiments` verification
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-105 directory helper alias repair.
@@ -11485,14 +11489,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The alias repair should only bridge helper naming and should not create or substitute node-owned metrics or experiment artifacts.
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-272
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should materialize baseline-first study-loop inputs before second-stage `run_experiments` execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-271 workflow-input materialization repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-271 workflow-input materialization repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-271 workflow-input materialization repair.
@@ -11534,7 +11538,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should materialize entrypoint context arguments before calling the baseline-first condition loop
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-272 study-loop input repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-272 study-loop input repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-272 study-loop runtime/dataset-input repair.
@@ -11576,7 +11580,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: `run_experiments` planned-condition coverage verification should count successful tuned rows emitted in the generated runner's top-level `condition_results` schema
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-273 entrypoint-context materialization repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-273 entrypoint-context materialization repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-273 entrypoint context-input repair.
@@ -11619,7 +11623,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: generated NEFTune-style embedding-noise conditions should remain replica-safe during real multi-GPU PEFT training
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, observed on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` after LV-273 allowed the generated PEFT runner to reach real condition execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, observed on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` after LV-273 allowed the generated PEFT runner to reach real condition execution
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-273 entrypoint context-input repair.
@@ -11660,7 +11664,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should connect its generated condition-evaluation loop to final metrics assembly before second-stage `run_experiments` execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
 
 - Reproduction steps:
   1. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
@@ -11702,7 +11706,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should bridge generated chunk-5 orchestration helper names into the final entrypoint dispatcher before second-stage `run_experiments` execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-276 metrics-assembly bridge repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-276 metrics-assembly bridge repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-276 metrics-assembly bridge and runtime `MutableMapping` import repair.
@@ -11744,7 +11748,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should bridge generated condition-comparison helper names into the final condition dispatcher before second-stage `run_experiments` execution
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-277 chunk-5 orchestration bridge repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-277 chunk-5 orchestration bridge repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-277 chunk-5 orchestration bridge.
@@ -11787,7 +11791,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runners should bridge generated baseline-first condition-loop helpers into `_entrypoint_run_conditions(...)` and keep failure metrics writing compatible with payload-first entrypoint calls
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-278 condition-comparison dispatcher bridge repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-278 condition-comparison dispatcher bridge repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-278 condition-comparison bridge.
@@ -11830,7 +11834,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: implement-stage local verification should run generated verification commands even when they redirect stdout/stderr to temporary or workspace files
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-279 entrypoint condition-loop and metrics-writer adapter repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-279 entrypoint condition-loop and metrics-writer adapter repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-279 condition-loop and `aggregated_metrics` writer adapter repair.
@@ -11871,7 +11875,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runners should bridge generated cleanup helper aliases before second-stage execution so cleanup paths do not become the primary experiment failure
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-280 shell-redirection precheck repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-280 shell-redirection precheck repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-280 redirection-token repair.
@@ -11914,7 +11918,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runners should bridge semantically equivalent model and instruction-dataset loader helper names before second-stage execution so real planned conditions can run instead of all failing at helper discovery
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-281 cleanup-helper alias repair
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-281 cleanup-helper alias repair
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-281 cleanup-helper alias repair.
@@ -11957,7 +11961,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runners should prefer high-level metrics contract builders over raw JSON file writers and should pass semantically equivalent payload aliases to the selected metrics writer before second-stage execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-282 model/instruction loader alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-282 model/instruction loader alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-282 loader alias repair.
@@ -12000,7 +12004,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runners should materialize real evaluation examples, instruction examples, and device metadata before calling generated locked condition execution loops whose signatures require those inputs.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-283 metrics-writer dispatcher repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-283 metrics-writer dispatcher repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-283 metrics-writer dispatcher repair.
@@ -12043,7 +12047,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
 - Validation target: regenerated PEFT runners should bridge singular/plural bounded evaluation dataset helper names before second-stage execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-284 locked-workflow input materialization repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-284 locked-workflow input materialization repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-284 locked-workflow input materialization repair.
@@ -12087,7 +12091,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
 - Validation target: regenerated PEFT runners should expose generated locked condition study functions under the canonical runner names searched by the final `_run_locked_study(...)` entrypoint.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-285 bounded-eval helper alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-285 bounded-eval helper alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-285 bounded-eval helper alias repair.
@@ -12130,7 +12134,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
 - Validation target: regenerated PEFT runners should expose real baseline-first condition execution helpers under the exact names searched by final `_chunk5c_run_condition_study(...)` dispatchers before second-stage execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-286 locked-runner alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-286 locked-runner alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-286 locked-runner alias repair.
@@ -12173,7 +12177,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
 - Validation target: regenerated PEFT runners should expose real completed-script condition suite helpers under the exact names searched by `_invoke_condition_runner(...)` before second-stage execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-287 chunk-5c condition-dispatch alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-287 chunk-5c condition-dispatch alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-287 chunk-5c condition-dispatch alias repair.
@@ -12217,7 +12221,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
 - Validation target: regenerated PEFT runners should expose real final condition workflow helpers under the exact names searched by `_run_conditions_via_available_api(...)` before second-stage execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-288 completed-script condition-suite alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-288 completed-script condition-suite alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-288 completed-script condition-suite alias repair.
@@ -12260,7 +12264,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: in_progress
 - Validation target: regenerated PEFT runners should pass the generated dataset bundle and device metadata into concrete per-condition runners before metrics contract validation.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-289 final condition-workflow alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-289 final condition-workflow alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-289 final condition-workflow alias repair.
@@ -12303,7 +12307,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
 - Validation target: regenerated composable PEFT runners should expose a top-level workflow facade under the names searched by `_entrypoint_run_workflow(...)` before second-stage execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-290 condition-context materialization repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-290 condition-context materialization repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-290 condition-context materialization repair.
@@ -12346,7 +12350,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
 - Validation target: regenerated PEFT runners should provide a `detect_device_info(...)` compatibility surface when later chunks call that name but earlier chunks generated equivalent torch/CUDA device helpers under different names.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-291 top-level workflow facade repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-291 top-level workflow facade repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-291 composable top-level workflow facade repair.
@@ -12389,7 +12393,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation reached a different earlier generated-runner boundary before directly re-exercising this symptom
 - Validation target: regenerated PEFT runners should select the available baseline-first condition-sequence helper before falling back to raw per-condition helpers, or should materialize the required `eval_examples` context before calling a raw per-condition helper.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-292 device-info alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-292 device-info alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-292 `detect_device_info(...)` repair.
@@ -12432,7 +12436,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-295 on 2026-05-01
 - Validation target: generated condition-spec registry construction should be signature-compatible with the generated `make_condition_spec(...)` factory before second-stage execution imports the runner.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-293 fallback input repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-293 fallback input repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-293 fallback condition-sequence input repair.
@@ -12474,7 +12478,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-296 on 2026-05-01
 - Validation target: final PEFT runner entrypoint should resolve the generated baseline-first locked workflow helper and should choose a payload-building metrics writer rather than calling the low-level JSON writer without a payload.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-294 condition-spec factory kwarg bridge repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-294 condition-spec factory kwarg bridge repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-294 condition-spec factory kwarg bridge repair.
@@ -12516,7 +12520,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-297 on 2026-05-01
 - Validation target: final PEFT runner entrypoint should discover or expose the generated baseline-first condition-sequence helper and materialize its required runtime inputs before `run_experiments` executes the generated study.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-295 final entrypoint alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-295 final entrypoint alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-295 locked workflow and payload-writer alias repairs.
@@ -12560,7 +12564,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-298 on 2026-05-01
 - Validation target: generated condition-runner orchestration should connect the real generated ARC-Challenge/HellaSwag evaluation dataset loader to the condition execution facade before `run_experiments` evaluates planned conditions.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-296 condition-sequence facade repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-296 condition-sequence facade repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-296 baseline-first condition-sequence facade repair.
@@ -12603,7 +12607,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-299 on 2026-05-01
 - Validation target: generated benchmark evaluator dispatch should call generated zero-shot evaluation helpers with signature-compatible arguments before recording condition failures.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-297 evaluation dataset alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-297 evaluation dataset alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-297 evaluation dataset helper alias repair.
@@ -12646,7 +12650,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-300 on 2026-05-01
 - Validation target: generated CLI entrypoints should call generated metrics writers using the writer's actual path/payload argument order before handing off to `run_experiments`.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-298 benchmark evaluator dispatch repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-298 benchmark evaluator dispatch repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-298 benchmark evaluator dispatch repair.
@@ -12696,7 +12700,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-301 on 2026-05-01
 - Validation target: final generated CLI entrypoints should dispatch to the real generated baseline-first condition runner, and metrics aggregation should normalize condition-result maps before invoking sequence-oriented aggregators.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-299 metrics writer call-order repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-299 metrics writer call-order repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-299 metrics writer call-order repair.
@@ -12748,7 +12752,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-302 on 2026-05-01
 - Validation target: generated baseline-first PEFT runners should preserve all governed conditions while aligning the executable order with the declared locked baseline condition.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-300 high-level runner bridge repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-300 high-level runner bridge repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-300 high-level condition runner bridge repair.
@@ -12798,7 +12802,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: broader repair implemented; same-flow live revalidation advanced to LV-303 on 2026-05-01
 - Validation target: generated PEFT condition registries should preserve the governed required condition markers, or resolve harmless unique prefix/alias drift to the concrete generated condition marker without fabricating condition rows.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-301 baseline-first order repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-301 baseline-first order repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-301 baseline-first condition order repair.
@@ -12855,7 +12859,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation blocked at LV-304 before fully confirming the runtime payload-dispatch boundary
 - Validation target: generated PEFT runners should expose a runnable top-level study workflow that drives the generated dataset loading, condition training/preparation, benchmark evaluation, metrics aggregation, and metrics persistence path without relying on deterministic fallback rows or calling payload builders without required condition evidence.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after the LV-302 required-marker alias/coverage repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after the LV-302 required-marker alias/coverage repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-302 alias/coverage repair.
@@ -12918,7 +12922,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-305 on 2026-05-02
 - Validation target: generated PEFT runners should not fail during import-time/runtime initialization because a generated logging fallback calls a timestamp helper under a different name than the timestamp helper emitted by earlier chunks.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after the LV-303 no-fallback payload bridge repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after the LV-303 no-fallback payload bridge repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-303 bridge repair.
@@ -12976,7 +12980,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-306 on 2026-05-02
 - Validation target: generated PEFT runners should expose a final entrypoint resolver that dispatches to the real generated orchestration function before `run_experiments` starts, instead of failing because the resolver's searched names omit the generated orchestration helper.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4319` with native Codex staged implementation after the LV-304 timestamp-alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4319` with native Codex staged implementation after the LV-304 timestamp-alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-304 timestamp helper alias repair.
@@ -13041,7 +13045,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-307 on 2026-05-02
 - Validation target: seed compatibility repairs should never create a self-recursive seed shim that prevents the generated runner from reaching condition execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4320` with native Codex staged implementation after the LV-305 entrypoint-orchestration alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4320` with native Codex staged implementation after the LV-305 entrypoint-orchestration alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-305 entrypoint-orchestration alias repair.
@@ -13102,7 +13106,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-308 on 2026-05-02
 - Validation target: entrypoint device detection should normalize generated device metadata objects before converting them to plain dictionaries, so second-stage execution can proceed into real condition execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4321` with native Codex staged implementation after the LV-306 seed-shim repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4321` with native Codex staged implementation after the LV-306 seed-shim repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-306 seed-shim self-recursion repair.
@@ -13161,7 +13165,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-309 on 2026-05-02
 - Validation target: final entrypoint condition-suite dispatchers should materialize generated training and benchmark datasets before calling a baseline-first runner that requires those inputs.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4322` with native Codex staged implementation after the LV-307 device metadata normalization repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4322` with native Codex staged implementation after the LV-307 device metadata normalization repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-307 device metadata normalization repair.
@@ -13224,7 +13228,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-310 on 2026-05-02
 - Validation target: generated deterministic sampling helpers should tolerate the common `salt`/`namespace` naming mismatch when benchmark preparation calls an existing helper with equivalent deterministic-domain metadata.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4323` with native Codex staged implementation after the LV-308 condition-suite input materialization repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4323` with native Codex staged implementation after the LV-308 condition-suite input materialization repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-308 `_main_execute_conditions(...)` train/benchmark input-materialization repair.
@@ -13283,7 +13287,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-311 on 2026-05-02
 - Validation target: final main orchestration should resolve an existing generated baseline-first condition runner instead of stopping before condition execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4324`, `127.0.0.1:4325`, and `127.0.0.1:4326` with native Codex staged implementation after the LV-309 deterministic sampling alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4324`, `127.0.0.1:4325`, and `127.0.0.1:4326` with native Codex staged implementation after the LV-309 deterministic sampling alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-309 `deterministic_sample_records(..., salt=...)` alias repair.
@@ -13343,7 +13347,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-312 on 2026-05-02
 - Validation target: generated condition configuration construction should provide all required `ConditionConfig` fields or define safe defaults before module import/execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4326` with native Codex staged implementation after the LV-310 condition-suite alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4326` with native Codex staged implementation after the LV-310 condition-suite alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-310 condition-suite alias repair.
@@ -13398,7 +13402,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-313 on 2026-05-02
 - Validation target: final experiment orchestration should invoke the generated locked condition study helper instead of failing before condition execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4327` with native Codex staged implementation after the LV-311 condition-config alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4327` with native Codex staged implementation after the LV-311 condition-config alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-311 `ConditionConfig` required-field alias repair.
@@ -13458,11 +13462,11 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Status: active; dependency-blocker classifier implemented on 2026-05-02, same-flow Web API revalidation pending
 - Validation target: generated PEFT runners should either execute the governed model/data conditions or surface environment/dependency blockers without presenting failed rows as completed evidence.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-318 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-318 repair.
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-318 metrics-payload builder wrapper repair.
-  2. Restart the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  2. Restart the localhost-only Web API in `<validation-workspace>`.
   3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
   4. Let the node reuse/regenerate the PEFT runner and run second-stage verification.
 
@@ -13510,19 +13514,19 @@ The resolved entries below are kept as recent validation history and regression 
   - Do not downgrade this to success or paper-scale evidence; all condition rows failed and no objective metric is backed by execution.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-318
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-319 on 2026-05-02
 - Validation target: final metrics payload construction should call generated `build_metrics_payload(...)` helpers with compatible argument binding instead of duplicating `condition_results`.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-317 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-317 repair.
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-317 main execution-loop and exception-serializer alias repair.
-  2. Restart the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  2. Restart the localhost-only Web API in `<validation-workspace>`.
   3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
   4. Let second-stage verification execute the generated PEFT runner.
 
@@ -13561,18 +13565,18 @@ The resolved entries below are kept as recent validation history and regression 
   - The next boundary is condition execution/model asset availability, not the metrics builder arity mismatch.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-317
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-318 on 2026-05-02
 - Validation target: generated main entrypoints should resolve the real baseline-first condition execution helper and should be able to serialize top-level exceptions.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-316 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-316 repair.
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-316 accuracy-delta helper alias repair.
-  2. Restart the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  2. Restart the localhost-only Web API in `<validation-workspace>`.
   3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
   4. Let second-stage verification execute the generated PEFT runner.
 
@@ -13610,18 +13614,18 @@ The resolved entries below are kept as recent validation history and regression 
   - Subsequent failures may still occur in metrics payload construction, model loading, benchmark evaluation, or paper-scale evidence gates.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-316
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-317 on 2026-05-02
 - Validation target: final metrics-document builders should reuse generated accuracy-delta derivation helpers instead of failing after node-owned condition execution returns rows.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-315 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-315 repair.
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-315 config-builder alias repair.
-  2. Start the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  2. Start the localhost-only Web API in `<validation-workspace>`.
   3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
   4. Let the node regenerate `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py` and run its second-stage verification command.
 
@@ -13661,18 +13665,18 @@ The resolved entries below are kept as recent validation history and regression 
   - After this repair, execution may advance into dependency/runtime limits, benchmark evaluation failures, metrics schema gaps, objective non-attainment, or paper-scale evidence insufficiency.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-315
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-316 on 2026-05-02
 - Validation target: generated process entrypoints that call `build_experiment_config(args)` should use the real generated configuration builder instead of failing before condition execution.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-314 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-314 repair.
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-314 CLI condition-runner alias repair.
-  2. Start the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  2. Start the localhost-only Web API in `<validation-workspace>`.
   3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
   4. Let the node regenerate `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py` and run its second-stage verification command.
 
@@ -13708,19 +13712,19 @@ The resolved entries below are kept as recent validation history and regression 
   - After this repair, execution may advance into model loading/training, dependency/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-314
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-315 on 2026-05-02
 - Validation target: regenerated PEFT runners with a real locked-order condition study helper should expose that helper under the names searched by the final CLI orchestration runner.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4329` after rebuilding AutoLabOS with the LV-313 repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, rerun through the localhost-only Web API on `127.0.0.1:4329` after rebuilding AutoLabOS with the LV-313 repair.
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-313 entrypoint condition dataset-input repair.
-  2. Start the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  2. Start the localhost-only Web API in `<validation-workspace>`.
   3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
   4. Let the node regenerate `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py` and run its second-stage verification command.
 
@@ -13757,18 +13761,18 @@ The resolved entries below are kept as recent validation history and regression 
   - After this repair, execution may advance into model loading/training, dependency/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Issue: LV-313
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-314 on 2026-05-02
 - Validation target: final entrypoint condition invocation should call the generated baseline-first condition orchestrator with materialized train/evaluation datasets instead of masking the missing-input boundary with an unfiltered keyword retry.
-- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, inspected on 2026-05-02 through rebuilt localhost-only Web API on `127.0.0.1:4328` after the LV-312 locked-condition study alias repair.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `<validation-workspace>`, inspected on 2026-05-02 through rebuilt localhost-only Web API on `127.0.0.1:4328` after the LV-312 locked-condition study alias repair.
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-312 locked-condition study orchestration alias repair.
-  2. Start the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  2. Start the localhost-only Web API in `<validation-workspace>`.
   3. Inspect or rerun the existing validation run and allow second-stage `run_experiments` to invoke the generated PEFT runner.
   4. Observe the generated `_entrypoint_run_conditions(...)` dispatcher selecting `execute_baseline_first_conditions`.
 
@@ -13815,6 +13819,6 @@ The resolved entries below are kept as recent validation history and regression 
   - After this repair, execution may advance into model loading/training, dependency/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
 
 - Evidence/artifacts:
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
-  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
-  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`

@@ -20,6 +20,19 @@ If the user explicitly asks you to test the behavior yourself or to show actual 
 
 Those tools are still useful as secondary diagnostics or regression checks, but the direct-testing request must use a real TUI/web flow when the environment allows. If credentials, network access, or required binaries block that real flow, state the limitation explicitly and do not present the fixture-driven result as equivalent to direct live validation.
 
+### Validation workspace location
+
+Live validation and test fixtures should run outside the repository checkout.
+
+- The default validation workspace root is the sibling `.autolabos-validation/`
+  directory next to the repo root. If the repo is checked out under the user's
+  home directory, this is commonly `~/.autolabos-validation/`.
+- Set `AUTOLABOS_VALIDATION_WORKSPACE_ROOT` to override that root.
+- `npm test` uses `<validation-workspace>/.tmp` for process temp directories.
+- Live fixture workspaces are created under `<validation-workspace>/.live/`.
+- Real TUI/web validation workspaces should live under the validation root, not
+  inside the implementation repo.
+
 ## 2) Required bug taxonomy
 
 Tag root-cause hypotheses with one dominant class:

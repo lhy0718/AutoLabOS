@@ -6,6 +6,8 @@ Last updated: 2026-04-24
 
 This note records live validation evidence for the `implement_experiments` Codex OAuth blocker on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
 
+Path note: `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
+
 The goal is to separate:
 
 - AutoLabOS-side correctness fixes that are already in place
@@ -198,7 +200,7 @@ Interpretation:
     - `unit_chunk_responses/peft_runner__peft_runner__d0__chunk_1_1.txt`
   - the public runner was rewritten to `690` lines
   - local verification passed via:
-    - `python -m py_compile /home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+    - `python -m py_compile <validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
   - `implement_experiments/status.json` ended with:
     - `status: "completed"`
     - `verifyStatus: "pass"`

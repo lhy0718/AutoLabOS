@@ -33,7 +33,22 @@ For each run, preserve:
 - If required artifacts are missing, do not claim reproducibility is satisfied.
 - Use weaker language when evidence is partial.
 
-## 4) Contributor workflow
+## 4) Validation workspace location
+
+Validation and test runs should not write transient state into the repository checkout.
+
+- The default validation workspace root is the sibling `.autolabos-validation/`
+  directory next to the repo root. If the repo is checked out under the user's
+  home directory, this is commonly `~/.autolabos-validation/`.
+- Set `AUTOLABOS_VALIDATION_WORKSPACE_ROOT` to override that root.
+- `npm test` sets `TMPDIR`, `TMP`, and `TEMP` to
+  `<validation-workspace>/.tmp`.
+- Live fixture workspaces are created under `<validation-workspace>/.live/`.
+- Real TUI/web validation workspaces should live under the validation root, with
+  run artifacts in `<validation-workspace>/.autolabos/...` and public outputs in
+  `<validation-workspace>/outputs/...`.
+
+## 5) Contributor workflow
 
 Before marking work complete:
 
@@ -41,7 +56,7 @@ Before marking work complete:
 2. Confirm expected artifacts are present, parseable, and consistent across `runs.json`, `run_record.json` when present, optional `runs.sqlite` mirrors/indexes, `events.jsonl`, checkpoints, and other run-scoped artifacts.
 3. Record limitations and unresolved uncertainty.
 
-## 5) Validation surfaces
+## 6) Validation surfaces
 
 - Runtime diagnostics: `/doctor` in TUI and web Doctor tab (environment + workspace harness checks).
 - CI/internal gate: `npm run validate:harness` (issue log format + workspace/test run artifact structure, including event logs and portfolio/manifest contracts).
