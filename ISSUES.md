@@ -18,6 +18,7 @@ Path placeholders:
 ## Current active status
 
 - Live-validation status and tracked defects:
+  - `LV-325` repair implemented with targeted regression, build, full test, and harness validation passing; rebuilt same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-324 repair advanced into real `run_experiments`, no longer reproduced the `records` TypeError, then exposed a generated baseline/retrieval condition resolver alias mismatch.
   - `LV-324` repair implemented with automated regression, build, and harness validation passing; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-323 repair advanced past dataset-dispatch mismatch, then exposed a generated baseline-first evaluator whose final dispatcher called `run_baseline_first_condition_evaluation(records)` without `records` and failed to unwrap the returned `conditions` mapping.
   - `LV-323` repair implemented; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-322 repair advanced past rollback artifact loss, then exposed a generated runner whose final dataset dispatcher could not invoke `load_dataset(config)` and did not search generated `fallback_dataset()`.
   - `LV-322` repair implemented; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-320 repair rolled back from `run_experiments` to `implement_experiments`, then failed because the public experiment runner path no longer existed.
@@ -1106,6 +1107,72 @@ Path placeholders:
 ---
 
 ## Active live validation issues
+
+## Issue: LV-325
+
+- Status: repair implemented with automated validation passing; rebuilt same-flow live revalidation pending after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02
+- Validation target: `implement_experiments` local handoff verification should reconcile generated baseline/retrieval condition resolver names before `run_experiments`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>`
+  - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
+  - run: `1dff774b-300d-4f34-bf25-4515cd168b6f`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - input brief: external AGB-001 brief path, not copied into committed docs
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-324 repair.
+  2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
+  3. Run `/doctor`.
+  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  5. Let the run advance through `implement_experiments` and into `run_experiments`.
+
+- Expected behavior:
+  - A generated runner whose final comparison dispatcher searches canonical names such as `resolve_baseline_condition` and `resolve_retrieval_condition` should be bridged to the concrete generated condition helpers before handoff.
+  - `run_experiments` should execute the baseline/retrieval comparison rather than fail before metrics creation due to a resolver-name mismatch.
+
+- Actual behavior:
+  - The rebuilt same-flow run advanced through `collect_papers`, `analyze_papers`, `generate_hypotheses`, `design_experiments`, and `implement_experiments`.
+  - The original LV-324 `run_baseline_first_condition_evaluation(... records ...)` TypeError did not reproduce in this run.
+  - `run_experiments` started real second-stage execution and failed with:
+    - `RuntimeError: No usable condition resolver found among: resolve_baseline_condition, run_baseline_condition, build_baseline_condition, evaluate_baseline_condition, locked_baseline_condition`
+  - The workflow rolled back into `implement_experiments` for a repair attempt under the old built CLI.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a fresh TUI validation workspace for P0-8 AGB-001.
+  - Existing session: the same persisted run recorded the `run_experiments` failure and rollback into `implement_experiments`.
+  - Divergence: no fresh/resumed projection divergence established; this is a generated-runner handoff compatibility gap visible in node-owned execution.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: staged materialization can persist concrete baseline and retrieval condition helpers under semantically specific names while the final resolver searches only canonical condition names. `py_compile` cannot catch this dynamic resolver drift, so implement-stage verification needs a deterministic alias repair before handoff.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds `repairPythonBaselineRetrievalConditionResolverAliasSurface(...)`
+      - detects generated runners whose final baseline/retrieval resolver reports `No usable condition resolver found among`
+      - aliases concrete generated baseline and retrieval condition helpers into canonical resolver names with signature-aware public-dir forwarding
+      - reruns local verification after the repair before handoff
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a `py_compile`-valid retrieval-feature runner whose final comparison dispatch searches canonical resolver names while the concrete helpers use generated baseline/retrieval names
+
+- Regression status:
+  - Reproduced in real TUI same-flow revalidation on 2026-05-02.
+  - Targeted regression: pass on 2026-05-02 with `npm test -- tests/implementSessionManager.test.ts -t "baseline and retrieval condition resolvers|baseline-first condition evaluators"`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Full automated regression: pass on 2026-05-02 with `npm test` (`160` root test files / `1756` root tests, plus `1` web test file / `14` web tests).
+  - Harness validation: pass on 2026-05-02 with `npm run validate:harness`.
+  - Same-flow revalidation: pending rebuilt TUI run after this repair.
+
+- Follow-up risks:
+  - The current live TUI process was already running from the pre-repair built CLI when the failure was observed; a rebuilt process is required to validate the new repair.
+  - P0-8 remains unchecked until the rebuilt same-flow live run reaches the downstream governance surfaces or fails earlier with a newly recorded blocker.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/1dff774b-300d-4f34-bf25-4515cd168b6f/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/1dff774b-300d-4f34-bf25-4515cd168b6f/events.jsonl`
+  - `<validation-workspace>/.autolabos/runs/1dff774b-300d-4f34-bf25-4515cd168b6f/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/retrieval-augmented-feature-block-impact-on-macr-1dff774b/experiment/run_retrieval_feature_block_experiment.py`
 
 ## Issue: LV-324
 

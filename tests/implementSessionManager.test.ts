@@ -80,6 +80,7 @@ import {
   repairPythonJsonSafeHelperAlias,
   repairPythonEntrypointDatasetLoaderAliasSurface,
   repairPythonBaselineFirstConditionEvaluationRecordsSurface,
+  repairPythonBaselineRetrievalConditionResolverAliasSurface,
   repairPythonInstructionDatasetHelperAliasSurface,
   repairPythonModelLoaderAliasSurface,
   repairPythonEvaluationDatasetHelperAliasSurface,
@@ -23272,6 +23273,88 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_baseline_first_evaluation_records_marker");
     expect(repairedSource).toContain("_autolabos_unwrap_baseline_first_evaluation_payload");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("aliases generated baseline and retrieval condition resolvers for final comparison dispatch", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-retrieval-resolver-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_retrieval_feature_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from typing import Any, Dict",
+        "",
+        "BASELINE_CONDITION_ID = 'no_retrieval_baseline'",
+        "RETRIEVAL_CONDITION_ID = 'retrieval_feature_block'",
+        "DEFAULT_PUBLIC_DIR = Path('.')",
+        "",
+        "def build_no_retrieval_baseline_condition(public_dir: Path) -> Dict[str, Any]:",
+        "    return {'condition_id': BASELINE_CONDITION_ID, 'status': 'completed', 'macro_f1': 0.5, 'public_dir': str(public_dir)}",
+        "",
+        "def run_retrieval_augmented_feature_block_condition(public_dir: Path) -> Dict[str, Any]:",
+        "    return {'condition_id': RETRIEVAL_CONDITION_ID, 'status': 'completed', 'macro_f1': 0.625, 'public_dir': str(public_dir)}",
+        "",
+        "def _call_condition_resolver(names, public_dir):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            try:",
+        "                return candidate(public_dir)",
+        "            except TypeError:",
+        "                continue",
+        "    raise RuntimeError(f\"No usable condition resolver found among: {', '.join(names)}\")",
+        "",
+        "def resolve_baseline_and_retrieval_conditions(public_dir):",
+        "    baseline = _call_condition_resolver((",
+        "        'resolve_baseline_condition',",
+        "        'run_baseline_condition',",
+        "        'build_baseline_condition',",
+        "        'evaluate_baseline_condition',",
+        "        'locked_baseline_condition',",
+        "    ), public_dir)",
+        "    retrieval = _call_condition_resolver((",
+        "        'resolve_retrieval_condition',",
+        "        'run_retrieval_condition',",
+        "        'build_retrieval_condition',",
+        "        'evaluate_retrieval_condition',",
+        "        'retrieval_condition',",
+        "    ), public_dir)",
+        "    return baseline, retrieval, {'source': 'resolver'}",
+        "",
+        "def run_baseline_first_comparison(public_dir):",
+        "    baseline, retrieval, _metadata = resolve_baseline_and_retrieval_conditions(public_dir)",
+        "    return {",
+        "        'conditions': {",
+        "            BASELINE_CONDITION_ID: baseline,",
+        "            RETRIEVAL_CONDITION_ID: retrieval,",
+        "        },",
+        "        'macro_f1_delta': retrieval['macro_f1'] - baseline['macro_f1'],",
+        "    }",
+        "",
+        "def main() -> int:",
+        "    result = run_baseline_first_comparison(Path('public'))",
+        "    return 0 if result['macro_f1_delta'] == 0.125 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No usable condition resolver/
+    );
+
+    const repair = await repairPythonBaselineRetrievalConditionResolverAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_retrieval_condition_resolver_alias_marker");
+    expect(repairedSource).toContain("def resolve_baseline_condition");
+    expect(repairedSource).toContain("def resolve_retrieval_condition");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 

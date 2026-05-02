@@ -7946,6 +7946,51 @@ export class ImplementSessionManager {
       }
     }
 
+    const baselineRetrievalConditionResolverAliasRepair =
+      await repairPythonBaselineRetrievalConditionResolverAliasSurface(executionScriptPath);
+    if (baselineRetrievalConditionResolverAliasRepair.repaired) {
+      onProgress?.(
+        baselineRetrievalConditionResolverAliasRepair.message ||
+          "Aligned generated baseline/retrieval condition resolver aliases before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            baselineRetrievalConditionResolverAliasRepair.message ||
+            "Aligned generated baseline/retrieval condition resolver aliases before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const instructionDatasetHelperAliasRepair =
       await repairPythonInstructionDatasetHelperAliasSurface(executionScriptPath);
     if (instructionDatasetHelperAliasRepair.repaired) {
@@ -17335,6 +17380,191 @@ export async function repairPythonBaselineFirstConditionEvaluationRecordsSurface
   return {
     repaired: true,
     message: `Wrapped baseline-first condition evaluator records dispatch in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonBaselineRetrievalConditionResolverAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_baseline_retrieval_condition_resolver_alias_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("No usable condition resolver found among") ||
+    !source.includes("resolve_baseline_and_retrieval_conditions")
+  ) {
+    return { repaired: false };
+  }
+
+  const canonicalBaselineNames = new Set([
+    "resolve_baseline_condition",
+    "run_baseline_condition",
+    "build_baseline_condition",
+    "evaluate_baseline_condition",
+    "locked_baseline_condition"
+  ]);
+  const canonicalRetrievalNames = new Set([
+    "resolve_retrieval_condition",
+    "run_retrieval_condition",
+    "build_retrieval_condition",
+    "evaluate_retrieval_condition",
+    "retrieval_condition",
+    "resolve_retrieval_feature_condition",
+    "run_retrieval_feature_condition",
+    "build_retrieval_feature_condition",
+    "evaluate_retrieval_feature_condition"
+  ]);
+  const functionNames = Array.from(source.matchAll(/^\s*def\s+([A-Za-z_]\w*)\s*\(/gmu)).map(
+    (match) => match[1]
+  );
+  const bridgeInternalName = (name: string): boolean =>
+    name.startsWith("_autolabos_") ||
+    name === "_call_condition_resolver" ||
+    name === "resolve_baseline_and_retrieval_conditions";
+  const baselineCandidates = functionNames.filter((name) => {
+    const lower = name.toLowerCase();
+    return (
+      !canonicalBaselineNames.has(name) &&
+      !canonicalRetrievalNames.has(name) &&
+      !bridgeInternalName(name) &&
+      lower.includes("condition") &&
+      (lower.includes("baseline") || lower.includes("no_retrieval") || lower.includes("local_text"))
+    );
+  });
+  const retrievalCandidates = functionNames.filter((name) => {
+    const lower = name.toLowerCase();
+    return (
+      !canonicalBaselineNames.has(name) &&
+      !canonicalRetrievalNames.has(name) &&
+      !bridgeInternalName(name) &&
+      lower.includes("condition") &&
+      !lower.includes("baseline") &&
+      !lower.includes("no_retrieval") &&
+      !lower.includes("local_text") &&
+      (lower.includes("retrieval") || lower.includes("bm25") || lower.includes("feature_block"))
+    );
+  });
+
+  if (baselineCandidates.length === 0 || retrievalCandidates.length === 0) {
+    return { repaired: false };
+  }
+
+  const insertionMatch =
+    source.match(/\ndef\s+resolve_baseline_and_retrieval_conditions\s*\(/u) ||
+    source.match(/\ndef\s+_call_condition_resolver\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const quoteList = (items: string[]): string => items.map((item) => JSON.stringify(item)).join(", ");
+  const aliasBlock = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_condition_resolver_alias_public_dir(positional, keyword):",
+    "    if positional:",
+    "        return positional[0]",
+    "    for _autolabos_key in (\"public_dir\", \"experiment_dir\", \"output_dir\", \"root_dir\"):",
+    "        if _autolabos_key in keyword:",
+    "            return keyword.get(_autolabos_key)",
+    "    return globals().get(\"DEFAULT_PUBLIC_DIR\", globals().get(\"PUBLIC_EXPERIMENT_DIR\"))",
+    "",
+    "def _autolabos_condition_resolver_alias_call(candidate_names, *positional, **keyword):",
+    "    _autolabos_public_dir = _autolabos_condition_resolver_alias_public_dir(positional, keyword)",
+    "    _autolabos_last_error = None",
+    "    for _autolabos_name in candidate_names:",
+    "        _autolabos_target = globals().get(_autolabos_name)",
+    "        if not callable(_autolabos_target):",
+    "            continue",
+    "        _autolabos_attempts = []",
+    "        _autolabos_attempts.append(lambda _target=_autolabos_target: _target(*positional, **keyword))",
+    "        try:",
+    "            import inspect as _autolabos_inspect",
+    "            _autolabos_parameters = _autolabos_inspect.signature(_autolabos_target).parameters",
+    "            _autolabos_accepts_kwargs = any(",
+    "                _param.kind == _autolabos_inspect.Parameter.VAR_KEYWORD",
+    "                for _param in _autolabos_parameters.values()",
+    "            )",
+    "        except Exception:",
+    "            _autolabos_parameters = {}",
+    "            _autolabos_accepts_kwargs = False",
+    "        _autolabos_payload = dict(keyword)",
+    "        if _autolabos_public_dir is not None:",
+    "            _autolabos_payload.setdefault(\"public_dir\", _autolabos_public_dir)",
+    "            _autolabos_payload.setdefault(\"experiment_dir\", _autolabos_public_dir)",
+    "            _autolabos_payload.setdefault(\"output_dir\", _autolabos_public_dir)",
+    "        if _autolabos_accepts_kwargs:",
+    "            _autolabos_attempts.append(lambda _target=_autolabos_target, _payload=_autolabos_payload: _target(**_payload))",
+    "        else:",
+    "            _autolabos_supported = {",
+    "                _key: _value",
+    "                for _key, _value in _autolabos_payload.items()",
+    "                if _key in _autolabos_parameters",
+    "            }",
+    "            if _autolabos_supported:",
+    "                _autolabos_attempts.append(lambda _target=_autolabos_target, _payload=_autolabos_supported: _target(**_payload))",
+    "        if _autolabos_public_dir is not None:",
+    "            _autolabos_attempts.append(lambda _target=_autolabos_target, _public_dir=_autolabos_public_dir: _target(_public_dir))",
+    "        _autolabos_attempts.append(lambda _target=_autolabos_target: _target())",
+    "        for _autolabos_attempt in _autolabos_attempts:",
+    "            try:",
+    "                return _autolabos_attempt()",
+    "            except TypeError as exc:",
+    "                _autolabos_last_error = exc",
+    "                continue",
+    "    raise RuntimeError(f\"No generated condition resolver alias could be invoked: {_autolabos_last_error!r}\")",
+    "",
+    "def resolve_baseline_condition(*positional, **keyword):",
+    `    return _autolabos_condition_resolver_alias_call((${quoteList(baselineCandidates)},), *positional, **keyword)`,
+    "",
+    "def resolve_retrieval_condition(*positional, **keyword):",
+    `    return _autolabos_condition_resolver_alias_call((${quoteList(retrievalCandidates)},), *positional, **keyword)`,
+    "",
+    "if \"run_baseline_condition\" not in globals():",
+    "    run_baseline_condition = resolve_baseline_condition",
+    "if \"build_baseline_condition\" not in globals():",
+    "    build_baseline_condition = resolve_baseline_condition",
+    "if \"evaluate_baseline_condition\" not in globals():",
+    "    evaluate_baseline_condition = resolve_baseline_condition",
+    "if \"locked_baseline_condition\" not in globals():",
+    "    locked_baseline_condition = resolve_baseline_condition",
+    "if \"run_retrieval_condition\" not in globals():",
+    "    run_retrieval_condition = resolve_retrieval_condition",
+    "if \"build_retrieval_condition\" not in globals():",
+    "    build_retrieval_condition = resolve_retrieval_condition",
+    "if \"evaluate_retrieval_condition\" not in globals():",
+    "    evaluate_retrieval_condition = resolve_retrieval_condition",
+    "if \"retrieval_condition\" not in globals():",
+    "    retrieval_condition = resolve_retrieval_condition",
+    "if \"resolve_retrieval_feature_condition\" not in globals():",
+    "    resolve_retrieval_feature_condition = resolve_retrieval_condition",
+    "if \"run_retrieval_feature_condition\" not in globals():",
+    "    run_retrieval_feature_condition = resolve_retrieval_condition",
+    "if \"build_retrieval_feature_condition\" not in globals():",
+    "    build_retrieval_feature_condition = resolve_retrieval_condition",
+    "if \"evaluate_retrieval_feature_condition\" not in globals():",
+    "    evaluate_retrieval_feature_condition = resolve_retrieval_condition",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${aliasBlock}${source.slice(insertionMatch.index)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aliased generated baseline/retrieval condition resolvers in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
