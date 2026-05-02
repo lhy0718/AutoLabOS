@@ -12,10 +12,12 @@ import {
   KnowledgeFileResponse,
   KnowledgeResponse,
   RepositoryKnowledgeEntry,
+  RunJobProjection,
   LiteratureResponse,
   RunRecord,
   RunLiteratureIndex,
   RunInsightCard,
+  NodeId,
   WebConfigFormData,
   WebConfigOptions,
   WebSessionState
@@ -516,7 +518,16 @@ export function App() {
   }
 
   if (!bootstrap) {
-    return <div className="shell"><div className="panel hero">Loading AutoLabOS Web Ops...</div></div>;
+    return (
+      <div className="loading-shell" role="status" aria-live="polite">
+        <section className="loading-card">
+          <p className="eyebrow">AutoLabOS</p>
+          <h1>Research Workbench</h1>
+          <p>Loading local workspace state from <code>http://127.0.0.1:4317</code>.</p>
+          <span className="loading-bar" aria-hidden="true" />
+        </section>
+      </div>
+    );
   }
 
   if (!bootstrap.configured) {
@@ -551,1253 +562,980 @@ export function App() {
   }
 
   return (
-    <div className="shell app-shell">
-      <aside className="panel sidebar">
-        <div className="sidebar-header">
-          <div className="brand">
-            <p className="eyebrow">AutoLabOS</p>
-            <h1>Web Ops</h1>
-            <p>{bootstrap.configSummary?.projectName}</p>
-          </div>
-          <div className="config-card">
-            <div className="chip-list">
-              <span className="chip">{labelWorkflowMode(bootstrap.configSummary?.workflowMode)}</span>
-              <span className="chip">{labelApprovalMode(bootstrap.configSummary?.approvalMode)}</span>
-              <span className="chip">{labelProviderMode(bootstrap.configSummary?.llmMode)}</span>
-              <span className="chip">{labelPdfMode(bootstrap.configSummary?.pdfMode)}</span>
-            </div>
-            <small>Autonomy preset: Overnight safe policy on demand via <code>/agent overnight</code>.</small>
-            <small>Research backend: {bootstrap.configSummary?.researchBackendModel} · {bootstrap.configSummary?.researchBackendReasoning}</small>
-            <small>Experiment: {bootstrap.configSummary?.experimentModel} · {bootstrap.configSummary?.experimentReasoning}</small>
-          </div>
+    <ResearchWorkbench
+      bootstrap={bootstrap}
+      session={session}
+      selectedRun={selectedRun}
+      selectedRunId={selectedRunId}
+      filteredRuns={filteredRuns}
+      jobRows={jobRows}
+      jobQueue={jobQueue}
+      selectedJob={selectedJob}
+      selectedRunStatusClass={selectedRunStatusClass}
+      completedNodeCount={completedNodeCount}
+      activeTab={activeTab}
+      activeTabLabel={activeTabLabel}
+      isBusy={isBusy}
+      activeBusyLabel={activeBusyLabel}
+      activityRun={activityRun}
+      runSearch={runSearch}
+      showNewRunForm={showNewRunForm}
+      newRunBrief={newRunBrief}
+      newRunTopic={newRunTopic}
+      newRunConstraints={newRunConstraints}
+      newRunObjective={newRunObjective}
+      newRunAutoStart={newRunAutoStart}
+      commandInput={commandInput}
+      artifacts={artifacts}
+      selectedArtifact={selectedArtifact}
+      artifactPreview={artifactPreview}
+      selectedReviewPacket={selectedReviewPacket}
+      selectedCompletenessChecklistArtifact={selectedCompletenessChecklistArtifact}
+      activeInsight={activeInsight}
+      expandedInsightReferenceKey={expandedInsightReferenceKey}
+      checkpoints={checkpoints}
+      selectedKnowledgeEntry={selectedKnowledgeEntry}
+      literature={literature}
+      knowledgePreviewPath={knowledgePreviewPath}
+      knowledgePreviewContent={knowledgePreviewContent}
+      knowledgeEntries={knowledgeEntries}
+      doctorChecks={doctorChecks}
+      doctorReadiness={doctorReadiness}
+      doctorHarness={doctorHarness}
+      explorationStatus={explorationStatus}
+      setupForm={setupForm}
+      configOptions={configOptions}
+      onSetRunSearch={setRunSearch}
+      onToggleNewRunForm={() => setShowNewRunForm((current) => !current)}
+      onCloseNewRunForm={() => setShowNewRunForm(false)}
+      onSetNewRunBrief={setNewRunBrief}
+      onSetNewRunTopic={setNewRunTopic}
+      onSetNewRunConstraints={setNewRunConstraints}
+      onSetNewRunObjective={setNewRunObjective}
+      onSetNewRunAutoStart={setNewRunAutoStart}
+      onSubmitNewRun={submitNewRun}
+      onSelectRun={(runId) => void runSlashSelection(runId)}
+      onApprove={(runId) => void runAction(`/api/runs/${runId}/actions/approve`, undefined, "Approving current node")}
+      onApplyRecommendation={(runId) =>
+        void runAction(`/api/runs/${runId}/actions/apply-transition`, undefined, "Applying transition recommendation")
+      }
+      onRetry={(runId, node) =>
+        void runAction(`/api/runs/${runId}/actions/retry`, node ? { node } : undefined, `Retrying ${node ? formatNodeLabel(node) : "current node"}`)
+      }
+      onOvernight={(runId) =>
+        void runAction(`/api/runs/${runId}/actions/overnight`, undefined, "Starting autonomy preset: overnight")
+      }
+      onRunNode={(runId, node) =>
+        void runAction(`/api/runs/${runId}/actions/run-node`, { node }, `Running ${formatNodeLabel(node)}`)
+      }
+      onJumpNode={(runId, node) =>
+        void runAction(`/api/runs/${runId}/actions/jump`, { node, force: true }, `Jumping to ${formatNodeLabel(node)}`)
+      }
+      onCancelActive={() => void cancelActive()}
+      onSetActiveTab={setActiveTab}
+      onSetCommandInput={setCommandInput}
+      onSubmitComposer={submitComposer}
+      onTriggerPending={(action) => void triggerPending(action)}
+      onRunSessionCommand={(text, label) => void runSessionCommand(text, label)}
+      onOpenInsightReference={(path) => void openInsightReference(path)}
+      onToggleInsightReference={(key) =>
+        setExpandedInsightReferenceKey((current) => (current === key ? null : key))
+      }
+      onLoadArtifactPreview={(runId, artifact) => void loadArtifactPreview(runId, artifact)}
+      onLoadKnowledgePreview={(path) => void loadKnowledgePreview(path)}
+      onOpenKnowledgeArtifact={(path) => void openKnowledgeArtifact(path)}
+      onSetSelectedRunId={setSelectedRunId}
+      onSubmitSetup={submitSetup}
+      onSetSetupForm={setSetupForm}
+    />
+  );
+}
+
+interface ResearchWorkbenchProps {
+  bootstrap: BootstrapResponse;
+  session: WebSessionState | null;
+  selectedRun: RunRecord | null;
+  selectedRunId: string | undefined;
+  filteredRuns: RunRecord[];
+  jobRows: RunJobProjection[];
+  jobQueue: NonNullable<BootstrapResponse["jobQueue"]>;
+  selectedJob: RunJobProjection | null;
+  selectedRunStatusClass: string;
+  completedNodeCount: number;
+  activeTab: TabId;
+  activeTabLabel: string;
+  isBusy: boolean;
+  activeBusyLabel: string | undefined;
+  activityRun: RunRecord | undefined;
+  runSearch: string;
+  showNewRunForm: boolean;
+  newRunBrief: string;
+  newRunTopic: string;
+  newRunConstraints: string;
+  newRunObjective: string;
+  newRunAutoStart: boolean;
+  commandInput: string;
+  artifacts: ArtifactEntry[];
+  selectedArtifact: ArtifactEntry | null;
+  artifactPreview: string | null;
+  selectedReviewPacket: ReviewPacketPreview | null;
+  selectedCompletenessChecklistArtifact: ArtifactEntry | null;
+  activeInsight: RunInsightCard | null;
+  expandedInsightReferenceKey: string | null;
+  checkpoints: CheckpointEntry[];
+  selectedKnowledgeEntry: RepositoryKnowledgeEntry | null;
+  literature: RunLiteratureIndex | null;
+  knowledgePreviewPath: string | null;
+  knowledgePreviewContent: string | null;
+  knowledgeEntries: RepositoryKnowledgeEntry[];
+  doctorChecks: DoctorCheck[];
+  doctorReadiness: DoctorResponse["readiness"] | null;
+  doctorHarness: HarnessValidationReport | null;
+  explorationStatus: ExplorationStatusResponse | null;
+  setupForm: SetupFormState;
+  configOptions: WebConfigOptions;
+  onSetRunSearch: (value: string) => void;
+  onToggleNewRunForm: () => void;
+  onCloseNewRunForm: () => void;
+  onSetNewRunBrief: (value: string) => void;
+  onSetNewRunTopic: (value: string) => void;
+  onSetNewRunConstraints: (value: string) => void;
+  onSetNewRunObjective: (value: string) => void;
+  onSetNewRunAutoStart: (value: boolean) => void;
+  onSubmitNewRun: (event: FormEvent) => Promise<void>;
+  onSelectRun: (runId: string) => void;
+  onApprove: (runId: string) => void;
+  onApplyRecommendation: (runId: string) => void;
+  onRetry: (runId: string, node?: NodeId) => void;
+  onOvernight: (runId: string) => void;
+  onRunNode: (runId: string, node: NodeId) => void;
+  onJumpNode: (runId: string, node: NodeId) => void;
+  onCancelActive: () => void;
+  onSetActiveTab: (tab: TabId) => void;
+  onSetCommandInput: (value: string) => void;
+  onSubmitComposer: (event: FormEvent) => Promise<void>;
+  onTriggerPending: (action: "next" | "all" | "cancel") => void;
+  onRunSessionCommand: (text: string, label?: string) => void;
+  onOpenInsightReference: (path: string) => void;
+  onToggleInsightReference: (key: string) => void;
+  onLoadArtifactPreview: (runId: string, artifact: ArtifactEntry) => void;
+  onLoadKnowledgePreview: (path: string) => void;
+  onOpenKnowledgeArtifact: (path: string) => void;
+  onSetSelectedRunId: (runId: string) => void;
+  onSubmitSetup: (event: FormEvent) => Promise<void>;
+  onSetSetupForm: Dispatch<SetStateAction<SetupFormState>>;
+}
+
+function ResearchWorkbench(props: ResearchWorkbenchProps) {
+  return (
+    <div className="workbench-shell">
+      <WorkbenchRail {...props} />
+      <main className="workbench-main">
+        <RuntimeRibbon {...props} />
+        {props.selectedRun ? (
+          <>
+            <ResearchRunHero {...props} />
+            <EvidenceBoard {...props} />
+            <WorkflowMap {...props} />
+          </>
+        ) : (
+          <section className="workbench-card empty-run-state">
+            <p className="eyebrow">Run selection</p>
+            <h2>No run selected</h2>
+            <p>Choose a run from the rail or create a new run to inspect the workflow.</p>
+          </section>
+        )}
+        <PendingPlanQueue {...props} />
+      </main>
+      <WorkbenchInspector {...props} />
+    </div>
+  );
+}
+
+function WorkbenchRail(props: ResearchWorkbenchProps) {
+  return (
+    <aside className="workbench-rail">
+      <section className="rail-intro">
+        <p className="eyebrow">AutoLabOS</p>
+        <h1>Research Workbench</h1>
+        <p>{props.bootstrap.configSummary?.projectName || "Governed research workspace"}</p>
+        <div className="chip-list">
+          <span className="chip">{labelWorkflowMode(props.bootstrap.configSummary?.workflowMode)}</span>
+          <span className="chip">{labelApprovalMode(props.bootstrap.configSummary?.approvalMode)}</span>
+          <span className="chip">{labelProviderMode(props.bootstrap.configSummary?.llmMode)}</span>
+          <span className="chip">{labelPdfMode(props.bootstrap.configSummary?.pdfMode)}</span>
         </div>
-        <div className="section-heading">
+        <small>Autonomy preset: Overnight safe policy on demand via <code>/agent overnight</code>.</small>
+        <small>Research backend: {props.bootstrap.configSummary?.researchBackendModel} · {props.bootstrap.configSummary?.researchBackendReasoning}</small>
+        <small>Experiment: {props.bootstrap.configSummary?.experimentModel} · {props.bootstrap.configSummary?.experimentReasoning}</small>
+      </section>
+
+      <section className="rail-panel">
+        <div className="panel-heading">
           <div>
             <p className="section-kicker">Runs</p>
             <h2>Workspace runs</h2>
           </div>
-          <span className="count-badge">{filteredRuns.length}</span>
+          <span className="count-badge">{props.filteredRuns.length}</span>
         </div>
-        <div className="sidebar-toolbar">
+        <div className="rail-toolbar">
           <input
             placeholder="Search runs"
-            value={runSearch}
-            onChange={(event) => setRunSearch(event.target.value)}
+            value={props.runSearch}
+            onChange={(event) => props.onSetRunSearch(event.target.value)}
           />
-          <button
-            className="button button-primary"
-            type="button"
-            disabled={isBusy}
-            onClick={() => setShowNewRunForm((current) => !current)}
-          >
-            {showNewRunForm ? "Close" : "New run"}
+          <button className="button button-primary" type="button" disabled={props.isBusy} onClick={props.onToggleNewRunForm}>
+            {props.showNewRunForm ? "Close" : "New run"}
           </button>
         </div>
-        {showNewRunForm ? (
-          <form className="subtle-card new-run-form" onSubmit={submitNewRun}>
-            <label>
-              Research brief
-              <textarea
-                disabled={isBusy}
-                value={newRunBrief}
-                onChange={(event) => setNewRunBrief(event.target.value)}
-                rows={4}
-                placeholder="Describe the topic, objective, constraints, and experiment plan in natural language."
-              />
-            </label>
-            <label>
-              Topic
-              <input disabled={isBusy} value={newRunTopic} onChange={(event) => setNewRunTopic(event.target.value)} />
-            </label>
-            <label>
-              Constraints
-              <input disabled={isBusy} value={newRunConstraints} onChange={(event) => setNewRunConstraints(event.target.value)} />
-            </label>
-            <label>
-              Objective
-              <input disabled={isBusy} value={newRunObjective} onChange={(event) => setNewRunObjective(event.target.value)} />
-            </label>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                disabled={isBusy}
-                checked={newRunAutoStart}
-                onChange={(event) => setNewRunAutoStart(event.target.checked)}
-              />
-              <span>Auto-start research after creating the run</span>
-            </label>
-            <div className="form-actions">
-              <button className="button button-primary" type="submit" disabled={isBusy}>
-                {isBusy ? "Working..." : "Create run"}
-              </button>
-              <button className="button button-secondary" type="button" disabled={isBusy} onClick={() => setShowNewRunForm(false)}>Cancel</button>
-            </div>
-          </form>
-        ) : null}
-        <div className="run-list">
-          {filteredRuns.length === 0 ? (
+        {props.showNewRunForm ? <NewRunComposer {...props} /> : null}
+        <div className="run-ledger">
+          {props.filteredRuns.length === 0 ? (
             <div className="inline-empty">No runs match this search yet.</div>
           ) : (
-            filteredRuns.map((run) => {
-              const job = jobRows.find((item) => item.run_id === run.id) || null;
+            props.filteredRuns.map((run) => {
+              const job = props.jobRows.find((item) => item.run_id === run.id) || null;
               const lifecycleStatus = job?.lifecycle_status || run.status;
               return (
                 <button
                   key={run.id}
-                  className={`run-list-item ${selectedRunId === run.id ? "selected" : ""}`}
+                  className={`run-ledger-item ${props.selectedRunId === run.id ? "selected" : ""}`}
                   type="button"
-                  disabled={isBusy}
-                  onClick={() => {
-                    void runSlashSelection(run.id);
-                  }}
+                  disabled={props.isBusy}
+                  onClick={() => props.onSelectRun(run.id)}
                 >
-                  <div className="run-list-top">
-                    <span className="run-title">{run.title}</span>
-                    <span className={`status-pill ${statusToneClass(lifecycleStatus)}`}>
-                      {formatStatusLabel(lifecycleStatus)}
-                    </span>
-                  </div>
-                  <div className="run-list-bottom">
-                    <span className="run-meta">{formatNodeLabel(run.currentNode)}</span>
-                    <span className="run-meta">{formatTimestamp(job?.last_event_at || run.updatedAt)}</span>
-                  </div>
+                  <span className={`status-dot ${statusToneClass(lifecycleStatus)}`} />
+                  <strong>{run.title}</strong>
+                  <span>{formatNodeLabel(run.currentNode)} · {formatTimestamp(job?.last_event_at || run.updatedAt)}</span>
                   {job ? (
-                    <div className="run-list-bottom">
-                      <span className="run-meta">Next: {formatRunRecommendedAction(job.recommended_next_action)}</span>
-                      <span className="run-meta">A/R/P: {formatReadinessTriple(job)}</span>
-                    </div>
-                  ) : null}
-                  {job?.review_gate_status || job?.paper_readiness_state ? (
-                    <div className="run-list-bottom">
-                      {job.review_gate_status ? (
-                        <span className="run-meta">
-                          Review: {job.review_gate_label || formatReviewGateStatus(job.review_gate_status, job.review_decision_outcome, job.review_recommended_transition)}
-                          {typeof job.review_score_overall === "number" ? ` · ${job.review_score_overall}/5` : ""}
-                        </span>
-                      ) : null}
-                      {job.paper_readiness_state ? (
-                        <span className="run-meta">Paper: {job.paper_readiness_state}</span>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {job?.network_dependency || job?.validation_scope === "live_fixture" ? (
-                    <div className="run-list-bottom">
-                      {job.network_dependency ? (
-                        <span className="run-meta">Network: {job.network_dependency.operator_label}</span>
-                      ) : null}
-                      {job.validation_scope === "live_fixture" ? (
-                        <span className="run-meta">Scope: Live fixture</span>
-                      ) : null}
-                    </div>
+                    <>
+                      <span>Next: {formatRunRecommendedAction(job.recommended_next_action)}</span>
+                      <span>A/R/P: {formatReadinessTriple(job)}</span>
+                    </>
                   ) : null}
                 </button>
               );
             })
           )}
         </div>
-        {bootstrap.jobs?.top_failures?.length ? (
-          <section className="subtle-card">
-            <p className="section-kicker">Top failures</p>
-            <div className="manuscript-quality-group-list">
-              {bootstrap.jobs.top_failures.map((failure) => (
-                <div key={failure.key} className="manuscript-quality-group-line">
-                  <p>
-                    <strong>{Math.round(failure.recurrence_probability * 100)}%</strong> · {failure.reason}
-                  </p>
-                  <p className="doctor-harness-meta">Fix: {failure.remediation}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-        ) : null}
-        <section className="subtle-card">
-          <p className="section-kicker">Live watch</p>
-          {renderLiveWatchTable(jobQueue)}
+      </section>
+
+      {props.bootstrap.jobs?.top_failures?.length ? (
+        <section className="rail-panel">
+          <p className="section-kicker">Top failures</p>
+          {props.bootstrap.jobs.top_failures.map((failure) => (
+            <article key={failure.key} className="mini-finding">
+              <strong>{Math.round(failure.recurrence_probability * 100)}% · {failure.reason}</strong>
+              <span>Fix: {failure.remediation}</span>
+            </article>
+          ))}
         </section>
-        <section className="subtle-card">
-          <p className="section-kicker">Exploration engine</p>
-          {renderExplorationStatusCard(explorationStatus)}
-        </section>
-        <section className="subtle-card">
-          <p className="section-kicker">Background jobs</p>
-          {renderJobBucket("Running", jobQueue.running)}
-          {renderJobBucket("Waiting", jobQueue.waiting)}
-          {renderJobBucket("Stalled", jobQueue.stalled)}
-        </section>
-      </aside>
+      ) : null}
 
-      <main className="main-column">
-        {isBusy && activeBusyLabel ? (
-          <section className="panel activity-banner" role="status" aria-live="polite">
-            <div className="activity-banner-main">
-              <span className="activity-spinner" aria-hidden="true" />
-              <div className="activity-banner-copy">
-                <p className="section-kicker">Runtime activity</p>
-                <h2>{activeBusyLabel}</h2>
-                <p className="activity-banner-meta">
-                  {activityRun
-                    ? `${activityRun.title} · ${formatNodeLabel(activityRun.currentNode)}`
-                    : "Waiting for live session updates and artifact refreshes."}
-                </p>
-              </div>
-            </div>
-            <div className="activity-banner-side">
-              <span className="status-pill is-active">
-                <span className="mini-spinner" aria-hidden="true" />
-                {session?.canCancel ? "Cancelable" : session?.busy ? "Running" : "Starting"}
-              </span>
-              {session?.canCancel ? (
-                <button className="button button-danger" type="button" onClick={() => void cancelActive()}>
-                  Cancel active task
-                </button>
-              ) : null}
-            </div>
-          </section>
-        ) : null}
+      <section className="rail-panel">
+        <p className="section-kicker">Live watch</p>
+        {renderLiveWatchTable(props.jobQueue)}
+      </section>
+      <section className="rail-panel">
+        <p className="section-kicker">Exploration engine</p>
+        {renderExplorationStatusCard(props.explorationStatus)}
+      </section>
+      <section className="rail-panel">
+        <p className="section-kicker">Background jobs</p>
+        {renderJobBucket("Running", props.jobQueue.running)}
+        {renderJobBucket("Waiting", props.jobQueue.waiting)}
+        {renderJobBucket("Stalled", props.jobQueue.stalled)}
+      </section>
+    </aside>
+  );
+}
 
-        {selectedRun ? (
-          <>
-            <section className="panel run-header">
-              <div className="run-header-top">
-                <div>
-                  <p className="eyebrow">Selected run</p>
-                  <div className="title-row">
-                    <h2>{selectedRun.title}</h2>
-                    <span className={`status-pill ${selectedRunStatusClass}`}>
-                      {formatStatusLabel(selectedJob?.lifecycle_status || selectedRun.status)}
-                    </span>
-                  </div>
-                  <p className="run-topic">{selectedRun.topic}</p>
-                </div>
-                <div className="header-actions">
-                  <button
-                    className="button button-primary"
-                    type="button"
-                    disabled={isBusy}
-                    onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/approve`, undefined, "Approving current node")}
-                  >
-                    Approve
-                  </button>
-                  {selectedRun.graph.pendingTransition ? (
-                    <button
-                      className="button button-secondary"
-                      type="button"
-                      disabled={isBusy}
-                      onClick={() =>
-                        void runAction(
-                          `/api/runs/${selectedRun.id}/actions/apply-transition`,
-                          undefined,
-                          "Applying transition recommendation"
-                        )
-                      }
-                    >
-                      Apply recommendation
-                    </button>
-                  ) : null}
-                  <button
-                    className="button button-secondary"
-                    type="button"
-                    disabled={isBusy}
-                    onClick={() =>
-                      void runAction(
-                        `/api/runs/${selectedRun.id}/actions/overnight`,
-                        undefined,
-                        "Starting autonomy preset: overnight"
-                      )
-                    }
-                  >
-                    Overnight preset
-                  </button>
-                  <button
-                    className="button button-secondary"
-                    type="button"
-                    disabled={isBusy}
-                    onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/retry`, undefined, "Retrying current node")}
-                  >
-                    Retry
-                  </button>
-                  {session?.canCancel ? (
-                    <button className="button button-danger" type="button" onClick={() => void cancelActive()}>Cancel</button>
-                  ) : null}
-                </div>
-              </div>
+function NewRunComposer(props: ResearchWorkbenchProps) {
+  return (
+    <form className="workbench-form new-run-form" onSubmit={props.onSubmitNewRun}>
+      <label>
+        Research brief
+        <textarea
+          disabled={props.isBusy}
+          value={props.newRunBrief}
+          onChange={(event) => props.onSetNewRunBrief(event.target.value)}
+          rows={4}
+          placeholder="Describe the topic, objective, constraints, and experiment plan in natural language."
+        />
+      </label>
+      <label>
+        Topic
+        <input disabled={props.isBusy} value={props.newRunTopic} onChange={(event) => props.onSetNewRunTopic(event.target.value)} />
+      </label>
+      <label>
+        Constraints
+        <input disabled={props.isBusy} value={props.newRunConstraints} onChange={(event) => props.onSetNewRunConstraints(event.target.value)} />
+      </label>
+      <label>
+        Objective
+        <input disabled={props.isBusy} value={props.newRunObjective} onChange={(event) => props.onSetNewRunObjective(event.target.value)} />
+      </label>
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          disabled={props.isBusy}
+          checked={props.newRunAutoStart}
+          onChange={(event) => props.onSetNewRunAutoStart(event.target.checked)}
+        />
+        <span>Auto-start research after creating the run</span>
+      </label>
+      <div className="form-actions">
+        <button className="button button-primary" type="submit" disabled={props.isBusy}>
+          {props.isBusy ? "Working..." : "Create run"}
+        </button>
+        <button className="button button-secondary" type="button" disabled={props.isBusy} onClick={props.onCloseNewRunForm}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
 
-              <div className="stat-grid">
-                <article className="stat-card">
-                  <span className="stat-label">Current node</span>
-                  <strong>{formatNodeLabel(selectedRun.currentNode)}</strong>
-                </article>
-                <article className="stat-card">
-                  <span className="stat-label">Progress</span>
-                  <strong>{completedNodeCount} / {NODE_ORDER.length}</strong>
-                </article>
-                <article className="stat-card">
-                  <span className="stat-label">Checkpoint</span>
-                  <strong>#{selectedRun.graph.checkpointSeq}</strong>
-                </article>
-                {selectedJob ? (
-                  <>
-                    <article className="stat-card">
-                      <span className="stat-label">Approval mode</span>
-                      <strong>{labelApprovalMode(selectedJob.approval_mode)}</strong>
-                    </article>
-                    <article className="stat-card">
-                      <span className="stat-label">Next action</span>
-                      <strong>{formatRunRecommendedAction(selectedJob.recommended_next_action)}</strong>
-                    </article>
-                    <article className="stat-card">
-                      <span className="stat-label">Readiness</span>
-                      <strong>{formatReadinessTriple(selectedJob)}</strong>
-                    </article>
-                    {selectedJob.review_gate_status ? (
-                      <article className="stat-card">
-                        <span className="stat-label">Review gate</span>
-                        <strong>{selectedJob.review_gate_label || formatReviewGateStatus(selectedJob.review_gate_status, selectedJob.review_decision_outcome, selectedJob.review_recommended_transition)}</strong>
-                      </article>
-                    ) : null}
-                    {typeof selectedJob.review_score_overall === "number" ? (
-                      <article className="stat-card">
-                        <span className="stat-label">Review score</span>
-                        <strong>{selectedJob.review_score_overall}/5</strong>
-                      </article>
-                    ) : null}
-                    {selectedJob.paper_readiness_state ? (
-                      <article className="stat-card">
-                        <span className="stat-label">Paper state</span>
-                        <strong>{selectedJob.paper_gate_label || selectedJob.paper_readiness_state}</strong>
-                      </article>
-                    ) : null}
-                    {selectedJob.network_dependency ? (
-                      <article className="stat-card">
-                        <span className="stat-label">Network</span>
-                        <strong>{selectedJob.network_dependency.operator_label}</strong>
-                      </article>
-                    ) : null}
-                    {selectedJob.validation_scope === "live_fixture" ? (
-                      <article className="stat-card">
-                        <span className="stat-label">Validation scope</span>
-                        <strong>Live fixture</strong>
-                      </article>
-                    ) : null}
-                    {selectedCompletenessChecklistArtifact ? (
-                      <article className="stat-card">
-                        <span className="stat-label">Completeness</span>
-                        <button
-                          className="button button-secondary button-small"
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => void openInsightReference("run_completeness_checklist.json")}
-                        >
-                          Open checklist
-                        </button>
-                      </article>
-                    ) : null}
-                  </>
-                ) : null}
-              </div>
+function RuntimeRibbon(props: ResearchWorkbenchProps) {
+  if (!props.isBusy || !props.activeBusyLabel) {
+    return null;
+  }
+  return (
+    <section className="runtime-ribbon" role="status" aria-live="polite">
+      <span className="activity-spinner" aria-hidden="true" />
+      <div>
+        <p className="section-kicker">Runtime activity</p>
+        <h2>{props.activeBusyLabel}</h2>
+        <p>
+          {props.activityRun
+            ? `${props.activityRun.title} · ${formatNodeLabel(props.activityRun.currentNode)}`
+            : "Waiting for live session updates and artifact refreshes."}
+        </p>
+      </div>
+      {props.session?.canCancel ? (
+        <button className="button button-danger" type="button" onClick={props.onCancelActive}>
+          Cancel active task
+        </button>
+      ) : null}
+    </section>
+  );
+}
 
-              {selectedJob?.blocker_summary ? (
-                <p className="summary-copy">{selectedJob.blocker_summary}</p>
-              ) : null}
+function ResearchRunHero(props: ResearchWorkbenchProps) {
+  if (!props.selectedRun) {
+    return null;
+  }
+  const transition = props.selectedRun.graph.pendingTransition;
+  const decisionFocus =
+    props.selectedJob?.blocker_summary ||
+    (transition
+      ? `${transition.action}${transition.targetNode ? ` toward ${formatNodeLabel(transition.targetNode)}` : ""}: ${transition.reason}`
+      : props.selectedRun.latestSummary || "No blocking decision is currently attached to this run.");
 
-              {selectedRun.constraints.length > 0 ? (
-                <div className="chip-list">
-                  {selectedRun.constraints.map((constraint) => (
-                    <span key={constraint} className="chip">{constraint}</span>
-                  ))}
-                </div>
-              ) : null}
-
-              {selectedRun.latestSummary ? (
-                <p className="summary-copy">{selectedRun.latestSummary}</p>
-              ) : null}
-
-              {activeInsight ? (
-                <section className={`inline-panel insight-panel ${activeInsight.manuscriptQuality ? "manuscript-quality-panel" : ""}`}>
-                  {activeInsight.manuscriptQuality ? (
-                    <div className="manuscript-quality-header">
-                      <p className="section-kicker">{activeInsight.title}</p>
-                      <div className="chip-list manuscript-quality-status-row">
-                        <span className={`status-pill ${manuscriptQualityStatusToneClass(activeInsight.manuscriptQuality.status)}`}>
-                          {formatManuscriptQualityStatus(activeInsight.manuscriptQuality.status)}
-                        </span>
-                        <span className="chip">{formatManuscriptQualityStage(activeInsight.manuscriptQuality.stage)}</span>
-                        <span className="chip">
-                          Repairs {activeInsight.manuscriptQuality.repairAttempts.attempted}/{activeInsight.manuscriptQuality.repairAttempts.allowedMax}
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="section-kicker">{activeInsight.title}</p>
-                  )}
-                  {activeInsight.manuscriptQuality ? (
-                    <div className="manuscript-quality-summary">
-                      <div className="manuscript-quality-stat-grid">
-                        <article className="stat-card manuscript-quality-stat-card">
-                          <span className="stat-label">Reason</span>
-                          <strong>{activeInsight.manuscriptQuality.displayReasonLabel || formatManuscriptQualityReason(activeInsight.manuscriptQuality.reasonCategory)}</strong>
-                        </article>
-                        <article className="stat-card manuscript-quality-stat-card">
-                          <span className="stat-label">Triggered By</span>
-                          <strong>{activeInsight.manuscriptQuality.triggeredBy.join(", ") || "No triggers recorded"}</strong>
-                        </article>
-                        <article className="stat-card manuscript-quality-stat-card">
-                          <span className="stat-label">Review Reliability</span>
-                          <strong>{formatManuscriptQualityReliability(activeInsight.manuscriptQuality.reviewReliability)}</strong>
-                        </article>
-                      </div>
-
-                      <div className="manuscript-quality-group-grid">
-                        {buildManuscriptQualityGroupCards(activeInsight.manuscriptQuality).map((group) => (
-                          <article key={group.key} className="manuscript-quality-group-card">
-                            <div className="manuscript-quality-group-header">
-                              <span className="stat-label">{group.label}</span>
-                              <span className={`status-pill ${group.toneClass}`}>{group.items.length}</span>
-                            </div>
-                            <div className="manuscript-quality-group-list">
-                              {group.items.slice(0, 3).map((item) => (
-                                <p key={`${group.key}-${item.code}-${item.section}-${item.message}`} className="manuscript-quality-group-line">
-                                  <strong>{item.code}</strong> · {item.section} · {item.message}
-                                </p>
-                              ))}
-                              {group.items.length > 3 ? (
-                                <p className="manuscript-quality-group-line">
-                                  +{group.items.length - 3} more finding(s)
-                                </p>
-                              ) : null}
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-
-                      {activeInsight.manuscriptQuality.artifactRefs.length ? (
-                        <div className="manuscript-quality-artifacts">
-                          {activeInsight.manuscriptQuality.artifactRefs.map((artifactRef) => (
-                            <button
-                              key={`${artifactRef.label}-${artifactRef.path}`}
-                              className="button button-secondary button-small"
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => void openInsightReference(artifactRef.path)}
-                            >
-                              {artifactRef.label}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : activeInsight.readinessRisks ? (
-                    <div className="manuscript-quality-summary">
-                      <div className="manuscript-quality-stat-grid">
-                        <article className="stat-card manuscript-quality-stat-card">
-                          <span className="stat-label">Readiness State</span>
-                          <strong>{activeInsight.readinessRisks.readinessState}</strong>
-                        </article>
-                        <article className="stat-card manuscript-quality-stat-card">
-                          <span className="stat-label">Blocked Risks</span>
-                          <strong>{activeInsight.readinessRisks.riskCounts.blocked}</strong>
-                        </article>
-                        <article className="stat-card manuscript-quality-stat-card">
-                          <span className="stat-label">Warning Risks</span>
-                          <strong>{activeInsight.readinessRisks.riskCounts.warning}</strong>
-                        </article>
-                      </div>
-
-                      <div className="manuscript-quality-group-grid">
-                        {buildReadinessRiskGroupCards(activeInsight.readinessRisks).map((group) => (
-                          <article key={group.key} className="manuscript-quality-group-card">
-                            <div className="manuscript-quality-group-header">
-                              <span className="stat-label">{group.label}</span>
-                              <span className={`status-pill ${group.toneClass}`}>{group.items.length}</span>
-                            </div>
-                            <div className="manuscript-quality-group-list">
-                              {group.items.slice(0, 3).map((item) => (
-                                <p key={`${group.key}-${item.code}-${item.section}-${item.message}`} className="manuscript-quality-group-line">
-                                  <strong>{item.code}</strong> · {item.section} · {item.message}
-                                </p>
-                              ))}
-                              {group.items.length > 3 ? (
-                                <p className="manuscript-quality-group-line">
-                                  +{group.items.length - 3} more finding(s)
-                                </p>
-                              ) : null}
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-
-                      {activeInsight.readinessRisks.artifactRefs.length ? (
-                        <div className="manuscript-quality-artifacts">
-                          {activeInsight.readinessRisks.artifactRefs.map((artifactRef) => (
-                            <button
-                              key={`${artifactRef.label}-${artifactRef.path}`}
-                              className="button button-secondary button-small"
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => void openInsightReference(artifactRef.path)}
-                            >
-                              {artifactRef.label}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <div className="insight-list">
-                    {activeInsight.lines.map((line) => (
-                      <p key={line} className="insight-line">{line}</p>
-                    ))}
-                  </div>
-                  {activeInsight.actions?.length ? (
-                    <div className="insight-actions">
-                      {activeInsight.actions.map((action) => (
-                        <button
-                          key={`${action.label}-${action.command}`}
-                          className="button button-secondary button-small insight-action"
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => void runSessionCommand(action.command, `${action.label} · ${action.command}`)}
-                        >
-                          <span>{action.label}</span>
-                          <code>{action.command}</code>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {!activeInsight.manuscriptQuality && activeInsight.references?.length ? (
-                    <div className="insight-references">
-                      {activeInsight.references.map((reference) => {
-                        const referenceKey = buildInsightReferenceKey(reference);
-                        const isExpanded = expandedInsightReferenceKey === referenceKey;
-                        return (
-                          <article
-                            key={referenceKey}
-                            className={`insight-reference-card ${isExpanded ? "expanded" : ""}`}
-                          >
-                            <button
-                              className="button button-ghost button-small insight-reference"
-                              type="button"
-                              aria-expanded={isExpanded}
-                              onClick={() =>
-                                setExpandedInsightReferenceKey((current) =>
-                                  current === referenceKey ? null : referenceKey
-                                )
-                              }
-                            >
-                              <span className="insight-reference-kind">{labelInsightReferenceKind(reference.kind)}</span>
-                              <span>{reference.label}</span>
-                              <code>{reference.path}</code>
-                              {reference.facts?.length ? (
-                                <div className="insight-reference-facts">
-                                  {reference.facts.map((fact) => (
-                                    <span key={`${reference.label}-${fact.label}-${fact.value}`} className="insight-reference-fact">
-                                      {fact.label} {fact.value}
-                                    </span>
-                                  ))}
-                                </div>
-                              ) : null}
-                              <small>{reference.summary}</small>
-                            </button>
-                            {isExpanded ? (
-                              <div className="insight-reference-detail">
-                                {reference.details?.length ? (
-                                  <div className="insight-reference-detail-list">
-                                    {reference.details.map((detail) => (
-                                      <p key={`${referenceKey}-${detail}`} className="insight-reference-detail-line">
-                                        {detail}
-                                      </p>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <p className="insight-reference-detail-line">
-                                    No additional grounded detail is attached to this evidence card yet.
-                                  </p>
-                                )}
-                                <div className="insight-reference-detail-actions">
-                                  <button
-                                    className="button button-secondary button-small"
-                                    type="button"
-                                    disabled={isBusy}
-                                    onClick={() => void openInsightReference(reference.path)}
-                                    aria-label={`Open artifact for ${reference.label}`}
-                                  >
-                                    Open artifact
-                                  </button>
-                                </div>
-                              </div>
-                            ) : null}
-                          </article>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </section>
-              ) : null}
-
-              {selectedRun.graph.pendingTransition ? (
-                <section className="inline-panel">
-                  <p className="section-kicker">Transition recommendation</p>
-                  <h3>
-                    {selectedRun.graph.pendingTransition.action}
-                    {selectedRun.graph.pendingTransition.targetNode
-                      ? ` -> ${formatNodeLabel(selectedRun.graph.pendingTransition.targetNode)}`
-                      : ""}
-                  </h3>
-                  <p className="summary-copy">{selectedRun.graph.pendingTransition.reason}</p>
-                  <p className="run-meta">
-                    Confidence {selectedRun.graph.pendingTransition.confidence.toFixed(2)}
-                    {" · "}
-                    {selectedRun.graph.pendingTransition.autoExecutable ? "auto-executable" : "review first"}
-                  </p>
-                  <div className="chip-list">
-                    {selectedRun.graph.pendingTransition.evidence.map((item) => (
-                      <span key={item} className="chip">{item}</span>
-                    ))}
-                  </div>
-                  <div className="insight-actions">
-                    <button
-                      className="button button-secondary button-small insight-action"
-                      type="button"
-                      disabled={isBusy}
-                      onClick={() => void runSessionCommand("/agent apply", "Applying transition recommendation")}
-                    >
-                      <span>Apply recommendation</span>
-                      <code>/agent apply</code>
-                    </button>
-                    {selectedRun.graph.pendingTransition.autoExecutable ? (
-                      <button
-                        className="button button-secondary button-small insight-action"
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => void runSessionCommand("/agent overnight", "Starting autonomy preset: overnight")}
-                      >
-                        <span>Start overnight preset</span>
-                        <code>/agent overnight</code>
-                      </button>
-                    ) : null}
-                  </div>
-                </section>
-              ) : null}
-            </section>
-
-            <section className="panel workflow-panel">
-              <div className="section-heading">
-                <div>
-                  <p className="section-kicker">Workflow</p>
-                  <h3>Workflow state graph</h3>
-                </div>
-                <span className="count-badge">{completedNodeCount}/{NODE_ORDER.length} complete</span>
-              </div>
-
-              <div className="workflow-grid">
-                {NODE_ORDER.map((node) => {
-                  const state = selectedRun.graph.nodeStates[node] ?? {
-                    status: "pending",
-                    note: null,
-                    lastError: null,
-                    updatedAt: selectedRun.updatedAt
-                  };
-                  const isCurrent = selectedRun.currentNode === node;
-                  return (
-                    <article key={node} className={`node-card status-${state.status} ${isCurrent ? "current" : ""}`}>
-                      <header className="node-card-header">
-                        <span className="node-index">{NODE_ORDER.indexOf(node) + 1}</span>
-                        <div className="node-copy">
-                          <h3>{formatNodeLabel(node)}</h3>
-                          <p className="node-note">{state.note || state.lastError || "No node note yet."}</p>
-                        </div>
-                        <span className={`status-pill ${statusToneClass(state.status)}`}>{formatStatusLabel(state.status)}</span>
-                      </header>
-                      <div className="node-footer">
-                        <span className="node-meta">{isCurrent ? "Current node" : formatTimestamp(state.updatedAt)}</span>
-                        <div className="node-actions">
-                          <button
-                            className="button button-secondary button-small"
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/run-node`, { node }, `Running ${formatNodeLabel(node)}`)}
-                          >
-                            Run
-                          </button>
-                          <button
-                            className="button button-secondary button-small"
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/retry`, { node }, `Retrying ${formatNodeLabel(node)}`)}
-                          >
-                            Retry
-                          </button>
-                          <button
-                            className="button button-ghost button-small"
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/jump`, { node, force: true }, `Jumping to ${formatNodeLabel(node)}`)}
-                          >
-                            Jump
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
-          </>
-        ) : (
-          <section className="panel empty-state">
-            <h2>No run selected</h2>
-            <p>Choose a run from the left rail or create a new one to inspect the workflow.</p>
-          </section>
-        )}
-
-        {session?.pendingPlan ? (
-          <section className="panel pending-panel">
-            <div className="section-heading">
-              <div>
-                <p className="section-kicker">Pending plan</p>
-                <h3>Step {session.pendingPlan.stepIndex + 1} of {session.pendingPlan.totalSteps}</h3>
-              </div>
-              <span className="count-badge">{session.pendingPlan.totalSteps} queued</span>
-            </div>
-            <div className="pending-body">
-              <ol className="command-list">
-                {session.pendingPlan.displayCommands.map((command) => (
-                  <li key={command}>{command}</li>
-                ))}
-              </ol>
-              <div className="pending-actions">
-                <button className="button button-primary" type="button" disabled={isBusy} onClick={() => void triggerPending("next")}>Run next</button>
-                {session.pendingPlan.totalSteps > 1 ? (
-                  <button className="button button-secondary" type="button" disabled={isBusy} onClick={() => void triggerPending("all")}>Run all</button>
-                ) : null}
-                <button className="button button-danger" type="button" disabled={isBusy} onClick={() => void triggerPending("cancel")}>Cancel</button>
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-      </main>
-
-      <aside className="panel detail-column">
-        <div className="detail-header">
-          <div>
-            <p className="section-kicker">Inspector</p>
-            <h2>{activeTabLabel}</h2>
-          </div>
+  return (
+    <section className="run-hero">
+      <div className="hero-copy">
+        <p className="eyebrow">Selected run</p>
+        <div className="title-row">
+          <h2>{props.selectedRun.title}</h2>
+          <span className={`status-pill ${props.selectedRunStatusClass}`}>
+            {formatStatusLabel(props.selectedJob?.lifecycle_status || props.selectedRun.status)}
+          </span>
         </div>
-        <div className="tab-row">
-          {DETAIL_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              className={`tab-button ${activeTab === tab.id ? "active" : ""}`}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-            >
-              {tab.label}
+        <p className="run-topic">{props.selectedRun.topic}</p>
+        <div className="signal-row">
+          <span>Node: {formatNodeLabel(props.selectedRun.currentNode)}</span>
+          <span>Progress: {props.completedNodeCount}/{NODE_ORDER.length}</span>
+          <span>Checkpoint #{props.selectedRun.graph.checkpointSeq}</span>
+          {props.selectedJob ? <span>Next action: {formatRunRecommendedAction(props.selectedJob.recommended_next_action)}</span> : null}
+        </div>
+      </div>
+      <div className="hero-actions">
+        <button className="button button-primary" type="button" disabled={props.isBusy} onClick={() => props.onApprove(props.selectedRun!.id)}>
+          Approve
+        </button>
+        {transition ? (
+          <button className="button button-primary button-warm" type="button" disabled={props.isBusy} onClick={() => props.onApplyRecommendation(props.selectedRun!.id)}>
+            Apply recommendation
+          </button>
+        ) : (
+          <button className="button button-secondary" type="button" disabled={props.isBusy} onClick={() => props.onRetry(props.selectedRun!.id)}>
+            Retry
+          </button>
+        )}
+        {props.session?.canCancel ? (
+          <button className="button button-danger" type="button" onClick={props.onCancelActive}>
+            Cancel active task
+          </button>
+        ) : null}
+      </div>
+      <article className="decision-focus">
+        <span className="next-action-label">Decision focus</span>
+        <p>{decisionFocus}</p>
+      </article>
+    </section>
+  );
+}
+
+function EvidenceBoard(props: ResearchWorkbenchProps) {
+  if (!props.selectedRun) {
+    return null;
+  }
+  return (
+    <section className="workbench-card evidence-board">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Governance state</p>
+          <h2>Evidence, gates, and next moves</h2>
+        </div>
+        <span className={`status-pill ${props.selectedRunStatusClass}`}>
+          {formatStatusLabel(props.selectedJob?.lifecycle_status || props.selectedRun.status)}
+        </span>
+      </div>
+      <div className="metric-grid">
+        <article><span>Current node</span><strong>{formatNodeLabel(props.selectedRun.currentNode)}</strong></article>
+        <article><span>Progress</span><strong>{props.completedNodeCount}/{NODE_ORDER.length}</strong></article>
+        <article><span>Checkpoint</span><strong>#{props.selectedRun.graph.checkpointSeq}</strong></article>
+        {props.selectedJob ? <article><span>Readiness</span><strong>{formatReadinessTriple(props.selectedJob)}</strong></article> : null}
+        {props.selectedJob?.review_gate_status ? (
+          <article><span>Review gate</span><strong>{props.selectedJob.review_gate_label || formatReviewGateStatus(props.selectedJob.review_gate_status, props.selectedJob.review_decision_outcome, props.selectedJob.review_recommended_transition)}</strong></article>
+        ) : null}
+        {props.selectedJob?.paper_readiness_state ? (
+          <article><span>Paper state</span><strong>{props.selectedJob.paper_gate_label || props.selectedJob.paper_readiness_state}</strong></article>
+        ) : null}
+        {props.selectedCompletenessChecklistArtifact ? (
+          <article>
+            <span>Completeness</span>
+            <button className="button button-secondary button-small" type="button" disabled={props.isBusy} onClick={() => props.onOpenInsightReference("run_completeness_checklist.json")}>
+              Open checklist
+            </button>
+          </article>
+        ) : null}
+      </div>
+      {props.selectedRun.constraints.length ? (
+        <div className="chip-list">
+          {props.selectedRun.constraints.map((constraint) => <span key={constraint} className="chip">{constraint}</span>)}
+        </div>
+      ) : null}
+      {props.selectedRun.graph.pendingTransition ? <TransitionPanel {...props} /> : null}
+      {props.activeInsight ? <InsightPanel {...props} /> : null}
+      <div className="decision-actions">
+        <button className="button button-secondary" type="button" disabled={props.isBusy} onClick={() => props.onOvernight(props.selectedRun!.id)}>
+          Overnight preset
+        </button>
+        <button className="button button-secondary" type="button" disabled={props.isBusy} onClick={() => props.onRetry(props.selectedRun!.id)}>
+          Retry current node
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function TransitionPanel(props: ResearchWorkbenchProps) {
+  const transition = props.selectedRun?.graph.pendingTransition;
+  if (!props.selectedRun || !transition) {
+    return null;
+  }
+  return (
+    <article className="sub-panel transition-panel">
+      <p className="section-kicker">Transition recommendation</p>
+      <h3>{transition.action}{transition.targetNode ? ` -> ${formatNodeLabel(transition.targetNode)}` : ""}</h3>
+      <p>{transition.reason}</p>
+      <span>Confidence {transition.confidence.toFixed(2)} · {transition.autoExecutable ? "auto-executable" : "review first"}</span>
+      <div className="chip-list">
+        {transition.evidence.map((item) => <span key={item} className="chip">{item}</span>)}
+      </div>
+      <div className="decision-actions">
+        <button className="button button-secondary button-small insight-action" type="button" disabled={props.isBusy} onClick={() => props.onRunSessionCommand("/agent apply", "Applying transition recommendation")}>
+          <span>Apply recommendation</span>
+          <code>/agent apply</code>
+        </button>
+        {transition.autoExecutable ? (
+          <button className="button button-secondary button-small insight-action" type="button" disabled={props.isBusy} onClick={() => props.onRunSessionCommand("/agent overnight", "Starting autonomy preset: overnight")}>
+            <span>Start overnight preset</span>
+            <code>/agent overnight</code>
+          </button>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function InsightPanel(props: ResearchWorkbenchProps) {
+  const insight = props.activeInsight;
+  if (!insight) {
+    return null;
+  }
+  return (
+    <article className="sub-panel insight-panel">
+      <p className="section-kicker">{insight.title}</p>
+      {insight.manuscriptQuality ? <ManuscriptQualitySummary insight={insight.manuscriptQuality} onOpen={props.onOpenInsightReference} isBusy={props.isBusy} /> : null}
+      {insight.readinessRisks ? <ReadinessRiskSummary insight={insight.readinessRisks} onOpen={props.onOpenInsightReference} isBusy={props.isBusy} /> : null}
+      <div className="insight-list">
+        {insight.lines.map((line) => <p key={line} className="insight-line">{line}</p>)}
+      </div>
+      {insight.actions?.length ? (
+        <div className="decision-actions">
+          {insight.actions.map((action) => (
+            <button key={`${action.label}-${action.command}`} className="button button-secondary button-small insight-action" type="button" disabled={props.isBusy} onClick={() => props.onRunSessionCommand(action.command, `${action.label} · ${action.command}`)}>
+              <span>{action.label}</span>
+              <code>{action.command}</code>
             </button>
           ))}
         </div>
-
-        <div className="detail-content">
-          {activeTab === "logs" ? (
-            <div className="log-list">
-              {(session?.logs || []).length === 0 ? (
-                <div className="inline-empty">Live runtime output will appear here.</div>
-              ) : (
-                (session?.logs || []).slice(-80).map((line, index) => (
-                  <pre key={`${line}-${index}`} className="log-line">{line}</pre>
-                ))
-              )}
-            </div>
-          ) : null}
-
-          {activeTab === "artifacts" ? (
-            <div className="artifact-layout">
-              <div className="artifact-list">
-                {artifacts.length === 0 ? (
-                  <div className="inline-empty">No artifacts for this run yet.</div>
-                ) : (
-                  artifacts.map((artifact) => (
-                    <button
-                      key={artifact.path}
-                      className={`artifact-item ${selectedArtifact?.path === artifact.path ? "selected" : ""}`}
-                      type="button"
-                      onClick={() => {
-                        if (selectedRunId) {
-                          void loadArtifactPreview(selectedRunId, artifact);
-                        }
-                      }}
-                    >
-                      <span>{artifact.path}</span>
-                      <small>{labelArtifactKind(artifact.kind)} · {formatBytes(artifact.size)}</small>
-                    </button>
-                  ))
-                )}
-              </div>
-              <div className="artifact-preview">
-                {selectedArtifact?.kind === "image" && artifactPreview ? <img src={artifactPreview} alt={selectedArtifact.path} /> : null}
-                {selectedArtifact?.kind === "pdf" && artifactPreview ? <iframe src={artifactPreview} title={selectedArtifact.path} /> : null}
-                {selectedArtifact?.path === "review/review_packet.json" && selectedReviewPacket ? (
-                  <div className="review-preview">
-                    <div className="review-preview-header">
-                      <div className="review-preview-copy">
-                        <p className="section-kicker">Manual review</p>
-                        <h3>Review readiness</h3>
-                        <p className="summary-copy">{selectedReviewPacket.objective_summary}</p>
-                      </div>
-                      <span className={`status-pill ${reviewStatusToneClass(selectedReviewPacket.readiness.status)}`}>
-                        {toHeadline(selectedReviewPacket.readiness.status)}
-                      </span>
-                    </div>
-
-                    <div className="review-summary-grid">
-                      <article className="stat-card">
-                        <span className="stat-label">Ready</span>
-                        <strong>{selectedReviewPacket.readiness.ready_checks}</strong>
-                      </article>
-                      <article className="stat-card">
-                        <span className="stat-label">Warning</span>
-                        <strong>{selectedReviewPacket.readiness.warning_checks}</strong>
-                      </article>
-                      <article className="stat-card">
-                        <span className="stat-label">Blocking</span>
-                        <strong>{selectedReviewPacket.readiness.blocking_checks}</strong>
-                      </article>
-                      <article className="stat-card">
-                        <span className="stat-label">Manual</span>
-                        <strong>{selectedReviewPacket.readiness.manual_checks}</strong>
-                      </article>
-                    </div>
-
-                    <article className="subtle-card review-objective-card">
-                      <span className="stat-label">Objective</span>
-                      <strong>{toHeadline(selectedReviewPacket.objective_status)}</strong>
-                      <p className="summary-copy">{selectedReviewPacket.objective_summary}</p>
-                      <small>{selectedReviewPacket.generated_at ? formatTimestamp(selectedReviewPacket.generated_at) : "No timestamp"}</small>
-                    </article>
-
-                    {selectedReviewPacket.recommendation ? (
-                      <article className="subtle-card review-objective-card">
-                        <span className="stat-label">Recommendation</span>
-                        <strong>
-                          {selectedReviewPacket.recommendation.action}
-                          {selectedReviewPacket.recommendation.target
-                            ? ` -> ${formatNodeLabel(selectedReviewPacket.recommendation.target)}`
-                            : ""}
-                        </strong>
-                        <p className="summary-copy">{selectedReviewPacket.recommendation.reason}</p>
-                        <div className="chip-list">
-                          <span className="chip">{selectedReviewPacket.recommendation.confidence_pct}% confidence</span>
-                          {selectedReviewPacket.recommendation.evidence.map((item) => (
-                            <span key={item} className="chip">{item}</span>
-                          ))}
-                        </div>
-                      </article>
-                    ) : null}
-
-                    <div className="insight-actions">
-                      <button
-                        className="button button-secondary button-small insight-action"
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => void runSessionCommand("/agent review", "Refreshing review packet")}
-                      >
-                        <span>Refresh review</span>
-                        <code>/agent review</code>
-                      </button>
-                      {selectedReviewPacket.suggested_actions.map((command) => (
-                        <button
-                          key={command}
-                          className="button button-secondary button-small insight-action"
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => void runSessionCommand(command, `Running ${summarizeCommand(command)}`)}
-                        >
-                          <span>{labelReviewAction(command)}</span>
-                          <code>{command}</code>
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="review-check-grid">
-                      {selectedReviewPacket.checks.map((check) => (
-                        <article key={check.id} className={`review-check-card status-${check.status}`}>
-                          <div className="review-check-top">
-                            <strong>{check.label}</strong>
-                            <span className={`status-pill ${reviewStatusToneClass(check.status)}`}>
-                              {toHeadline(check.status)}
-                            </span>
-                          </div>
-                          <p>{check.detail}</p>
-                        </article>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {selectedArtifact && (selectedArtifact.kind === "text" || selectedArtifact.kind === "json") ? (
-                  selectedArtifact.path === "review/review_packet.json" && selectedReviewPacket ? null : <pre>{artifactPreview}</pre>
-                ) : null}
-                {selectedArtifact && selectedArtifact.kind === "download" ? (
-                  <a
-                    className="button button-secondary"
-                    href={`/api/runs/${encodeURIComponent(selectedRunId || "")}/artifact?path=${encodeURIComponent(selectedArtifact.path)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Download artifact
-                  </a>
-                ) : null}
-                {!selectedArtifact ? <div className="inline-empty">Choose an artifact to preview it here.</div> : null}
-              </div>
-            </div>
-          ) : null}
-
-          {activeTab === "checkpoints" ? (
-            <div className="checkpoint-list">
-              {checkpoints.length === 0 ? (
-                <div className="inline-empty">No checkpoints recorded yet.</div>
-              ) : (
-                checkpoints.map((checkpoint) => (
-                  <article key={checkpoint.seq} className="checkpoint-item">
-                    <div className="checkpoint-row">
-                      <strong>#{checkpoint.seq}</strong>
-                      <span className="status-pill is-neutral">{formatNodeLabel(checkpoint.node)}</span>
-                    </div>
-                    <span>{formatStatusLabel(checkpoint.phase)}</span>
-                    <small>{formatTimestamp(checkpoint.createdAt)}</small>
-                    {checkpoint.reason ? <small>{checkpoint.reason}</small> : null}
-                  </article>
-                ))
-              )}
-            </div>
-          ) : null}
-
-          {activeTab === "knowledge" ? (
-            <div className="checkpoint-list">
-              {selectedKnowledgeEntry ? (
-                <article className="meta-card">
-                  <article className="meta-row"><span>Run</span><strong>{selectedKnowledgeEntry.run_id}</strong></article>
-                  <article className="meta-row"><span>Title</span><strong>{selectedKnowledgeEntry.title}</strong></article>
-                  <article className="meta-row"><span>Latest section</span><strong>{selectedKnowledgeEntry.latest_published_section}</strong></article>
-                  <article className="meta-row"><span>Updated</span><strong>{formatTimestamp(selectedKnowledgeEntry.updated_at)}</strong></article>
-                  <article className="meta-row"><span>Objective</span><strong>{selectedKnowledgeEntry.objective_metric}</strong></article>
-                  {selectedKnowledgeEntry.research_question ? (
-                    <article className="meta-row"><span>Question</span><strong>{selectedKnowledgeEntry.research_question}</strong></article>
-                  ) : null}
-                  {selectedKnowledgeEntry.analysis_summary ? (
-                    <article className="meta-row"><span>Analysis</span><strong>{selectedKnowledgeEntry.analysis_summary}</strong></article>
-                  ) : null}
-                  {selectedKnowledgeEntry.latest_summary ? (
-                    <article className="meta-row"><span>Summary</span><strong>{selectedKnowledgeEntry.latest_summary}</strong></article>
-                  ) : null}
-                  {selectedKnowledgeEntry.manuscript_type ? (
-                    <article className="meta-row"><span>Manuscript</span><strong>{selectedKnowledgeEntry.manuscript_type}</strong></article>
-                  ) : null}
-                  <article className="meta-row"><span>Knowledge note</span><strong>{selectedKnowledgeEntry.knowledge_note}</strong></article>
-                  <article className="meta-row"><span>Manifest</span><strong>{selectedKnowledgeEntry.public_manifest}</strong></article>
-                  <div className="pending-actions">
-                    <button
-                      className="button button-secondary button-small"
-                      type="button"
-                      onClick={() => void loadKnowledgePreview(selectedKnowledgeEntry.knowledge_note)}
-                    >
-                      Preview note
-                    </button>
-                    <button
-                      className="button button-secondary button-small"
-                      type="button"
-                      onClick={() => void loadKnowledgePreview(selectedKnowledgeEntry.public_manifest)}
-                    >
-                      Preview manifest
-                    </button>
-                    {literature ? (
-                      <button
-                        className="button button-secondary button-small"
-                        type="button"
-                        onClick={() => void loadKnowledgePreview(literature.artifacts.literature_index_path)}
-                      >
-                        Preview literature index
-                      </button>
-                    ) : null}
-                  </div>
+      ) : null}
+      {insight.references?.length ? (
+        <div className="reference-grid">
+          {insight.references.map((reference) => {
+            const key = buildInsightReferenceKey(reference);
+            const expanded = props.expandedInsightReferenceKey === key;
+            return (
+              <article key={key} className={`reference-card ${expanded ? "expanded" : ""}`}>
+                <button className="button button-ghost button-small insight-reference" type="button" aria-expanded={expanded} onClick={() => props.onToggleInsightReference(key)}>
+                  <span className="reference-kind">{labelInsightReferenceKind(reference.kind)}</span>
+                  <span>{reference.label}</span>
+                  <code>{reference.path}</code>
+                  <small>{reference.summary}</small>
+                </button>
+                {reference.facts?.length ? (
                   <div className="chip-list">
-                    {selectedKnowledgeEntry.sections.map((section) => (
-                      <span key={`${selectedKnowledgeEntry.run_id}-${section.name}`} className="chip">
-                        {section.name}
-                      </span>
+                    {reference.facts.map((fact) => <span key={`${key}-${fact.label}-${fact.value}`} className="chip">{fact.label} {fact.value}</span>)}
+                  </div>
+                ) : null}
+                {expanded ? (
+                  <div className="reference-detail">
+                    {(reference.details || ["No additional grounded detail is attached to this evidence card yet."]).map((detail) => (
+                      <p key={`${key}-${detail}`}>{detail}</p>
                     ))}
-                  </div>
-                </article>
-              ) : (
-                <div className="inline-empty">No repository knowledge is available for the selected run yet.</div>
-              )}
-
-              {literature ? (
-                <article className="meta-card">
-                  <article className="meta-row"><span>Corpus</span><strong>{literature.corpus.paper_count} papers</strong></article>
-                  <article className="meta-row"><span>PDF coverage</span><strong>{literature.corpus.papers_with_pdf} with PDF / {literature.corpus.missing_pdf_count} missing</strong></article>
-                  <article className="meta-row"><span>BibTeX coverage</span><strong>{literature.corpus.papers_with_bibtex} with BibTeX / {literature.corpus.enriched_bibtex_count} enriched</strong></article>
-                  <article className="meta-row"><span>Citations</span><strong>{literature.citations.total} total / avg {literature.citations.average}</strong></article>
-                  <article className="meta-row"><span>Analysis coverage</span><strong>{literature.analysis.summary_count} summaries / {literature.analysis.evidence_count} evidence</strong></article>
-                  <article className="meta-row"><span>Source detail</span><strong>{literature.analysis.full_text_summary_count} full text / {literature.analysis.abstract_summary_count} abstract</strong></article>
-                  {literature.citations.top_paper ? (
-                    <article className="meta-row"><span>Top cited</span><strong>{literature.citations.top_paper.title} ({literature.citations.top_paper.citation_count})</strong></article>
-                  ) : null}
-                  {literature.corpus.year_range ? (
-                    <article className="meta-row"><span>Year range</span><strong>{literature.corpus.year_range.min} - {literature.corpus.year_range.max}</strong></article>
-                  ) : null}
-                  {literature.corpus.top_venues.length > 0 ? (
-                    <div className="chip-list">
-                      {literature.corpus.top_venues.map((venue) => (
-                        <span key={venue} className="chip">{venue}</span>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="pending-actions">
-                    <button
-                      className="button button-secondary button-small"
-                      type="button"
-                      onClick={() => void openKnowledgeArtifact(literature.artifacts.collect_result_path)}
-                    >
-                      Open collect result
-                    </button>
-                    <button
-                      className="button button-secondary button-small"
-                      type="button"
-                      onClick={() => void openKnowledgeArtifact(literature.artifacts.corpus_path)}
-                    >
-                      Open corpus
-                    </button>
-                    <button
-                      className="button button-secondary button-small"
-                      type="button"
-                      onClick={() => void openKnowledgeArtifact(literature.artifacts.bibtex_path)}
-                    >
-                      Open bibtex
-                    </button>
-                    <button
-                      className="button button-secondary button-small"
-                      type="button"
-                      onClick={() => void openKnowledgeArtifact(literature.artifacts.summaries_path)}
-                    >
-                      Open summaries
-                    </button>
-                    <button
-                      className="button button-secondary button-small"
-                      type="button"
-                      onClick={() => void openKnowledgeArtifact(literature.artifacts.evidence_path)}
-                    >
-                      Open evidence
+                    <button className="button button-secondary button-small" type="button" disabled={props.isBusy} onClick={() => props.onOpenInsightReference(reference.path)} aria-label={`Open artifact for ${reference.label}`}>
+                      Open artifact
                     </button>
                   </div>
-                  {literature.warnings.length > 0 ? (
-                    <div className="doctor-harness-findings">
-                      {literature.warnings.map((warning) => (
-                        <article key={warning} className="doctor-harness-finding">
-                          <strong>Warning</strong>
-                          <p>{warning}</p>
-                        </article>
-                      ))}
-                    </div>
-                  ) : null}
-                </article>
-              ) : selectedRunId ? (
-                <div className="inline-empty">Literature summary is loading for the selected run.</div>
-              ) : null}
-
-              {knowledgePreviewPath ? (
-                <article className="meta-card">
-                  <article className="meta-row"><span>Preview</span><strong>{knowledgePreviewPath}</strong></article>
-                  <pre>{knowledgePreviewContent}</pre>
-                </article>
-              ) : (
-                <div className="inline-empty">Choose note, manifest, or literature index to preview the underlying file.</div>
-              )}
-
-              {knowledgeEntries.length === 0 ? (
-                <div className="inline-empty">Repository knowledge will appear after public outputs are published.</div>
-              ) : (
-                knowledgeEntries.map((entry) => (
-                  <article key={entry.run_id} className="checkpoint-item">
-                    <div className="checkpoint-row">
-                      <strong>{entry.title}</strong>
-                      <span className={`status-pill ${entry.run_id === (selectedRunId || session?.activeRunId) ? "is-success" : "is-neutral"}`}>
-                        {entry.latest_published_section}
-                      </span>
-                    </div>
-                    <span>{entry.run_id}</span>
-                    <small>{entry.analysis_summary || entry.latest_summary || entry.topic}</small>
-                    <small>{formatTimestamp(entry.updated_at)}</small>
-                    <div className="pending-actions">
-                      <button
-                        className="button button-secondary button-small"
-                        type="button"
-                        onClick={() => setSelectedRunId(entry.run_id)}
-                      >
-                        Select run
-                      </button>
-                      <button
-                        className="button button-secondary button-small"
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => void runSessionCommand(`/knowledge ${entry.run_id}`, "Refreshing repository knowledge")}
-                      >
-                        Refresh in composer
-                      </button>
-                    </div>
-                  </article>
-                ))
-              )}
-            </div>
-          ) : null}
-
-          {activeTab === "meta" && selectedRun ? (
-            <div className="meta-card">
-              <article className="meta-row"><span>ID</span><strong>{selectedRun.id}</strong></article>
-              <article className="meta-row"><span>Status</span><strong>{formatStatusLabel(selectedRun.status)}</strong></article>
-              <article className="meta-row"><span>Objective</span><strong>{selectedRun.objectiveMetric}</strong></article>
-              <article className="meta-row"><span>Constraints</span><strong>{selectedRun.constraints.join(", ") || "None"}</strong></article>
-            </div>
-          ) : null}
-
-          {activeTab === "workspace" ? (
-            <ConfigEditorForm
-              className="meta-card"
-              form={setupForm}
-              options={configOptions}
-              onChange={setSetupForm}
-              onSubmit={submitSetup}
-              disabled={isBusy}
-              heading="Workspace settings"
-              submitLabel="Save settings"
-              apiKeyHelp="Leave API key fields blank to keep the current stored value."
-            />
-          ) : null}
-
-          {activeTab === "doctor" ? (
-            <div className="doctor-list">
-              {doctorReadiness ? (
-                <section className="subtle-card">
-                  <p className="section-kicker">Readiness profile</p>
-                  <div className="stat-grid">
-                    <article className="stat-card">
-                      <span className="stat-label">Backend</span>
-                      <strong>{formatDoctorBackendSummary(doctorReadiness)}</strong>
-                    </article>
-                    <article className="stat-card">
-                      <span className="stat-label">Runtime</span>
-                      <strong>{formatDoctorRuntimeSummary(doctorReadiness)}</strong>
-                    </article>
-                    <article className="stat-card">
-                      <span className="stat-label">Isolation</span>
-                      <strong>{doctorReadiness.candidateIsolation || "not-configured"}</strong>
-                    </article>
-                    <article className="stat-card">
-                      <span className="stat-label">Network</span>
-                      <strong>{formatDoctorNetworkSummary(doctorReadiness)}</strong>
-                    </article>
-                  </div>
-                </section>
-              ) : null}
-              {doctorChecks.length === 0 ? (
-                <div className="inline-empty">Doctor checks will appear after bootstrap completes.</div>
-              ) : (
-                doctorChecks.map((check) => (
-                  <article
-                    key={check.name}
-                    className={`doctor-item ${doctorCheckToneClass(check)}${isStrongRequiredNetworkWarning(check, doctorReadiness) ? " warning-strong" : ""}`}
-                  >
-                    <span className={`status-pill ${doctorCheckPillClass(check, doctorReadiness)}`}>{doctorCheckLabel(check, doctorReadiness)}</span>
-                    <div>
-                      <h4>{check.name}</h4>
-                      <p>{check.detail}</p>
-                      {isStrongRequiredNetworkWarning(check, doctorReadiness) ? (
-                        <p className="doctor-emphasis">
-                          Network is required for this run. Treat outputs as network-assisted and keep operator review in the loop.
-                        </p>
-                      ) : null}
-                    </div>
-                  </article>
-                ))
-              )}
-              {doctorHarness ? (
-                <article className={`doctor-item ${doctorHarness.status === "ok" ? "ok" : "fail"}`}>
-                  <span
-                    className={`status-pill ${doctorHarness.status === "ok" ? "is-success" : "is-danger"}`}
-                  >
-                    {doctorHarness.status === "ok" ? "OK" : "FAIL"}
-                  </span>
-                  <div>
-                    <h4>harness-validation</h4>
-                    <p>
-                      {doctorHarness.findings.length} issue(s), {doctorHarness.runsChecked} run(s),
-                      {" "}
-                      {doctorHarness.runStoresChecked} run store(s) checked
-                    </p>
-                    {doctorHarness.findings.length > 0 ? (
-                      <div className="doctor-harness-findings">
-                        {doctorHarness.findings.slice(0, 5).map((finding, index) => (
-                          <article key={`${finding.code}-${finding.runId || "na"}-${index}`} className="doctor-harness-finding">
-                            <strong>{finding.kind}</strong>
-                            <p>{finding.message}</p>
-                            <p className="doctor-harness-meta">
-                              {finding.runId ? `run: ${finding.runId}` : "run: n/a"}
-                              {finding.filePath ? ` | file: ${finding.filePath}` : ""}
-                            </p>
-                            <p className="doctor-harness-remediation">Fix: {finding.remediation}</p>
-                          </article>
-                        ))}
-                        {doctorHarness.findings.length > 5 ? (
-                          <p className="doctor-harness-meta">
-                            ... {doctorHarness.findings.length - 5} more harness finding(s)
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                </article>
-              ) : null}
-            </div>
-          ) : null}
+                ) : null}
+              </article>
+            );
+          })}
         </div>
+      ) : null}
+    </article>
+  );
+}
 
-        <form className="composer composer-inline" onSubmit={submitComposer}>
-          <div className="section-heading">
-            <div>
-              <p className="section-kicker">Command input</p>
-              <h3>{activeTab === "logs" ? "Logs and input together" : "Run a command"}</h3>
-            </div>
-            <span className={`status-pill ${isBusy ? "is-active" : "is-neutral"}`}>
-              {isBusy ? (
-                <>
-                  <span className="mini-spinner" aria-hidden="true" />
-                  {activeBusyLabel || "Working..."}
-                </>
-              ) : (
-                "Idle"
-              )}
-            </span>
+function ManuscriptQualitySummary(props: {
+  insight: NonNullable<RunInsightCard["manuscriptQuality"]>;
+  onOpen: (path: string) => void;
+  isBusy: boolean;
+}) {
+  return (
+    <div className="quality-summary">
+      <div className="chip-list">
+        <span className={`status-pill ${manuscriptQualityStatusToneClass(props.insight.status)}`}>{formatManuscriptQualityStatus(props.insight.status)}</span>
+        <span className="chip">{props.insight.displayReasonLabel || formatManuscriptQualityReason(props.insight.reasonCategory)}</span>
+        <span className="chip">{formatManuscriptQualityStage(props.insight.stage)}</span>
+      </div>
+      <div className="quality-grid">
+        {buildManuscriptQualityGroupCards(props.insight).map((group) => (
+          <article key={group.key} className="quality-group">
+            <strong>{group.label}</strong>
+            <span className={`status-pill ${group.toneClass}`}>{group.items.length}</span>
+            {group.items.slice(0, 3).map((item) => <p key={`${group.key}-${item.code}-${item.message}`}><strong>{item.code}</strong> · {item.section} · {item.message}</p>)}
+          </article>
+        ))}
+      </div>
+      <div className="decision-actions">
+        {props.insight.artifactRefs.map((artifactRef) => (
+          <button key={`${artifactRef.label}-${artifactRef.path}`} className="button button-secondary button-small" type="button" disabled={props.isBusy} onClick={() => props.onOpen(artifactRef.path)}>
+            {artifactRef.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReadinessRiskSummary(props: {
+  insight: NonNullable<RunInsightCard["readinessRisks"]>;
+  onOpen: (path: string) => void;
+  isBusy: boolean;
+}) {
+  return (
+    <div className="quality-summary">
+      <div className="metric-grid">
+        <article><span>Readiness State</span><strong>{props.insight.readinessState}</strong></article>
+        <article><span>Blocked Risks</span><strong>{props.insight.riskCounts.blocked}</strong></article>
+        <article><span>Warning Risks</span><strong>{props.insight.riskCounts.warning}</strong></article>
+      </div>
+      <div className="quality-grid">
+        {buildReadinessRiskGroupCards(props.insight).map((group) => (
+          <article key={group.key} className="quality-group">
+            <strong>{group.label}</strong>
+            <span className={`status-pill ${group.toneClass}`}>{group.items.length}</span>
+            {group.items.slice(0, 3).map((item) => <p key={`${group.key}-${item.code}-${item.message}`}><strong>{item.code}</strong> · {item.section} · {item.message}</p>)}
+          </article>
+        ))}
+      </div>
+      <div className="decision-actions">
+        {props.insight.artifactRefs.map((artifactRef) => (
+          <button key={`${artifactRef.label}-${artifactRef.path}`} className="button button-secondary button-small" type="button" disabled={props.isBusy} onClick={() => props.onOpen(artifactRef.path)}>
+            {artifactRef.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WorkflowMap(props: ResearchWorkbenchProps) {
+  if (!props.selectedRun) {
+    return null;
+  }
+  return (
+    <section className="workbench-card workflow-map">
+      <div className="panel-heading">
+        <div>
+          <p className="section-kicker">Workflow</p>
+          <h3>Workflow state graph</h3>
+        </div>
+        <span className="count-badge">{props.completedNodeCount}/{NODE_ORDER.length} complete</span>
+      </div>
+      <div className="node-map">
+        {NODE_ORDER.map((node, index) => {
+          const state = props.selectedRun!.graph.nodeStates[node] ?? {
+            status: "pending",
+            note: null,
+            lastError: null,
+            updatedAt: props.selectedRun!.updatedAt
+          };
+          const current = props.selectedRun!.currentNode === node;
+          return (
+            <article key={node} className={`node-tile status-${state.status} ${current ? "current" : ""}`}>
+              <span className="node-index">{index + 1}</span>
+              <div>
+                <h3>{formatNodeLabel(node)}</h3>
+                <p>{state.note || state.lastError || "No node note yet."}</p>
+              </div>
+              <span className={`status-pill ${statusToneClass(state.status)}`}>{formatStatusLabel(state.status)}</span>
+              <div className="node-actions">
+                <button className="button button-secondary button-small" type="button" disabled={props.isBusy} onClick={() => props.onRunNode(props.selectedRun!.id, node)}>Run</button>
+                <button className="button button-secondary button-small" type="button" disabled={props.isBusy} onClick={() => props.onRetry(props.selectedRun!.id, node)}>Retry</button>
+                <button className="button button-ghost button-small" type="button" disabled={props.isBusy} onClick={() => props.onJumpNode(props.selectedRun!.id, node)}>Jump</button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function PendingPlanQueue(props: ResearchWorkbenchProps) {
+  const plan = props.session?.pendingPlan;
+  if (!plan) {
+    return null;
+  }
+  return (
+    <section className="workbench-card pending-queue">
+      <div className="panel-heading">
+        <div>
+          <p className="section-kicker">Pending plan</p>
+          <h3>Step {plan.stepIndex + 1} of {plan.totalSteps}</h3>
+        </div>
+        <span className="count-badge">{plan.totalSteps} queued</span>
+      </div>
+      <ol className="command-list">
+        {plan.displayCommands.map((command) => <li key={command}>{command}</li>)}
+      </ol>
+      <div className="decision-actions">
+        <button className="button button-primary" type="button" disabled={props.isBusy} onClick={() => props.onTriggerPending("next")}>Run next</button>
+        {plan.totalSteps > 1 ? <button className="button button-secondary" type="button" disabled={props.isBusy} onClick={() => props.onTriggerPending("all")}>Run all</button> : null}
+        <button className="button button-danger" type="button" disabled={props.isBusy} onClick={() => props.onTriggerPending("cancel")}>Cancel</button>
+      </div>
+    </section>
+  );
+}
+
+function WorkbenchInspector(props: ResearchWorkbenchProps) {
+  return (
+    <aside className="workbench-inspector">
+      <div className="inspector-header">
+        <div>
+          <p className="section-kicker">Inspector</p>
+          <h2>{props.activeTabLabel}</h2>
+        </div>
+      </div>
+      <div className="inspector-tabs">
+        {DETAIL_TABS.map((tab) => (
+          <button key={tab.id} className={`tab-button ${props.activeTab === tab.id ? "active" : ""}`} type="button" onClick={() => props.onSetActiveTab(tab.id)}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <div className="inspector-body">
+        {props.activeTab === "logs" ? <LogsPane {...props} /> : null}
+        {props.activeTab === "artifacts" ? <ArtifactsPane {...props} /> : null}
+        {props.activeTab === "checkpoints" ? <CheckpointsPane {...props} /> : null}
+        {props.activeTab === "knowledge" ? <KnowledgePane {...props} /> : null}
+        {props.activeTab === "meta" ? <MetaPane {...props} /> : null}
+        {props.activeTab === "workspace" ? (
+          <ConfigEditorForm
+            className="workbench-form"
+            form={props.setupForm}
+            options={props.configOptions}
+            onChange={props.onSetSetupForm}
+            onSubmit={props.onSubmitSetup}
+            disabled={props.isBusy}
+            heading="Workspace settings"
+            submitLabel="Save settings"
+            apiKeyHelp="Leave API key fields blank to keep the current stored value."
+          />
+        ) : null}
+        {props.activeTab === "doctor" ? <DoctorPane {...props} /> : null}
+      </div>
+      <form className="command-console" onSubmit={props.onSubmitComposer}>
+        <div className="panel-heading">
+          <div>
+            <p className="section-kicker">Command input</p>
+            <h3>{props.activeTab === "logs" ? "Logs and input together" : "Run a command"}</h3>
           </div>
-          <label className="field-label">
-            Prompt
-            <textarea
-              value={commandInput}
-              onChange={(event) => setCommandInput(event.target.value)}
-              placeholder="collect 100 papers from the last 5 years by relevance"
-              rows={3}
-              disabled={isBusy}
-            />
-          </label>
-          <div className="composer-actions">
-            <button className="button button-primary" type="submit" disabled={isBusy}>
-              {isBusy ? "Running..." : "Send"}
+          <span className={`status-pill ${props.isBusy ? "is-active" : "is-neutral"}`}>{props.isBusy ? props.activeBusyLabel || "Working..." : "Idle"}</span>
+        </div>
+        <label className="field-label">
+          Prompt
+          <textarea value={props.commandInput} onChange={(event) => props.onSetCommandInput(event.target.value)} placeholder="collect 100 papers from the last 5 years by relevance" rows={3} disabled={props.isBusy} />
+        </label>
+        <div className="composer-actions">
+          <button className="button button-primary" type="submit" disabled={props.isBusy}>{props.isBusy ? "Running..." : "Send"}</button>
+          {props.session?.canCancel ? <button className="button button-danger" type="button" onClick={props.onCancelActive}>Cancel active task</button> : null}
+        </div>
+      </form>
+    </aside>
+  );
+}
+
+function LogsPane(props: ResearchWorkbenchProps) {
+  const logs = props.session?.logs || [];
+  return logs.length === 0 ? (
+    <div className="inline-empty">Live runtime output will appear here.</div>
+  ) : (
+    <div className="log-list">{logs.slice(-80).map((line, index) => <pre key={`${line}-${index}`} className="log-line">{line}</pre>)}</div>
+  );
+}
+
+function ArtifactsPane(props: ResearchWorkbenchProps) {
+  return (
+    <div className="artifact-workspace">
+      <div className="artifact-list">
+        {props.artifacts.length === 0 ? (
+          <div className="inline-empty">No artifacts for this run yet.</div>
+        ) : (
+          props.artifacts.map((artifact) => (
+            <button key={artifact.path} className={`artifact-item ${props.selectedArtifact?.path === artifact.path ? "selected" : ""}`} type="button" onClick={() => props.selectedRunId && props.onLoadArtifactPreview(props.selectedRunId, artifact)}>
+              <span>{artifact.path}</span>
+              <small>{labelArtifactKind(artifact.kind)} · {formatBytes(artifact.size)}</small>
             </button>
-            {session?.canCancel ? (
-              <button className="button button-danger" type="button" onClick={() => void cancelActive()}>Cancel active task</button>
-            ) : null}
+          ))
+        )}
+      </div>
+      <ArtifactPreviewPane {...props} />
+    </div>
+  );
+}
+
+function ArtifactPreviewPane(props: ResearchWorkbenchProps) {
+  if (!props.selectedArtifact) {
+    return <div className="inline-empty">Choose an artifact to preview it here.</div>;
+  }
+  if (props.selectedArtifact.kind === "image" && props.artifactPreview) {
+    return <div className="artifact-preview"><img src={props.artifactPreview} alt={props.selectedArtifact.path} /></div>;
+  }
+  if (props.selectedArtifact.kind === "pdf" && props.artifactPreview) {
+    return <div className="artifact-preview"><iframe src={props.artifactPreview} title={props.selectedArtifact.path} /></div>;
+  }
+  if (props.selectedArtifact.path === "review/review_packet.json" && props.selectedReviewPacket) {
+    return <ReviewPacketPreviewPane packet={props.selectedReviewPacket} isBusy={props.isBusy} onRunSessionCommand={props.onRunSessionCommand} />;
+  }
+  if (props.selectedArtifact.kind === "text" || props.selectedArtifact.kind === "json") {
+    return <div className="artifact-preview"><pre>{props.artifactPreview}</pre></div>;
+  }
+  return (
+    <a className="button button-secondary" href={`/api/runs/${encodeURIComponent(props.selectedRunId || "")}/artifact?path=${encodeURIComponent(props.selectedArtifact.path)}`} target="_blank" rel="noreferrer">
+      Download artifact
+    </a>
+  );
+}
+
+function ReviewPacketPreviewPane(props: {
+  packet: ReviewPacketPreview;
+  isBusy: boolean;
+  onRunSessionCommand: (command: string, label?: string) => void;
+}) {
+  return (
+    <div className="review-preview">
+      <div className="panel-heading">
+        <div>
+          <p className="section-kicker">Manual review</p>
+          <h3>Review readiness</h3>
+          <p>{props.packet.objective_summary}</p>
+        </div>
+        <span className={`status-pill ${reviewStatusToneClass(props.packet.readiness.status)}`}>{toHeadline(props.packet.readiness.status)}</span>
+      </div>
+      <div className="metric-grid">
+        <article><span>Ready</span><strong>{props.packet.readiness.ready_checks}</strong></article>
+        <article><span>Warning</span><strong>{props.packet.readiness.warning_checks}</strong></article>
+        <article><span>Blocking</span><strong>{props.packet.readiness.blocking_checks}</strong></article>
+        <article><span>Manual</span><strong>{props.packet.readiness.manual_checks}</strong></article>
+      </div>
+      {props.packet.recommendation ? (
+        <article className="sub-panel">
+          <strong>{props.packet.recommendation.action}{props.packet.recommendation.target ? ` -> ${formatNodeLabel(props.packet.recommendation.target)}` : ""}</strong>
+          <p>{props.packet.recommendation.reason}</p>
+        </article>
+      ) : null}
+      <div className="decision-actions">
+        <button className="button button-secondary button-small insight-action" type="button" disabled={props.isBusy} onClick={() => props.onRunSessionCommand("/agent review", "Refreshing review packet")}>
+          <span>Refresh review</span>
+          <code>/agent review</code>
+        </button>
+        {props.packet.suggested_actions.map((command) => (
+          <button key={command} className="button button-secondary button-small insight-action" type="button" disabled={props.isBusy} onClick={() => props.onRunSessionCommand(command, `Running ${summarizeCommand(command)}`)}>
+            <span>{labelReviewAction(command)}</span>
+            <code>{command}</code>
+          </button>
+        ))}
+      </div>
+      <div className="quality-grid">
+        {props.packet.checks.map((check) => (
+          <article key={check.id} className={`quality-group status-${check.status}`}>
+            <strong>{check.label}</strong>
+            <span className={`status-pill ${reviewStatusToneClass(check.status)}`}>{toHeadline(check.status)}</span>
+            <p>{check.detail}</p>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CheckpointsPane(props: ResearchWorkbenchProps) {
+  return props.checkpoints.length === 0 ? (
+    <div className="inline-empty">No checkpoints recorded yet.</div>
+  ) : (
+    <div className="checkpoint-list">
+      {props.checkpoints.map((checkpoint) => (
+        <article key={checkpoint.seq} className="checkpoint-item">
+          <strong>#{checkpoint.seq}</strong>
+          <span>{formatNodeLabel(checkpoint.node)} · {formatStatusLabel(checkpoint.phase)}</span>
+          <small>{formatTimestamp(checkpoint.createdAt)}</small>
+          {checkpoint.reason ? <small>{checkpoint.reason}</small> : null}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function KnowledgePane(props: ResearchWorkbenchProps) {
+  return (
+    <div className="knowledge-pane">
+      {props.selectedKnowledgeEntry ? (
+        <article className="sub-panel">
+          <p className="section-kicker">Repository knowledge</p>
+          <h3>{props.selectedKnowledgeEntry.title}</h3>
+          <p>{props.selectedKnowledgeEntry.research_question}</p>
+          <div className="meta-grid">
+            <span>Manuscript</span><strong>{props.selectedKnowledgeEntry.manuscript_type || "n/a"}</strong>
+            <span>Manifest</span><strong>{props.selectedKnowledgeEntry.public_manifest}</strong>
+            <span>Objective</span><strong>{props.selectedKnowledgeEntry.objective_metric}</strong>
           </div>
-        </form>
-      </aside>
+          <div className="decision-actions">
+            <button className="button button-secondary button-small" type="button" onClick={() => props.onLoadKnowledgePreview(props.selectedKnowledgeEntry!.knowledge_note)}>Preview note</button>
+            <button className="button button-secondary button-small" type="button" onClick={() => props.onLoadKnowledgePreview(props.selectedKnowledgeEntry!.public_manifest)}>Preview manifest</button>
+            {props.literature ? <button className="button button-secondary button-small" type="button" onClick={() => props.onLoadKnowledgePreview(props.literature!.artifacts.literature_index_path)}>Preview literature index</button> : null}
+          </div>
+        </article>
+      ) : <div className="inline-empty">No repository knowledge is available for the selected run yet.</div>}
+      {props.literature ? (
+        <article className="sub-panel">
+          <h3>{props.literature.corpus.paper_count} papers</h3>
+          <p>{props.literature.corpus.papers_with_pdf} with PDF / {props.literature.corpus.missing_pdf_count} missing</p>
+          <p>{props.literature.corpus.papers_with_bibtex} with BibTeX / {props.literature.corpus.enriched_bibtex_count} enriched</p>
+          <div className="decision-actions">
+            <button className="button button-secondary button-small" type="button" onClick={() => props.onOpenKnowledgeArtifact(props.literature!.artifacts.collect_result_path)}>Open collect result</button>
+            <button className="button button-secondary button-small" type="button" onClick={() => props.onOpenKnowledgeArtifact(props.literature!.artifacts.corpus_path)}>Open corpus</button>
+            <button className="button button-secondary button-small" type="button" onClick={() => props.onOpenKnowledgeArtifact(props.literature!.artifacts.bibtex_path)}>Open bibtex</button>
+            <button className="button button-secondary button-small" type="button" onClick={() => props.onOpenKnowledgeArtifact(props.literature!.artifacts.summaries_path)}>Open summaries</button>
+            <button className="button button-secondary button-small" type="button" onClick={() => props.onOpenKnowledgeArtifact(props.literature!.artifacts.evidence_path)}>Open evidence</button>
+          </div>
+        </article>
+      ) : props.selectedRunId ? <div className="inline-empty">Literature summary is loading for the selected run.</div> : null}
+      {props.knowledgePreviewPath ? (
+        <article className="sub-panel">
+          <strong>{props.knowledgePreviewPath}</strong>
+          <pre>{props.knowledgePreviewContent}</pre>
+        </article>
+      ) : <div className="inline-empty">Choose note, manifest, or literature index to preview the underlying file.</div>}
+      {props.knowledgeEntries.map((entry) => (
+        <article key={entry.run_id} className="checkpoint-item">
+          <strong>{entry.title}</strong>
+          <span>{entry.run_id}</span>
+          <small>{entry.analysis_summary || entry.latest_summary || entry.topic}</small>
+          <button className="button button-secondary button-small" type="button" onClick={() => props.onSetSelectedRunId(entry.run_id)}>Select run</button>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function MetaPane(props: ResearchWorkbenchProps) {
+  if (!props.selectedRun) {
+    return <div className="inline-empty">No run selected.</div>;
+  }
+  return (
+    <div className="meta-grid">
+      <span>ID</span><strong>{props.selectedRun.id}</strong>
+      <span>Status</span><strong>{formatStatusLabel(props.selectedRun.status)}</strong>
+      <span>Objective</span><strong>{props.selectedRun.objectiveMetric}</strong>
+      <span>Constraints</span><strong>{props.selectedRun.constraints.join(", ") || "None"}</strong>
+    </div>
+  );
+}
+
+function DoctorPane(props: ResearchWorkbenchProps) {
+  return (
+    <div className="doctor-list">
+      {props.doctorReadiness ? (
+        <section className="sub-panel">
+          <p className="section-kicker">Readiness profile</p>
+          <div className="metric-grid">
+            <article><span>Backend</span><strong>{formatDoctorBackendSummary(props.doctorReadiness)}</strong></article>
+            <article><span>Runtime</span><strong>{formatDoctorRuntimeSummary(props.doctorReadiness)}</strong></article>
+            <article><span>Isolation</span><strong>{props.doctorReadiness.candidateIsolation || "not-configured"}</strong></article>
+            <article><span>Network</span><strong>{formatDoctorNetworkSummary(props.doctorReadiness)}</strong></article>
+          </div>
+        </section>
+      ) : null}
+      {props.doctorChecks.length === 0 ? (
+        <div className="inline-empty">Doctor checks will appear after bootstrap completes.</div>
+      ) : (
+        props.doctorChecks.map((check) => (
+          <article key={check.name} className={`doctor-item ${doctorCheckToneClass(check)}${isStrongRequiredNetworkWarning(check, props.doctorReadiness) ? " warning-strong" : ""}`}>
+            <span className={`status-pill ${doctorCheckPillClass(check, props.doctorReadiness)}`}>{doctorCheckLabel(check, props.doctorReadiness)}</span>
+            <div>
+              <h4>{check.name}</h4>
+              <p>{check.detail}</p>
+              {isStrongRequiredNetworkWarning(check, props.doctorReadiness) ? <p className="doctor-emphasis">Network is required for this run. Treat outputs as network-assisted and keep operator review in the loop.</p> : null}
+            </div>
+          </article>
+        ))
+      )}
+      {props.doctorHarness ? (
+        <article className={`doctor-item ${props.doctorHarness.status === "ok" ? "ok" : "fail"}`}>
+          <span className={`status-pill ${props.doctorHarness.status === "ok" ? "is-success" : "is-danger"}`}>{props.doctorHarness.status === "ok" ? "OK" : "FAIL"}</span>
+          <div>
+            <h4>harness-validation</h4>
+            <p>{props.doctorHarness.findings.length} issue(s), {props.doctorHarness.runsChecked} run(s), {props.doctorHarness.runStoresChecked} run store(s) checked</p>
+          </div>
+        </article>
+      ) : null}
     </div>
   );
 }
