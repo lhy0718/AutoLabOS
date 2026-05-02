@@ -1,12 +1,17 @@
 import { launchTerminalApp } from "./tui/TerminalApp.js";
 import { bootstrapAutoLabOSRuntime } from "./runtime/createRuntime.js";
 import { NodeOptionPackageName } from "./types.js";
+import type { GovernanceBenchmarkConditionName } from "./core/benchmark/governanceCondition.js";
 
-export async function runAutoLabOSApp(opts?: { packageName?: NodeOptionPackageName }): Promise<void> {
+export async function runAutoLabOSApp(opts?: {
+  packageName?: NodeOptionPackageName;
+  benchmarkCondition?: GovernanceBenchmarkConditionName;
+}): Promise<void> {
   const bootstrap = await bootstrapAutoLabOSRuntime({
     cwd: process.cwd(),
     allowInteractiveSetup: true,
-    nodeOptionPackageName: opts?.packageName
+    nodeOptionPackageName: opts?.packageName,
+    ...(opts?.benchmarkCondition ? { benchmarkCondition: opts.benchmarkCondition } : {})
   });
   if (!bootstrap.runtime || !bootstrap.config) {
     throw new Error("AutoLabOS runtime could not be initialized.");

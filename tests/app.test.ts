@@ -102,6 +102,27 @@ describe("runAutoLabOSApp", () => {
       nodeOptionPackageName: "fast"
     });
   });
+
+  it("forwards the selected benchmark condition into runtime bootstrap", async () => {
+    const runtime = makeRuntime();
+    bootstrapAutoLabOSRuntime.mockResolvedValue({
+      configured: true,
+      firstRunSetup: false,
+      paths: { cwd: process.cwd() },
+      config: runtime.config,
+      runtime
+    });
+
+    const { runAutoLabOSApp } = await import("../src/app.js");
+    await runAutoLabOSApp({ benchmarkCondition: "gated" });
+
+    expect(bootstrapAutoLabOSRuntime).toHaveBeenCalledWith({
+      cwd: process.cwd(),
+      allowInteractiveSetup: true,
+      nodeOptionPackageName: undefined,
+      benchmarkCondition: "gated"
+    });
+  });
 });
 
 function makeRuntime() {

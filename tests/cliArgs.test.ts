@@ -11,6 +11,18 @@ describe("resolveCliAction", () => {
     expect(resolveCliAction(["--package", "fast"])).toEqual({ kind: "run", packageName: "fast" });
   });
 
+  it("supports benchmark condition selection for TUI run mode", () => {
+    expect(resolveCliAction(["--benchmark-condition", "gated"])).toEqual({
+      kind: "run",
+      benchmarkCondition: "gated"
+    });
+    expect(resolveCliAction(["--package", "fast", "--benchmark-condition", "ungated"])).toEqual({
+      kind: "run",
+      packageName: "fast",
+      benchmarkCondition: "ungated"
+    });
+  });
+
   it("supports --help", () => {
     expect(resolveCliAction(["--help"]).kind).toBe("help");
   });
@@ -20,6 +32,13 @@ describe("resolveCliAction", () => {
       kind: "web",
       host: "0.0.0.0",
       port: 3001
+    });
+  });
+
+  it("supports benchmark condition selection for web mode", () => {
+    expect(resolveCliAction(["web", "--benchmark-condition", "no_review_gate"])).toEqual({
+      kind: "web",
+      benchmarkCondition: "no_review_gate"
     });
   });
 

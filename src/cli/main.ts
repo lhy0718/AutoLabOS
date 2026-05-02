@@ -17,8 +17,8 @@ function printHelp(): void {
     "",
     "Usage:",
     "  autolabos",
-    "  autolabos --package <fast|thorough|paper_scale>",
-    "  autolabos web [--host 127.0.0.1] [--port 4317]",
+    "  autolabos [--package <fast|thorough|paper_scale>] [--benchmark-condition gated|ungated|no_claim_ceiling|no_review_gate|no_figure_audit]",
+    "  autolabos web [--host 127.0.0.1] [--port 4317] [--benchmark-condition gated|ungated|no_claim_ceiling|no_review_gate|no_figure_audit]",
     "  autolabos compare-analysis --run <run-id> [--limit 3] [--no-judge]",
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
@@ -53,7 +53,8 @@ async function main(): Promise<void> {
     await runAutoLabOSWebServer({
       cwd: process.cwd(),
       host: action.host,
-      port: action.port
+      port: action.port,
+      benchmarkCondition: action.benchmarkCondition
     });
     return;
   }
@@ -123,7 +124,8 @@ async function main(): Promise<void> {
   }
 
   await runAutoLabOSApp({
-    packageName: action.kind === "run" ? action.packageName : undefined
+    packageName: action.kind === "run" ? action.packageName : undefined,
+    benchmarkCondition: action.kind === "run" ? action.benchmarkCondition : undefined
   });
 }
 

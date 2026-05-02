@@ -18,6 +18,7 @@ Path placeholders:
 ## Current active status
 
 - Live-validation status and tracked defects:
+  - `LV-320` active: P0-8 AGB-001 real TUI live run reached `run_experiments` under the `gated` benchmark condition, then failed after retry 3/3 because the generated retrieval feature-block runner calls `compute_classification_metrics(...)` without the required `records` argument. Resume/reload preserved `status: failed` and `node: run_experiments`, but `/session` still projected `interaction: busy`.
   - `LV-319` active: same-flow Web API revalidation after the LV-318 metrics-payload arity repair advanced through final payload construction, but the generated runner now writes only failed condition rows because `EleutherAI/pythia-410m` model configuration cannot be loaded in the validation environment. The metrics contract then fails because `accuracy_delta_vs_baseline` is absent and 0 successful tuned conditions were observed.
   - `LV-318` repair implemented; same-flow live revalidation advanced to LV-319 on 2026-05-02. The repair wraps generated `build_metrics_payload(...)` calls so final entrypoints that pass `(aggregated_results, args, runtime_context, status)` do not bind `condition_results` twice and can supply `args`, `condition_results`, `aggregated_metrics`, and `run_started_at`.
   - `LV-317` repair implemented; same-flow live revalidation advanced to LV-318 on 2026-05-02. The repair aliases generated `execute_baseline_first_conditions(...)` into the final main execution-loop resolver names and aliases generated exception serializers such as `exception_to_evidence(...)` into `serialize_exception(...)`.
@@ -13457,6 +13458,73 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
   - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-320
+
+- Status: active; reproduced during P0-8 AGB-001 live TUI validation on 2026-05-02
+- Validation target: AGB-001 live full-run validation through the real TUI under the `gated` governance benchmark condition.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>`
+  - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
+  - run: `7ccf8e69-1682-4e39-b467-f32039bee315`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - input brief: external AGB-001 brief path, not copied into committed docs
+
+- Reproduction steps:
+  1. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
+  2. Run `/doctor`.
+  3. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  4. Let the governed workflow proceed through implementation and experiment execution retries.
+  5. Restart the TUI from the same workspace and run `/session`.
+
+- Expected behavior:
+  - The live run should either complete a valid baseline-first experiment execution or stop with a clear dependency or generated-runner blocker before any failed metrics payload can look like measured evidence.
+  - Implement-stage verification should catch generated runner helper/signature drift before handoff to `run_experiments`.
+  - After restart, the TUI projection should clearly show the failed run as failed and not simultaneously imply an active busy interaction.
+
+- Actual behavior:
+  - The run recorded the `gated` benchmark condition and progressed through `collect_papers`, `analyze_papers`, `generate_hypotheses`, `design_experiments`, and multiple `implement_experiments` attempts.
+  - `run_experiments` first failed on invalid or crashing generated runner surfaces, including missing callable baseline-first workflow and mismatched example/gold/prediction lengths.
+  - The final attempt passed `py_compile`, then failed three `run_experiments` retries with:
+    - `TypeError: compute_classification_metrics() missing 1 required positional argument: 'records'`
+  - The failed `metrics.json` still contained zero-valued top-level metric fields and two failed condition rows with empty metrics.
+  - Restarting the TUI and running `/session` preserved `status: failed` and `node: run_experiments`, but also displayed `interaction: busy`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: a new TUI process in a fresh validation workspace started the AGB-001 brief and reproduced the run failure at `run_experiments`.
+  - Existing session: restarting the TUI in the same workspace reloaded the persisted run as `status: failed`, `node: run_experiments`, with the same failure summary.
+  - Divergence: no persisted run-state divergence observed for node/status; the remaining UI projection concern is the `interaction: busy` display after failed reload.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged implementation generates helper and final metrics/evaluation call surfaces independently. Syntax-only verification accepts the runner, but the final execution path calls `compute_classification_metrics(...)` with an incompatible signature and then writes a failed metrics payload that still includes zero-valued top-level metrics.
+
+- Code/test changes:
+  - Code:
+    - `src/cli/args.ts`, `src/cli/main.ts`, `src/app.ts`, `src/runtime/createRuntime.ts`, and `src/web/server.ts`
+      - wire `--benchmark-condition` through live TUI/web/runtime startup so real benchmark-condition runs can be exercised.
+  - Tests:
+    - `tests/cliArgs.test.ts`
+    - `tests/app.test.ts`
+  - Generated-runner repair: none yet for the `compute_classification_metrics(...)` arity mismatch.
+
+- Regression status:
+  - Reproduced in real TUI live validation on 2026-05-02.
+  - Targeted wiring regression: pass on 2026-05-02 with `npm test -- tests/cliArgs.test.ts tests/app.test.ts tests/stateGraphRuntime.test.ts`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Same-flow live revalidation after generated-runner repair: pending.
+
+- Follow-up risks:
+  - A repair should distinguish true executed evidence from failed metrics payloads that contain placeholder-like zero metrics.
+  - The `interaction: busy` projection after failed reload may require a separate UI/state fix if it persists after the generated-runner failure is repaired.
+  - P0-8 must remain unchecked until the live run reaches review/write-paper governance surfaces or fails earlier with a correctly classified blocker.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/7ccf8e69-1682-4e39-b467-f32039bee315/governance_condition.json`
+  - `<validation-workspace>/.autolabos/runs/7ccf8e69-1682-4e39-b467-f32039bee315/events.jsonl`
+  - `<validation-workspace>/.autolabos/runs/7ccf8e69-1682-4e39-b467-f32039bee315/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/7ccf8e69-1682-4e39-b467-f32039bee315/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/retrieval-augmented-feature-block-impact-on-macr-7ccf8e69/experiment/run_retrieval_feature_block_experiment.py`
 
 ## Issue: LV-319
 

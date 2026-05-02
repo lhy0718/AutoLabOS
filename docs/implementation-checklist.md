@@ -51,7 +51,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P0-5. Required artifact contract validation.
 - [x] P0-6. Governance rubric and scoring output.
 - [x] P0-7. AGB-001 dry-run contract lock.
-- [ ] P0-8. AGB-001 live full-run validation.
+- [ ] P0-8. AGB-001 live full-run validation. Live TUI run attempted on 2026-05-02 and blocked in `run_experiments`; see `ISSUES.md` `LV-320`.
 
 ### P1 — Next Release Cycle
 
@@ -258,33 +258,43 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P0-8. AGB-001 Live Full-Run Validation
 
-- [ ] Status: not started
+- [ ] Status: attempted on 2026-05-02; blocked by `run_experiments` generated-runner signature mismatch (`LV-320`)
 - Related repo files:
+  - Existing: `src/cli/args.ts`
+  - Existing: `src/cli/main.ts`
+  - Existing: `src/app.ts`
   - Existing: `src/tui/TerminalApp.ts`
   - Existing: `src/runtime/createRuntime.ts`
+  - Existing: `src/web/server.ts`
   - Existing: `src/core/stateGraph/runtime.ts`
   - Existing: `src/core/runs/researchBriefFiles.ts`
   - Existing: `src/core/benchmark/governanceCondition.ts`
   - Existing: `src/core/benchmark/governanceArtifactContract.ts`
 - Planned files if needed:
-  - TUI/web/runtime condition-selection wiring for benchmark live runs
-  - `ISSUES.md` entry if live validation exposes a concrete interactive defect
+  - Generated-runner call-surface repair for AGB-001 retrieval feature-block experiment runners
+  - Same-flow revalidation notes after `LV-320` repair
 - Validation commands:
   - `npm run build`
   - `npm test`
   - `npm run validate:harness`
   - Start AutoLabOS from a validation workspace, run `/doctor`, then run `/brief start <path-to-AGB-001-brief.md>`.
   - Re-run the same live flow after any fix before checking this item.
+- Validation notes:
+  - Live TUI run started from an external AGB-001 brief path under the `gated` benchmark condition.
+  - `/doctor` was run before the live execution and surfaced pre-existing duplicate live-validation issue identifiers in `ISSUES.md`.
+  - The run progressed through `collect_papers`, `analyze_papers`, `generate_hypotheses`, `design_experiments`, multiple `implement_experiments` attempts, and repeated `run_experiments` retries.
+  - The final live state was `failed` at `run_experiments` after retry 3/3 with `TypeError: compute_classification_metrics() missing 1 required positional argument: 'records'`.
+  - A restarted TUI session reloaded the same run as `status: failed`, `node: run_experiments`; the UI also showed `interaction: busy`, which is recorded in `LV-320`.
 - Completion criteria:
-  - [ ] Live TUI run starts from the external AGB-001 brief path without copying private source paths into committed docs.
-  - [ ] `/doctor` output is checked before the live run.
-  - [ ] Run artifacts include traceable brief snapshot/source metadata, `events.jsonl`, `run_record.json`, and `runs.json`.
-  - [ ] Benchmark condition is recorded for the live run and matches the selected condition.
+  - [x] Live TUI run starts from the external AGB-001 brief path without copying private source paths into committed docs.
+  - [x] `/doctor` output is checked before the live run.
+  - [x] Run artifacts include traceable brief snapshot/source metadata, `events.jsonl`, `run_record.json`, and `runs.json`.
+  - [x] Benchmark condition is recorded for the live run and matches the selected condition.
   - [ ] Missing baseline is detected in live run artifacts.
   - [ ] Comparative improvement claim is blocked or downgraded before paper-ready classification.
   - [ ] Required review and paper artifacts are present and parseable.
-  - [ ] Fresh-session and existing/resumed-session behavior are compared.
-  - [ ] Any live-validation issue is recorded in `ISSUES.md` with the required taxonomy and regression status.
+  - [x] Fresh-session and existing/resumed-session behavior are compared.
+  - [x] Any live-validation issue is recorded in `ISSUES.md` with the required taxonomy and regression status.
 
 ### P1-1. Paper-Readiness Gate And Claim Ceiling
 

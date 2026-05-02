@@ -43,6 +43,7 @@ import { detectExecutionProfile } from "./executionProfile.js";
 import { resolveNodeOptionsForPackage } from "../core/stateGraph/defaults.js";
 import { loadExplorationConfig } from "../core/exploration/explorationConfig.js";
 import { assertNotProjectRootWorkspace } from "../workspaceGuard.js";
+import type { GovernanceBenchmarkConditionName } from "../core/benchmark/governanceCondition.js";
 
 export interface AutoLabOSRuntime {
   paths: AppPaths;
@@ -73,6 +74,7 @@ export async function bootstrapAutoLabOSRuntime(opts?: {
   cwd?: string;
   allowInteractiveSetup?: boolean;
   nodeOptionPackageName?: NodeOptionPackageName;
+  benchmarkCondition?: GovernanceBenchmarkConditionName;
 }): Promise<RuntimeBootstrap> {
   const cwd = opts?.cwd || process.cwd();
   assertNotProjectRootWorkspace(cwd);
@@ -114,7 +116,8 @@ export async function bootstrapAutoLabOSRuntime(opts?: {
       paths,
       runtimeConfig,
       executionProfile,
-      opts?.nodeOptionPackageName
+      opts?.nodeOptionPackageName,
+      opts?.benchmarkCondition
     )
   };
 }
@@ -123,7 +126,8 @@ export async function createAutoLabOSRuntime(
   paths: AppPaths,
   config: AppConfig,
   executionProfile?: ExecutionProfile,
-  nodeOptionPackageName?: NodeOptionPackageName
+  nodeOptionPackageName?: NodeOptionPackageName,
+  benchmarkCondition?: GovernanceBenchmarkConditionName
 ): Promise<AutoLabOSRuntime> {
   await hydrateProcessEnvFromWorkspace(paths.cwd);
   const resolvedExecutionProfile = executionProfile || (await detectExecutionProfile());
@@ -276,7 +280,8 @@ export async function createAutoLabOSRuntime(
   const checkpointStore = new CheckpointStore(paths);
   const runtime = new StateGraphRuntime(runStore, nodeRegistry, checkpointStore, eventStream, {
     approvalMode: config.workflow?.approval_mode,
-    budgetGuardUsd: config.workflow?.budget_guard_usd
+    budgetGuardUsd: config.workflow?.budget_guard_usd,
+    benchmarkCondition
   });
   const orchestrator = new AgentOrchestrator(runStore, runtime, checkpointStore);
   await recoverCollectEnrichmentJobs({

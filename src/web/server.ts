@@ -47,6 +47,7 @@ import { buildExplorationStatusSnapshot } from "../core/exploration/status.js";
 import { bootstrapAutoLabOSRuntime, AutoLabOSRuntime } from "../runtime/createRuntime.js";
 import { detectExecutionProfile, executionProfileToDependencyMode } from "../runtime/executionProfile.js";
 import { GraphNodeId, PendingPlan, RunJobsSnapshot, RunQueueSnapshot, RunRecord, WebSessionState } from "../types.js";
+import type { GovernanceBenchmarkConditionName } from "../core/benchmark/governanceCondition.js";
 import { InteractionSession } from "../interaction/InteractionSession.js";
 import { listRunArtifacts, readRunArtifact } from "./artifacts.js";
 import {
@@ -71,6 +72,7 @@ interface WebServerOptions {
   cwd?: string;
   host?: string;
   port?: number;
+  benchmarkCondition?: GovernanceBenchmarkConditionName;
 }
 
 interface SetupRequestBody {
@@ -115,6 +117,7 @@ class AutoLabOSWebController {
   private readonly cwd: string;
   private readonly host: string;
   private readonly port: number;
+  private readonly benchmarkCondition?: GovernanceBenchmarkConditionName;
   private readonly paths;
   private runtime?: AutoLabOSRuntime;
   private session?: InteractionSession;
@@ -126,13 +129,15 @@ class AutoLabOSWebController {
     this.cwd = opts?.cwd || process.cwd();
     this.host = opts?.host || "127.0.0.1";
     this.port = opts?.port || 4317;
+    this.benchmarkCondition = opts?.benchmarkCondition;
     this.paths = resolveAppPaths(this.cwd);
   }
 
   async start(): Promise<void> {
     const bootstrap = await bootstrapAutoLabOSRuntime({
       cwd: this.cwd,
-      allowInteractiveSetup: false
+      allowInteractiveSetup: false,
+      benchmarkCondition: this.benchmarkCondition
     });
     if (bootstrap.runtime) {
       await this.attachRuntime(bootstrap.runtime);
@@ -280,7 +285,8 @@ class AutoLabOSWebController {
         const runtime = (
           await bootstrapAutoLabOSRuntime({
             cwd: this.cwd,
-            allowInteractiveSetup: false
+            allowInteractiveSetup: false,
+            benchmarkCondition: this.benchmarkCondition
           })
         ).runtime;
         if (!runtime) {

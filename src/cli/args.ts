@@ -2,8 +2,8 @@ import { GovernanceBenchmarkConditionName } from "../core/benchmark/governanceCo
 import { NodeOptionPackageName } from "../types.js";
 
 export type CliAction =
-  | { kind: "run"; packageName?: NodeOptionPackageName }
-  | { kind: "web"; host?: string; port?: number }
+  | { kind: "run"; packageName?: NodeOptionPackageName; benchmarkCondition?: GovernanceBenchmarkConditionName }
+  | { kind: "web"; host?: string; port?: number; benchmarkCondition?: GovernanceBenchmarkConditionName }
   | { kind: "compare-analysis"; runId: string; limit: number; judge: boolean }
   | { kind: "eval-harness"; runIds: string[]; limit: number; outputPath?: string; noHistory?: boolean }
   | { kind: "evolve"; maxCycles: number; target: "skills" | "prompts" | "all"; dryRun: boolean }
@@ -36,6 +36,7 @@ export function resolveCliAction(args: string[]): CliAction {
   if (first === "web") {
     let host: string | undefined;
     let port: number | undefined;
+    let benchmarkCondition: GovernanceBenchmarkConditionName | undefined;
     for (let index = 1; index < args.length; index += 1) {
       const token = args[index];
       if (token === "--host") {
@@ -60,12 +61,29 @@ export function resolveCliAction(args: string[]): CliAction {
         index += 1;
         continue;
       }
+      if (token === "--benchmark-condition") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --benchmark-condition." };
+        }
+        benchmarkCondition = parseGovernanceBenchmarkCondition(value);
+        if (!benchmarkCondition) {
+          return { kind: "error", message: `Unsupported governance benchmark condition: ${value}.` };
+        }
+        index += 1;
+        continue;
+      }
       return {
         kind: "error",
         message: `Unsupported web argument: ${token}`
       };
     }
-    return { kind: "web", host, port };
+    return {
+      kind: "web",
+      ...(host ? { host } : {}),
+      ...(port ? { port } : {}),
+      ...(benchmarkCondition ? { benchmarkCondition } : {})
+    };
   }
 
   if (first === "compare-analysis") {
@@ -404,30 +422,52 @@ function parseGovernanceBenchmarkCondition(value: string): GovernanceBenchmarkCo
 const VALID_NODE_OPTION_PACKAGES: NodeOptionPackageName[] = ["fast", "thorough", "paper_scale"];
 
 function parseRunPackageArgs(args: string[]): CliAction | undefined {
-  if (args[0] !== "--package") {
+  if (args[0] !== "--package" && args[0] !== "--benchmark-condition") {
     return undefined;
   }
 
-  const packageName = args[1];
-  if (!packageName) {
-    return { kind: "error", message: "Missing value for --package." };
-  }
-
-  if (!isNodeOptionPackageName(packageName)) {
+  let packageName: NodeOptionPackageName | undefined;
+  let benchmarkCondition: GovernanceBenchmarkConditionName | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--package") {
+      const value = args[index + 1];
+      if (!value) {
+        return { kind: "error", message: "Missing value for --package." };
+      }
+      if (!isNodeOptionPackageName(value)) {
+        return {
+          kind: "error",
+          message: `Unsupported package: ${value}. Expected one of ${VALID_NODE_OPTION_PACKAGES.join(", ")}.`
+        };
+      }
+      packageName = value;
+      index += 1;
+      continue;
+    }
+    if (token === "--benchmark-condition") {
+      const value = args[index + 1];
+      if (!value) {
+        return { kind: "error", message: "Missing value for --benchmark-condition." };
+      }
+      benchmarkCondition = parseGovernanceBenchmarkCondition(value);
+      if (!benchmarkCondition) {
+        return { kind: "error", message: `Unsupported governance benchmark condition: ${value}.` };
+      }
+      index += 1;
+      continue;
+    }
     return {
       kind: "error",
-      message: `Unsupported package: ${packageName}. Expected one of ${VALID_NODE_OPTION_PACKAGES.join(", ")}.`
+      message: `Unsupported run argument: ${token}`
     };
   }
 
-  if (args.length > 2) {
-    return {
-      kind: "error",
-      message: `Unsupported run argument: ${args[2]}`
-    };
-  }
-
-  return { kind: "run", packageName };
+  return {
+    kind: "run",
+    ...(packageName ? { packageName } : {}),
+    ...(benchmarkCondition ? { benchmarkCondition } : {})
+  };
 }
 
 function isNodeOptionPackageName(value: string): value is NodeOptionPackageName {
