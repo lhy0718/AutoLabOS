@@ -247,6 +247,117 @@ describe("resultAnalysis", () => {
     );
   });
 
+  it("projects metrics.conditions plus condition_summaries into baseline/comparator comparisons", () => {
+    const report = buildAnalysisReport({
+      run: {
+        objectiveMetric: "Improve mean zero-shot accuracy over the unmodified baseline."
+      },
+      metrics: {
+        status: "completed",
+        best_condition: {
+          name: "base_unmodified",
+          arc_challenge_accuracy: 0.296875,
+          hellaswag_accuracy: 0.5078125,
+          mean_zero_shot_accuracy: 0.40234375,
+          bootstrap_mean_ci: {
+            ci_low: 0.296875,
+            ci_high: 0.5078125,
+            mean: 0.40234375
+          }
+        },
+        condition_summaries: [
+          {
+            name: "base_unmodified",
+            arc_challenge_accuracy: 0.296875,
+            hellaswag_accuracy: 0.5078125,
+            mean_zero_shot_accuracy: 0.40234375,
+            bootstrap_mean_ci: {
+              ci_low: 0.296875,
+              ci_high: 0.5078125,
+              mean: 0.40234375
+            },
+            trainable_params: 0,
+            training_wall_time_sec: 0
+          },
+          {
+            name: "lora_r8",
+            arc_challenge_accuracy: 0.2734375,
+            hellaswag_accuracy: 0.5234375,
+            mean_zero_shot_accuracy: 0.3984375,
+            trainable_params: 6307840,
+            training_wall_time_sec: 431.3
+          }
+        ],
+        conditions: [
+          {
+            name: "base_unmodified",
+            condition_type: "baseline_unmodified_checkpoint",
+            evaluation: {
+              arc_challenge: { accuracy: 0.296875 },
+              hellaswag: { accuracy: 0.5078125 }
+            },
+            training: { trainable_params: 0, wall_time_sec: 0 }
+          },
+          {
+            name: "lora_r8",
+            condition_type: "peft_lora_instruction_tuned",
+            evaluation: {
+              arc_challenge: { accuracy: 0.2734375 },
+              hellaswag: { accuracy: 0.5234375 }
+            },
+            training: { trainable_params: 6307840, wall_time_sec: 431.3 }
+          }
+        ]
+      },
+      objectiveProfile: {
+        source: "llm",
+        raw: "Improve mean zero-shot accuracy over the unmodified baseline.",
+        primaryMetric: "mean_zero_shot_accuracy",
+        preferredMetricKeys: ["mean_zero_shot_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+        comparator: ">=",
+        targetValue: 0.01,
+        targetDescription: "Mean zero-shot accuracy should improve by at least one point.",
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      objectiveEvaluation: {
+        rawObjectiveMetric: "Improve mean zero-shot accuracy over the unmodified baseline.",
+        profileSource: "llm",
+        primaryMetric: "mean_zero_shot_accuracy",
+        preferredMetricKeys: ["mean_zero_shot_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+        matchedMetricKey: "best_condition.arc_challenge_accuracy",
+        comparator: ">=",
+        targetValue: 0.01,
+        observedValue: 0.296875,
+        status: "met",
+        summary: "Objective metric met."
+      }
+    });
+
+    expect(report.condition_comparisons[0]).toMatchObject({
+      id: "lora_r8_vs_base_unmodified",
+      source: "metrics.conditions",
+      hypothesis_supported: false
+    });
+    expect(report.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "mean_zero_shot_accuracy",
+          baseline_value: 0.402344,
+          primary_value: 0.398438,
+          value: -0.0039
+        })
+      ])
+    );
+    expect(
+      report.statistical_summary.confidence_intervals.some((item) =>
+        item.metric_key === "best_condition.mean_zero_shot_accuracy"
+      )
+    ).toBe(true);
+    expect(report.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
+  });
+
   it("extracts a preset runtime guardrail from the experiment plan and removes the stale threshold warning", () => {
     const report = buildAnalysisReport({
       run: {

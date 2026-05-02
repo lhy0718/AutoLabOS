@@ -283,6 +283,134 @@ describe("run_experiments execution profile behavior", () => {
     });
   });
 
+  it("fails verification when planned brief conditions are under-executed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-under-executed-conditions-"));
+    process.chdir(root);
+    const run = makeRun("run-under-executed-conditions");
+    run.objectiveMetric =
+      "Primary metric: mean zero-shot accuracy. Meaningful improvement: at least +1.0 percentage point over the tuned baseline.";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+    await runContext.put(
+      "run_brief.raw",
+      [
+        "# Research Brief",
+        "## Minimum Acceptable Evidence",
+        "- All planned conditions must execute successfully and report bootstrap confidence intervals.",
+        "## Minimum Experiment Plan",
+        "- one named tuned baseline run",
+        "- three alternative recipe conditions"
+      ].join("\n")
+    );
+    await runContext.put(EXPERIMENT_GOVERNANCE_CONTRACT_KEY, {
+      version: 1,
+      run_id: run.id,
+      plan_id: "plan-under-executed-conditions",
+      selected_hypothesis_ids: ["hypothesis-1"],
+      objective_metric_name: run.objectiveMetric,
+      baseline_first_required: true,
+      baseline_candidate_ids: ["standard_lora_baseline"],
+      comparison_mode: "baseline_first_locked",
+      budget_profile: {
+        mode: "single_run_locked",
+        locked: true,
+        timeout_sec: 7200
+      },
+      objective_profile: {
+        source: "heuristic_fallback",
+        raw: run.objectiveMetric,
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        direction: "maximize",
+        comparator: ">=",
+        targetValue: 0.01
+      },
+      evaluator_contract_id: "eval-contract-under-executed-conditions",
+      created_at: new Date().toISOString()
+    });
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                primary_metric: {
+                  name: "accuracy_delta_vs_baseline",
+                  value: 0.012,
+                  target: 0.01,
+                  met: true
+                },
+                conditions: [
+                  {
+                    name: "base_unmodified",
+                    condition_type: "baseline_unmodified_checkpoint",
+                    evaluation: { mean_zero_shot_accuracy: 0.4 }
+                  },
+                  {
+                    name: "lora_r8",
+                    condition_type: "peft_lora_instruction_tuned",
+                    evaluation: { mean_zero_shot_accuracy: 0.412 }
+                  },
+                  {
+                    name: "lora_r16",
+                    condition_type: "peft_lora_instruction_tuned",
+                    evaluation: { mean_zero_shot_accuracy: 0.411 }
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "experiment command completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment metrics contract failed");
+    expect(result.error).toContain("Planned condition coverage incomplete");
+    expect(result.error).toContain("observed 2 successful tuned condition");
+    expect(result.error).toContain("requires 4");
+  });
+
   it("fails verification when a successful command writes top-level failed metrics", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-failed-metrics-"));
     process.chdir(root);
@@ -368,6 +496,97 @@ describe("run_experiments execution profile behavior", () => {
       status: "fail",
       stage: "metrics"
     });
+  });
+
+  it("classifies all-condition Hugging Face model load failures as dependency blockers", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-model-dependency-blocker-"));
+    process.chdir(root);
+    const run = makeRun("run-model-dependency-blocker");
+    run.objectiveMetric = "accuracy_delta_vs_baseline";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                condition_results: [
+                  {
+                    condition_id: "unmodified_base",
+                    status: "failed",
+                    error:
+                      "OSError: Can't load the configuration of 'EleutherAI/pythia-410m'. If you were trying to load it from Hugging Face, make sure the model is available or cached locally."
+                  },
+                  {
+                    condition_id: "vanilla_lora",
+                    status: "failed",
+                    evidence: {
+                      error_message:
+                        "OSError: Can't load the configuration of 'EleutherAI/pythia-410m'. AutoModelForCausalLM.from_pretrained failed."
+                    }
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner wrote dependency-failed metrics",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment dependency blocker");
+    expect(result.error).toContain("EleutherAI/pythia-410m");
+    expect(result.error).toContain("No condition metrics were accepted as evidence");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("Experiment dependency blocker");
   });
 
   it("fails verification when comparator recipes report failed statuses inside otherwise ok metrics", async () => {

@@ -262,7 +262,11 @@ export function evaluateObjectiveMetric(
     ...profile.preferredMetricKeys,
     ...(profile.primaryMetric ? [profile.primaryMetric] : [])
   ]);
-  const matched = findMatchingMetric(flattened, preferredKeys);
+  const relativeObjective = isRelativeObjectiveMetricRequest(preferredKeys, rawObjectiveMetric);
+  const matchableMetrics = relativeObjective
+    ? flattened.filter((metric) => isRelativeMetricKey(metric.key))
+    : flattened;
+  const matched = findMatchingMetric(matchableMetrics, preferredKeys);
 
   if (!matched) {
     const inferred = inferBestEffortMetricMatch(flattened, preferredKeys, rawObjectiveMetric);
@@ -321,6 +325,7 @@ const SYNTHESIZE_METRIC_KEYS = [
   "rouge_l",
   "success_rate",
   "mean_accuracy",
+  "primary_mean_accuracy",
   "mean_zero_shot_accuracy",
   "zero_shot_accuracy",
   "arc_challenge_accuracy",
@@ -366,6 +371,44 @@ export function synthesizeRelativeMetrics(
         }
       }
       return enriched;
+    }
+  }
+
+  // Strategy 1b: conditions object map with nested evaluation payloads, e.g.
+  // `conditions: { base: { evaluation: { primary_mean_accuracy } }, lora: ... }`.
+  if (conditions && typeof conditions === "object" && !Array.isArray(conditions)) {
+    const conditionEntries = Object.entries(conditions as Record<string, unknown>).filter(
+      ([, value]) => value && typeof value === "object" && !Array.isArray(value)
+    ) as Array<[string, Record<string, unknown>]>;
+    if (conditionEntries.length >= 2) {
+      const baselineEntry = selectBaselineConditionEntry(conditionEntries);
+      if (baselineEntry) {
+        const [, baselineRecord] = baselineEntry;
+        const nonBaselineEntries = selectEligibleTreatmentConditionEntries(
+          conditionEntries.filter((entry) => entry !== baselineEntry)
+        );
+        const enriched: Record<string, unknown> = { ...metrics };
+        for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
+          const baseVal = getConditionMetricValue(baselineRecord, metricKey);
+          if (baseVal === undefined) continue;
+          let bestDelta = -Infinity;
+          for (const [, treatmentRecord] of nonBaselineEntries) {
+            const val = getConditionMetricValue(treatmentRecord, metricKey);
+            if (val === undefined) continue;
+            const delta = val - baseVal;
+            if (delta > bestDelta) bestDelta = delta;
+          }
+          if (Number.isFinite(bestDelta)) {
+            enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
+            enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
+            if (metricKey.includes("accuracy")) {
+              enriched.accuracy_delta_vs_baseline = bestDelta;
+              enriched.accuracy_improvement_over_baseline = bestDelta;
+            }
+          }
+        }
+        return enriched;
+      }
     }
   }
 
@@ -493,6 +536,89 @@ function isBaselineResultRecord(record: Record<string, unknown>): boolean {
     .filter((value): value is string => typeof value === "string")
     .join(" ");
   return BASELINE_PATTERN.test(labels);
+}
+
+function selectBaselineConditionEntry(
+  entries: Array<[string, Record<string, unknown>]>
+): [string, Record<string, unknown>] | undefined {
+  return entries
+    .map((entry, index) => ({
+      entry,
+      index,
+      score: baselineConditionScore(entry[0], entry[1])
+    }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)[0]?.entry;
+}
+
+function selectEligibleTreatmentConditionEntries(
+  entries: Array<[string, Record<string, unknown>]>
+): Array<[string, Record<string, unknown>]> {
+  const nonBaselineEntries = entries.filter(([name, record]) => !isBaselineConditionRecord(name, record));
+  return nonBaselineEntries.length > 0 ? nonBaselineEntries : entries;
+}
+
+function isBaselineConditionRecord(name: string, record: Record<string, unknown>): boolean {
+  if (baselineConditionScore(name, record) > 0) {
+    return true;
+  }
+  const labels = conditionLabelText(name, record);
+  return BASELINE_PATTERN.test(labels);
+}
+
+function baselineConditionScore(name: string, record: Record<string, unknown>): number {
+  const labels = conditionLabelText(name, record).toLowerCase();
+  const referenceBaseline =
+    /(?:^|[_\s-])(?:unmodified|pretrained|zero[_\s-]?shot|untuned|no[_\s-]?tuning|base)(?:[_\s-]|$)/u.test(labels);
+  const explicitBaseline = /(?:^|[_\s-])baseline(?:[_\s-]|$)/u.test(labels);
+  const tunedBaseline =
+    /(?:^|[_\s-])(?:lora|peft|adapter|tuned|locked)[\w\s-]*baseline(?:[_\s-]|$)/u.test(labels) ||
+    /(?:^|[_\s-])baseline[\w\s-]*(?:lora|peft|adapter|tuned|locked)(?:[_\s-]|$)/u.test(labels);
+
+  if (tunedBaseline && !referenceBaseline) {
+    return 4;
+  }
+  if (explicitBaseline && !referenceBaseline) {
+    return 3;
+  }
+  if (explicitBaseline) {
+    return 2;
+  }
+  return referenceBaseline ? 1 : 0;
+}
+
+function conditionLabelText(name: string, record: Record<string, unknown>): string {
+  const labels = [
+    name,
+    record.name,
+    record.condition,
+    record.condition_id,
+    record.condition_type,
+    record.type,
+    record.kind,
+    record.label
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  return labels;
+}
+
+function getConditionMetricValue(record: Record<string, unknown>, metricKey: string): number | undefined {
+  const direct = record[metricKey];
+  if (typeof direct === "number" && Number.isFinite(direct)) {
+    return direct;
+  }
+  for (const nestedKey of ["evaluation", "metrics", "summary"]) {
+    const nested = record[nestedKey];
+    if (!nested || typeof nested !== "object" || Array.isArray(nested)) {
+      continue;
+    }
+    const value = (nested as Record<string, unknown>)[metricKey];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function buildObjectiveMetricSystemPrompt(): string {
@@ -684,7 +810,7 @@ function applyObjectiveRequirementChecks(
   metrics: Record<string, unknown>,
   rawObjectiveMetric: string
 ): ObjectiveMetricEvaluation {
-  const requirements = collectObjectiveRequirements(metrics, rawObjectiveMetric);
+  const requirements = collectObjectiveRequirements(metrics, rawObjectiveMetric, evaluation);
   if (requirements.length === 0) {
     return evaluation;
   }
@@ -1071,7 +1197,8 @@ function dedupe(values: string[]): string[] {
 
 function collectObjectiveRequirements(
   metrics: Record<string, unknown>,
-  rawObjectiveMetric: string
+  rawObjectiveMetric: string,
+  evaluation?: ObjectiveMetricEvaluation
 ): Array<{ status: "met" | "not_met" | "missing"; summary: string }> {
   const requirements: Array<{ status: "met" | "not_met" | "missing"; summary: string }> = [];
   if (/\bcpu[-\s]?only\b/iu.test(rawObjectiveMetric)) {
@@ -1079,6 +1206,9 @@ function collectObjectiveRequirements(
   }
   if (/\breproduc(?:ible|ibility)\b/iu.test(rawObjectiveMetric) || /\breplicab(?:le|ility)\b/iu.test(rawObjectiveMetric)) {
     requirements.push(describeBooleanRequirement("Reproducibility requirement", resolveReproducibilityEvidence(metrics)));
+  }
+  if (requiresResourceRegressionCheck(rawObjectiveMetric)) {
+    requirements.push(describeResourceRegressionRequirement(metrics, rawObjectiveMetric, evaluation));
   }
   return requirements;
 }
@@ -1134,6 +1264,276 @@ function resolveReproducibilityEvidence(metrics: Record<string, unknown>): boole
     return true;
   }
   return undefined;
+}
+
+const RESOURCE_REGRESSION_RATIO_LIMIT = 1.5;
+const STRICT_RESOURCE_REGRESSION_RATIO_LIMIT = 1.05;
+
+interface ResourceRegressionMetric {
+  kind: "runtime" | "memory";
+  label: string;
+  candidateValue?: number;
+  baselineValue?: number;
+  ratio?: number;
+}
+
+interface ResourceRegressionComparison {
+  baselineName: string;
+  candidateName: string;
+  metrics: ResourceRegressionMetric[];
+}
+
+function requiresResourceRegressionCheck(rawObjectiveMetric: string): boolean {
+  return (
+    /\b(?:runtime|run[-\s]?time|wall[-\s]?clock|latency|time|memory|gpu|vram)\b/iu.test(rawObjectiveMetric) &&
+    /\b(?:regression|worse|without|unacceptable|material|preserv|cost)\b/iu.test(rawObjectiveMetric)
+  );
+}
+
+function describeResourceRegressionRequirement(
+  metrics: Record<string, unknown>,
+  rawObjectiveMetric: string,
+  evaluation?: ObjectiveMetricEvaluation
+): { status: "met" | "not_met" | "missing"; summary: string } {
+  const comparison = selectResourceRegressionComparison(metrics, evaluation);
+  if (!comparison) {
+    return {
+      status: "missing",
+      summary: "Resource regression requirement could not be verified from metrics.json."
+    };
+  }
+
+  const limit = resourceRegressionRatioLimit(rawObjectiveMetric);
+  const requiredKinds = requiredResourceKinds(rawObjectiveMetric);
+  const relevantMetrics = comparison.metrics.filter((metric) => requiredKinds.has(metric.kind));
+  const missingMetrics = relevantMetrics.filter((metric) => metric.ratio === undefined);
+  const failedMetrics = relevantMetrics.filter((metric) => typeof metric.ratio === "number" && metric.ratio > limit);
+  const ratioSummary = relevantMetrics
+    .map((metric) =>
+      typeof metric.ratio === "number"
+        ? `${metric.kind} ${formatRatio(metric.ratio)}`
+        : `${metric.kind} unavailable`
+    )
+    .join(", ");
+  const pair = `${comparison.candidateName} vs ${comparison.baselineName}`;
+
+  if (failedMetrics.length > 0) {
+    return {
+      status: "not_met",
+      summary: `Resource regression requirement not satisfied for ${pair}: ${ratioSummary}; allowed limit is ${formatRatio(limit)}.`
+    };
+  }
+  if (missingMetrics.length > 0) {
+    return {
+      status: "missing",
+      summary: `Resource regression requirement could not be fully verified for ${pair}: ${ratioSummary}.`
+    };
+  }
+  return {
+    status: "met",
+    summary: `Resource regression requirement satisfied for ${pair}: ${ratioSummary}; allowed limit is ${formatRatio(limit)}.`
+  };
+}
+
+function resourceRegressionRatioLimit(rawObjectiveMetric: string): number {
+  const normalized = rawObjectiveMetric.toLowerCase();
+  if (
+    /\b(?:no|zero)\b[\s\S]{0,40}\b(?:regression|worse)\b/u.test(normalized) &&
+    !/\b(?:unacceptable|material|substantial)\b/u.test(normalized)
+  ) {
+    return STRICT_RESOURCE_REGRESSION_RATIO_LIMIT;
+  }
+  return RESOURCE_REGRESSION_RATIO_LIMIT;
+}
+
+function requiredResourceKinds(rawObjectiveMetric: string): Set<ResourceRegressionMetric["kind"]> {
+  const kinds = new Set<ResourceRegressionMetric["kind"]>();
+  if (/\b(?:runtime|run[-\s]?time|wall[-\s]?clock|latency|time)\b/iu.test(rawObjectiveMetric)) {
+    kinds.add("runtime");
+  }
+  if (/\b(?:memory|gpu|vram)\b/iu.test(rawObjectiveMetric)) {
+    kinds.add("memory");
+  }
+  if (kinds.size === 0) {
+    kinds.add("runtime");
+    kinds.add("memory");
+  }
+  return kinds;
+}
+
+function selectResourceRegressionComparison(
+  metrics: Record<string, unknown>,
+  evaluation?: ObjectiveMetricEvaluation
+): ResourceRegressionComparison | undefined {
+  const entries = conditionEntriesFromMetrics(metrics);
+  if (entries.length < 2) {
+    return undefined;
+  }
+  const baselineEntry = selectBaselineConditionEntry(entries);
+  if (!baselineEntry) {
+    return undefined;
+  }
+  const treatmentEntries = selectEligibleTreatmentConditionEntries(entries.filter((entry) => entry !== baselineEntry));
+  if (treatmentEntries.length === 0) {
+    return undefined;
+  }
+
+  const [, baselineRecord] = baselineEntry;
+  const scoreMetricKeys = scoreMetricKeysForEvaluation(evaluation);
+  const candidates = scoreMetricKeys.flatMap((metricKey, metricIndex) => {
+    const baselineValue = getConditionMetricValue(baselineRecord, metricKey);
+    if (baselineValue === undefined) {
+      return [];
+    }
+    return treatmentEntries.flatMap(([candidateName, candidateRecord], candidateIndex) => {
+      const candidateValue = getConditionMetricValue(candidateRecord, metricKey);
+      if (candidateValue === undefined) {
+        return [];
+      }
+      const delta = candidateValue - baselineValue;
+      return [
+        {
+          entry: [candidateName, candidateRecord] as [string, Record<string, unknown>],
+          delta,
+          exactObservedMatch:
+            typeof evaluation?.observedValue === "number" &&
+            Math.abs(delta - evaluation.observedValue) <= 1e-9,
+          metricIndex,
+          candidateIndex
+        }
+      ];
+    });
+  });
+
+  const selected = candidates.sort(
+    (left, right) =>
+      Number(right.exactObservedMatch) - Number(left.exactObservedMatch) ||
+      right.delta - left.delta ||
+      left.metricIndex - right.metricIndex ||
+      left.candidateIndex - right.candidateIndex
+  )[0];
+  if (!selected) {
+    return undefined;
+  }
+
+  const [candidateName, candidateRecord] = selected.entry;
+  const [baselineName] = baselineEntry;
+  return {
+    baselineName: humanizeConditionName(baselineName),
+    candidateName: humanizeConditionName(candidateName),
+    metrics: [
+      compareResourceMetric("runtime", "runtime", baselineRecord, candidateRecord),
+      compareResourceMetric("memory", "memory", baselineRecord, candidateRecord)
+    ]
+  };
+}
+
+function conditionEntriesFromMetrics(metrics: Record<string, unknown>): Array<[string, Record<string, unknown>]> {
+  const conditions = metrics.conditions;
+  if (Array.isArray(conditions)) {
+    return conditions
+      .filter((item): item is Record<string, unknown> => item && typeof item === "object" && !Array.isArray(item))
+      .map((record, index) => [
+        cleanString(record.name) || cleanString(record.condition_id) || cleanString(record.condition) || `condition_${index + 1}`,
+        record
+      ]);
+  }
+  if (conditions && typeof conditions === "object") {
+    return Object.entries(conditions as Record<string, unknown>).filter(
+      (entry): entry is [string, Record<string, unknown>] =>
+        Boolean(entry[1]) && typeof entry[1] === "object" && !Array.isArray(entry[1])
+    );
+  }
+  return [];
+}
+
+function scoreMetricKeysForEvaluation(evaluation?: ObjectiveMetricEvaluation): string[] {
+  const matchedMetricKey = evaluation?.matchedMetricKey || "";
+  const stripped = matchedMetricKey
+    .replace(/_improvement_over_baseline$/iu, "")
+    .replace(/_delta_vs_baseline$/iu, "")
+    .replace(/_gain_vs_baseline$/iu, "")
+    .replace(/_lift_vs_baseline$/iu, "");
+  const preferred = stripped && stripped !== matchedMetricKey ? [stripped] : [];
+  const accuracyKeys = /accuracy|acc/iu.test(matchedMetricKey)
+    ? ["mean_zero_shot_accuracy", "primary_mean_accuracy", "mean_accuracy", "accuracy", "acc"]
+    : [];
+  return dedupe([...accuracyKeys, ...preferred, ...SYNTHESIZE_METRIC_KEYS]);
+}
+
+function compareResourceMetric(
+  kind: ResourceRegressionMetric["kind"],
+  label: string,
+  baselineRecord: Record<string, unknown>,
+  candidateRecord: Record<string, unknown>
+): ResourceRegressionMetric {
+  const paths = kind === "runtime" ? RUNTIME_METRIC_PATHS : MEMORY_METRIC_PATHS;
+  const baseline = readFirstNumericPath(baselineRecord, paths);
+  const candidate = readFirstNumericPath(candidateRecord, paths);
+  const ratio =
+    typeof baseline?.value === "number" &&
+    baseline.value > 0 &&
+    typeof candidate?.value === "number"
+      ? candidate.value / baseline.value
+      : undefined;
+  return {
+    kind,
+    label,
+    baselineValue: baseline?.value,
+    candidateValue: candidate?.value,
+    ratio
+  };
+}
+
+const RUNTIME_METRIC_PATHS = [
+  ["wall_clock_sec"],
+  ["wall_clock_seconds"],
+  ["runtime_sec"],
+  ["run_time_sec"],
+  ["elapsed_sec"],
+  ["duration_sec"],
+  ["training", "train_runtime_sec"],
+  ["training", "trainer_metrics", "train_runtime"],
+  ["trainer_metrics", "train_runtime"]
+];
+
+const MEMORY_METRIC_PATHS = [
+  ["peak_gpu_memory_bytes"],
+  ["peak_memory_bytes"],
+  ["max_memory_allocated_bytes"],
+  ["cuda_max_memory_allocated_bytes"],
+  ["device_info_end", "cuda_max_memory_allocated_bytes"],
+  ["device_info_final", "cuda_max_memory_allocated_bytes"],
+  ["training", "peak_gpu_memory_bytes"],
+  ["training", "cuda_max_memory_allocated_bytes"]
+];
+
+function readFirstNumericPath(
+  record: Record<string, unknown>,
+  paths: string[][]
+): { key: string; value: number } | undefined {
+  for (const pathParts of paths) {
+    let current: unknown = record;
+    for (const part of pathParts) {
+      if (!current || typeof current !== "object" || Array.isArray(current)) {
+        current = undefined;
+        break;
+      }
+      current = (current as Record<string, unknown>)[part];
+    }
+    if (typeof current === "number" && Number.isFinite(current)) {
+      return { key: pathParts.join("."), value: current };
+    }
+  }
+  return undefined;
+}
+
+function humanizeConditionName(value: string): string {
+  return value.replace(/[_-]+/gu, " ").trim() || value;
+}
+
+function formatRatio(value: number): string {
+  return `${value.toFixed(2)}x`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

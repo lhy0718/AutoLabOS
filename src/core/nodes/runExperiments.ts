@@ -47,6 +47,11 @@ import {
   setMetricsState
 } from "../runExperimentsPanel.js";
 import { wrapCommandForExecutionProfile } from "../../runtime/executionProfile.js";
+import { parseMarkdownRunBriefSections, type MarkdownRunBriefSections } from "../runs/runBriefParser.js";
+import {
+  countExecutedPlannedConditions,
+  deriveRequiredPlannedConditionCount
+} from "../analysis/plannedConditionCoverage.js";
 
 type SupplementalProfileName = "quick_check" | "confirmatory";
 
@@ -107,6 +112,8 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
       const comparisonContract = await loadExperimentComparisonContract(run, runContext);
       const implementationContext = await loadExperimentImplementationContext(run, runContext);
+      const rawBrief = await runContext.get<string>("run_brief.raw");
+      const briefSections = rawBrief ? parseMarkdownRunBriefSections(rawBrief) : undefined;
       const pendingHandoff =
         (await runContext.get<boolean>("implement_experiments.pending_handoff_to_run_experiments")) === true;
       const handoffReason = await runContext.get<string>("implement_experiments.handoff_reason");
@@ -746,6 +753,9 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           watchdog = setMetricsState(watchdog, "valid", logFile);
           const failedMetricsMessage = detectFailedMetricsPayload(parsedMetrics);
           if (failedMetricsMessage) {
+            const failedMetricsSuggestedNextAction = failedMetricsMessage.includes("Experiment dependency blocker:")
+              ? "Prewarm or make the required experiment dependency available, or revise the governed experiment design to use an available model before rerunning."
+              : "Repair the experiment implementation so metrics.json records completed baseline/comparator execution instead of a top-level failed status.";
             const triage = classifyRunExperimentsFailure({
               attempt: attemptNumber,
               stage: "metrics",
@@ -774,8 +784,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               stdout: obs.stdout,
               stderr: failedMetricsMessage,
               logFile,
-              suggestedNextAction:
-                "Repair the experiment implementation so metrics.json records completed baseline/comparator execution instead of a top-level failed status."
+              suggestedNextAction: failedMetricsSuggestedNextAction
             });
             deps.eventStream.emit({
               type: "TEST_FAILED",
@@ -1002,7 +1011,9 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       const metricsContractIssues = validateRunMetricsContract({
         metrics: parsedMetrics,
         objectiveEvaluation,
-        comparisonContract
+        comparisonContract,
+        briefSections,
+        experimentPortfolio
       });
       if (metricsContractIssues.length > 0) {
         const contractMessage = `Experiment metrics contract failed: ${metricsContractIssues.join(" ")}`;
@@ -1320,6 +1331,10 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
   if (success === false) {
     return `Experiment metrics payload reports success=false${failureMessage ? `: ${failureMessage}` : "."}`;
   }
+  const conditionDependencyBlocker = detectConditionDependencyBlocker(metrics);
+  if (conditionDependencyBlocker) {
+    return conditionDependencyBlocker;
+  }
   const recipes = asRecord(metrics.recipes);
   const failedRecipeSummaries = Object.entries(recipes)
     .filter(([, recipe]) => {
@@ -1338,6 +1353,87 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
     return `Experiment metrics payload reports failed recipe(s): ${failedRecipeSummaries.join("; ")}.`;
   }
   return null;
+}
+
+function detectConditionDependencyBlocker(metrics: Record<string, unknown>): string | null {
+  const conditionRows = [
+    ...collectConditionRows(metrics.condition_results),
+    ...collectConditionRows(metrics.conditions),
+    ...collectConditionRows(asRecord(metrics.study).condition_results),
+    ...collectConditionRows(asRecord(metrics.study).conditions)
+  ];
+  if (conditionRows.length === 0) {
+    return null;
+  }
+  const failedRows = conditionRows.filter((row) => {
+    const status = asString(row.status)?.toLowerCase();
+    return ["failed", "failure", "error", "errored"].includes(status || "");
+  });
+  if (failedRows.length !== conditionRows.length) {
+    return null;
+  }
+
+  const messages = failedRows.flatMap((row) => collectDiagnosticStrings(row));
+  const combined = messages.join("\n");
+  if (!isModelDependencyFailure(combined)) {
+    return null;
+  }
+
+  const modelId = extractModelAssetId(combined);
+  return [
+    "Experiment dependency blocker:",
+    `model asset ${modelId || "required model/tokenizer asset"} could not be loaded.`,
+    "Prewarm/cache the model, allow required Hugging Face access, or select an available local model before retrying.",
+    `No condition metrics were accepted as evidence (${failedRows.length}/${conditionRows.length} condition rows failed).`
+  ].join(" ");
+}
+
+function collectConditionRows(value: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(value)) {
+    return value.map(asRecord).filter((row) => Object.keys(row).length > 0);
+  }
+  const record = asRecord(value);
+  return Object.values(record).map(asRecord).filter((row) => Object.keys(row).length > 0);
+}
+
+function collectDiagnosticStrings(value: unknown, depth = 0): string[] {
+  if (depth > 4) {
+    return [];
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectDiagnosticStrings(item, depth + 1));
+  }
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, nested]) => {
+    if (!/(error|exception|trace|message|reason|evidence|diagnostic|stderr|failure|model|tokenizer|config)/iu.test(key)) {
+      return [];
+    }
+    return collectDiagnosticStrings(nested, depth + 1);
+  });
+}
+
+function isModelDependencyFailure(message: string): boolean {
+  return (
+    /can't\s+load\s+the\s+(?:configuration|config|tokenizer|model)\b/iu.test(message) ||
+    /\bfrom_pretrained\b/iu.test(message) ||
+    /\b(?:hugging\s*face|transformers)\b[\s\S]{0,160}\b(?:cache|config|tokenizer|model|download|access)\b/iu.test(message) ||
+    /\bconfig\.json\b/iu.test(message) ||
+    /\blocal\s+cache\b[\s\S]{0,120}\b(?:missing|unavailable|not\s+found|disabled)\b/iu.test(message)
+  );
+}
+
+function extractModelAssetId(message: string): string | undefined {
+  const quoted = message.match(/['"]([A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*)['"]/u)?.[1];
+  if (quoted) {
+    return quoted;
+  }
+  return message.match(/\bmodel(?:_id|[-_\s]name)?\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*)/iu)?.[1];
 }
 
 function flattenMetricValues(
@@ -2495,14 +2591,59 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function validatePlannedConditionCoverage(input: {
+  metrics: Record<string, unknown>;
+  briefSections?: MarkdownRunBriefSections;
+  experimentPortfolio?: ExperimentPortfolio;
+}): string | undefined {
+  const primaryGroup =
+    input.experimentPortfolio?.trial_groups.find(
+      (group) => group.id === input.experimentPortfolio?.primary_trial_group_id
+    ) || input.experimentPortfolio?.trial_groups[0];
+  const requirement = deriveRequiredPlannedConditionCount(input.briefSections, {
+    summary: primaryGroup?.label,
+    implementation_notes: primaryGroup?.notes,
+    evaluation_steps: primaryGroup?.notes,
+    resource_notes: primaryGroup?.notes,
+    metrics: primaryGroup?.metrics
+  });
+  if (!requirement) {
+    return undefined;
+  }
+
+  const executedCount = countExecutedPlannedConditions(input.metrics, {
+    tunedOnly: requirement.tunedOnly
+  });
+  if (executedCount >= requirement.conditionCount) {
+    return undefined;
+  }
+
+  return [
+    "Planned condition coverage incomplete:",
+    `observed ${executedCount} successful${requirement.tunedOnly ? " tuned" : ""} condition(s)`,
+    `but the brief/design requires ${requirement.conditionCount}.`
+  ].join(" ");
+}
+
 function validateRunMetricsContract(input: {
   metrics: Record<string, unknown>;
   objectiveEvaluation: ObjectiveMetricEvaluation;
   comparisonContract?: Awaited<ReturnType<typeof loadExperimentComparisonContract>>;
+  briefSections?: MarkdownRunBriefSections;
+  experimentPortfolio?: ExperimentPortfolio;
 }): string[] {
   const issues: string[] = [];
   if (input.objectiveEvaluation.status === "missing") {
     issues.push(input.objectiveEvaluation.summary);
+  }
+
+  const conditionCoverageIssue = validatePlannedConditionCoverage({
+    metrics: input.metrics,
+    briefSections: input.briefSections,
+    experimentPortfolio: input.experimentPortfolio
+  });
+  if (conditionCoverageIssue) {
+    issues.push(conditionCoverageIssue);
   }
 
   const study = asRecord(input.metrics.study);

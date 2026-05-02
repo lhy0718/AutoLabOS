@@ -27,7 +27,9 @@ export interface AnalysisConditionComparison {
     | "metrics.results"
     | "metrics.result_rows"
     | "metrics.recipes"
-    | "metrics.conditions";
+    | "metrics.conditions"
+    | "metrics.condition_results"
+    | "metrics.condition_summaries";
   metrics: AnalysisComparisonMetric[];
   hypothesis_supported?: boolean;
   summary: string;
@@ -46,6 +48,7 @@ export interface AnalysisSelectedDesign {
   selected_hypothesis_ids: string[];
   metrics: string[];
   baselines: string[];
+  implementation_notes: string[];
   evaluation_steps: string[];
   risks: string[];
   resource_notes: string[];
@@ -518,6 +521,7 @@ function parseExperimentPlan(raw: string): AnalysisPlanContext {
             ...asStringList(selectedDesignRaw.baselines),
             ...asStringList(confirmatory.additional_baselines)
           ]),
+          implementation_notes: asStringList(selectedDesignRaw.implementation_notes),
           evaluation_steps: uniqueStrings([
             ...asStringList(selectedDesignRaw.evaluation_steps),
             ...asStringList(confirmatory.evaluation_steps)
@@ -1301,6 +1305,16 @@ function extractConfidenceIntervals(args: {
   profile?: string;
 }): AnalysisConfidenceInterval[] {
   const intervals: AnalysisConfidenceInterval[] = [];
+  const directInterval = readDirectConfidenceInterval({
+    value: args.value,
+    prefix: args.prefix,
+    sampleSize: args.sampleSize,
+    source: args.source,
+    profile: args.profile
+  });
+  if (directInterval) {
+    intervals.push(directInterval);
+  }
 
   for (const [key, raw] of Object.entries(args.value)) {
     const nextPrefix = args.prefix ? `${args.prefix}.${key}` : key;
@@ -1308,7 +1322,7 @@ function extractConfidenceIntervals(args: {
     if (match && Array.isArray(raw) && raw.length === 2) {
       const lower = asNumber(raw[0]);
       const upper = asNumber(raw[1]);
-      const level = asNumber(match[1]);
+      const level = normalizeConfidenceLevel(asNumber(match[1]));
       if (typeof lower === "number" && typeof upper === "number" && typeof level === "number") {
         const metricKey = args.prefix ? `${args.prefix}.${match[2]}` : match[2];
         const source =
@@ -1323,7 +1337,7 @@ function extractConfidenceIntervals(args: {
           sample_size: args.sampleSize,
           source,
           profile: args.profile,
-          summary: `${label} ${level}% CI [${formatMetricValue(lower)}, ${formatMetricValue(upper)}]${
+          summary: `${label} ${formatConfidenceIntervalPercent(level)}% CI [${formatMetricValue(lower)}, ${formatMetricValue(upper)}]${
             typeof args.sampleSize === "number" ? ` over n=${args.sampleSize}` : ""
           }.`
         });
@@ -1344,6 +1358,115 @@ function extractConfidenceIntervals(args: {
   }
 
   return intervals;
+}
+
+function readDirectConfidenceInterval(args: {
+  value: Record<string, unknown>;
+  prefix?: string;
+  sampleSize?: number;
+  source?: "metrics" | "supplemental_runs";
+  profile?: string;
+}): AnalysisConfidenceInterval | undefined {
+  const lower = firstNumber(args.value, [
+    "ci_low",
+    "ci95_low",
+    "ci_lower",
+    "lower",
+    "low",
+    "bootstrap_ci95_low",
+    "lower_bound"
+  ]);
+  const upper = firstNumber(args.value, [
+    "ci_high",
+    "ci95_high",
+    "ci_upper",
+    "upper",
+    "high",
+    "bootstrap_ci95_high",
+    "upper_bound"
+  ]);
+  if (typeof lower !== "number" || typeof upper !== "number") {
+    return undefined;
+  }
+
+  const rawLevel =
+    firstNumber(args.value, ["confidence_level", "ci_level", "level"]) ??
+    inferConfidenceLevel(args.prefix);
+  const level = normalizeConfidenceLevel(rawLevel) ?? 0.95;
+  const metricKey =
+    asString(args.value.metric_key) ||
+    asString(args.value.metric) ||
+    inferConfidenceIntervalMetricKey(args.prefix);
+  const source = metricKey.startsWith("condition_metrics.") ? "condition_metrics" : args.source || "metrics";
+  const label = humanizeMetricLabel(metricKey);
+
+  return {
+    metric_key: metricKey,
+    label,
+    lower,
+    upper,
+    level,
+    sample_size: args.sampleSize,
+    source,
+    profile: args.profile,
+    summary: `${label} ${formatConfidenceIntervalPercent(level)}% CI [${formatMetricValue(lower)}, ${formatMetricValue(upper)}]${
+      typeof args.sampleSize === "number" ? ` over n=${args.sampleSize}` : ""
+    }.`
+  };
+}
+
+function normalizeConfidenceLevel(level: number | undefined): number | undefined {
+  if (typeof level !== "number" || !Number.isFinite(level)) {
+    return undefined;
+  }
+  return level > 1 ? Number((level / 100).toFixed(4)) : level;
+}
+
+function formatConfidenceIntervalPercent(level: number): string {
+  const percent = level <= 1 ? level * 100 : level;
+  return Number(percent.toFixed(2)).toString();
+}
+
+function firstNumber(value: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const numberValue = asNumber(value[key]);
+    if (typeof numberValue === "number") {
+      return numberValue;
+    }
+  }
+  return undefined;
+}
+
+function inferConfidenceLevel(prefix: string | undefined): number | undefined {
+  const match = prefix?.match(/(?:^|[._-])ci(\d{2,3})(?:[._-]|$)/iu);
+  if (!match) {
+    return undefined;
+  }
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function inferConfidenceIntervalMetricKey(prefix: string | undefined): string {
+  if (!prefix) {
+    return "metric";
+  }
+  const parts = prefix.split(".");
+  const lastPart = parts.at(-1)?.toLowerCase() ?? "";
+  if (/bootstrap.*mean.*ci|mean.*confidence.*interval/u.test(lastPart)) {
+    parts.pop();
+    const owner = parts.join(".");
+    return owner ? `${owner}.mean_zero_shot_accuracy` : "mean_zero_shot_accuracy";
+  }
+  if (/pooled.*bootstrap|bootstrap.*pooled/u.test(lastPart)) {
+    parts.pop();
+    const owner = parts.join(".");
+    return owner ? `${owner}.mean_zero_shot_accuracy` : "mean_zero_shot_accuracy";
+  }
+  if (/bootstrap.*ci|confidence.*interval|^ci\d*$/u.test(lastPart)) {
+    parts.pop();
+    return parts.join(".") || prefix;
+  }
+  return prefix;
 }
 
 function sortConfidenceIntervals(
@@ -1395,7 +1518,6 @@ function buildStatisticalEffects(
   objectiveProfile: ObjectiveMetricProfile
 ): AnalysisStatisticalEffect[] {
   return conditionComparisons
-    .filter((item) => item.source === "metrics.condition_metrics")
     .map((comparison) => {
       const metric = selectEffectMetric(comparison, objectiveProfile);
       if (!metric) {
@@ -1596,10 +1718,7 @@ function buildResultsArrayConditionComparison(args: {
   objectiveEvaluation: ObjectiveMetricEvaluation;
   objectiveProfile: ObjectiveMetricProfile;
 }): AnalysisConditionComparison | undefined {
-  const resultRowsSource = asArray(args.metrics.results).length > 0 ? "metrics.results" : "metrics.result_rows";
-  const resultRows = asArray(
-    resultRowsSource === "metrics.results" ? args.metrics.results : args.metrics.result_rows
-  ).map((item) => asRecord(item));
+  const { source: resultRowsSource, rows: resultRows } = readResultRowsFromMetrics(args.metrics);
   if (resultRows.length < 2) {
     return undefined;
   }
@@ -1612,21 +1731,35 @@ function buildResultsArrayConditionComparison(args: {
       const conditionId = asString(row.condition_id)?.toLowerCase();
       return (
         recipe === "baseline" ||
+        isLikelyBaselineCondition(recipe || "") ||
         peftType === "none" ||
         conditionId === "baseline" ||
+        isLikelyBaselineCondition(conditionId || "") ||
         row.is_baseline_reference === true
       );
     });
-  const bestRecipe = asString(args.metrics.best_recipe) || asString(args.metrics.best_tuned_condition_id) || asString(args.metrics.best_condition_id);
-  const comparatorRow = bestRecipe
-    ? resultRows.find((row) => (asString(row.recipe) === bestRecipe || asString(row.condition_id) === bestRecipe) && row !== baselineRow)
-    : undefined;
 
-  if (!baselineRow || !comparatorRow) {
+  if (!baselineRow) {
     return undefined;
   }
 
   const preferredKeys = buildResultArrayPreferredKeys(args.objectiveEvaluation, args.objectiveProfile);
+  const candidates = resultRows.filter((row) => row !== baselineRow);
+  const bestRecipe = asString(args.metrics.best_recipe) || asString(args.metrics.best_tuned_condition_id) || asString(args.metrics.best_condition_id);
+  const explicitComparator = bestRecipe
+    ? candidates.find((row) => asString(row.recipe) === bestRecipe || asString(row.condition_id) === bestRecipe)
+    : undefined;
+  const comparatorRow =
+    explicitComparator ||
+    selectConditionRowByMetric({
+      rows: candidates,
+      preferredKeys,
+      direction: args.objectiveProfile.direction
+    });
+  if (!comparatorRow) {
+    return undefined;
+  }
+
   const baselineMetrics = new Map(
     flattenNumericMetrics(baselineRow).map((item) => [item.key, item.value])
   );
@@ -1672,6 +1805,108 @@ function buildResultsArrayConditionComparison(args: {
   };
 }
 
+function readResultRowsFromMetrics(metrics: Record<string, unknown>): {
+  source: "metrics.results" | "metrics.result_rows";
+  rows: Array<Record<string, unknown>>;
+} {
+  const resultsArray = asArray(metrics.results).map((item) => enrichResultRow(asRecord(item)));
+  if (resultsArray.length > 0) {
+    return { source: "metrics.results", rows: resultsArray };
+  }
+
+  const resultsRecord = asRecord(metrics.results);
+  const objectRows = Object.entries(resultsRecord)
+    .map(([name, value]) => {
+      const row = { ...asRecord(value) };
+      if (!asString(row.recipe)) {
+        row.recipe = name;
+      }
+      if (!asString(row.condition_id)) {
+        row.condition_id = name;
+      }
+      return enrichResultRow(row);
+    })
+    .filter((row) => Object.keys(row).length > 0);
+  if (objectRows.length > 0) {
+    return { source: "metrics.results", rows: objectRows };
+  }
+
+  return {
+    source: "metrics.result_rows",
+    rows: asArray(metrics.result_rows).map((item) => enrichResultRow(asRecord(item)))
+  };
+}
+
+function enrichResultRow(row: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...row };
+  const evaluation = asRecord(next.evaluation);
+  const arcAccuracy = asNumber(asRecord(evaluation.arc_challenge).accuracy);
+  const hellaswagAccuracy = asNumber(asRecord(evaluation.hellaswag).accuracy);
+  if (arcAccuracy !== undefined && next.arc_challenge_accuracy === undefined) {
+    next.arc_challenge_accuracy = arcAccuracy;
+  }
+  if (hellaswagAccuracy !== undefined && next.hellaswag_accuracy === undefined) {
+    next.hellaswag_accuracy = hellaswagAccuracy;
+  }
+  if (
+    arcAccuracy !== undefined &&
+    hellaswagAccuracy !== undefined &&
+    next.mean_accuracy === undefined
+  ) {
+    next.mean_accuracy = Number(((arcAccuracy + hellaswagAccuracy) / 2).toFixed(6));
+  }
+  if (
+    arcAccuracy !== undefined &&
+    hellaswagAccuracy !== undefined &&
+    next.mean_zero_shot_accuracy === undefined
+  ) {
+    next.mean_zero_shot_accuracy = Number(((arcAccuracy + hellaswagAccuracy) / 2).toFixed(6));
+  }
+  return next;
+}
+
+function enrichConditionRow(row: Record<string, unknown>): Record<string, unknown> {
+  const next = enrichResultRow(row);
+  const evaluation = asRecord(next.evaluation);
+  const evalMetrics = asRecord(next.eval_metrics);
+  const training = asRecord(next.training);
+
+  const evalMeanAccuracy = asNumber(evalMetrics.mean_accuracy);
+  const evalMeanZeroShotAccuracy =
+    asNumber(evaluation.mean_zero_shot_accuracy) ||
+    asNumber(evalMetrics.mean_zero_shot_accuracy) ||
+    asNumber(next.mean_zero_shot_accuracy);
+  if (next.mean_accuracy === undefined && typeof evalMeanAccuracy === "number") {
+    next.mean_accuracy = evalMeanAccuracy;
+  }
+  if (next.mean_zero_shot_accuracy === undefined && typeof evalMeanZeroShotAccuracy === "number") {
+    next.mean_zero_shot_accuracy = evalMeanZeroShotAccuracy;
+  }
+  if (next.mean_accuracy === undefined && typeof evalMeanZeroShotAccuracy === "number") {
+    next.mean_accuracy = evalMeanZeroShotAccuracy;
+  }
+
+  const trainableParams =
+    asNumber(next.trainable_params) ||
+    asNumber(next.trainable_parameters) ||
+    asNumber(training.trainable_params) ||
+    asNumber(training.trainable_parameters);
+  if (next.trainable_params === undefined && typeof trainableParams === "number") {
+    next.trainable_params = trainableParams;
+  }
+
+  const trainingWallTime =
+    asNumber(next.training_wall_time_sec) ||
+    asNumber(training.wall_time_sec) ||
+    asNumber(training.wall_clock_seconds) ||
+    asNumber(training.runtime_seconds);
+  if (next.training_wall_time_sec === undefined && typeof trainingWallTime === "number") {
+    next.training_wall_time_sec = trainingWallTime;
+  }
+
+  return next;
+}
+
 function buildResultArrayPreferredKeys(
   objectiveEvaluation: ObjectiveMetricEvaluation,
   objectiveProfile: ObjectiveMetricProfile
@@ -1680,9 +1915,12 @@ function buildResultArrayPreferredKeys(
     objectiveEvaluation.matchedMetricKey,
     objectiveProfile.primaryMetric,
     ...objectiveProfile.preferredMetricKeys,
+    "mean_zero_shot_accuracy",
     "mean_accuracy",
     "arc_challenge_accuracy",
     "hellaswag_accuracy",
+    "trainable_params",
+    "training_wall_time_sec",
     "wall_clock_seconds",
     "peak_gpu_memory_allocated_bytes",
     "max_gpu_memory_allocated_bytes"
@@ -1772,22 +2010,20 @@ function buildConditionsArrayConditionComparison(args: {
   objectiveEvaluation: ObjectiveMetricEvaluation;
   objectiveProfile: ObjectiveMetricProfile;
 }): AnalysisConditionComparison | undefined {
-  const conditionRows = asArray(args.metrics.conditions)
-    .map((item) => asRecord(item))
+  const conditionRowSource = readConditionRowsFromMetrics(args.metrics);
+  const conditionRows = conditionRowSource.rows
     .filter((row) => Object.keys(row).length > 0)
     .filter((row) => isCompletedConditionRow(row));
   if (conditionRows.length < 2) {
     return undefined;
   }
 
-  const baselineRow =
-    conditionRows.find((row) => row.is_baseline === true) ||
-    conditionRows.find((row) => isLikelyBaselineCondition(readConditionName(row)));
+  const baselineRow = selectBaselineConditionRow(conditionRows);
   if (!baselineRow) {
     return undefined;
   }
 
-  const candidates = conditionRows.filter((row) => row !== baselineRow);
+  const candidates = selectEligibleComparatorConditionRows(conditionRows.filter((row) => row !== baselineRow));
   if (candidates.length === 0) {
     return undefined;
   }
@@ -1853,11 +2089,65 @@ function buildConditionsArrayConditionComparison(args: {
   return {
     id: `${comparatorName}_vs_${baselineName}`,
     label: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}`,
-    source: "metrics.conditions",
+    source: conditionRowSource.source,
     metrics: shared,
     hypothesis_supported: hypothesisSupported,
     summary: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}: ${sharedSummary}.`
   };
+}
+
+function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
+  source: "metrics.conditions" | "metrics.condition_results" | "metrics.condition_summaries";
+  rows: Array<Record<string, unknown>>;
+} {
+  const summaryRows = asArray(metrics.condition_summaries)
+    .map((item) => enrichConditionRow(asRecord(item)))
+    .filter((row) => Object.keys(row).length > 0);
+  const summariesByName = new Map(
+    summaryRows
+      .map((row) => [readConditionName(row), row] as const)
+      .filter(([name]) => Boolean(name))
+  );
+  const conditionRowsFromArray = asArray(metrics.conditions)
+    .map((item) => {
+      const row = asRecord(item);
+      const name = readConditionName(row);
+      const summary = name ? summariesByName.get(name) : undefined;
+      return enrichConditionRow(summary ? { ...summary, ...row } : row);
+    })
+    .filter((row) => Object.keys(row).length > 0);
+  const conditionRowsFromRecord = Object.entries(asRecord(metrics.conditions))
+    .map(([name, value]) => {
+      const row = { ...asRecord(value) };
+      if (!asString(row.name)) {
+        row.name = name;
+      }
+      if (!asString(row.condition_id)) {
+        row.condition_id = name;
+      }
+      const rowName = readConditionName(row);
+      const summary = rowName ? summariesByName.get(rowName) : undefined;
+      return enrichConditionRow(summary ? { ...summary, ...row } : row);
+    })
+    .filter((row) => Object.keys(row).length > 0);
+  const conditionRows = conditionRowsFromArray.length > 0
+    ? conditionRowsFromArray
+    : conditionRowsFromRecord;
+  const conditionResultRows = asArray(metrics.condition_results)
+    .map((item) => {
+      const row = asRecord(item);
+      const name = readConditionName(row);
+      const summary = name ? summariesByName.get(name) : undefined;
+      return enrichConditionRow(summary ? { ...summary, ...row } : row);
+    })
+    .filter((row) => Object.keys(row).length > 0);
+  if (conditionRows.length > 0) {
+    return { source: "metrics.conditions", rows: conditionRows };
+  }
+  if (conditionResultRows.length > 0) {
+    return { source: "metrics.condition_results", rows: conditionResultRows };
+  }
+  return { source: "metrics.condition_summaries", rows: summaryRows };
 }
 
 function isCompletedConditionRow(row: Record<string, unknown>): boolean {
@@ -1869,21 +2159,88 @@ function isCompletedConditionRow(row: Record<string, unknown>): boolean {
 }
 
 function readConditionName(row: Record<string, unknown>): string {
+  const conditionConfig = asRecord(row.condition_config);
   return (
     asString(row.name) ||
+    asString(row.condition_name) ||
     asString(row.condition_id) ||
+    asString(row.condition_marker) ||
     asString(row.id) ||
     asString(row.recipe) ||
     asString(row.recipe_id) ||
+    asString(conditionConfig.name) ||
+    asString(conditionConfig.marker) ||
     ""
   );
 }
 
+function isBaselineConditionRow(row: Record<string, unknown>): boolean {
+  return baselineConditionRowScore(row) > 0;
+}
+
+function selectBaselineConditionRow(rows: Array<Record<string, unknown>>): Record<string, unknown> | undefined {
+  return rows
+    .map((row, index) => ({
+      row,
+      index,
+      score: baselineConditionRowScore(row)
+    }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)[0]?.row;
+}
+
+function selectEligibleComparatorConditionRows(
+  rows: Array<Record<string, unknown>>
+): Array<Record<string, unknown>> {
+  const nonBaselineRows = rows.filter((row) => !isBaselineConditionRow(row));
+  return nonBaselineRows.length > 0 ? nonBaselineRows : rows;
+}
+
+function baselineConditionRowScore(row: Record<string, unknown>): number {
+  if (row.is_baseline === true) {
+    return 5;
+  }
+  const roleText = [
+    readConditionName(row),
+    asString(row.condition_type),
+    asString(row.type),
+    asString(row.role),
+    asString(row.group_kind)
+  ].filter((item): item is string => Boolean(item)).join(" ");
+  return baselineConditionTextScore(roleText);
+}
+
+function baselineConditionTextScore(text: string): number {
+  const lower = text.toLowerCase();
+  const referenceBaseline =
+    /(?:^|[_\s-])(?:unmodified|pretrained|zero[_\s-]?shot|untuned|no[_\s-]?tuning|base)(?:[_\s-]|$)/u.test(lower);
+  const explicitBaseline = /(?:^|[_\s-])baseline(?:[_\s-]|$)/u.test(lower);
+  const tunedBaseline =
+    /(?:^|[_\s-])(?:lora|peft|adapter|tuned|locked)[\w\s-]*baseline(?:[_\s-]|$)/u.test(lower) ||
+    /(?:^|[_\s-])baseline[\w\s-]*(?:lora|peft|adapter|tuned|locked)(?:[_\s-]|$)/u.test(lower);
+
+  if (tunedBaseline && !referenceBaseline) {
+    return 4;
+  }
+  if (explicitBaseline && !referenceBaseline) {
+    return 3;
+  }
+  if (explicitBaseline) {
+    return 2;
+  }
+  return referenceBaseline || isLikelyBaselineCondition(lower) ? 1 : 0;
+}
+
 function readBestConditionName(metrics: Record<string, unknown>): string | undefined {
   const primaryMetric = asRecord(metrics.primary_metric);
+  const bestCondition = asRecord(metrics.best_condition);
   return (
     asString(primaryMetric.best_condition) ||
     asString(primaryMetric.best_condition_id) ||
+    asString(bestCondition.name) ||
+    asString(bestCondition.condition_id) ||
+    asString(bestCondition.id) ||
+    asString(bestCondition.recipe) ||
     asString(metrics.best_condition) ||
     asString(metrics.best_condition_id) ||
     asString(metrics.best_tuned_condition_id) ||
@@ -1976,7 +2333,7 @@ function isUsefulResultArrayMetric(key: string, preferredKeys: string[]): boolea
   if (metricPreferenceRank(key, preferredKeys) !== Number.MAX_SAFE_INTEGER) {
     return true;
   }
-  return /(?:^|_)(accuracy|acc|score|f1|precision|recall|loss|latency|runtime|memory|seconds|time)(?:_|$)/i.test(key);
+  return /(?:^|[._-])(accuracy|acc|score|f1|precision|recall|loss|latency|runtime|memory|seconds|time)(?:[._-]|$)/i.test(key);
 }
 
 function selectConditionByMetric(args: {
@@ -2215,7 +2572,7 @@ function isLowerBetterMetric(
 }
 
 function isLikelyBaselineCondition(name: string): boolean {
-  return /baseline|control|free[_ -]?form|plain|unstructured|default/u.test(name.toLowerCase());
+  return /(?:^|[_ -])(baseline|base|control|reference|free[_ -]?form|plain|unstructured|default|unmodified|pretrained|zero[_ -]?shot)(?:[_ -]|$)/u.test(name.toLowerCase());
 }
 
 function isLikelyPrimaryCondition(name: string): boolean {

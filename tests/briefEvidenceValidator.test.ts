@@ -24,6 +24,14 @@ function makeReport(overrides: Partial<AnalysisReport> = {}): AnalysisReport {
         metrics: [],
         hypothesis_supported: true,
         summary: "Candidate outperformed the baseline."
+      },
+      {
+        id: "comparison_2",
+        label: "candidate vs second baseline",
+        source: "metrics.condition_metrics",
+        metrics: [],
+        hypothesis_supported: true,
+        summary: "Candidate also outperformed the second baseline."
       }
     ],
     failure_taxonomy: [],
@@ -87,6 +95,16 @@ describe("briefEvidenceValidator", () => {
             baselines: ["baseline_a"]
           }
         } as AnalysisReport["plan_context"]["selected_design"],
+        condition_comparisons: [
+          {
+            id: "comparison_1",
+            label: "candidate vs baseline",
+            source: "metrics.condition_metrics",
+            metrics: [],
+            hypothesis_supported: true,
+            summary: "Only one executed baseline comparison is available."
+          }
+        ] as AnalysisReport["condition_comparisons"],
         failure_taxonomy: [
           {
             id: "gap_1",
@@ -128,5 +146,67 @@ describe("briefEvidenceValidator", () => {
     expect(assessment.failures).toHaveLength(0);
     expect(assessment.requirements.minimum_baseline_count).toBe(2);
     expect(assessment.requirements.minimum_runs_or_folds).toBe(3);
+  });
+
+  it("does not fail the brief gate solely for documented low-severity scope limitations", () => {
+    const assessment = evaluateBriefEvidenceAgainstResults({
+      briefSections: makeBriefSections(),
+      report: makeReport({
+        failure_taxonomy: [
+          {
+            id: "scope_limit",
+            category: "scope_limit",
+            severity: "low",
+            status: "risk",
+            summary: "Scope limitation: optional DoRA variant was documented but not required.",
+            evidence: ["plan_context.selected_design.risks"],
+            recommended_action: "Document the limitation explicitly."
+          }
+        ] as AnalysisReport["failure_taxonomy"]
+      })
+    });
+
+    expect(assessment.enabled).toBe(true);
+    expect(assessment.status).toBe("pass");
+    expect(assessment.actual.scope_limit_count).toBe(0);
+    expect(assessment.failures).toHaveLength(0);
+  });
+
+  it("fails when the brief requires all planned conditions but execution covers only a subset", () => {
+    const assessment = evaluateBriefEvidenceAgainstResults({
+      briefSections: makeBriefSections({
+        minimumAcceptableEvidence:
+          "All planned conditions must execute successfully and report bootstrap confidence intervals.",
+        minimumExperimentPlan:
+          "Execute one named tuned baseline run and three alternative recipe conditions."
+      }),
+      report: makeReport({
+        plan_context: {
+          selected_design: {
+            baselines: ["locked_lora"],
+            implementation_notes: [
+              "Planned tuned conditions: locked Standard LoRA; LoRA all-linear; LoRA q_k_v_o; RSLoRA q_v."
+            ],
+            evaluation_steps: [],
+            metrics: [],
+            resource_notes: [],
+            risks: []
+          }
+        } as AnalysisReport["plan_context"],
+        metrics: {
+          conditions: [
+            { name: "base_unmodified" },
+            { name: "lora_r8" },
+            { name: "lora_r16" }
+          ]
+        }
+      })
+    });
+
+    expect(assessment.enabled).toBe(true);
+    expect(assessment.status).toBe("fail");
+    expect(assessment.requirements.minimum_condition_count).toBe(4);
+    expect(assessment.actual.executed_condition_count).toBe(2);
+    expect(assessment.failures).toContain("Executed evidence covers all planned conditions");
   });
 });

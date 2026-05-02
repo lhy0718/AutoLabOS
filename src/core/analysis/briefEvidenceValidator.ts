@@ -1,5 +1,9 @@
 import type { AnalysisReport } from "../resultAnalysis.js";
 import type { MarkdownRunBriefSections } from "../runs/runBriefParser.js";
+import {
+  countExecutedPlannedConditions,
+  deriveRequiredPlannedConditionCount
+} from "./plannedConditionCoverage.js";
 
 export type BriefEvidenceStatus = "not_applicable" | "pass" | "warn" | "fail";
 export type BriefEvidenceCeiling =
@@ -26,6 +30,7 @@ export interface BriefEvidenceAssessment {
   requirements: {
     minimum_runs_or_folds?: number;
     minimum_baseline_count: number;
+    minimum_condition_count?: number;
     requires_confidence_intervals: boolean;
     paper_ceiling?: string;
     raw_minimum_evidence?: string;
@@ -33,6 +38,7 @@ export interface BriefEvidenceAssessment {
   actual: {
     executed_trials?: number;
     baseline_count: number;
+    executed_condition_count?: number;
     confidence_interval_count: number;
     evidence_gap_count: number;
     scope_limit_count: number;
@@ -83,9 +89,20 @@ export function evaluateBriefEvidenceAgainstResults(input: {
     input.report.statistical_summary.total_trials ??
     input.report.overview.execution_runs;
   const baselineCount = deriveActualBaselineCount(input.report);
+  const conditionRequirement = deriveRequiredPlannedConditionCount(
+    briefSections,
+    input.report.plan_context.selected_design
+  );
+  const requiredConditionCount = conditionRequirement?.conditionCount;
+  const executedConditionCount = countExecutedPlannedConditions(asRecord(input.report.metrics), {
+    tunedOnly: conditionRequirement?.tunedOnly,
+    fallbackComparisonCount: input.report.condition_comparisons.length > 0
+      ? input.report.condition_comparisons.length + 1
+      : 0
+  });
   const confidenceIntervalCount = input.report.statistical_summary.confidence_intervals.length;
-  const evidenceGapCount = countFailureCategory(input.report, "evidence_gap");
-  const scopeLimitCount = countFailureCategory(input.report, "scope_limit");
+  const evidenceGapCount = countBlockingFailureCategory(input.report, "evidence_gap");
+  const scopeLimitCount = countBlockingFailureCategory(input.report, "scope_limit");
 
   if (!hasBriefGovernance) {
     return {
@@ -96,11 +113,13 @@ export function evaluateBriefEvidenceAgainstResults(input: {
       ceiling_type: "unrestricted",
       requirements: {
         minimum_baseline_count: 0,
+        minimum_condition_count: requiredConditionCount,
         requires_confidence_intervals: false
       },
       actual: {
         executed_trials: executedTrials,
         baseline_count: baselineCount,
+        executed_condition_count: executedConditionCount,
         confidence_interval_count: confidenceIntervalCount,
         evidence_gap_count: evidenceGapCount,
         scope_limit_count: scopeLimitCount
@@ -163,6 +182,18 @@ export function evaluateBriefEvidenceAgainstResults(input: {
           : "No explicit run/fold count could be inferred from the brief."
     },
     {
+      id: "planned_condition_coverage_met",
+      label: "Executed evidence covers all planned conditions",
+      severity: "error",
+      passed:
+        typeof requiredConditionCount !== "number" ||
+        executedConditionCount >= requiredConditionCount,
+      detail:
+        typeof requiredConditionCount === "number"
+          ? `Observed executed_condition_count=${executedConditionCount}; required at least ${requiredConditionCount}.`
+          : "No explicit planned-condition count could be inferred from the brief or selected design."
+    },
+    {
       id: "confidence_intervals_present",
       label: "Confidence intervals are present when the brief asks for statistical support",
       severity: requiresConfidenceIntervals ? "error" : "warning",
@@ -173,10 +204,10 @@ export function evaluateBriefEvidenceAgainstResults(input: {
     },
     {
       id: "analysis_evidence_gaps_clear",
-      label: "Analyze-results did not flag unresolved evidence-scale or scope gaps",
+      label: "Analyze-results did not flag unresolved evidence-scale or blocking scope gaps",
       severity: "error",
       passed: evidenceGapCount === 0 && scopeLimitCount === 0,
-      detail: `Observed evidence_gap=${evidenceGapCount}, scope_limit=${scopeLimitCount}.`
+      detail: `Observed blocking evidence_gap=${evidenceGapCount}, blocking scope_limit=${scopeLimitCount}.`
     }
   ];
 
@@ -209,6 +240,7 @@ export function evaluateBriefEvidenceAgainstResults(input: {
     requirements: {
       minimum_runs_or_folds: requiredRuns,
       minimum_baseline_count: requiredBaselineCount,
+      minimum_condition_count: requiredConditionCount,
       requires_confidence_intervals: requiresConfidenceIntervals,
       paper_ceiling: briefSections?.paperCeiling?.trim() || undefined,
       raw_minimum_evidence: minimumEvidenceText || undefined
@@ -216,6 +248,7 @@ export function evaluateBriefEvidenceAgainstResults(input: {
     actual: {
       executed_trials: executedTrials,
       baseline_count: baselineCount,
+      executed_condition_count: executedConditionCount,
       confidence_interval_count: confidenceIntervalCount,
       evidence_gap_count: evidenceGapCount,
       scope_limit_count: scopeLimitCount
@@ -227,9 +260,7 @@ export function evaluateBriefEvidenceAgainstResults(input: {
 }
 
 function deriveActualBaselineCount(report: AnalysisReport): number {
-  const explicitBaselines = report.plan_context.selected_design?.baselines?.length ?? 0;
-  const comparisons = report.condition_comparisons.length > 0 ? 1 : 0;
-  return Math.max(explicitBaselines, comparisons);
+  return report.condition_comparisons.length;
 }
 
 function parseRequiredBaselineCount(text: string): number {
@@ -286,6 +317,19 @@ function detectConfidenceIntervalRequirement(chunks: Array<string | undefined>):
   );
 }
 
-function countFailureCategory(report: AnalysisReport, category: "evidence_gap" | "scope_limit"): number {
-  return report.failure_taxonomy.filter((failure) => failure.category === category).length;
+function countBlockingFailureCategory(report: AnalysisReport, category: "evidence_gap" | "scope_limit"): number {
+  return report.failure_taxonomy.filter((failure) =>
+    failure.category === category && failure.severity !== "low"
+  ).length;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

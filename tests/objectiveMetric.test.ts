@@ -184,7 +184,7 @@ describe("objectiveMetric", () => {
     expect(enriched.f1_delta_vs_baseline).toBeCloseTo(0.05, 10);
   });
 
-  it("applies plausibility guard for impossible absolute targets (LV-014 defense-in-depth)", () => {
+  it("does not use plausibility rescaling to satisfy a relative target from raw accuracy alone", () => {
     const profile = normalizeObjectiveMetricProfile(
       {
         source: "llm",
@@ -202,8 +202,9 @@ describe("objectiveMetric", () => {
       "accuracy at least 1.5 over baseline"
     );
 
-    expect(evaluation.targetValue).toBe(0.015);
-    expect(evaluation.status).toBe("met");
+    expect(evaluation.targetValue).toBe(1.5);
+    expect(evaluation.status).toBe("missing");
+    expect(evaluation.matchedMetricKey).toBeUndefined();
   });
 
   it("handles general accuracy + baseline without logistic regression", () => {
@@ -336,6 +337,235 @@ describe("objectiveMetric", () => {
 
     expect(enriched.mean_zero_shot_accuracy_delta_vs_baseline).toBeCloseTo(-0.02083333333333337, 10);
     expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(-0.02083333333333337, 10);
+  });
+
+  it("synthesizes accuracy delta from top-level condition object maps with nested evaluation metrics", () => {
+    const enriched = synthesizeRelativeMetrics({
+      comparison_mode: "baseline_first_locked",
+      conditions: {
+        base: {
+          type: "locked_untuned_baseline",
+          evaluation: { primary_mean_accuracy: 0.525 }
+        },
+        lora_r16: {
+          type: "peft_lora_instruction_tuned",
+          evaluation: { primary_mean_accuracy: 0.4875 },
+          train: { trainable_params: 2252800 }
+        },
+        lora_r8: {
+          type: "peft_lora_instruction_tuned",
+          evaluation: { primary_mean_accuracy: 0.5125 },
+          train: { trainable_params: 1126400 }
+        }
+      }
+    });
+
+    expect(enriched.primary_mean_accuracy_delta_vs_baseline).toBeCloseTo(-0.0125, 10);
+    expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(-0.0125, 10);
+  });
+
+  it("evaluates a negative delta from top-level condition object maps without treating raw accuracy as success", () => {
+    const objective = "at least +1.0 percentage point over the named tuned baseline";
+    const profile = normalizeObjectiveMetricProfile(
+      {
+        source: "llm",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "primary_mean_accuracy_delta_vs_baseline"],
+        direction: "maximize",
+        comparator: ">=",
+        targetValue: 0.01
+      },
+      objective
+    );
+
+    const evaluation = evaluateObjectiveMetric(
+      {
+        conditions: {
+          base: {
+            type: "locked_untuned_baseline",
+            evaluation: { primary_mean_accuracy: 0.525 }
+          },
+          lora_r16: {
+            type: "peft_lora_instruction_tuned",
+            evaluation: { primary_mean_accuracy: 0.4875 },
+            train: { trainable_params: 2252800 }
+          },
+          lora_r8: {
+            type: "peft_lora_instruction_tuned",
+            evaluation: { primary_mean_accuracy: 0.5125 },
+            train: { trainable_params: 1126400 }
+          }
+        }
+      },
+      profile,
+      objective
+    );
+
+    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
+    expect(evaluation.observedValue).toBeCloseTo(-0.0125, 10);
+    expect(evaluation.status).toBe("not_met");
+  });
+
+  it("excludes unmodified reference conditions when evaluating alternatives over a named tuned baseline", () => {
+    const objective = "at least +1.0 percentage point over the named tuned baseline";
+    const profile = normalizeObjectiveMetricProfile(
+      {
+        source: "llm",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_delta_vs_baseline"],
+        direction: "maximize",
+        comparator: ">=",
+        targetValue: 0.01
+      },
+      objective
+    );
+
+    const evaluation = evaluateObjectiveMetric(
+      {
+        conditions: {
+          dora: {
+            name: "dora",
+            status: "completed",
+            accuracy_delta_vs_baseline: -0.03125,
+            evaluation: { mean_zero_shot_accuracy: 0.4765625 }
+          },
+          lora_baseline: {
+            name: "lora_baseline",
+            status: "completed",
+            accuracy_delta_vs_baseline: -0.015625,
+            evaluation: { mean_zero_shot_accuracy: 0.4921875 }
+          },
+          rslora: {
+            name: "rslora",
+            status: "completed",
+            accuracy_delta_vs_baseline: -0.0078125,
+            evaluation: { mean_zero_shot_accuracy: 0.5 }
+          },
+          unmodified_base: {
+            name: "unmodified_base",
+            status: "completed",
+            accuracy_delta_vs_baseline: 0,
+            evaluation: { mean_zero_shot_accuracy: 0.5078125 }
+          }
+        }
+      },
+      profile,
+      objective
+    );
+
+    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
+    expect(evaluation.observedValue).toBeCloseTo(0.0078125, 10);
+    expect(evaluation.status).toBe("not_met");
+    expect(evaluation.summary).toContain("not met");
+  });
+
+  it("downgrades a met accuracy delta when the winning treatment has a large resource regression", () => {
+    const objective =
+      "Primary metric: mean zero-shot accuracy across ARC-Challenge and HellaSwag. What counts as meaningful improvement: at least +1.0 percentage point over the named tuned baseline on the primary metric without an unacceptable runtime or memory regression.";
+    const profile = normalizeObjectiveMetricProfile(
+      {
+        source: "llm",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy"],
+        direction: "maximize",
+        comparator: ">=",
+        targetValue: 0.01
+      },
+      objective
+    );
+
+    const evaluation = evaluateObjectiveMetric(
+      {
+        conditions: {
+          dora: {
+            name: "dora",
+            status: "completed",
+            evaluation: { mean_zero_shot_accuracy: 0.4765625 },
+            wall_clock_sec: 128.40490746498108,
+            device_info_end: { cuda_max_memory_allocated_bytes: 9772951552 }
+          },
+          lora_baseline: {
+            name: "lora_baseline",
+            status: "completed",
+            evaluation: { mean_zero_shot_accuracy: 0.4921875 },
+            wall_clock_sec: 28.637099504470825,
+            device_info_end: { cuda_max_memory_allocated_bytes: 3031420928 }
+          },
+          rslora: {
+            name: "rslora",
+            status: "completed",
+            evaluation: { mean_zero_shot_accuracy: 0.5078125 },
+            wall_clock_sec: 81.93073916435242,
+            device_info_end: { cuda_max_memory_allocated_bytes: 9751863296 }
+          },
+          unmodified_base: {
+            name: "unmodified_base",
+            status: "completed",
+            evaluation: { mean_zero_shot_accuracy: 0.5078125 },
+            wall_clock_sec: 7.428321599960327,
+            device_info_end: { cuda_max_memory_allocated_bytes: 1606646272 }
+          }
+        }
+      },
+      profile,
+      objective
+    );
+
+    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
+    expect(evaluation.observedValue).toBeCloseTo(0.015625, 10);
+    expect(evaluation.status).toBe("not_met");
+    expect(evaluation.summary).toContain("Resource regression requirement not satisfied");
+    expect(evaluation.summary).toContain("rslora vs lora baseline");
+    expect(evaluation.summary).toContain("runtime 2.86x");
+    expect(evaluation.summary).toContain("memory 3.22x");
+  });
+
+  it("does not match raw accuracy when the objective requires improvement over baseline", () => {
+    const objective =
+      "Primary metric: mean zero-shot accuracy. What counts as meaningful improvement: at least +1.0 percentage point over the named tuned baseline.";
+    const profile = normalizeObjectiveMetricProfile(
+      {
+        source: "llm",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: [
+          "accuracy_delta_vs_baseline",
+          "mean_zero_shot_accuracy",
+          "arc_challenge_accuracy"
+        ],
+        direction: "maximize",
+        comparator: ">=",
+        targetValue: 0.01
+      },
+      objective
+    );
+
+    const evaluation = evaluateObjectiveMetric(
+      {
+        best_condition: {
+          name: "base_unmodified",
+          arc_challenge_accuracy: 0.296875,
+          mean_zero_shot_accuracy: 0.40234375
+        },
+        conditions: [
+          {
+            name: "base_unmodified",
+            condition_type: "baseline_unmodified_checkpoint",
+            evaluation: { mean_zero_shot_accuracy: 0.40234375 }
+          },
+          {
+            name: "lora_r8",
+            condition_type: "peft_lora_instruction_tuned",
+            evaluation: { mean_zero_shot_accuracy: 0.3984375 }
+          }
+        ]
+      },
+      profile,
+      objective
+    );
+
+    expect(evaluation.status).toBe("missing");
+    expect(evaluation.matchedMetricKey).toBeUndefined();
+    expect(evaluation.summary).toContain("was not found");
   });
 
   it("does not satisfy a delta objective with absolute baseline accuracy from PEFT metrics", () => {

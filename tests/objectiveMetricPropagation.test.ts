@@ -2173,6 +2173,141 @@ describe("objective metric propagation", () => {
     );
   });
 
+  it("does not pause for an incomplete table when metrics.results is keyed by recipe with nested evaluation metrics", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-keyed-results-table-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-keyed-results-table";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "mean zero-shot accuracy improvement over tuned baseline >= 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          best_recipe: "unmodified_baseline",
+          primary_metric: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
+          baseline_comparisons_bootstrap: {
+            broader_target_lora_rank16_alpha32_dropout005_q_k_v_o_mlp: {
+              mean_delta: -0.015625,
+              bootstrap_ci95_low: -0.057291666666666664,
+              bootstrap_ci95_high: 0.026041666666666668
+            }
+          },
+          results: {
+            unmodified_baseline: {
+              status: "completed",
+              training: { trained: false, trainable_parameters: 0 },
+              evaluation: {
+                arc_challenge: { accuracy: 0.23958333333333334, correct: 23, total: 96 },
+                hellaswag: { accuracy: 0.5, correct: 48, total: 96 }
+              }
+            },
+            standard_lora_rank16_alpha32_dropout005_q_v_baseline: {
+              status: "completed",
+              training: { trained: true, trainable_parameters: 2252800 },
+              evaluation: {
+                arc_challenge: { accuracy: 0.16666666666666666, correct: 16, total: 96 },
+                hellaswag: { accuracy: 0.5, correct: 48, total: 96 }
+              }
+            },
+            broader_target_lora_rank16_alpha32_dropout005_q_k_v_o_mlp: {
+              status: "completed",
+              training: { trained: true, trainable_parameters: 12615680 },
+              evaluation: {
+                arc_challenge: { accuracy: 0.22916666666666666, correct: 22, total: 96 },
+                hellaswag: { accuracy: 0.4791666666666667, correct: 46, total: 96 }
+              }
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: runId,
+          created_at: new Date().toISOString(),
+          hypothesis: "A broader target LoRA recipe should improve zero-shot accuracy",
+          causal_mechanism: "Targeting additional modules should improve adaptation",
+          single_change: "LoRA target module scope",
+          confounded: false,
+          expected_metric_effect: "Higher mean accuracy than baseline",
+          abort_condition: "Abort if accuracy regresses",
+          keep_or_discard_rule: "Keep if improved",
+          baselines: ["unmodified_baseline"],
+          metrics: ["mean_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+          results_table_schema: [
+            {
+              metric: "mean_accuracy",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
+
+    const analysisRaw = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as {
+      condition_comparisons: Array<{ source: string; metrics: Array<{ key: string; baseline_value: number; primary_value: number }> }>;
+      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
+    };
+    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.results");
+    expect(analysisRaw.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "mean_accuracy",
+          baseline_value: 0.3698,
+          primary_value: 0.3542
+        })
+      ])
+    );
+    expect(analysisRaw.results_table).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "mean_accuracy",
+          baseline: 0.3698,
+          comparator: 0.3542,
+          delta: -0.0156
+        })
+      ])
+    );
+  });
+
   it("does not pause for an incomplete table when metrics.result_rows has a locked baseline and best tuned row", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-result-rows-table-"));
     process.chdir(root);
@@ -2543,6 +2678,508 @@ describe("objective metric propagation", () => {
           baseline: 0.390625,
           comparator: 0.375,
           delta: -0.0156
+        })
+      ])
+    );
+  });
+
+  it("does not pause for an incomplete table when metrics.conditions is keyed by condition name", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-conditions-map-table-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-conditions-map-table";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          primary_metric: {
+            key: "accuracy_delta_vs_baseline",
+            baseline_condition: "unmodified_base",
+            best_condition: "unmodified_base",
+            best_value: 0
+          },
+          conditions: {
+            dora: {
+              name: "dora",
+              status: "completed",
+              accuracy_delta_vs_baseline: -0.03125,
+              evaluation: {
+                mean_zero_shot_accuracy: 0.4765625,
+                pooled_bootstrap: {
+                  ci95_low: 0.3904296875,
+                  ci95_high: 0.5703125,
+                  mean: 0.4765625
+                },
+                tasks: {
+                  arc_challenge: { accuracy: 0.453125 },
+                  hellaswag: { accuracy: 0.5 }
+                }
+              }
+            },
+            lora_baseline: {
+              name: "lora_baseline",
+              status: "completed",
+              accuracy_delta_vs_baseline: -0.015625,
+              evaluation: {
+                mean_zero_shot_accuracy: 0.4921875,
+                pooled_bootstrap: {
+                  ci95_low: 0.3984375,
+                  ci95_high: 0.5859375,
+                  mean: 0.4921875
+                },
+                tasks: {
+                  arc_challenge: { accuracy: 0.46875 },
+                  hellaswag: { accuracy: 0.515625 }
+                }
+              }
+            },
+            rslora: {
+              name: "rslora",
+              status: "completed",
+              accuracy_delta_vs_baseline: -0.0078125,
+              evaluation: {
+                mean_zero_shot_accuracy: 0.5,
+                pooled_bootstrap: {
+                  ci95_low: 0.40625,
+                  ci95_high: 0.59375,
+                  mean: 0.5
+                },
+                tasks: {
+                  arc_challenge: { accuracy: 0.484375 },
+                  hellaswag: { accuracy: 0.515625 }
+                }
+              }
+            },
+            unmodified_base: {
+              name: "unmodified_base",
+              status: "completed",
+              accuracy_delta_vs_baseline: 0,
+              evaluation: {
+                mean_zero_shot_accuracy: 0.5078125,
+                pooled_bootstrap: {
+                  ci95_low: 0.4140625,
+                  ci95_high: 0.6015625,
+                  mean: 0.5078125
+                },
+                tasks: {
+                  arc_challenge: { accuracy: 0.484375 },
+                  hellaswag: { accuracy: 0.53125 }
+                }
+              }
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: runId,
+          created_at: new Date().toISOString(),
+          hypothesis: "A non-baseline PEFT condition should improve accuracy",
+          causal_mechanism: "Adapter choice changes zero-shot accuracy",
+          single_change: "PEFT recipe",
+          confounded: false,
+          expected_metric_effect: "Higher accuracy than the named tuned baseline",
+          abort_condition: "Abort on missing condition evidence",
+          keep_or_discard_rule: "Keep if improved",
+          baselines: ["lora_baseline"],
+          metrics: ["accuracy_delta_vs_baseline"],
+          results_table_schema: [
+            {
+              metric: "accuracy_delta_vs_baseline",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
+
+    const analysisRaw = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as {
+      condition_comparisons: Array<{ source: string; label: string }>;
+      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
+      statistical_summary: { confidence_intervals: Array<{ metric_key: string }> };
+      failure_taxonomy: Array<{ id: string }>;
+    };
+    expect(analysisRaw.condition_comparisons[0]).toMatchObject({
+      source: "metrics.conditions",
+      label: "rslora vs lora baseline"
+    });
+    expect(analysisRaw.results_table).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "accuracy_delta_vs_baseline",
+          baseline: -0.015625,
+          comparator: -0.007813,
+          delta: 0.0078
+        })
+      ])
+    );
+    expect(
+      analysisRaw.statistical_summary.confidence_intervals.some((item) =>
+        item.metric_key === "conditions.unmodified_base.evaluation.mean_zero_shot_accuracy"
+      )
+    ).toBe(true);
+    expect(analysisRaw.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
+  });
+
+  it("does not pause when metrics.conditions uses base_unmodified and nested evaluation metrics", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-current-conditions-table-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-current-conditions-table";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "mean zero-shot accuracy improves over the unmodified baseline by at least 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          best_condition: {
+            name: "base_unmodified",
+            arc_challenge_accuracy: 0.296875,
+            hellaswag_accuracy: 0.5078125,
+            mean_zero_shot_accuracy: 0.40234375,
+            bootstrap_mean_ci: {
+              ci_low: 0.296875,
+              ci_high: 0.5078125,
+              mean: 0.40234375
+            }
+          },
+          best_vs_baseline_delta: 0,
+          condition_summaries: [
+            {
+              name: "base_unmodified",
+              arc_challenge_accuracy: 0.296875,
+              hellaswag_accuracy: 0.5078125,
+              mean_zero_shot_accuracy: 0.40234375,
+              bootstrap_mean_ci: {
+                ci_low: 0.296875,
+                ci_high: 0.5078125,
+                mean: 0.40234375
+              },
+              trainable_params: 0,
+              training_wall_time_sec: 0
+            },
+            {
+              name: "lora_r8",
+              arc_challenge_accuracy: 0.2734375,
+              hellaswag_accuracy: 0.5234375,
+              mean_zero_shot_accuracy: 0.3984375,
+              trainable_params: 6307840,
+              training_wall_time_sec: 431.3
+            },
+            {
+              name: "lora_r16",
+              arc_challenge_accuracy: 0.265625,
+              hellaswag_accuracy: 0.53125,
+              mean_zero_shot_accuracy: 0.3984375,
+              trainable_params: 12615680,
+              training_wall_time_sec: 433.3
+            }
+          ],
+          conditions: [
+            {
+              name: "base_unmodified",
+              condition_type: "baseline_unmodified_checkpoint",
+              evaluation: {
+                arc_challenge: { accuracy: 0.296875 },
+                hellaswag: { accuracy: 0.5078125 }
+              },
+              training: { trainable_params: 0, wall_time_sec: 0 }
+            },
+            {
+              name: "lora_r8",
+              condition_type: "peft_lora_instruction_tuned",
+              evaluation: {
+                arc_challenge: { accuracy: 0.2734375 },
+                hellaswag: { accuracy: 0.5234375 }
+              },
+              training: { trainable_params: 6307840, wall_time_sec: 431.3 }
+            },
+            {
+              name: "lora_r16",
+              condition_type: "peft_lora_instruction_tuned",
+              evaluation: {
+                arc_challenge: { accuracy: 0.265625 },
+                hellaswag: { accuracy: 0.53125 }
+              },
+              training: { trainable_params: 12615680, wall_time_sec: 433.3 }
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: runId,
+          created_at: new Date().toISOString(),
+          hypothesis: "LoRA tuning should improve zero-shot accuracy",
+          causal_mechanism: "Adapter training should improve downstream benchmark accuracy",
+          single_change: "LoRA rank",
+          confounded: false,
+          expected_metric_effect: "Higher mean zero-shot accuracy than the unmodified baseline",
+          abort_condition: "Abort if accuracy regresses",
+          keep_or_discard_rule: "Keep if improved",
+          baselines: ["base_unmodified"],
+          metrics: ["mean_zero_shot_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+          results_table_schema: [
+            {
+              metric: "primary_mean_zero_shot_accuracy=(arc_challenge_accuracy+hellaswag_accuracy)/2",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            },
+            {
+              metric: "accuracy_delta_vs_locked_tuned_baseline=primary_mean_zero_shot_accuracy-condition - primary_mean_zero_shot_accuracy-standard_lora_rank16_alpha32_dropout005_q_v_baseline",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
+
+    const analysisRaw = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as {
+      condition_comparisons: Array<{ source: string; metrics: Array<{ key: string; baseline_value: number; primary_value: number }> }>;
+      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
+      statistical_summary: { confidence_intervals: Array<{ metric_key: string }> };
+      failure_taxonomy: Array<{ id: string }>;
+    };
+    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.conditions");
+    expect(analysisRaw.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "mean_zero_shot_accuracy",
+          baseline_value: 0.402344,
+          primary_value: 0.398438
+        })
+      ])
+    );
+    expect(analysisRaw.results_table).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "mean_zero_shot_accuracy",
+          baseline: 0.402344,
+          comparator: 0.398438,
+          delta: -0.0039
+        })
+      ])
+    );
+    expect(
+      analysisRaw.statistical_summary.confidence_intervals.some((item) =>
+        item.metric_key === "best_condition.mean_zero_shot_accuracy"
+      )
+    ).toBe(true);
+    expect(analysisRaw.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
+  });
+
+  it("does not pause when generated metrics store completed rows under condition_results", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-condition-results-table-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-condition-results-table";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "mean zero-shot accuracy improves over the unmodified baseline by at least 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          condition_results: [
+            {
+              condition_name: "unmodified_base",
+              condition_marker: "unmodified_base",
+              status: "completed",
+              arc_challenge_accuracy: 0.3125,
+              hellaswag_accuracy: 0.4375,
+              mean_zero_shot_accuracy: 0.375
+            },
+            {
+              condition_name: "vanilla_lora_max_seq_length_1024_epochs_1_effective_batch_size_8",
+              condition_marker: "vanilla_lora|max_seq_length_1024_epochs_1_effective_batch_siz",
+              status: "completed",
+              arc_challenge_accuracy: 0.3125,
+              hellaswag_accuracy: 0.4375,
+              mean_zero_shot_accuracy: 0.375,
+              accuracy_delta_vs_baseline: 0
+            },
+            {
+              condition_name: "rslora_max_seq_length_1024_epochs_1_effective_batch_size_8",
+              condition_marker: "rslora|max_seq_length_1024_epochs_1_effective_batch_siz",
+              status: "completed",
+              arc_challenge_accuracy: 0.296875,
+              hellaswag_accuracy: 0.453125,
+              mean_zero_shot_accuracy: 0.375,
+              accuracy_delta_vs_baseline: 0
+            }
+          ],
+          summary: {
+            best_tuned_accuracy_delta_vs_baseline: 0,
+            best_tuned_condition: "vanilla_lora_max_seq_length_1024_epochs_1_effective_batch_size_8",
+            completed_condition_count: 3,
+            failed_condition_count: 0
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: runId,
+          created_at: new Date().toISOString(),
+          hypothesis: "LoRA tuning should improve zero-shot accuracy",
+          causal_mechanism: "Adapter training should improve downstream benchmark accuracy",
+          single_change: "PEFT method",
+          confounded: false,
+          expected_metric_effect: "Higher mean zero-shot accuracy than the unmodified baseline",
+          abort_condition: "Abort if accuracy regresses",
+          keep_or_discard_rule: "Keep if improved",
+          baselines: ["unmodified_base"],
+          metrics: ["mean_zero_shot_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+          results_table_schema: [
+            {
+              metric: "primary_mean_zero_shot_accuracy = (arc_challenge_accuracy + hellaswag_accuracy) / 2",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
+
+    const analysisRaw = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as {
+      condition_comparisons: Array<{ source: string; metrics: Array<{ key: string; baseline_value: number; primary_value: number }> }>;
+      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
+    };
+    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.condition_results");
+    expect(analysisRaw.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "mean_zero_shot_accuracy",
+          baseline_value: 0.375,
+          primary_value: 0.375
+        })
+      ])
+    );
+    expect(analysisRaw.results_table).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "mean_zero_shot_accuracy",
+          baseline: 0.375,
+          comparator: 0.375,
+          delta: 0
         })
       ])
     );

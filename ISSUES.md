@@ -5751,7 +5751,7 @@ The resolved entries below are kept as recent validation history and regression 
 - Recommended next step:
   - Treat the current `accuracy_delta_vs_baseline=0` as a real negative result unless a governed backtrack explicitly revises the experiment design or implementation; do not claim the target improvement was achieved.
 
-## Issue: LV-103
+## Issue: ARCHIVE-20260429-FINAL-WORKFLOW-DISPATCH
 
 - Status: resolved
 - Validation target: existing external-workspace TUI same-flow `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec` after removing heuristic decomposition/materialization/subdivision fallbacks and then tightening staged materialization/bootstrap guards
@@ -6125,7 +6125,7 @@ The resolved entries below are kept as recent validation history and regression 
 - Recommended next step:
   - keep the implement-stage compatibility repairs, and treat offline Hugging Face bootstrap as the next real `run_experiments` blocker rather than a recurrence of this runner-integrity issue.
 
-## Issue: LV-104
+## Issue: ARCHIVE-20260429-TRAINER-COLLATION
 
 - Status: resolved
 - Validation target: same persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after removing `allow_network` as a runtime execution gate and rerunning `run_experiments` through the real TUI
@@ -10946,7 +10946,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
   - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/experiment_portfolio.json`
 
-## Issue: LV-105
+## Issue: ARCHIVE-20260429-DIRECTORY-HELPER-ALIAS
 
 - Status: in_progress
 - Validation target: generated PEFT runner should expose directory helper aliases consistently during second-stage `run_experiments` verification
@@ -10990,7 +10990,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
   - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
-## Issue: LV-101
+## Issue: ARCHIVE-20260429-CLI-DEFAULTS-TRUST-REMOTE-CODE
 
 - Status: in_progress
 - Validation target: generated PEFT runner CLI defaults should include every field referenced by the generated argument parser before second-stage execution
@@ -11030,7 +11030,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
   - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
-## Issue: LV-102
+## Issue: ARCHIVE-20260429-BASELINE-EVALUATOR-ARGS
 
 - Status: in_progress
 - Validation target: generated PEFT runner should pass the resolved model, tokenizer, and benchmark datasets into the generated baseline zero-shot evaluator during second-stage execution
@@ -11071,7 +11071,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
   - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
-## Issue: LV-095
+## Issue: ARCHIVE-20260429-NO-TRAINING-BASELINE-HYPERPARAMS
 
 - Status: in_progress
 - Validation target: generated PEFT runner should allow an untuned no-training baseline recipe to use inert training hyperparameters without failing at module import time
@@ -11111,7 +11111,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
   - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
-## Issue: LV-100
+## Issue: ARCHIVE-20260429-CANDIDATE-ORCHESTRATION-ALIAS
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should expose its candidate orchestration implementation under one of the names required by the final candidate execution bridge
@@ -11152,7 +11152,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
   - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
-## Issue: LV-098
+## Issue: ARCHIVE-20260429-INSTRUCTION-DATASET-HELPER
 
 - Status: in_progress
 - Validation target: generated PEFT runner should resolve its instruction-tuning dataset loader helper during second-stage execution
@@ -11192,7 +11192,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
   - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
-## Issue: LV-096
+## Issue: ARCHIVE-20260429-BOOTSTRAP-NETWORK-WARNING
 
 - Status: in_progress
 - Validation target: `implement_experiments` bootstrap planning should not hard-block code generation for network/cache uncertainty when the run is allowed to use public Hugging Face model and dataset downloads
@@ -11238,7 +11238,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract.json`
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_raw_response.txt`
 
-## Issue: LV-097
+## Issue: ARCHIVE-20260429-BASELINE-RECIPE-ID
 
 - Status: in_progress
 - Validation target: generated PEFT runner should keep the baseline-first recipe ID used by CLI defaults, validation, and the recipe registry consistent
@@ -11362,7 +11362,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
   - `npm test -- --run tests/implementSessionManager.test.ts -t "condition-study orchestration aliases"`
 
-## Issue: LV-099
+## Issue: ARCHIVE-20260429-TOKENIZER-HELPER-ALIAS
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should expose its generated tokenizer loader under one of the names searched by the workflow tokenizer-loading bridge
@@ -11402,7 +11402,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
   - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
-## Issue: LV-094
+## Issue: ARCHIVE-20260429-RECIPE-LOOP-ALIAS
 
 - Status: in_progress
 - Validation target: regenerated PEFT runner should expose the generated recipe execution loop under one of the names searched by the final recipe-runner dispatcher
@@ -13456,7 +13456,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 ## Issue: LV-319
 
-- Status: active; reproduced by same-flow Web API live revalidation on 2026-05-02 after the LV-318 repair
+- Status: active; dependency-blocker classifier implemented on 2026-05-02, same-flow Web API revalidation pending
 - Validation target: generated PEFT runners should either execute the governed model/data conditions or surface environment/dependency blockers without presenting failed rows as completed evidence.
 - Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-318 repair.
 
@@ -13487,12 +13487,23 @@ The resolved entries below are kept as recent validation history and regression 
   - Hypothesis: the generated runner now reaches condition execution and final payload writing, but the validation environment cannot load the requested Hugging Face model configuration. The metrics contract correctly refuses to treat zero successful tuned conditions and null primary metrics as sufficient evidence.
 
 - Code/test changes:
-  - None yet for LV-319. This entry records the new same-flow boundary after LV-318.
+  - Code:
+    - `src/core/nodes/runExperiments.ts`
+      - added condition-level dependency blocker detection for metrics payloads where every `condition_results`/`conditions` row failed on a shared Hugging Face model/config/tokenizer load signature
+      - reports the failure as `Experiment dependency blocker` and preserves the rule that no failed condition metrics are accepted as evidence
+  - Tests:
+    - `tests/runExperimentsExecutionProfile.test.ts`
+      - added coverage for all-condition `EleutherAI/pythia-410m` configuration load failures being classified as dependency blockers instead of only generic missing-objective/coverage failures
 
 - Regression status:
   - Reproduced in same-flow live validation on 2026-05-02.
-  - Automated regression: pending.
-  - Same-flow revalidation: pending.
+  - Automated regression: pass on 2026-05-02 with `npm test -- --run tests/runExperimentsExecutionProfile.test.ts -t "dependency blockers|failed metrics|failed recipe|planned brief conditions"`.
+  - Related regression set: pass on 2026-05-02 with `npm test -- --run tests/plannedConditionCoverage.test.ts tests/runExperimentsExecutionProfile.test.ts tests/objectiveMetric.test.ts tests/objectiveMetricPropagation.test.ts tests/resultAnalysis.test.ts tests/briefEvidenceValidator.test.ts`.
+  - Full automated regression: pass on 2026-05-02 with `npm test`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Web tests: pass on 2026-05-02 with `npm run test:web`.
+  - Harness: pass on 2026-05-02 with `npm run validate:harness` after archived duplicate issue headings were relabeled.
+  - Same-flow revalidation: pending; the next live Web API run should confirm that this same model-load boundary is now surfaced as an explicit dependency blocker before any new experiment is treated as evidence.
 
 - Follow-up risks:
   - Need distinguish an environment/asset availability blocker from a generated-runner bug before adding another code repair.
