@@ -7901,6 +7901,51 @@ export class ImplementSessionManager {
       }
     }
 
+    const baselineFirstConditionEvaluationRecordsRepair =
+      await repairPythonBaselineFirstConditionEvaluationRecordsSurface(executionScriptPath);
+    if (baselineFirstConditionEvaluationRecordsRepair.repaired) {
+      onProgress?.(
+        baselineFirstConditionEvaluationRecordsRepair.message ||
+          "Aligned baseline-first condition evaluator records argument before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            baselineFirstConditionEvaluationRecordsRepair.message ||
+            "Aligned baseline-first condition evaluator records argument before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const instructionDatasetHelperAliasRepair =
       await repairPythonInstructionDatasetHelperAliasSurface(executionScriptPath);
     if (instructionDatasetHelperAliasRepair.repaired) {
@@ -17194,6 +17239,102 @@ export async function repairPythonEntrypointDatasetLoaderAliasSurface(
   return {
     repaired: true,
     message: `Added entrypoint dataset loader aliases to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonBaselineFirstConditionEvaluationRecordsSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_baseline_first_evaluation_records_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def execute_locked_baseline_first_comparison(") ||
+    !source.includes("run_baseline_first_condition_evaluation") ||
+    !/def\s+run_baseline_first_condition_evaluation\s*\([^)]*\brecords\b/u.test(source) ||
+    !source.includes("raw = candidate()")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+execute_locked_baseline_first_comparison\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const helperBlock = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_call_baseline_first_evaluation_candidate(candidate):",
+    "    \"\"\"Call generated baseline-first condition evaluators with their required shared records.\"\"\"",
+    "    records = None",
+    "    records_builder = globals().get(\"_fallback_records_for_payload\")",
+    "    if callable(records_builder):",
+    "        try:",
+    "            records = records_builder()",
+    "        except Exception:",
+    "            records = None",
+    "    if records is None:",
+    "        records = []",
+    "    try:",
+    "        import inspect as _autolabos_inspect",
+    "        parameters = _autolabos_inspect.signature(candidate).parameters",
+    "        accepts_var_kwargs = any(param.kind == _autolabos_inspect.Parameter.VAR_KEYWORD for param in parameters.values())",
+    "    except (TypeError, ValueError):",
+    "        parameters = {}",
+    "        accepts_var_kwargs = False",
+    "    kwargs = {}",
+    "    if \"records\" in parameters:",
+    "        kwargs[\"records\"] = records",
+    "    if \"dataset\" in parameters:",
+    "        kwargs.setdefault(\"dataset\", records)",
+    "    if \"examples\" in parameters:",
+    "        kwargs.setdefault(\"examples\", records)",
+    "    if \"abstract_records\" in parameters:",
+    "        kwargs.setdefault(\"abstract_records\", records)",
+    "    if accepts_var_kwargs:",
+    "        kwargs.setdefault(\"records\", records)",
+    "    try:",
+    "        return candidate(**kwargs)",
+    "    except TypeError:",
+    "        if records:",
+    "            return candidate(records)",
+    "        raise",
+    "",
+    "def _autolabos_unwrap_baseline_first_evaluation_payload(raw):",
+    "    if isinstance(raw, Mapping):",
+    "        for key in (\"conditions\", \"condition_results\", \"results\"):",
+    "            nested = raw.get(key)",
+    "            if isinstance(nested, Mapping):",
+    "                return nested",
+    "    return raw",
+    ""
+  ].join("\n");
+
+  let nextSource = `${source.slice(0, insertionMatch.index)}${helperBlock}${source.slice(insertionMatch.index)}`;
+  nextSource = nextSource.replace(
+    /(\n\s*)raw\s*=\s*candidate\(\)(\n\s*)if\s+isinstance\(raw,\s*Mapping\)\s+and\s+BASELINE_CONDITION_ID\s+in\s+raw\s+and\s+RETRIEVAL_CONDITION_ID\s+in\s+raw:/u,
+    "$1raw = _autolabos_unwrap_baseline_first_evaluation_payload(_autolabos_call_baseline_first_evaluation_candidate(candidate))$2if isinstance(raw, Mapping) and BASELINE_CONDITION_ID in raw and RETRIEVAL_CONDITION_ID in raw:"
+  );
+
+  if (nextSource === source || nextSource.includes("raw = candidate()")) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Wrapped baseline-first condition evaluator records dispatch in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

@@ -18,6 +18,7 @@ Path placeholders:
 ## Current active status
 
 - Live-validation status and tracked defects:
+  - `LV-324` repair implemented with automated regression, build, and harness validation passing; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-323 repair advanced past dataset-dispatch mismatch, then exposed a generated baseline-first evaluator whose final dispatcher called `run_baseline_first_condition_evaluation(records)` without `records` and failed to unwrap the returned `conditions` mapping.
   - `LV-323` repair implemented; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-322 repair advanced past rollback artifact loss, then exposed a generated runner whose final dataset dispatcher could not invoke `load_dataset(config)` and did not search generated `fallback_dataset()`.
   - `LV-322` repair implemented; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-320 repair rolled back from `run_experiments` to `implement_experiments`, then failed because the public experiment runner path no longer existed.
   - `LV-321` repair implemented; same-flow live revalidation pending. The P0-8 rerun advanced past the LV-320 `records` TypeError, then exposed a generated numeric-helper alias mismatch where `_coerce_float(...)` was called while only `coerce_float(...)` existed.
@@ -1105,6 +1106,71 @@ Path placeholders:
 ---
 
 ## Active live validation issues
+
+## Issue: LV-324
+
+- Status: repair implemented; same-flow live revalidation pending after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02
+- Validation target: `implement_experiments` local handoff verification should reconcile generated baseline-first condition evaluator signatures before `run_experiments`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>`
+  - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
+  - run: `238eadcd-c672-4e81-a6b9-6ae0db4ba6cb`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - input brief: external AGB-001 brief path, not copied into committed docs
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-323 repair.
+  2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
+  3. Run `/doctor`.
+  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  5. Let the run advance through `implement_experiments` and into `run_experiments` after dataset-dispatch repair.
+
+- Expected behavior:
+  - A generated runner whose final baseline-first dispatcher searches `run_baseline_first_condition_evaluation` should call it with the shared held-out records it requires.
+  - If the evaluator returns a wrapper mapping such as `{"conditions": {...}}`, the final dispatcher should unwrap the condition map before checking baseline and retrieval condition rows.
+
+- Actual behavior:
+  - The rebuilt same-flow run advanced past LV-320, LV-321, LV-322, and LV-323.
+  - `implement_experiments` passed local `py_compile` handoff verification.
+  - `run_experiments` failed three times with:
+    - `TypeError: run_baseline_first_condition_evaluation() missing 1 required positional argument: 'records'`
+  - The generated runner defined `_fallback_records_for_payload()` and `run_baseline_first_condition_evaluation(records)`, but `execute_locked_baseline_first_comparison()` called the evaluator as `candidate()` and only accepted top-level baseline/retrieval keys.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a fresh TUI validation workspace for P0-8 AGB-001.
+  - Existing session: the same persisted run recorded the failed `run_experiments` attempts and ended as `status: failed`, `node: run_experiments`.
+  - Divergence: no fresh/resumed projection divergence established; this is a generated-runner handoff compatibility gap visible in node-owned execution.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: staged materialization can persist a syntactically valid runner whose final baseline-first condition dispatcher is inconsistent with the generated evaluator signature and payload shape. `py_compile` cannot catch the dynamic records-argument omission, so implement-stage verification needs a deterministic signature/payload repair before handoff.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds `repairPythonBaselineFirstConditionEvaluationRecordsSurface(...)`
+      - wraps final baseline-first evaluator dispatch with signature-aware records forwarding from `_fallback_records_for_payload()`
+      - unwraps nested `conditions`, `condition_results`, or `results` mappings before baseline/retrieval row normalization
+      - runs the repair after entrypoint dataset-loader alias repair and reruns local verification after repair
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a `py_compile`-valid retrieval-feature runner whose baseline-first evaluator requires `records` and returns nested `conditions`
+
+- Regression status:
+  - Reproduced in real TUI same-flow revalidation on 2026-05-02.
+  - Targeted regression: pass on 2026-05-02 with `npm test -- tests/implementSessionManager.test.ts -t "entrypoint dataset loader aliases|baseline-first condition evaluators"`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Full automated regression: pass on 2026-05-02 with `npm test` (`160` root test files / `1755` root tests; `1` web test file / `14` web tests).
+  - Harness validation: pass on 2026-05-02 with `npm run validate:harness`.
+  - Same-flow revalidation: pending rebuilt TUI run after this repair.
+
+- Follow-up risks:
+  - Implement-stage verification still uses syntax-level local checks for many generated runners, so adjacent dynamic dispatcher mismatches may only surface in `run_experiments`.
+  - P0-8 remains unchecked until the rebuilt same-flow live run reaches the downstream governance surfaces or fails earlier with a newly recorded blocker.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/238eadcd-c672-4e81-a6b9-6ae0db4ba6cb/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/238eadcd-c672-4e81-a6b9-6ae0db4ba6cb/events.jsonl`
+  - `<validation-workspace>/outputs/retrieval-augmented-feature-block-impact-on-macr-238eadcd/experiment/run_retrieval_feature_block_experiment.py`
 
 ## Issue: LV-323
 

@@ -79,6 +79,7 @@ import {
   repairPythonPeftRecipeConfigMetadataAliasSurface,
   repairPythonJsonSafeHelperAlias,
   repairPythonEntrypointDatasetLoaderAliasSurface,
+  repairPythonBaselineFirstConditionEvaluationRecordsSurface,
   repairPythonInstructionDatasetHelperAliasSurface,
   repairPythonModelLoaderAliasSurface,
   repairPythonEvaluationDatasetHelperAliasSurface,
@@ -23188,6 +23189,89 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("def load_or_create_dataset(");
     expect(repairedSource).toContain("def build_fallback_dataset(");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs baseline-first condition evaluators that require shared records", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-records-dispatch-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_retrieval_feature_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from collections.abc import Mapping, Sequence",
+        "from typing import Any, Dict",
+        "",
+        "BASELINE_CONDITION_ID = 'no_retrieval_baseline'",
+        "RETRIEVAL_CONDITION_ID = 'retrieval_feature_block'",
+        "",
+        "def _fallback_records_for_payload():",
+        "    return [{'id': 'r1', 'text': 'background abstract', 'label': 'background'}]",
+        "",
+        "def run_baseline_first_condition_evaluation(records) -> Dict[str, Any]:",
+        "    if not records:",
+        "        raise RuntimeError('records required')",
+        "    return {",
+        "        'conditions': {",
+        "            BASELINE_CONDITION_ID: {'status': 'completed', 'value': len(records)},",
+        "            RETRIEVAL_CONDITION_ID: {'status': 'completed', 'value': len(records) + 1},",
+        "        }",
+        "    }",
+        "",
+        "def _normalize_condition_result(condition_id: str, value: Any) -> Dict[str, Any]:",
+        "    result = dict(value)",
+        "    result['condition_id'] = condition_id",
+        "    return result",
+        "",
+        "def _condition_result_from_tuple(condition_id: str, value: Any) -> Dict[str, Any]:",
+        "    return _normalize_condition_result(condition_id, value)",
+        "",
+        "def execute_locked_baseline_first_comparison() -> Dict[str, Dict[str, Any]]:",
+        "    for callable_name in (",
+        "        'run_baseline_first_condition_evaluation',",
+        "        'evaluate_baseline_first_conditions',",
+        "        'run_locked_conditions',",
+        "        'execute_conditions_baseline_first',",
+        "    ):",
+        "        candidate = globals().get(callable_name)",
+        "        if not callable(candidate):",
+        "            continue",
+        "        raw = candidate()",
+        "        if isinstance(raw, Mapping) and BASELINE_CONDITION_ID in raw and RETRIEVAL_CONDITION_ID in raw:",
+        "            return {",
+        "                BASELINE_CONDITION_ID: _normalize_condition_result(BASELINE_CONDITION_ID, raw[BASELINE_CONDITION_ID]),",
+        "                RETRIEVAL_CONDITION_ID: _normalize_condition_result(RETRIEVAL_CONDITION_ID, raw[RETRIEVAL_CONDITION_ID]),",
+        "            }",
+        "        if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)) and len(raw) >= 2:",
+        "            return {",
+        "                BASELINE_CONDITION_ID: _condition_result_from_tuple(BASELINE_CONDITION_ID, raw[0]),",
+        "                RETRIEVAL_CONDITION_ID: _condition_result_from_tuple(RETRIEVAL_CONDITION_ID, raw[1]),",
+        "            }",
+        "    raise RuntimeError('no conditions')",
+        "",
+        "def main() -> int:",
+        "    result = execute_locked_baseline_first_comparison()",
+        "    baseline = result[BASELINE_CONDITION_ID]",
+        "    retrieval = result[RETRIEVAL_CONDITION_ID]",
+        "    return 0 if baseline['value'] == 1 and retrieval['value'] == 2 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing 1 required positional argument: 'records'/
+    );
+
+    const repair = await repairPythonBaselineFirstConditionEvaluationRecordsSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_evaluation_records_marker");
+    expect(repairedSource).toContain("_autolabos_unwrap_baseline_first_evaluation_payload");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
