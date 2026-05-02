@@ -100,6 +100,7 @@ import {
   repairPythonModelLoaderDeviceInfoAliasSurface,
   repairPythonNeftuneEmbeddingForwardHookSurface,
   repairPythonNormalizeForJsonHelperAlias,
+  repairPythonNumericCoercionHelperAlias,
   repairPythonRecipeExecutionOrchestratorAlias,
   repairPythonRecipeSpecUntunedNoTrainingHyperparameterSurface,
   repairPythonRecipeSpecTrainAdapterSurface,
@@ -4734,6 +4735,37 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("def normalize_for_json(value):");
     expect(repairedSource).toContain("return _autolabos_json_safe(value)");
+    execFileSync("python3", [scriptPath]);
+  });
+
+  it("repairs a missing _coerce_float alias by delegating to coerce_float", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-coerce-float-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def coerce_float(value):",
+        "    return float(value)",
+        "",
+        "def metric_value_is_usable(value):",
+        "    number = _coerce_float(value)",
+        "    return number == number",
+        "",
+        "if not metric_value_is_usable('0.75'):",
+        "    raise SystemExit(1)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/_coerce_float/);
+
+    const repair = await repairPythonNumericCoercionHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _coerce_float(*args, **kwargs):");
+    expect(repairedSource).toContain("return coerce_float(*args, **kwargs)");
     execFileSync("python3", [scriptPath]);
   });
 

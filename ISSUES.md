@@ -18,7 +18,9 @@ Path placeholders:
 ## Current active status
 
 - Live-validation status and tracked defects:
-  - `LV-320` active: P0-8 AGB-001 real TUI live run reached `run_experiments` under the `gated` benchmark condition, then failed after retry 3/3 because the generated retrieval feature-block runner calls `compute_classification_metrics(...)` without the required `records` argument. Resume/reload preserved `status: failed` and `node: run_experiments`, but `/session` still projected `interaction: busy`.
+  - `LV-322` active: P0-8 AGB-001 same-flow TUI revalidation after the LV-320 repair rolled back from `run_experiments` to `implement_experiments`, then failed because the public experiment runner path no longer existed.
+  - `LV-321` repair implemented; same-flow live revalidation pending. The P0-8 rerun advanced past the LV-320 `records` TypeError, then exposed a generated numeric-helper alias mismatch where `_coerce_float(...)` was called while only `coerce_float(...)` existed.
+  - `LV-320` repair implemented; same-flow live revalidation advanced to LV-321 and LV-322 on 2026-05-02. The repair wraps generated `compute_classification_metrics(...)` helpers that require `records` when generated call sites omit that argument. Resume/reload still needs UI projection review for `interaction: busy`.
   - `LV-319` active: same-flow Web API revalidation after the LV-318 metrics-payload arity repair advanced through final payload construction, but the generated runner now writes only failed condition rows because `EleutherAI/pythia-410m` model configuration cannot be loaded in the validation environment. The metrics contract then fails because `accuracy_delta_vs_baseline` is absent and 0 successful tuned conditions were observed.
   - `LV-318` repair implemented; same-flow live revalidation advanced to LV-319 on 2026-05-02. The repair wraps generated `build_metrics_payload(...)` calls so final entrypoints that pass `(aggregated_results, args, runtime_context, status)` do not bind `condition_results` twice and can supply `args`, `condition_results`, `aggregated_metrics`, and `run_started_at`.
   - `LV-317` repair implemented; same-flow live revalidation advanced to LV-318 on 2026-05-02. The repair aliases generated `execute_baseline_first_conditions(...)` into the final main execution-loop resolver names and aliases generated exception serializers such as `exception_to_evidence(...)` into `serialize_exception(...)`.
@@ -13459,9 +13461,126 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
   - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
+## Issue: LV-322
+
+- Status: active; reproduced during P0-8 AGB-001 same-flow TUI revalidation on 2026-05-02
+- Validation target: rollback from `run_experiments` to `implement_experiments` should preserve or regenerate the public experiment artifact surface before verification resumes.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>`
+  - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
+  - run: `7f3aa8d7-d163-43fd-94dc-c715afe07013`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - input brief: external AGB-001 brief path, not copied into committed docs
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-320 repair.
+  2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
+  3. Run `/doctor`.
+  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  5. Let `run_experiments` fail and trigger the automatic rollback to `implement_experiments`.
+
+- Expected behavior:
+  - Rollback should leave the public experiment directory and target runner path in a coherent state or recreate them before local verification/handoff.
+  - A retrying implementation pass should not fail solely because the target public runner disappeared.
+
+- Actual behavior:
+  - The revalidation run advanced past the previous LV-320 `compute_classification_metrics(... records)` failure.
+  - `run_experiments` then failed three times with a generated `_coerce_float(...)` / `coerce_float(...)` alias mismatch and rolled back to `implement_experiments`.
+  - The rollback retry emitted:
+    - `Implementation execution failed before any runnable implementation was produced: ENOENT: no such file or directory, open '<validation-workspace>/outputs/study-whether-adding-a-retrieval-augmented-featu-7f3aa8d7/experiment/run_retrieval_feature_experiment.py'`
+    - `Error: ENOENT: no such file or directory, open '.autolabos/runs/7f3aa8d7-d163-43fd-94dc-c715afe07013/memory/episodes.jsonl'`
+  - The public experiment directory for that run was absent when inspected after the failure.
+
+- Fresh vs existing session comparison:
+  - Fresh session: a new TUI process in a fresh validation workspace started the AGB-001 brief and reached the rollback artifact-loss failure.
+  - Existing session: not separately reloaded after the rollback artifact loss; the issue was observed in the active real TUI session and persisted artifacts.
+  - Divergence: the observed failure is an artifact consistency problem after rollback, not a fresh/resumed state projection divergence.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: rollback or retry setup can remove or fail to recreate public experiment and run-memory artifact surfaces before staged materialization and episode logging resume. The retry then fails before producing any runnable implementation, even though the prior attempt had materialized a runner.
+
+- Code/test changes:
+  - None yet. This is the next active rollback/artifact-consistency blocker after LV-321.
+
+- Regression status:
+  - Reproduced in real TUI same-flow revalidation on 2026-05-02.
+  - Same-flow live revalidation: pending after a rollback-artifact repair.
+
+- Follow-up risks:
+  - Fixing the generated `_coerce_float` alias mismatch may avoid this exact rollback path in fresh runs, but the rollback artifact-loss behavior remains a real consistency defect once reproduced.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/7f3aa8d7-d163-43fd-94dc-c715afe07013/events.jsonl`
+  - `<validation-workspace>/.autolabos/runs/7f3aa8d7-d163-43fd-94dc-c715afe07013/run_record.json`
+
+## Issue: LV-321
+
+- Status: repair implemented; same-flow live revalidation pending
+- Validation target: generated retrieval feature-block runners should not fail at runtime when a numeric helper calls `_coerce_float(...)` but the generated script defines `coerce_float(...)`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>`
+  - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
+  - run: `7f3aa8d7-d163-43fd-94dc-c715afe07013`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - input brief: external AGB-001 brief path, not copied into committed docs
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-320 repair.
+  2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
+  3. Run `/doctor`.
+  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  5. Let the workflow proceed into `run_experiments`.
+
+- Expected behavior:
+  - Implement-stage verification should insert a compatibility alias or otherwise catch the generated helper-name drift before handoff.
+  - `run_experiments` should not fail with a missing `_coerce_float` when `coerce_float` is available.
+
+- Actual behavior:
+  - The P0-8 rerun advanced past the LV-320 `compute_classification_metrics(... records)` failure.
+  - The generated runner defined `coerce_float(...)` but `_metric_value_is_usable(...)` called `_coerce_float(...)`.
+  - `run_experiments` failed after retry 3/3 with:
+    - `NameError: name '_coerce_float' is not defined. Did you mean: 'coerce_float'?`
+
+- Fresh vs existing session comparison:
+  - Fresh session: a new TUI process in a fresh validation workspace started the AGB-001 brief and reproduced the numeric-helper alias failure.
+  - Existing session: not separately reloaded for this specific alias failure before the subsequent rollback artifact-loss boundary.
+  - Divergence: no session divergence observed; the failure is a generated helper-name projection mismatch visible in live execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged implementation independently generated numeric coercion helpers and metrics-validation call sites. Syntax-only verification accepted both functions, but runtime execution selected the underscored alias that was never defined.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonNumericCoercionHelperAlias(...)`.
+      - wired the repair into the pre-handoff Python helper-alias repair sequence.
+      - inserts `def _coerce_float(*args, **kwargs): return coerce_float(*args, **kwargs)` only when `_coerce_float(...)` is called, `_coerce_float` is missing, and `coerce_float` exists.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage that first reproduces the Python `NameError`, then verifies the inserted alias makes the script runnable.
+
+- Regression status:
+  - Reproduced in real TUI same-flow revalidation on 2026-05-02.
+  - Targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "coerce_float alias|classification metrics helpers"`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Full tests: pass on 2026-05-02 with `npm test` (`160` test files, `1753` tests; web `14` tests).
+  - Harness: pass on 2026-05-02 with `npm run validate:harness`.
+  - Same-flow live revalidation after this repair: pending.
+
+- Follow-up risks:
+  - A fresh rebuilt TUI run must still confirm the alias repair before P0-8 can advance.
+  - The subsequent rollback artifact-loss failure is tracked separately as LV-322.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/7f3aa8d7-d163-43fd-94dc-c715afe07013/events.jsonl`
+  - `<validation-workspace>/.autolabos/runs/7f3aa8d7-d163-43fd-94dc-c715afe07013/run_record.json`
+  - `<validation-workspace>/outputs/study-whether-adding-a-retrieval-augmented-featu-7f3aa8d7/experiment/run_experiments_verify_report.json`
+
 ## Issue: LV-320
 
-- Status: active; reproduced during P0-8 AGB-001 live TUI validation on 2026-05-02
+- Status: repair implemented; same-flow live revalidation advanced to LV-321 and LV-322 on 2026-05-02
 - Validation target: AGB-001 live full-run validation through the real TUI under the `gated` governance benchmark condition.
 - Environment/session context:
   - validation workspace: `<validation-workspace>`
@@ -13506,13 +13625,21 @@ The resolved entries below are kept as recent validation history and regression 
   - Tests:
     - `tests/cliArgs.test.ts`
     - `tests/app.test.ts`
-  - Generated-runner repair: none yet for the `compute_classification_metrics(...)` arity mismatch.
+  - Generated-runner repair:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonClassificationMetricsRecordsArgumentSurface(...)` to wrap generated `compute_classification_metrics(...)` helpers requiring `records` when generated call sites omit that argument.
+      - the wrapper synthesizes record shells from gold/predicted labels only for the missing-`records` TypeError path.
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage for the missing `records` call-surface mismatch.
 
 - Regression status:
   - Reproduced in real TUI live validation on 2026-05-02.
   - Targeted wiring regression: pass on 2026-05-02 with `npm test -- tests/cliArgs.test.ts tests/app.test.ts tests/stateGraphRuntime.test.ts`.
+  - Targeted generated-runner regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "classification metrics helpers|metrics writer|metrics payload|device metrics helper"`.
   - Build: pass on 2026-05-02 with `npm run build`.
-  - Same-flow live revalidation after generated-runner repair: pending.
+  - Full tests: pass on 2026-05-02 with `npm test` after the later LV-321 repair (`160` test files, `1753` tests; web `14` tests).
+  - Harness: pass on 2026-05-02 with `npm run validate:harness` after the later LV-321 repair.
+  - Same-flow live revalidation after generated-runner repair: partial pass on 2026-05-02. The rebuilt real TUI rerun did not reproduce the `compute_classification_metrics() missing ... records` TypeError; it advanced to LV-321, then LV-322.
 
 - Follow-up risks:
   - A repair should distinguish true executed evidence from failed metrics payloads that contain placeholder-like zero metrics.

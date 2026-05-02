@@ -51,7 +51,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P0-5. Required artifact contract validation.
 - [x] P0-6. Governance rubric and scoring output.
 - [x] P0-7. AGB-001 dry-run contract lock.
-- [ ] P0-8. AGB-001 live full-run validation. Live TUI run attempted on 2026-05-02 and blocked in `run_experiments`; see `ISSUES.md` `LV-320`.
+- [ ] P0-8. AGB-001 live full-run validation. Live TUI run attempted on 2026-05-02; `LV-320` is repaired and revalidated to the next boundaries, but P0-8 remains blocked by `LV-321` pending live revalidation and active rollback artifact-loss issue `LV-322`.
 
 ### P1 — Next Release Cycle
 
@@ -258,7 +258,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P0-8. AGB-001 Live Full-Run Validation
 
-- [ ] Status: attempted on 2026-05-02; blocked by `run_experiments` generated-runner signature mismatch (`LV-320`)
+- [ ] Status: attempted on 2026-05-02; `LV-320` repaired and same-flow revalidation advanced to `LV-321`/`LV-322`; still blocked pending rebuilt live revalidation and rollback artifact repair
 - Related repo files:
   - Existing: `src/cli/args.ts`
   - Existing: `src/cli/main.ts`
@@ -271,8 +271,8 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Existing: `src/core/benchmark/governanceCondition.ts`
   - Existing: `src/core/benchmark/governanceArtifactContract.ts`
 - Planned files if needed:
-  - Generated-runner call-surface repair for AGB-001 retrieval feature-block experiment runners
-  - Same-flow revalidation notes after `LV-320` repair
+  - Same-flow revalidation notes after `LV-321` repair
+  - Rollback artifact-consistency repair for `LV-322`
 - Validation commands:
   - `npm run build`
   - `npm test`
@@ -285,6 +285,8 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - The run progressed through `collect_papers`, `analyze_papers`, `generate_hypotheses`, `design_experiments`, multiple `implement_experiments` attempts, and repeated `run_experiments` retries.
   - The final live state was `failed` at `run_experiments` after retry 3/3 with `TypeError: compute_classification_metrics() missing 1 required positional argument: 'records'`.
   - A restarted TUI session reloaded the same run as `status: failed`, `node: run_experiments`; the UI also showed `interaction: busy`, which is recorded in `LV-320`.
+  - After the `LV-320` repair, a rebuilt real TUI revalidation under the `gated` benchmark condition no longer reproduced the missing `records` TypeError and advanced to a generated numeric-helper alias mismatch (`LV-321`).
+  - The same revalidation then auto-rolled back and exposed rollback artifact loss: the public experiment runner path no longer existed when `implement_experiments` retried (`LV-322`).
 - Completion criteria:
   - [x] Live TUI run starts from the external AGB-001 brief path without copying private source paths into committed docs.
   - [x] `/doctor` output is checked before the live run.

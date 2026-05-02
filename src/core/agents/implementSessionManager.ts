@@ -4770,6 +4770,51 @@ export class ImplementSessionManager {
       }
     }
 
+    const numericCoercionAliasRepair =
+      await repairPythonNumericCoercionHelperAlias(executionScriptPath);
+    if (numericCoercionAliasRepair.repaired) {
+      onProgress?.(
+        numericCoercionAliasRepair.message ||
+          "Aligned numeric coercion helper aliases before local verification.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            numericCoercionAliasRepair.message ||
+            "Aligned numeric coercion helper aliases before local verification."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const canonicalStringAliasRepair =
       await repairPythonCanonicalStringHelperAlias(executionScriptPath);
     if (canonicalStringAliasRepair.repaired) {
@@ -14519,6 +14564,44 @@ export async function repairPythonNormalizeForJsonHelperAlias(
   return {
     repaired: true,
     message: `Added normalize_for_json compatibility helper to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonNumericCoercionHelperAlias(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !/\b_coerce_float\s*\(/u.test(source) ||
+    pythonSourceDefinesOrImportsName(source, "_coerce_float") ||
+    !pythonSourceDefinesOrImportsName(source, "coerce_float")
+  ) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    "",
+    "def _coerce_float(*args, **kwargs):",
+    "    return coerce_float(*args, **kwargs)",
+    ""
+  ].join("\n");
+
+  const nextSource = insertPythonTopLevelHelperAfterImports(source, helper);
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added _coerce_float compatibility helper to ${path.basename(scriptPath)} before handoff.`
   };
 }
 
