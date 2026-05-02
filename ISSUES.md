@@ -18,7 +18,7 @@ Path placeholders:
 ## Current active status
 
 - Live-validation status and tracked defects:
-  - `LV-322` active: P0-8 AGB-001 same-flow TUI revalidation after the LV-320 repair rolled back from `run_experiments` to `implement_experiments`, then failed because the public experiment runner path no longer existed.
+  - `LV-322` repair implemented; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-320 repair rolled back from `run_experiments` to `implement_experiments`, then failed because the public experiment runner path no longer existed.
   - `LV-321` repair implemented; same-flow live revalidation pending. The P0-8 rerun advanced past the LV-320 `records` TypeError, then exposed a generated numeric-helper alias mismatch where `_coerce_float(...)` was called while only `coerce_float(...)` existed.
   - `LV-320` repair implemented; same-flow live revalidation advanced to LV-321 and LV-322 on 2026-05-02. The repair wraps generated `compute_classification_metrics(...)` helpers that require `records` when generated call sites omit that argument. Resume/reload still needs UI projection review for `interaction: busy`.
   - `LV-319` active: same-flow Web API revalidation after the LV-318 metrics-payload arity repair advanced through final payload construction, but the generated runner now writes only failed condition rows because `EleutherAI/pythia-410m` model configuration cannot be loaded in the validation environment. The metrics contract then fails because `accuracy_delta_vs_baseline` is absent and 0 successful tuned conditions were observed.
@@ -13463,7 +13463,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 ## Issue: LV-322
 
-- Status: active; reproduced during P0-8 AGB-001 same-flow TUI revalidation on 2026-05-02
+- Status: repair implemented; same-flow live revalidation pending after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02
 - Validation target: rollback from `run_experiments` to `implement_experiments` should preserve or regenerate the public experiment artifact surface before verification resumes.
 - Environment/session context:
   - validation workspace: `<validation-workspace>`
@@ -13501,11 +13501,27 @@ The resolved entries below are kept as recent validation history and regression 
   - Hypothesis: rollback or retry setup can remove or fail to recreate public experiment and run-memory artifact surfaces before staged materialization and episode logging resume. The retry then fails before producing any runnable implementation, even though the prior attempt had materialized a runner.
 
 - Code/test changes:
-  - None yet. This is the next active rollback/artifact-consistency blocker after LV-321.
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - recreates the parent directory before each sectioned skeleton write and final stripped runner write
+      - rewrites the managed public `bootstrap_contract.json` after sectioned materialization so a mid-attempt public-directory loss does not leave declared public artifacts missing
+      - resolves implement memory refs against the workspace root and normalizes sandbox aliases before reading/writing run context, episode memory, and long-term memory
+      - detects a persisted previous script path that no longer exists and marks it as stale in the task spec instead of prompting repair-in-place against a missing runner
+    - `src/core/runs/runStore.ts`
+      - exposes workspace path resolution through the same sandbox-alias normalization used for run artifacts
+    - `src/core/stateGraph/runtime.ts`
+      - resolves rollback/reflexion memory paths through the run store so relative memory refs are anchored to the run workspace, not process cwd
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - extends the canonical sectioned-skeleton materialization test to delete the public experiment directory during chunk materialization and verify the same attempt still finishes
 
 - Regression status:
   - Reproduced in real TUI same-flow revalidation on 2026-05-02.
-  - Same-flow live revalidation: pending after a rollback-artifact repair.
+  - Targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "sandbox-friendly /tmp aliases|canonical skeleton|coerce_float alias"`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Full tests: pass on 2026-05-02 with `npm test` (`160` test files, `1753` tests; web `14` tests).
+  - Harness: pass on 2026-05-02 with `npm run validate:harness`.
+  - Same-flow live revalidation: pending after the rollback-artifact repair.
 
 - Follow-up risks:
   - Fixing the generated `_coerce_float` alias mismatch may avoid this exact rollback path in fresh runs, but the rollback artifact-loss behavior remains a real consistency defect once reproduced.

@@ -708,7 +708,7 @@ export class StateGraphRuntime {
       errorMessage,
       planExcerpt: `Node ${node}`,
       observations: [errorMessage],
-      episodeMemory: new EpisodeMemory(run.memoryRefs.episodePath),
+      episodeMemory: new EpisodeMemory(this.runStore.resolveWorkspacePath(run.memoryRefs.episodePath)),
       eventStream: this.eventStream
     });
 
@@ -1095,7 +1095,7 @@ export class StateGraphRuntime {
       return undefined;
     }
 
-    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    const runContext = new RunContextMemory(this.runStore.resolveWorkspacePath(run.memoryRefs.runContextPath));
     const pendingRequest = await runContext.get<Record<string, unknown> | null>("collect_papers.request");
     if (pendingRequest) {
       const pendingQuery = pendingRequest.query;

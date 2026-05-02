@@ -444,8 +444,8 @@ export class RunStore {
     };
   }
 
-  private resolveWorkspacePath(filePath: string): string {
-    return path.isAbsolute(filePath) ? filePath : path.join(this.paths.cwd, filePath);
+  resolveWorkspacePath(filePath: string): string {
+    return normalizeFsPath(path.isAbsolute(filePath) ? filePath : path.join(this.paths.cwd, filePath));
   }
 
   private async readRunContextItems(filePath: string): Promise<RunContextItem[]> {

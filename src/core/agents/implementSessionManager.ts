@@ -261,6 +261,11 @@ interface ImplementTaskSpec {
     previous_summary?: string;
     previous_run_command?: string;
     previous_script?: string;
+    stale_previous_implementation?: {
+      previous_script?: string;
+      previous_run_command?: string;
+      reason: string;
+    };
     environment_snapshot?: EnvironmentSnapshot;
     long_term_memory: LongTermMemorySnapshot;
     runner_feedback?: RunVerifierReport;
@@ -437,9 +442,15 @@ export class ImplementSessionManager {
     abortSignal?: AbortSignal,
     environmentSnapshot?: EnvironmentSnapshot
   ): Promise<ImplementSessionSummary> {
-    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
-    const episodeMemory = new EpisodeMemory(run.memoryRefs.episodePath);
-    const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
+    const runContext = new RunContextMemory(
+      resolveWorkspaceMemoryPath(this.deps.workspaceRoot, run.memoryRefs.runContextPath)
+    );
+    const episodeMemory = new EpisodeMemory(
+      resolveWorkspaceMemoryPath(this.deps.workspaceRoot, run.memoryRefs.episodePath)
+    );
+    const longTermStore = new LongTermStore(
+      resolveWorkspaceMemoryPath(this.deps.workspaceRoot, run.memoryRefs.longTermPath)
+    );
     const runDir = path.join(this.deps.workspaceRoot, ".autolabos", "runs", run.id);
     const metricsPath = path.join(runDir, "metrics.json");
     const defaultPublicDir = buildPublicExperimentDir(this.deps.workspaceRoot, run);
@@ -1649,6 +1660,19 @@ export class ImplementSessionManager {
     const previousSummary = await runContext.get<string>("implement_experiments.last_summary");
     const previousRunCommand = await runContext.get<string>("implement_experiments.run_command");
     const previousScript = await runContext.get<string>("implement_experiments.script");
+    const normalizedPreviousScript = normalizeStoredPath(previousScript, this.deps.workspaceRoot);
+    const previousScriptExists = normalizedPreviousScript ? await fileExists(normalizedPreviousScript) : true;
+    const stalePreviousImplementation =
+      normalizedPreviousScript && !previousScriptExists
+        ? {
+            previous_script: previousScript,
+            previous_run_command: previousRunCommand,
+            reason:
+              "The previously persisted implementation script is missing from the workspace; regenerate the public experiment bundle instead of repairing that stale path in place."
+          }
+        : undefined;
+    const promptPreviousRunCommand = stalePreviousImplementation ? undefined : previousRunCommand;
+    const promptPreviousScript = stalePreviousImplementation ? undefined : previousScript;
     const runnerFeedback = await this.loadApplicableRunnerFeedback(run, runContext);
     const paperCritique = await runContext.get<{
       overall_decision?: string;
@@ -1721,8 +1745,12 @@ export class ImplementSessionManager {
         hypotheses_excerpt: rewriteWorkspacePathsForSandbox(hypotheses || "(missing)", this.deps.workspaceRoot),
         repo_listing: repoListing,
         previous_summary: rewriteWorkspacePathsForSandbox(previousSummary, this.deps.workspaceRoot),
-        previous_run_command: rewriteWorkspacePathsForSandbox(previousRunCommand, this.deps.workspaceRoot),
-        previous_script: rewriteWorkspacePathsForSandbox(previousScript, this.deps.workspaceRoot),
+        previous_run_command: rewriteWorkspacePathsForSandbox(promptPreviousRunCommand, this.deps.workspaceRoot),
+        previous_script: rewriteWorkspacePathsForSandbox(promptPreviousScript, this.deps.workspaceRoot),
+        stale_previous_implementation: rewriteWorkspacePathsForSandbox(
+          stalePreviousImplementation,
+          this.deps.workspaceRoot
+        ),
         environment_snapshot: rewriteWorkspacePathsForSandbox(environmentSnapshot, this.deps.workspaceRoot),
         long_term_memory: rewriteWorkspacePathsForSandbox(longTermMemory, this.deps.workspaceRoot),
         runner_feedback: rewriteWorkspacePathsForSandbox(runnerFeedback, this.deps.workspaceRoot),
@@ -2619,6 +2647,7 @@ export class ImplementSessionManager {
             sectionContent,
             filePath
           );
+          await ensureDir(path.dirname(filePath));
           await fs.writeFile(filePath, currentFileContent, "utf8");
           await ensureDir(path.join(input.runDir, IMPLEMENT_UNIT_SECTION_DIR));
           await fs.writeFile(
@@ -2654,6 +2683,7 @@ export class ImplementSessionManager {
       }
       if (useSectionedSkeleton) {
         draftContent = stripCanonicalSkeletonMarkers(currentFileContent, filePath);
+        await ensureDir(path.dirname(filePath));
         await fs.writeFile(filePath, draftContent, "utf8");
       } else {
         await ensureDir(path.dirname(filePath));
@@ -2665,6 +2695,9 @@ export class ImplementSessionManager {
         content: draftContent
       });
     }
+
+    await ensureDir(path.dirname(bootstrapContractPublicPath));
+    await writeJsonFile(bootstrapContractPublicPath, bootstrapContractResult.contract);
 
     return {
       threadId: activeThreadId,
@@ -12749,6 +12782,10 @@ function isSubpath(filePath: string, parentDir: string): boolean {
 function isPathInsideOrEqual(filePath: string, parentDir: string): boolean {
   const relative = path.relative(parentDir, filePath);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function resolveWorkspaceMemoryPath(workspaceRoot: string, memoryPath: string): string {
+  return normalizeFsPath(path.isAbsolute(memoryPath) ? memoryPath : path.join(workspaceRoot, memoryPath));
 }
 
 function asString(value: unknown): string | undefined {

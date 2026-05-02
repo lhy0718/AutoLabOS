@@ -8319,6 +8319,7 @@ describe("ImplementSessionManager", () => {
 
     const publicDir = buildPublicExperimentDir(workspace, run);
     const publicScriptPath = path.join(publicDir, "experiment.py");
+    let removedPublicDirDuringMaterialization = false;
     const requestedParentChunkIs = (prompt: string, chunkId: string): boolean => {
       const marker = "Requested parent chunk to subdivide:";
       const markerIndex = prompt.indexOf(marker);
@@ -8454,6 +8455,10 @@ describe("ImplementSessionManager", () => {
             };
           }
           if (targetChunkIs(prompt, "chunk_entrypoint")) {
+            if (!removedPublicDirDuringMaterialization) {
+              removedPublicDirDuringMaterialization = true;
+              rmSync(publicDir, { recursive: true, force: true });
+            }
             return {
               text: JSON.stringify({
                 chunk_id: "chunk_entrypoint",
@@ -8511,6 +8516,7 @@ describe("ImplementSessionManager", () => {
         "utf8"
       )
     ).toContain("class ExperimentConfig");
+    expect(removedPublicDirDuringMaterialization).toBe(true);
     expect(llmCalls).toBe(6);
   });
 
