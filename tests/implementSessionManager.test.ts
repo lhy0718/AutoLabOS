@@ -24,8 +24,99 @@ import {
   isTransientStagedLlmProviderError,
   normalizeLockedPeftStudyConfigPayloadForCompatibility,
   repairPythonOrchestrationArgumentSurface,
+  repairPythonAutolabosMetricsWriterCompatibleCallSurface,
+  repairPythonEntrypointMetricsWriterCallOrderSurface,
+  repairPythonBaselineFirstConditionLoopInvocationSurface,
+  repairPythonBaselineFirstWorkflowInputMaterializationSurface,
+  repairPythonBaselineFirstStudyLoopInputMaterializationSurface,
+  repairPythonBaselineFirstEntrypointContextMaterializationSurface,
+  repairPythonMainExecuteConditionsInputMaterializationSurface,
+  repairPythonDeterministicSampleRecordsSaltAliasSurface,
+  repairPythonConditionConfigRequiredFieldAliasSurface,
+  repairPythonEntrypointConditionDatasetInputMaterializationSurface,
+  repairPythonBaselineEvaluatorArgumentSurface,
+  repairPythonBroaderTargetLoraMarkerSurface,
+  repairPythonCandidateSpecPeftRecipeNormalizationSurface,
+  repairPythonCandidateExecutorArgumentBridgeSurface,
+  repairPythonCausalLmLabelPaddingSurface,
+  repairPythonCanonicalStringHelperAlias,
   repairPythonConditionHelperSurface,
+  repairPythonConditionResultNormalizerAliasSurface,
+  repairPythonDeterministicSubsetHelperAritySurface,
+  repairPythonEntrypointRuntimeCompatibilitySurface,
+  repairPythonEntrypointAtomicWriterCallOrderSurface,
+  repairPythonEntrypointConditionExecutionBridgeSurface,
+  repairPythonAutolabosConditionContextMaterializationSurface,
+  repairPythonEntrypointComposableWorkflowAliasSurface,
+  repairPythonEntrypointConditionLoopBridgeSurface,
+  repairPythonEntrypointHighLevelConditionRunnerSurface,
+  repairPythonBaselineFirstConditionOrderSurface,
+  repairPythonRequiredConditionMarkerAliasSurface,
+  repairPythonEntrypointConditionRunnerResolverSurface,
+  repairPythonFallbackConditionSequenceInputMaterializationSurface,
+  repairPythonEntrypointMetricsWriterAggregatedMetricsCallSurface,
+  repairPythonConditionPlanRunnerSignatureSurface,
+  repairPythonConditionSuiteAliasSurface,
+  repairPythonLockedConditionStudyOrchestrationAliasSurface,
+  repairPythonConditionSpecFactoryKwargBridgeSurface,
+  repairPythonBaselineFirstLockedWorkflowAliasSurface,
+  repairPythonBaselineFirstConditionSequenceEntrypointFacadeSurface,
+  repairPythonMetricsPayloadBuilderAliasSurface,
+  repairPythonAccuracyDeltaBuilderAliasSurface,
+  repairPythonMainExecutionLoopAliasSurface,
+  repairPythonMainMetricsPayloadBuilderCallSurface,
+  repairPythonPeftAcronymClassAliasSurface,
+  repairPythonEntrypointMetricsAggregationBridgeSurface,
+  repairPythonEntrypointWorkflowSignatureBridgeSurface,
+  repairPythonAutolabosCliParserBuilderAliasSurface,
+  repairPythonAutolabosSupportedArgsDuplicateArgsSurface,
+  repairPythonExperimentDefaultsHfRuntimeFieldSurface,
+  repairPythonChunk5OrchestrationHelperBridgeSurface,
+  repairPythonBuildMetricsPayloadFromOptionsBridgeSurface,
+  repairPythonRunConditionsFromConfigRunnerBridgeSurface,
+  repairPythonConditionEvaluationMetricsAssemblyBridgeSurface,
+  repairPythonFinalMetricsSchemaCompatibilitySurface,
+  repairPythonPeftRecipeConfigMetadataAliasSurface,
+  repairPythonJsonSafeHelperAlias,
+  repairPythonInstructionDatasetHelperAliasSurface,
+  repairPythonModelLoaderAliasSurface,
+  repairPythonEvaluationDatasetHelperAliasSurface,
+  repairPythonEvaluationDatasetLoaderArgumentAliasSurface,
+  repairPythonSupportedSignatureKwargAliasSurface,
+  repairPythonBenchmarkEvaluatorAliasSurface,
+  repairPythonBenchmarkEvaluatorArgumentSurface,
+  repairPythonAggregateMetricsPluralFinalizerSurface,
+  repairPythonLockedRecipeCatalogAliasSurface,
   repairPythonLockedStandardLoraBaselineIdSurface,
+  repairPythonLegacyBaseModelRecipeIdSurface,
+  repairPythonLoggingHelperAlias,
+  repairPythonCleanupModelArtifactsAliasSurface,
+  repairPythonLockedRecipeWorkflowInputMaterializationSurface,
+  repairPythonMetricsPayloadMappingResultSurface,
+  repairPythonMetricsWriterAdapterPathSurface,
+  repairPythonMetricsWriterDispatcherPayloadAliasSurface,
+  repairPythonDeviceHelperAliasSurface,
+  repairPythonModelLoaderDeviceInfoAliasSurface,
+  repairPythonNeftuneEmbeddingForwardHookSurface,
+  repairPythonNormalizeForJsonHelperAlias,
+  repairPythonRecipeExecutionOrchestratorAlias,
+  repairPythonRecipeSpecUntunedNoTrainingHyperparameterSurface,
+  repairPythonRecipeSpecTrainAdapterSurface,
+  repairPythonPeftVirtualTokenEvaluationAlignmentSurface,
+  repairPythonIa3FeedforwardSubsetSurface,
+  repairPythonDependencyCheckerCallSurface,
+  repairPythonRuntimeDependencyHelperAlias,
+  repairPythonPathLikeSignatureAliasSurface,
+  repairPythonTokenizerHelperAliasSurface,
+  repairPythonMissingParseArgsSurface,
+  repairPythonMissingBuildExperimentConfigSurface,
+  repairPythonNamespaceParseArgsSurface,
+  repairPythonOptionalPathArgDefaultsSurface,
+  repairPythonTransformersLinearSchedulerSurface,
+  repairPythonLockedConditionContractCallSurface,
+  repairPythonLockedConditionNameProjectionSurface,
+  repairPythonTupleReturningMainArgsSurface,
+  repairPythonWriteJsonMetricsAliasSurface,
   repairLockedPeftStudyConfigSurface,
   repairPythonLockedConditionCountSurface
 } from "../src/core/agents/implementSessionManager.js";
@@ -353,6 +444,30 @@ describe("ImplementSessionManager", () => {
 
     expect(paths).toContain(scriptPath);
     expect(paths.some((candidate) => candidate.includes("p='"))).toBe(false);
+  });
+
+  it("does not treat shell output redirection targets as required verification artifacts", () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-redirection-paths-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "outputs", "experiment", "run_peft_instruction_study.py");
+    const stderrPath = path.join(workspace, "outputs", "experiment", "stderr.txt");
+    const helpPath = path.join(workspace, "outputs", "experiment", "help.txt");
+    mkdirSync(path.dirname(scriptPath), { recursive: true });
+    writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
+
+    const paths = extractWorkspacePathsFromCommand(
+      [
+        `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        `python3 ${JSON.stringify(scriptPath)} --help >/tmp/peft_study_help.txt 2> ${JSON.stringify(stderrPath)} >>${JSON.stringify(helpPath)}`
+      ].join(" && "),
+      workspace,
+      workspace
+    );
+
+    expect(paths).toContain(scriptPath);
+    expect(paths).not.toContain("/tmp/peft_study_help.txt");
+    expect(paths).not.toContain(stderrPath);
+    expect(paths).not.toContain(helpPath);
   });
 
   it("persists thread id and run command from Codex session", async () => {
@@ -4561,6 +4676,66 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("return json_safe(value)");
   });
 
+  it("repairs a missing _jsonable alias by delegating to to_jsonable", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-jsonable-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def to_jsonable(value):",
+        "    return {'wrapped': value}",
+        "",
+        "def failure_payload(error):",
+        "    return _jsonable({'error': error})",
+        "",
+        "payload = failure_payload('boom')",
+        "if payload != {'wrapped': {'error': 'boom'}}:",
+        "    raise SystemExit(1)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/_jsonable/);
+
+    const repair = await repairPythonJsonSafeHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _jsonable(value):");
+    expect(repairedSource).toContain("return to_jsonable(value)");
+    execFileSync("python3", [scriptPath]);
+  });
+
+  it("repairs a missing normalize_for_json alias before local verification", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-normalize-for-json-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def _autolabos_json_safe(value):",
+        "    return value",
+        "",
+        "def failure_payload(error):",
+        "    return normalize_for_json({'error': error})",
+        "",
+        "payload = failure_payload('boom')",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow();
+
+    const repair = await repairPythonNormalizeForJsonHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def normalize_for_json(value):");
+    expect(repairedSource).toContain("return _autolabos_json_safe(value)");
+    execFileSync("python3", [scriptPath]);
+  });
+
   it("ignores uppercase words in Python docstrings and attribute names during undefined constant validation", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-uppercase-safe-"));
     tempDirs.push(workspace);
@@ -6140,12 +6315,19 @@ describe("ImplementSessionManager", () => {
       title: "Implementation OpenAI Compact Prompt Run",
       topic: "small model reasoning under strict budget",
       constraints: ["recent", "budgeted"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "accuracy_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
-    const longPlan = `hypotheses:\n  - baseline\nnotes: ${"plan-token ".repeat(900)}`;
+    const longPlan = [
+      "hypotheses:",
+      "  - baseline",
+      "selected_design:",
+      "  implementation_notes:",
+      "    - Conditions: C0 unmodified base no-tune evaluation only; C1 vanilla LoRA rank=8; C2 rsLoRA rank=8; C3 DoRA rank=8.",
+      `notes: ${"plan-token ".repeat(900)}`
+    ].join("\n");
     const longHypotheses = `${"hypothesis-token ".repeat(900)}\n`;
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), longPlan, "utf8");
     writeFileSync(path.join(runDir, "hypotheses.jsonl"), longHypotheses, "utf8");
@@ -6199,6 +6381,13 @@ describe("ImplementSessionManager", () => {
 
     expect(capturedPrompt).toContain("The API-mode context below is compacted to the highest-signal fields only");
     expect(capturedPrompt).toContain('"plan_excerpt":');
+    expect(capturedPrompt).toContain('"planned_condition_contract":');
+    expect(capturedPrompt).toContain('"required_condition_count": 4');
+    expect(capturedPrompt).toContain('"vanilla_lora"');
+    expect(capturedPrompt).toContain('"rslora"');
+    expect(capturedPrompt).toContain('"dora"');
+    expect(capturedPrompt).toContain('"primary_metric_key": "accuracy_delta_vs_baseline"');
+    expect(capturedPrompt).toContain("do not collapse rsLoRA/DoRA");
     expect(capturedPrompt).toContain("...<truncated>");
     expect(capturedPrompt).not.toContain('"repo_listing":');
     expect(capturedPrompt).not.toContain('"resolved_constraint_profile":');
@@ -7042,7 +7231,7 @@ describe("ImplementSessionManager", () => {
               requires_network: true,
               requires_warm_cache: true,
               blocking_reason:
-                "None known except missing Python/system prerequisites or missing existing script path. If torch, transformers, datasets, peft, accelerate, or evaluate are not installed, execution will fail even if network access is available for Hugging Face assets.",
+                "No known non-network blocker at bootstrap. If network access is unavailable, the Hugging Face model, tokenizer, ARC-Challenge, HellaSwag, and instruction-tuning dataset must already be present in the local cache; otherwise execution will fail despite valid code.",
               remediation: ["Prewarm the Hugging Face cache or allow network access for bootstrap."],
               requirements: [
                 {
@@ -7093,9 +7282,140 @@ describe("ImplementSessionManager", () => {
     ).toContain("\"requires_network\":true");
     expect(bootstrapContract.requires_network).toBe(true);
     expect(bootstrapContract).toMatchObject({
-      blocking_reason: expect.stringContaining("None known except")
+      blocking_reason: expect.stringContaining("No known non-network blocker")
     });
     expect(bootstrapContract.summary).toContain("Hugging Face model and tokenizer bootstrap");
+  });
+
+  it("recovers a staged bootstrap contract when provider output includes a leading tool-like JSON object", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-noisy-bootstrap-contract-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Noisy Bootstrap Contract Run",
+      topic: "PEFT instruction tuning baseline study",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "plan_locked",
+        hypothesis_ids: ["h_locked"],
+        baselines: ["baseline_runner"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: false
+    });
+    await storeExperimentGovernanceDecision(run, runContext, {
+      contract,
+      entries: []
+    });
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let llmCalls = 0;
+    const bootstrapPayload = {
+      version: 1,
+      strategy: "hf_bootstrap_contract",
+      summary: "Recovered bootstrap contract after a noisy leading JSON object.",
+      requires_network: true,
+      requires_warm_cache: false,
+      blocking_reason: "",
+      remediation: ["Continue because no concrete non-network blocker is known."],
+      requirements: [
+        {
+          id: "hf_model",
+          kind: "model",
+          source: "huggingface",
+          required_for: ["baseline_evaluation"],
+          availability: "download_required",
+          summary: "Compact public causal LM"
+        }
+      ],
+      checks: [
+        {
+          id: "check-python",
+          check_type: "command_available",
+          target: "python3",
+          reason: "The runner executes through python3."
+        }
+      ]
+    };
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async (prompt: string) => {
+          llmCalls += 1;
+          if (prompt.includes("scaffold-first contract")) {
+            return {
+              text: JSON.stringify({
+                summary: "Scaffold for a PEFT runner.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-noisy-bootstrap-scaffold"
+            };
+          }
+          if (prompt.includes("Staged implement bootstrap contract planning.")) {
+            return {
+              text: `${JSON.stringify({ cmd: `sed -n '1,80p' ${publicScriptPath}` })}${JSON.stringify(bootstrapPayload)}`,
+              threadId: "thread-noisy-bootstrap-contract"
+            };
+          }
+          return {
+            text: JSON.stringify({ note: "not a decomposition plan" }),
+            threadId: "thread-noisy-bootstrap-followup"
+          };
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/decomposition_plan|decomposition repair|dynamic plan/i);
+    expect(llmCalls).toBeGreaterThanOrEqual(2);
+    const raw = readFileSync(
+      path.join(runDir, "implement_experiments", "bootstrap_contract_raw_response.txt"),
+      "utf8"
+    );
+    const parsedContract = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "bootstrap_contract.json"), "utf8")
+    ) as { summary?: string; requires_network?: boolean };
+
+    expect(raw).toContain("\"cmd\"");
+    expect(raw).toContain("\"hf_bootstrap_contract\"");
+    expect(parsedContract.requires_network).toBe(true);
+    expect(parsedContract.summary).toContain("Recovered bootstrap contract");
   });
 
   it("fails loudly when chunk subdivision planning does not return a parseable dynamic plan", async () => {
@@ -9294,7 +9614,1061 @@ describe("ImplementSessionManager", () => {
     const result = await manager.run(run);
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
     expect(repairedSource).toContain("def parse_args(argv=None):");
+    expect(repairedSource).toContain("if isinstance(argv, _AutoLabOSArgparse.Namespace):");
+    expect(repairedSource).toContain("return argv");
     expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("aliases parse_args to parse_cli_args when the generated entrypoint calls the legacy helper name", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-parse-cli-args-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "from typing import Optional, Sequence",
+        "",
+        "def parse_cli_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    args = parser.parse_args(argv)",
+        "    return args",
+        "",
+        "def main(argv: Optional[Sequence[str]] = None) -> int:",
+        "    args = parse_args(argv)",
+        "    assert args.metrics_path == 'custom.json'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", "custom.json"], { cwd: workspace }))
+      .toThrow(/NameError/);
+
+    const repair = await repairPythonMissingParseArgsSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def parse_args(argv=None):");
+    expect(repairedSource).toContain("parse_cli_args_fn = globals().get('parse_cli_args')");
+    expect(repairedSource).toContain("return parsed[0]");
+    execFileSync("python3", [scriptPath, "--metrics-path", "custom.json"], { cwd: workspace });
+  });
+
+  it("repairs optional model_output_dir path defaults before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-optional-path-arg-defaults-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "",
+        "DEFAULT_METRICS_PATH = Path('metrics.json')",
+        "DEFAULT_OUTPUT_DIR = Path('outputs')",
+        "DEFAULT_CACHE_DIR = Path('.cache')",
+        "",
+        "@dataclass",
+        "class StudyCLIConfig:",
+        "    metrics_path: Path",
+        "    output_dir: Path",
+        "    cache_dir: Path",
+        "    model_output_dir: Path",
+        "",
+        "def build_arg_parser() -> argparse.ArgumentParser:",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', type=Path, default=DEFAULT_METRICS_PATH)",
+        "    parser.add_argument('--output-dir', type=Path, default=DEFAULT_OUTPUT_DIR)",
+        "    parser.add_argument('--cache-dir', type=Path, default=DEFAULT_CACHE_DIR)",
+        "    parser.add_argument('--model-output-dir', type=Path, default=None)",
+        "    return parser",
+        "",
+        "def _config_from_namespace(args: argparse.Namespace) -> StudyCLIConfig:",
+        "    return StudyCLIConfig(",
+        "        metrics_path=Path(args.metrics_path),",
+        "        output_dir=Path(args.output_dir),",
+        "        cache_dir=Path(args.cache_dir),",
+        "        model_output_dir=Path(args.model_output_dir),",
+        "    )",
+        "",
+        "def parse_study_cli_config(argv=None) -> StudyCLIConfig:",
+        "    args = build_arg_parser().parse_args(argv)",
+        "    return _config_from_namespace(args)",
+        "",
+        "def main(argv=None) -> int:",
+        "    config = parse_study_cli_config(argv)",
+        "    assert config.model_output_dir == Path('public') / 'models'",
+        "    print(config.model_output_dir)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", "m.json", "--output-dir", "public"], { cwd: workspace }))
+      .toThrow(/TypeError/);
+
+    const repair = await repairPythonOptionalPathArgDefaultsSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _autolabos_path_arg_or_default(value, fallback):");
+    expect(repairedSource).toContain("model_output_dir=_autolabos_path_arg_or_default");
+    const output = execFileSync("python3", [scriptPath, "--metrics-path", "m.json", "--output-dir", "public"], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("public/models");
+  });
+
+  it("repairs generated linear scheduler calls for get_linear_schedule_with_warmup", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-linear-scheduler-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps):",
+        "    return {",
+        "        'optimizer': optimizer,",
+        "        'num_warmup_steps': num_warmup_steps,",
+        "        'num_training_steps': num_training_steps,",
+        "    }",
+        "",
+        "def train_adapter():",
+        "    get_scheduler = get_linear_schedule_with_warmup",
+        "    optimizer = 'optim'",
+        "    total_update_steps = 7",
+        "    scheduler = get_scheduler(",
+        "        'linear',",
+        "        optimizer=optimizer,",
+        "        num_warmup_steps=max(0, int(0.03 * total_update_steps)),",
+        "        num_training_steps=total_update_steps,",
+        "    )",
+        "    print(f\"{scheduler['optimizer']}:{scheduler['num_warmup_steps']}:{scheduler['num_training_steps']}\")",
+        "",
+        "if __name__ == '__main__':",
+        "    train_adapter()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/multiple values/);
+
+    const repair = await repairPythonTransformersLinearSchedulerSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _autolabos_linear_scheduler(");
+    expect(repairedSource).toContain("scheduler = _autolabos_linear_scheduler(");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("optim:0:7");
+  });
+
+  it("repairs zero-argument locked condition contract validation calls", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-condition-contract-call-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "",
+        "@dataclass(frozen=True)",
+        "class ConditionSpec:",
+        "    marker: str",
+        "",
+        "LOCKED_CONDITION_SPECS = (",
+        "    ConditionSpec('unmodified_base'),",
+        "    ConditionSpec('vanilla_lora'),",
+        "    ConditionSpec('rslora'),",
+        "    ConditionSpec('dora'),",
+        ")",
+        "",
+        "def validate_locked_condition_contract(specs):",
+        "    markers = [spec.marker for spec in specs]",
+        "    if markers != ['unmodified_base', 'vanilla_lora', 'rslora', 'dora']:",
+        "        raise RuntimeError(markers)",
+        "",
+        "def _locked_condition_sequence():",
+        "    validate_locked_condition_contract()",
+        "    return list(LOCKED_CONDITION_SPECS)",
+        "",
+        "if __name__ == '__main__':",
+        "    print(len(_locked_condition_sequence()))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/missing 1 required positional argument/);
+
+    const repair = await repairPythonLockedConditionContractCallSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("validate_locked_condition_contract(LOCKED_CONDITION_SPECS)");
+    expect(repairedSource).toContain("_autolabos_locked_condition_contract_call_marker");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("4");
+  });
+
+  it("repairs dict-backed LOCKED_CONDITIONS name projection for baseline-first parsers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-condition-name-projection-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "",
+        "LOCKED_CONDITIONS = [",
+        "    {'condition_id': 'unmodified_base', 'name': 'unmodified_base'},",
+        "    {'condition_id': 'vanilla_lora', 'name': 'vanilla_lora'},",
+        "    {'condition_id': 'rslora', 'name': 'rslora'},",
+        "    {'condition_id': 'dora', 'name': 'dora'},",
+        "]",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--condition', '--conditions', dest='conditions', action='append', default=None)",
+        "    return parser",
+        "",
+        "def _locked_condition_names():",
+        "    if 'LOCKED_CONDITIONS' in globals():",
+        "        return [str(x) for x in globals()['LOCKED_CONDITIONS']]",
+        "    return ['unmodified_base', 'vanilla_lora', 'rslora', 'dora']",
+        "",
+        "def parse_args(argv=None):",
+        "    parser = build_arg_parser()",
+        "    args = parser.parse_args(argv)",
+        "    if not args.conditions:",
+        "        args.conditions = _locked_condition_names()",
+        "    if not args.conditions or args.conditions[0] != 'unmodified_base':",
+        "        parser.error('the locked comparison contract requires unmodified_base as the first condition')",
+        "    return args",
+        "",
+        "if __name__ == '__main__':",
+        "    print(','.join(parse_args().conditions))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /requires unmodified_base as the first condition/
+    );
+
+    const repair = await repairPythonLockedConditionNameProjectionSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_locked_condition_name_projection_marker");
+    expect(repairedSource).toContain('_autolabos_condition.get("condition_id")');
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("unmodified_base,vanilla_lora,rslora,dora");
+  });
+
+  it("bridges final entrypoint metrics aggregation and runnable command helper names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-metrics-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "import sys",
+        "import time",
+        "import traceback",
+        "from pathlib import Path",
+        "from typing import Any, Mapping, Optional, Sequence",
+        "",
+        "def _resolve_first_callable(names):",
+        "    for name in names:",
+        "        fn = globals().get(name)",
+        "        if callable(fn):",
+        "            return fn",
+        "    return None",
+        "",
+        "def _call_with_supported_kwargs(fn, **kwargs):",
+        "    return fn(**kwargs)",
+        "",
+        "def _parse_main_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', type=str, default='metrics.json')",
+        "    parser.add_argument('--output-dir', type=str, default='.')",
+        "    return parser.parse_args(list(argv) if argv is not None else None)",
+        "",
+        "def run_baseline_first_experiment(args=None, **kwargs):",
+        "    return {",
+        "        'raw_condition_outcomes': [",
+        "            {'condition_marker': 'unmodified_base', 'success': True, 'mean_zero_shot_accuracy': 0.5}",
+        "        ]",
+        "    }",
+        "",
+        "def aggregate_recipe_metrics(raw_condition_outcomes):",
+        "    return {",
+        "        'status': 'success',",
+        "        'recipe_outcomes': list(raw_condition_outcomes),",
+        "        'baseline_mean_zero_shot_accuracy': 0.5,",
+        "    }",
+        "",
+        "def _canonical_command_from_args(args, metrics_path):",
+        "    return 'python runner.py --metrics-path ' + str(metrics_path)",
+        "",
+        "def write_experiment_metrics(aggregated=None, raw_run=None, args=None, started_at=None, metrics_path=None, output_dir=None, **kwargs):",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'aggregated': aggregated,",
+        "        'runnable_command': _canonical_command_from_args(args, metrics_path),",
+        "    }",
+        "    Path(metrics_path).write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _write_fatal_failure_metrics(*, args, exc, started_at):",
+        "    metrics_path = Path(getattr(args, 'metrics_path', 'metrics.json')) if args is not None else Path('metrics.json')",
+        "    payload = {",
+        "        'status': 'failed',",
+        "        'error_message': str(exc),",
+        "        'traceback': traceback.format_exc(),",
+        "        'runnable_command': _build_runnable_command(args, metrics_path) if args is not None else 'python runner.py',",
+        "    }",
+        "    metrics_path.write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "",
+        "def main(argv: Optional[Sequence[str]] = None) -> int:",
+        "    started_at = time.perf_counter()",
+        "    args = None",
+        "    try:",
+        "        args = _parse_main_args(argv)",
+        "        orchestrator = _resolve_first_callable(('run_baseline_first_experiment',))",
+        "        raw_run = _call_with_supported_kwargs(orchestrator, args=args)",
+        "        aggregator = _resolve_first_callable((",
+        "            'aggregate_condition_metrics',",
+        "            'aggregate_experiment_metrics',",
+        "            'compute_aggregated_metrics',",
+        "            'summarize_recipe_outcomes',",
+        "        ))",
+        "        if aggregator is None:",
+        "            raise RuntimeError('No metrics aggregation helper is defined.')",
+        "        aggregated = _call_with_supported_kwargs(aggregator, raw_run=raw_run, args=args, started_at=started_at)",
+        "        payload_writer = _resolve_first_callable(('write_experiment_metrics',))",
+        "        final_payload = _call_with_supported_kwargs(",
+        "            payload_writer,",
+        "            aggregated=aggregated,",
+        "            raw_run=raw_run,",
+        "            args=args,",
+        "            started_at=started_at,",
+        "            metrics_path=Path(getattr(args, 'metrics_path')),",
+        "            output_dir=Path(getattr(args, 'output_dir')),",
+        "        )",
+        "        print(final_payload['status'])",
+        "        return 0",
+        "    except Exception as exc:",
+        "        try:",
+        "            _write_fatal_failure_metrics(args=args, exc=exc, started_at=started_at)",
+        "        finally:",
+        "            traceback.print_exc()",
+        "        return 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], {
+        cwd: workspace,
+        encoding: "utf8"
+      })
+    ).toThrow(/_build_runnable_command|No metrics aggregation helper/);
+
+    const repair = await repairPythonEntrypointMetricsAggregationBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_metrics_bridge_marker");
+    expect(repairedSource).toContain("def aggregate_condition_metrics(");
+    expect(repairedSource).toContain("def _build_runnable_command(");
+    const output = execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("completed");
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.aggregated.recipe_outcomes[0].condition_marker).toBe("unmodified_base");
+    expect(metrics.runnable_command).toContain("--metrics-path");
+  });
+
+  it("aliases generated build_arg_parser for AutoLabOS parser resolvers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-cli-parser-builder-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    return parser",
+        "",
+        "def create_arg_parser():",
+        "    return build_arg_parser()",
+        "",
+        "def _autolabos_resolve_parser():",
+        "    parser_obj = globals().get('ARGUMENT_PARSER')",
+        "    if isinstance(parser_obj, argparse.ArgumentParser):",
+        "        return parser_obj",
+        "    for builder_name in (",
+        "        'build_argument_parser',",
+        "        'create_argument_parser',",
+        "        'make_argument_parser',",
+        "        'get_argument_parser',",
+        "        'build_parser',",
+        "    ):",
+        "        builder = globals().get(builder_name)",
+        "        if callable(builder):",
+        "            candidate = builder()",
+        "            if isinstance(candidate, argparse.ArgumentParser):",
+        "                return candidate",
+        "    raise RuntimeError(",
+        "        'No CLI parser was found. Expected build_argument_parser(), create_argument_parser(), '",
+        "        'make_argument_parser(), get_argument_parser(), build_parser(), or ARGUMENT_PARSER to be defined '",
+        "        'by the CLI defaults section.'",
+        "    )",
+        "",
+        "if __name__ == '__main__':",
+        "    print(_autolabos_resolve_parser().parse_args(['--metrics-path', 'ok.json']).metrics_path)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath], {
+        cwd: workspace,
+        encoding: "utf8"
+      })
+    ).toThrow(/No CLI parser was found/);
+
+    const repair = await repairPythonAutolabosCliParserBuilderAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_cli_parser_builder_alias_marker");
+    expect(repairedSource).toContain("def build_argument_parser(");
+    expect(repairedSource).toContain("def create_argument_parser(");
+    const output = execFileSync("python3", [scriptPath], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("ok.json");
+  });
+
+  it("renames AutoLabOS supported-args adapter parameter to avoid duplicate args binding", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-supported-args-duplicate-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from typing import Any, Callable",
+        "",
+        "def _autolabos_call_with_supported_args(func: Callable[..., Any], args: argparse.Namespace, **extra_kwargs: Any) -> Any:",
+        "    \"\"\"Call a helper from earlier sections using either Namespace, keyword, or no-arg style.\"\"\"",
+        "    import inspect",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        kwargs = dict(extra_kwargs)",
+        "        kwargs.setdefault('args', args)",
+        "        return func(**kwargs)",
+        "    return func(args)",
+        "",
+        "def run_experiment_workflow(**kwargs):",
+        "    return kwargs['args'].marker",
+        "",
+        "def _autolabos_run_workflow(args: argparse.Namespace) -> Any:",
+        "    common_kwargs = {",
+        "        'args': args,",
+        "        'metrics_path': 'metrics.json',",
+        "    }",
+        "    return _autolabos_call_with_supported_args(run_experiment_workflow, args, **common_kwargs)",
+        "",
+        "if __name__ == '__main__':",
+        "    print(_autolabos_run_workflow(argparse.Namespace(marker='ok')))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath], {
+        cwd: workspace,
+        encoding: "utf8"
+      })
+    ).toThrow(/multiple values for argument 'args'/);
+
+    const repair = await repairPythonAutolabosSupportedArgsDuplicateArgsSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_call_with_supported_args_duplicate_args_marker");
+    expect(repairedSource).toContain("_autolabos_args: argparse.Namespace");
+    const output = execFileSync("python3", [scriptPath], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("ok");
+  });
+
+  it("adds generated locked condition-order helpers to entrypoint condition resolvers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-condition-resolver-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "",
+        "@dataclass",
+        "class ExperimentOptions:",
+        "    metrics_path: Path = Path('metrics.json')",
+        "",
+        "def execute_locked_condition_order(options: ExperimentOptions):",
+        "    return {'called': True, 'conditions': [{'condition_id': 'unmodified_base', 'status': 'ok'}]}",
+        "",
+        "def _entrypoint_run_conditions(options: ExperimentOptions):",
+        "    for helper_name in (",
+        "        'run_locked_experiment_conditions',",
+        "        'execute_locked_condition_sequence',",
+        "        'run_condition_sequence',",
+        "        'execute_experiment_conditions',",
+        "        'run_experiment_conditions',",
+        "    ):",
+        "        helper = globals().get(helper_name)",
+        "        if callable(helper):",
+        "            return helper(options)",
+        "    raise RuntimeError(",
+        "        'No condition execution helper was found; expected one of run_locked_experiment_conditions, '",
+        "        'execute_locked_condition_sequence, run_condition_sequence, execute_experiment_conditions, or '",
+        "        'run_experiment_conditions.'",
+        "    )",
+        "",
+        "if __name__ == '__main__':",
+        "    print(_entrypoint_run_conditions(ExperimentOptions())['called'])",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No condition execution helper/
+    );
+
+    const repair = await repairPythonEntrypointConditionRunnerResolverSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain('"execute_locked_condition_order"');
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("True");
+  });
+
+  it("bridges generated baseline-first condition loops into entrypoint condition dispatchers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-condition-loop-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from pathlib import Path",
+        "",
+        "PUBLIC_EXPERIMENT_DIR = Path('public_experiment')",
+        "",
+        "def _call_with_supported_kwargs(func, **kwargs):",
+        "    parameters = inspect.signature(func).parameters",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        return func(**kwargs)",
+        "    return func(**{key: value for key, value in kwargs.items() if key in parameters})",
+        "",
+        "def load_all_benchmark_samples(args=None, seed=None):",
+        "    return {'arc_challenge': [{'id': 'arc-1'}], 'hellaswag': [{'id': 'hella-1'}]}",
+        "",
+        "def run_conditions_baseline_first(args, device, benchmark_samples, run_output_dir):",
+        "    return [{'condition_marker': 'locked_lora_baseline', 'sample_count': len(benchmark_samples['arc_challenge']), 'output_dir': str(run_output_dir), 'device': str(device)}]",
+        "",
+        "def _resolve_helper(candidate_names, required=True):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    if required:",
+        "        raise RuntimeError('None of the expected helper functions is available: ' + ', '.join(candidate_names))",
+        "    return None",
+        "",
+        "def _entrypoint_run_conditions(args, device, device_metadata):",
+        "    runner = _resolve_helper([",
+        "        'run_baseline_first_conditions',",
+        "        'execute_baseline_first_conditions',",
+        "        'run_locked_baseline_first_conditions',",
+        "        'execute_locked_condition_order',",
+        "        'run_condition_execution_orchestration',",
+        "        'run_experiment_conditions',",
+        "    ], required=True)",
+        "    return _call_with_supported_kwargs(",
+        "        runner,",
+        "        args=args,",
+        "        device=device,",
+        "        device_metadata=dict(device_metadata),",
+        "        output_dir=getattr(args, 'output_dir', str(PUBLIC_EXPERIMENT_DIR)),",
+        "    )",
+        "",
+        "if __name__ == '__main__':",
+        "    rows = _entrypoint_run_conditions(argparse.Namespace(seed=7, output_dir='out'), 'cpu', {'device': 'cpu'})",
+        "    print(rows[0]['sample_count'], rows[0]['output_dir'], rows[0]['device'])",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /None of the expected helper functions/
+    );
+
+    const repair = await repairPythonEntrypointConditionLoopBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_condition_loop_bridge_marker");
+    expect(repairedSource).toContain("def run_baseline_first_conditions(**kwargs):");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("1 out cpu");
+  });
+
+  it("materializes eval and instruction inputs before fallback condition-sequence execution", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-fallback-condition-sequence-inputs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "import time",
+        "import traceback",
+        "",
+        "DEFAULT_EVAL_EXAMPLES_PER_TASK = 2",
+        "DEFAULT_MAX_TRAIN_EXAMPLES = 3",
+        "",
+        "def _call_with_supported_kwargs(func, **kwargs):",
+        "    try:",
+        "        parameters = inspect.signature(func).parameters",
+        "        accepted = {name: value for name, value in kwargs.items() if name in parameters}",
+        "        return func(**accepted)",
+        "    except TypeError:",
+        "        last_error = None",
+        "        for candidate_keys in (",
+        "            ('args', 'device', 'output_dir'),",
+        "            ('args', 'device'),",
+        "            ('args',),",
+        "        ):",
+        "            try:",
+        "                return func(**{key: kwargs[key] for key in candidate_keys if key in kwargs})",
+        "            except TypeError as exc:",
+        "                last_error = exc",
+        "                continue",
+        "        if last_error is not None:",
+        "            raise last_error",
+        "        raise",
+        "",
+        "def _first_callable(candidate_names):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def build_locked_condition_sequence(args):",
+        "    return ['unmodified_base', 'dora']",
+        "",
+        "def load_benchmark_subsets(max_examples_per_task, seed=42):",
+        "    return {'arc_challenge': [{'id': f'arc-{seed}', 'limit': max_examples_per_task}]}, {'source': 'benchmark-loader'}",
+        "",
+        "def load_instruction_records(args):",
+        "    return [{'instruction': 'bounded train example'}], {'source': 'instruction-loader'}",
+        "",
+        "def execute_condition(condition, args, eval_examples, instruction_examples=None, device=None, condition_index=None):",
+        "    return {",
+        "        'condition_marker': condition,",
+        "        'status': 'success',",
+        "        'eval_count': len(eval_examples['arc_challenge']),",
+        "        'train_count': len(instruction_examples or []),",
+        "        'condition_index': condition_index,",
+        "        'device': str(device),",
+        "    }",
+        "",
+        "run_condition = execute_condition",
+        "",
+        "def _fallback_execute_condition_sequence(args, device, output_dir):",
+        "    sequence = build_locked_condition_sequence(args)",
+        "    condition_records = []",
+        "    single_runner = _first_callable(",
+        "        [",
+        "            'run_single_condition',",
+        "            'execute_single_condition',",
+        "            'execute_condition_and_evaluate',",
+        "            'run_condition_and_evaluate',",
+        "            'run_condition',",
+        "        ]",
+        "    )",
+        "    if single_runner is None:",
+        "        return []",
+        "",
+        "    for index, marker in enumerate(sequence):",
+        "        start = time.time()",
+        "        try:",
+        "            raw_record = _call_with_supported_kwargs(",
+        "                single_runner,",
+        "                marker=marker,",
+        "                condition_marker=marker,",
+        "                condition=marker,",
+        "                index=index,",
+        "                args=args,",
+        "                device=device,",
+        "                output_dir=output_dir,",
+        "            )",
+        "            record = dict(raw_record)",
+        "            record.setdefault('status', 'completed')",
+        "        except Exception as exc:",
+        "            record = {",
+        "                'condition_marker': marker,",
+        "                'status': 'failed',",
+        "                'error': repr(exc),",
+        "                'traceback': traceback.format_exc(limit=12),",
+        "            }",
+        "        record.setdefault('wall_clock_seconds', float(time.time() - start))",
+        "        condition_records.append(record)",
+        "    return condition_records",
+        "",
+        "if __name__ == '__main__':",
+        "    rows = _fallback_execute_condition_sequence(argparse.Namespace(seed=7), 'cpu', 'out')",
+        "    if any(row.get('status') == 'failed' for row in rows):",
+        "        raise RuntimeError(rows[0]['error'])",
+        "    print(json.dumps(rows, sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing .*eval_examples/
+    );
+
+    const repair = await repairPythonFallbackConditionSequenceInputMaterializationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_fallback_condition_sequence_inputs_marker");
+    expect(repairedSource).toContain("eval_examples=_autolabos_sequence_inputs.get(\"eval_examples\")");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    const rows = JSON.parse(output);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      condition_marker: "unmodified_base",
+      device: "cpu",
+      eval_count: 1,
+      train_count: 1,
+      condition_index: 0
+    });
+    expect(rows[1]).toMatchObject({
+      condition_marker: "dora",
+      condition_index: 1
+    });
+  });
+
+  it("repairs condition-plan runner calls when the selected runner requires keyword-only args", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-plan-runner-signature-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "",
+        "def execute_locked_condition_plan(condition_plan, *, args):",
+        "    return [{'condition_id': condition_plan[0]['condition_id'], 'seed': args.seed}]",
+        "",
+        "def _find_condition_plan_runner():",
+        "    return execute_locked_condition_plan",
+        "",
+        "def run_experiment(args):",
+        "    condition_plan = [{'condition_id': 'unmodified_base'}]",
+        "    runner = _find_condition_plan_runner()",
+        "    raw_condition_results = list(runner(condition_plan, args))",
+        "    return raw_condition_results",
+        "",
+        "if __name__ == '__main__':",
+        "    print(run_experiment(argparse.Namespace(seed=7))[0]['seed'])",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /takes 1 positional argument but 2 were given/
+    );
+
+    const repair = await repairPythonConditionPlanRunnerSignatureSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _autolabos_call_condition_plan_runner(");
+    expect(repairedSource).toContain("_autolabos_condition_plan_runner_signature_marker");
+    expect(repairedSource).toContain(
+      "raw_condition_results = list(_autolabos_call_condition_plan_runner(runner, condition_plan, args))"
+    );
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("7");
+  });
+
+  it("bridges entrypoint condition execution context for output_dir and device runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-execution-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import math",
+        "from pathlib import Path",
+        "from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional",
+        "",
+        "LOCKED_CONDITIONS = [{'condition_id': 'unmodified_base'}, {'condition_id': 'vanilla_lora'}]",
+        "",
+        "def _condition_identifier(condition):",
+        "    return condition['condition_id']",
+        "",
+        "def _resolve_required_conditions():",
+        "    return LOCKED_CONDITIONS",
+        "",
+        "def execute_single_condition(condition: Any, output_dir: Path, device: Any) -> Dict[str, Any]:",
+        "    if Path(output_dir) != Path('out'):",
+        "        raise RuntimeError(f'wrong output_dir={output_dir}')",
+        "    if device != 'cuda':",
+        "        raise RuntimeError(f'wrong device={device}')",
+        "    return {'condition_id': condition['condition_id'], 'mean_zero_shot_accuracy': 0.5 if condition['condition_id'] == 'unmodified_base' else 0.6}",
+        "",
+        "def _find_condition_execution_callable():",
+        "    return execute_single_condition",
+        "",
+        "def _call_condition_execution(",
+        "    runner: Callable[..., Dict[str, Any]],",
+        "    condition: Any,",
+        "    args: argparse.Namespace,",
+        "    runtime: Optional[MutableMapping[str, Any]],",
+        "    order_index: int,",
+        ") -> Dict[str, Any]:",
+        "    signature = inspect.signature(runner)",
+        "    kwargs: Dict[str, Any] = {}",
+        "    parameters = signature.parameters",
+        "    if 'condition' in parameters:",
+        "        kwargs['condition'] = condition",
+        "    if 'condition_spec' in parameters:",
+        "        kwargs['condition_spec'] = condition",
+        "    if 'args' in parameters:",
+        "        kwargs['args'] = args",
+        "    if 'runtime' in parameters:",
+        "        kwargs['runtime'] = runtime",
+        "    if 'runtime_context' in parameters:",
+        "        kwargs['runtime_context'] = runtime",
+        "    if 'order_index' in parameters:",
+        "        kwargs['order_index'] = order_index",
+        "    if 'condition_order' in parameters:",
+        "        kwargs['condition_order'] = order_index",
+        "    if kwargs:",
+        "        return runner(**kwargs)",
+        "    return runner(condition)",
+        "",
+        "def run_required_conditions(",
+        "    args: argparse.Namespace,",
+        "    runtime: Optional[MutableMapping[str, Any]] = None,",
+        ") -> List[Dict[str, Any]]:",
+        "    runtime = runtime if runtime is not None else {}",
+        "    runner = _find_condition_execution_callable()",
+        "    results = []",
+        "    for order_index, condition in enumerate(_resolve_required_conditions()):",
+        "        results.append(_call_condition_execution(runner, condition, args, runtime, order_index))",
+        "    return results",
+        "",
+        "def _call_with_supported_kwargs(func: Callable[..., Any], **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    filtered = {key: value for key, value in kwargs.items() if key in signature.parameters}",
+        "    return func(**filtered)",
+        "",
+        "def _run_entrypoint_conditions(args: argparse.Namespace, device: Any) -> List[Dict[str, Any]]:",
+        "    run_kwargs = {",
+        "        \"args\": args,",
+        "        \"device\": device,",
+        "        \"output_dir\": Path(args.output_dir),",
+        "    }",
+        "    for helper_name in (",
+        "        'run_required_conditions',",
+        "    ):",
+        "        helper = globals().get(helper_name)",
+        "        if callable(helper):",
+        "            return _call_with_supported_kwargs(helper, **run_kwargs)",
+        "    raise RuntimeError('No condition orchestration helper was found.')",
+        "",
+        "def _aggregate_entrypoint_results(condition_results: List[Dict[str, Any]]) -> Dict[str, Any]:",
+        "    baseline = condition_results[0]",
+        "    baseline_accuracy = _extract_numeric_metric(baseline, ['mean_zero_shot_accuracy'])",
+        "    return {'baseline_mean_zero_shot_accuracy': baseline_accuracy}",
+        "",
+        "if __name__ == '__main__':",
+        "    args = argparse.Namespace(output_dir='out')",
+        "    results = _run_entrypoint_conditions(args, 'cuda')",
+        "    aggregate = _aggregate_entrypoint_results(results)",
+        "    print(aggregate['baseline_mean_zero_shot_accuracy'])",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /output_dir.*device/
+    );
+
+    const repair = await repairPythonEntrypointConditionExecutionBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_condition_execution_bridge_marker");
+    expect(repairedSource).toContain("_autolabos_condition_runtime_bridge_marker");
+    expect(repairedSource).toContain("def _extract_numeric_metric(");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("0.5");
+  });
+
+  it("repairs entrypoint atomic JSON writer calls for payload-first writers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-writer-call-order-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from typing import Any, Mapping",
+        "import json",
+        "",
+        "def ensure_parent_dir(path: Path) -> Path:",
+        "    path.parent.mkdir(parents=True, exist_ok=True)",
+        "    return path",
+        "",
+        "def atomic_write_json(payload: Mapping[str, Any], path: Path) -> Path:",
+        "    target = ensure_parent_dir(Path(path))",
+        "    target.write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "    return target",
+        "",
+        "def _entrypoint_atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:",
+        "    writer = globals().get('write_json_atomic') or globals().get('atomic_write_json') or globals().get('write_metrics_json')",
+        "    if callable(writer):",
+        "        writer(path, payload)",
+        "        return",
+        "    Path(path).write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "",
+        "if __name__ == '__main__':",
+        "    _entrypoint_atomic_write_json(Path('metrics.json'), {'status': 'failed'})",
+        "    print(Path('metrics.json').read_text(encoding='utf-8'))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/not 'dict'/);
+
+    const repair = await repairPythonEntrypointAtomicWriterCallOrderSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_writer_call_order_marker");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe('{"status": "failed"}');
+  });
+
+  it("repairs parse_args calls that receive an argparse Namespace from workflow dispatch", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-namespace-parse-args-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "from dataclasses import dataclass",
+        "",
+        "@dataclass",
+        "class ExperimentConfig:",
+        "    metrics_path: str",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    return parser",
+        "",
+        "def resolve_config(args=None) -> ExperimentConfig:",
+        "    parser = build_arg_parser()",
+        "    namespace = parser.parse_args(args=args)",
+        "    return ExperimentConfig(metrics_path=namespace.metrics_path)",
+        "",
+        "def run_experiment_workflow(args):",
+        "    return resolve_config(args)",
+        "",
+        "if __name__ == '__main__':",
+        "    parsed = build_arg_parser().parse_args()",
+        "    config = run_experiment_workflow(parsed)",
+        "    print(config.metrics_path)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonNamespaceParseArgsSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_namespace_parse_args_marker = True");
+    expect(repairedSource).toContain("if isinstance(args, _AutoLabOSArgparse.Namespace):");
+    expect(repairedSource).toContain("namespace = args");
+    const output = execFileSync("python3", [scriptPath], { encoding: "utf8" }).trim();
+    expect(output).toBe("metrics.json");
   });
 
   it("repairs a baseline-first execution resolver that misses the generated helper", async () => {
@@ -9602,6 +10976,99 @@ describe("ImplementSessionManager", () => {
     expect(await new RunContextMemory(run.memoryRefs.runContextPath).get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
   });
 
+  it("repairs when a python runner omits a typing alias used in parameter annotations", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-typing-alias-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Missing Typing Alias Annotation",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let callCount = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        return {
+          threadId: `thread-missing-typing-alias-${callCount}`,
+          finalText: JSON.stringify({
+            summary: "Implemented the experiment runner.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "real_execution",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from typing import Any, Mapping",
+                  "",
+                  "def update_condition_marker_coverage(",
+                  "    status: MutableMapping[str, Any],",
+                  "    observed_markers: Mapping[str, Any] | None = None,",
+                  ") -> MutableMapping[str, Any]:",
+                  "    status['observed_markers'] = observed_markers or {}",
+                  "    return status",
+                  "",
+                  "def main(argv=None):",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+
+    expect(callCount).toBe(1);
+    expect(repairedSource).toContain("from __future__ import annotations");
+    expect(repairedSource).toContain("status: MutableMapping[str, Any]");
+  });
+
   it("retries when a python runner uses slugify without defining it before module-level recipe projections", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-undefined-slugify-"));
     tempDirs.push(workspace);
@@ -9899,6 +11366,5350 @@ describe("ImplementSessionManager", () => {
     expect(await new RunContextMemory(run.memoryRefs.runContextPath).get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
   });
 
+  it("repairs a python runner that calls ensure_directory when ensure_dir is defined", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-ensure-directory-alias-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Ensure Directory Alias",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let callCount = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        return {
+          threadId: `thread-ensure-directory-alias-${callCount}`,
+          finalText: JSON.stringify({
+            summary: "Implemented the experiment runner.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "real_execution",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "import json",
+                  "from pathlib import Path",
+                  "",
+                  "def ensure_dir(path):",
+                  "    directory = Path(path)",
+                  "    directory.mkdir(parents=True, exist_ok=True)",
+                  "    return directory",
+                  "",
+                  "def main(argv=None):",
+                  "    output_dir = ensure_directory('results')",
+                  "    with open(output_dir / 'metrics.json', 'w', encoding='utf-8') as handle:",
+                  "        json.dump({'status': 'ok'}, handle)",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+
+    expect(callCount).toBe(1);
+    expect(repairedSource).toContain("def ensure_directory(path):");
+    expect(repairedSource).toContain("return ensure_dir(path)");
+    expect(await new RunContextMemory(run.memoryRefs.runContextPath).get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
+  });
+
+  it("repairs a python runner that calls ensure_parent_dir when ensure_parent_directory is defined", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-ensure-parent-dir-alias-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Ensure Parent Dir Alias",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let callCount = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        return {
+          threadId: `thread-ensure-parent-dir-alias-${callCount}`,
+          finalText: JSON.stringify({
+            summary: "Implemented the experiment runner.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "real_execution",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "import json",
+                  "from pathlib import Path",
+                  "",
+                  "def ensure_parent_directory(path):",
+                  "    target = Path(path)",
+                  "    target.parent.mkdir(parents=True, exist_ok=True)",
+                  "    return target",
+                  "",
+                  "def main(argv=None):",
+                  "    metrics_path = Path('results/metrics.json')",
+                  "    ensure_parent_dir(metrics_path)",
+                  "    with open(metrics_path, 'w', encoding='utf-8') as handle:",
+                  "        json.dump({'status': 'ok'}, handle)",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+
+    expect(callCount).toBe(1);
+    expect(repairedSource).toContain("def ensure_parent_dir(path):");
+    expect(repairedSource).toContain("return ensure_parent_directory(path)");
+    expect(await new RunContextMemory(run.memoryRefs.runContextPath).get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
+  });
+
+  it("repairs a python runner that calls _safe_mkdir when ensure_directory is defined", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-safe-mkdir-alias-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Safe Mkdir Alias",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let callCount = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        return {
+          threadId: `thread-safe-mkdir-alias-${callCount}`,
+          finalText: JSON.stringify({
+            summary: "Implemented the experiment runner.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "real_execution",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "import json",
+                  "from pathlib import Path",
+                  "",
+                  "def ensure_directory(path):",
+                  "    directory = Path(path)",
+                  "    directory.mkdir(parents=True, exist_ok=True)",
+                  "    return directory",
+                  "",
+                  "def main(argv=None):",
+                  "    output_dir = _safe_mkdir('results')",
+                  "    with open(output_dir / 'metrics.json', 'w', encoding='utf-8') as handle:",
+                  "        json.dump({'status': 'ok'}, handle)",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+
+    expect(callCount).toBe(1);
+    expect(repairedSource).toContain("def _safe_mkdir(path):");
+    expect(repairedSource).toContain("return ensure_directory(path)");
+    expect(await new RunContextMemory(run.memoryRefs.runContextPath).get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
+  });
+
+  it("maps path and file_path aliases to generated path_like helper parameters", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-path-like-signature-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import inspect",
+        "from pathlib import Path",
+        "from typing import Any, Callable",
+        "",
+        "def ensure_parent_dir(path_like: Any) -> Path:",
+        "    target = Path(path_like)",
+        "    target.parent.mkdir(parents=True, exist_ok=True)",
+        "    return target",
+        "",
+        "def _call_with_supported_main_signature(function: Callable[..., Any], **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(function)",
+        "    parameters = signature.parameters",
+        "    supported_kwargs = {",
+        "        key: value",
+        "        for key, value in kwargs.items()",
+        "        if key in parameters",
+        "    }",
+        "    if supported_kwargs:",
+        "        return function(**supported_kwargs)",
+        "    return function()",
+        "",
+        "def main() -> int:",
+        "    _call_with_supported_main_signature(ensure_parent_dir, path='results/metrics.json', file_path='results/metrics.json')",
+        "    print('ok')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { encoding: "utf8", cwd: workspace })).toThrow();
+
+    const repair = await repairPythonPathLikeSignatureAliasSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_path_like_signature_marker = True");
+    expect(repairedSource).toContain("kwargs[\"path_like\"] = kwargs[_autolabos_path_key]");
+    const output = execFileSync("python3", [scriptPath], { encoding: "utf8", cwd: workspace }).trim();
+    expect(output).toBe("ok");
+  });
+
+  it("repairs a python runner that calls the legacy runtime dependency helper before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runtime-deps-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import importlib",
+        "from typing import Mapping, Optional",
+        "",
+        "RuntimePackageMap = dict",
+        "",
+        "def validate_runtime_dependencies(required: Optional[Mapping[str, str]] = None) -> RuntimePackageMap:",
+        "    required = required or {'math': 'math is required.'}",
+        "    packages = {}",
+        "    for module_name, _reason in required.items():",
+        "        packages[module_name] = importlib.import_module(module_name)",
+        "    return packages",
+        "",
+        "def main() -> int:",
+        "    packages = require_runtime_dependencies(['math'])",
+        "    assert 'math' in packages",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /require_runtime_dependencies/
+    );
+
+    const repair = await repairPythonRuntimeDependencyHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def require_runtime_dependencies(required=None):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs a python runner that calls the underscore runtime dependency helper before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runtime-deps-private-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import importlib",
+        "from typing import Mapping, Optional",
+        "",
+        "RuntimePackageMap = dict",
+        "",
+        "def require_runtime_dependencies(required: Optional[Mapping[str, str]] = None) -> RuntimePackageMap:",
+        "    required = required or {'math': 'math is required.'}",
+        "    if not hasattr(required, 'items'):",
+        "        required = {str(name): f'{name} is required.' for name in required}",
+        "    packages = {}",
+        "    for module_name, _reason in required.items():",
+        "        packages[module_name] = importlib.import_module(module_name)",
+        "    return packages",
+        "",
+        "def main() -> int:",
+        "    packages = _require_runtime_dependencies(['math'])",
+        "    assert 'math' in packages",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /_require_runtime_dependencies/
+    );
+
+    const repair = await repairPythonRuntimeDependencyHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _require_runtime_dependencies(required=None):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs dependency checker calls that omit generated required dependency lists before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-dependency-checker-call-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "from typing import Sequence, Tuple",
+        "",
+        "REQUIRED_DEPENDENCIES: Tuple[str, ...] = ('json',)",
+        "",
+        "def require_dependencies(required: Sequence[str]) -> None:",
+        "    assert tuple(required) == REQUIRED_DEPENDENCIES",
+        "",
+        "def _resolve_callable(names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def initialize_experiment_runtime():",
+        "    dependency_checker = _resolve_callable(['require_dependencies', 'check_required_dependencies'])",
+        "    if dependency_checker is not None:",
+        "        dependency_checker()",
+        "",
+        "def main() -> int:",
+        "    initialize_experiment_runtime()",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing 1 required positional argument|takes exactly one argument/
+    );
+
+    const repair = await repairPythonDependencyCheckerCallSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain('required_dependencies = globals().get("REQUIRED_DEPENDENCIES", ())');
+    expect(repairedSource).toContain("dependency_checker(required_dependencies)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs a python runner that calls setup_logging while defining configure_logging", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-logging-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import logging",
+        "",
+        "def configure_logging(log_level: str = 'INFO') -> logging.Logger:",
+        "    logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO))",
+        "    return logging.getLogger('runner')",
+        "",
+        "def main() -> int:",
+        "    setup_logging('INFO')",
+        "    logging.info('started')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/setup_logging/);
+
+    const repair = await repairPythonLoggingHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def setup_logging(log_level=\"INFO\"):");
+    expect(repairedSource).toContain("return configure_logging(log_level)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs current_utc_timestamp logging fallbacks when utc_timestamp exists", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-current-utc-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import contextlib",
+        "import json",
+        "",
+        "def utc_timestamp():",
+        "    return 'known-utc-time'",
+        "",
+        "def _autolabos_json_safe(value):",
+        "    return value",
+        "",
+        "def to_json_safe(value):",
+        "    return value",
+        "",
+        "def _call_available_logger(message, payload=None):",
+        "    payload_dict = dict(payload or {})",
+        "    for logger_name in ('log_event', 'record_event', 'append_event'):",
+        "        logger = globals().get(logger_name)",
+        "        if callable(logger):",
+        "            with contextlib.suppress(Exception):",
+        "                logger(message, payload_dict)",
+        "                return",
+        "    print(f'[{current_utc_timestamp()}] {message}: {json.dumps(_autolabos_json_safe(to_json_safe(payload_dict)), sort_keys=True)}', flush=True)",
+        "",
+        "def detect_device(seed=1, *, log=True):",
+        "    info = {'device': 'cpu'}",
+        "    if log:",
+        "        _call_available_logger('device_selected', info)",
+        "    return 'cpu', info",
+        "",
+        "EXPERIMENT_DEVICE, DEVICE_INFO = detect_device(log=True)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/current_utc_timestamp/);
+
+    const repair = await repairPythonLoggingHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def current_utc_timestamp():");
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toContain(
+      '[known-utc-time] device_selected: {"device": "cpu"}'
+    );
+  });
+
+  it("repairs cleanup_model_artifacts calls when generated cleanup helpers use another name", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-cleanup-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const markerPath = path.join(workspace, "cleanup.txt");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "",
+        "def cleanup_model_resources(*objects):",
+        `    Path(${JSON.stringify(markerPath)}).write_text(str(len(objects)), encoding='utf-8')`,
+        "",
+        "def run_one_condition():",
+        "    cleanup_model_artifacts('model', 'tokenizer')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(run_one_condition())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/cleanup_model_artifacts/);
+
+    const repair = await repairPythonCleanupModelArtifactsAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def cleanup_model_artifacts(*objects, **keyword):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(readFileSync(markerPath, "utf8")).toBe("2");
+  });
+
+  it("repairs missing log_message aliases from generated entrypoint loggers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-log-message-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const logPath = path.join(workspace, "runner.log");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "",
+        "def log(message, *, level='INFO'):",
+        `    Path(${JSON.stringify(logPath)}).write_text(f'{level}:{message}', encoding='utf-8')`,
+        "",
+        "def main() -> int:",
+        "    log_message('started', level='WARNING')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/log_message/);
+
+    const repair = await repairPythonLoggingHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def log_message(message, *, level=\"INFO\"):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(readFileSync(logPath, "utf8")).toBe("WARNING:started");
+  });
+
+  it("repairs missing print_status aliases from generated status output", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-print-status-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def main() -> int:",
+        "    print_status('PEFT instruction-tuning study starting')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/print_status/);
+
+    const repair = await repairPythonLoggingHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def print_status(message, *, level=\"INFO\"):");
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toContain(
+      "[AutoLabOS] PEFT instruction-tuning study starting"
+    );
+  });
+
+  it("repairs missing module-level logger aliases from generated entrypoint logging", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-logger-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import logging",
+        "",
+        "def main() -> int:",
+        "    logging.basicConfig(level=logging.INFO)",
+        "    logger.info('Canonical runnable command: %s', 'python run_peft_instruction_study.py')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/logger/);
+
+    const repair = await repairPythonLoggingHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("logger = logging.getLogger(__name__)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs entrypoint runtime helper aliases and dict-returning metrics writers before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-entrypoint-runtime-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "import json",
+        "",
+        "def get_device_info(device):",
+        "    return {'device': str(device)}",
+        "",
+        "def write_strict_metrics_json(metrics_payload, metrics_path):",
+        "    output_path = Path(metrics_path)",
+        "    output_path.write_text(json.dumps(metrics_payload), encoding='utf-8')",
+        "    return dict(metrics_payload)",
+        "",
+        "def _entrypoint_write_metrics(metrics_payload, metrics_path):",
+        "    context = {'metrics_payload': metrics_payload, 'metrics_path': metrics_path}",
+        "    writer = write_strict_metrics_json",
+        "    written = writer(context['metrics_payload'], context['metrics_path'])",
+        "    return Path(written) if written is not None else metrics_path",
+        "",
+        "def main():",
+        "    assert _device_info('cpu')['device'] == 'cpu'",
+        `    assert _entrypoint_write_metrics({'status': 'completed'}, Path(${JSON.stringify(metricsPath)})) == Path(${JSON.stringify(metricsPath)})`,
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/_device_info/);
+
+    const repair = await repairPythonEntrypointRuntimeCompatibilitySurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _device_info(device):");
+    expect(repairedSource).toContain("if isinstance(written, str) or hasattr(written, \"__fspath__\"):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({ status: "completed" });
+  });
+
+  it("repairs missing get_device_info entrypoint helpers before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-get-device-info-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def main():",
+        "    info = get_device_info('cpu')",
+        "    assert info['device'] == 'cpu'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/get_device_info/);
+
+    const repair = await repairPythonEntrypointRuntimeCompatibilitySurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def get_device_info(device=None):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("normalizes entrypoint detect_device tuple metadata objects before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-device-tuple-info-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import dataclasses",
+        "",
+        "@dataclasses.dataclass",
+        "class RuntimeDeviceInfo:",
+        "    device: str",
+        "    cuda_available: bool",
+        "    cuda_device_count: int",
+        "",
+        "def _contract_json_safe(value):",
+        "    if dataclasses.is_dataclass(value):",
+        "        return _contract_json_safe(dataclasses.asdict(value))",
+        "    if hasattr(value, 'items'):",
+        "        return {str(key): _contract_json_safe(item) for key, item in value.items()}",
+        "    return value",
+        "",
+        "def detect_device():",
+        "    return 'cuda', RuntimeDeviceInfo(device='cuda', cuda_available=True, cuda_device_count=2)",
+        "",
+        "def _entrypoint_resolve_callable(*names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _entrypoint_detect_device():",
+        "    detect_fn = _entrypoint_resolve_callable('detect_device', 'get_runtime_device', 'discover_device')",
+        "    if detect_fn is not None:",
+        "        detected = detect_fn()",
+        "        if isinstance(detected, tuple) and len(detected) == 2:",
+        "            return detected[0], dict(detected[1] or {})",
+        "    return 'cpu', {'device': 'cpu'}",
+        "",
+        "def main():",
+        "    device, device_info = _entrypoint_detect_device()",
+        "    assert device == 'cuda'",
+        "    assert device_info['cuda_available'] is True",
+        "    assert device_info['cuda_device_count'] == 2",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /RuntimeDeviceInfo|object is not iterable/
+    );
+
+    const repair = await repairPythonEntrypointRuntimeCompatibilitySurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repair.message).toContain("device-tuple-info-normalization");
+    expect(repairedSource).toContain("_autolabos_detected_info = detected[1]");
+    expect(repairedSource).toContain('globals().get("_contract_json_safe")');
+    expect(repairedSource).not.toContain("return detected[0], dict(detected[1] or {})");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs entrypoint filesystem path normalization for frozen dataclass configs", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-frozen-args-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const outputDir = path.join(workspace, "experiment");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "from typing import Optional, Sequence, Tuple",
+        "",
+        "@dataclass(frozen=True)",
+        "class ExperimentConfig:",
+        "    output_dir: str",
+        "    metrics_path: str",
+        "",
+        "def parse_args(argv: Optional[Sequence[str]] = None) -> ExperimentConfig:",
+        `    return ExperimentConfig(output_dir=${JSON.stringify(outputDir)}, metrics_path=${JSON.stringify(metricsPath)})`,
+        "",
+        "def _entrypoint_parse_args(argv: Optional[Sequence[str]] = None):",
+        "    return parse_args(argv)",
+        "",
+        "def _entrypoint_prepare_filesystem(args) -> Tuple[Path, Path]:",
+        "    output_dir = Path(str(getattr(args, 'output_dir', 'outputs'))).expanduser()",
+        "    metrics_path = Path(str(getattr(args, 'metrics_path', 'metrics.json'))).expanduser()",
+        "    output_dir.mkdir(parents=True, exist_ok=True)",
+        "    metrics_path.parent.mkdir(parents=True, exist_ok=True)",
+        "    setattr(args, \"output_dir\", str(output_dir))",
+        "    setattr(args, \"metrics_path\", str(metrics_path))",
+        "    return output_dir, metrics_path",
+        "",
+        "def main(argv: Optional[Sequence[str]] = None) -> int:",
+        "    args = _entrypoint_parse_args(argv)",
+        "    output_dir, metrics_path = _entrypoint_prepare_filesystem(args)",
+        "    assert output_dir.exists()",
+        "    metrics_path.write_text('{\"status\":\"completed\"}', encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /FrozenInstanceError|cannot assign to field/
+    );
+
+    const repair = await repairPythonEntrypointRuntimeCompatibilitySurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repair.message).toContain("frozen-args-path-normalization");
+    expect(repairedSource).toContain("_autolabos_path_setattr_exc.__class__.__name__");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(readFileSync(metricsPath, "utf8")).toBe("{\"status\":\"completed\"}");
+  });
+
+  it("repairs missing Timer entrypoint helpers from generated WallClockTimer utilities", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-timer-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import time",
+        "",
+        "class WallClockTimer:",
+        "    def __init__(self):",
+        "        self.start_time = time.perf_counter()",
+        "        self.end_time = None",
+        "    @property",
+        "    def elapsed_seconds(self):",
+        "        end_time = self.end_time if self.end_time is not None else time.perf_counter()",
+        "        return max(0.0, end_time - self.start_time)",
+        "",
+        "def main():",
+        "    timer = Timer()",
+        "    assert timer.elapsed() >= 0.0",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/Timer/);
+
+    const repair = await repairPythonEntrypointRuntimeCompatibilitySurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("class Timer(WallClockTimer):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs missing JSON-safe helper aliases without requiring an existing fallback", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-json-safe-fallback-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "",
+        "def main():",
+        "    payload = {'path': Path('metrics.json'), 'bad': float('nan'), 'items': (1, 2)}",
+        "    safe = _json_safe(payload)",
+        "    assert safe['path'] == 'metrics.json'",
+        "    assert safe['bad'] is None",
+        "    assert safe['items'] == [1, 2]",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/_json_safe/);
+
+    const repair = await repairPythonJsonSafeHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _json_safe(value):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("inserts JSON-safe helper aliases after complete multi-line import blocks", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-json-safe-import-block-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "from typing import (",
+        "    Any,",
+        "    Dict,",
+        "    List,",
+        ")",
+        "",
+        "def main() -> int:",
+        "    payload: Dict[str, Any] = {'items': (1, 2), 'labels': ['a']}",
+        "    safe = make_json_safe(payload)",
+        "    return 0 if safe['items'] == [1, 2] else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/make_json_safe/);
+
+    const repair = await repairPythonJsonSafeHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain(")\n\ndef make_json_safe(value):");
+    expect(repairedSource).not.toContain("from typing import (\n\ndef make_json_safe");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs metrics writer adapters that omit the writer's required path argument", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metrics-writer-path-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "import inspect",
+        "import json",
+        "",
+        "def _entrypoint_invoke(func, **kwargs):",
+        "    signature = inspect.signature(func)",
+        "    supported = {key: value for key, value in kwargs.items() if key in signature.parameters}",
+        "    return func(**supported)",
+        "",
+        "def write_metrics_json(metrics, path):",
+        "    destination = Path(path)",
+        "    destination.write_text(json.dumps(metrics), encoding='utf-8')",
+        "    return destination",
+        "",
+        "def _entrypoint_write_metrics(payload, metrics_path):",
+        "    writer = write_metrics_json",
+        "    return _entrypoint_invoke(writer, metrics=payload, payload=payload, metrics_payload=payload)",
+        "",
+        "def main():",
+        `    assert _entrypoint_write_metrics({'status': 'completed'}, Path(${JSON.stringify(metricsPath)})) == Path(${JSON.stringify(metricsPath)})`,
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/path/);
+
+    const repair = await repairPythonMetricsWriterAdapterPathSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("path=metrics_path");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({ status: "completed" });
+  });
+
+  it("repairs AutoLabOS metrics writer compatible-call adapters that duplicate the metrics argument", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-autolabos-metrics-writer-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from collections.abc import Mapping",
+        "import inspect",
+        "import json",
+        "",
+        "def _autolabos_resolve_callable(*names):",
+        "    for name in names:",
+        "        value = globals().get(name)",
+        "        if callable(value):",
+        "            return value",
+        "    return None",
+        "",
+        "def _autolabos_call_compatible(func, /, *args, **kwargs):",
+        "    try:",
+        "        parameters = inspect.signature(func).parameters",
+        "        supported = {key: value for key, value in kwargs.items() if key in parameters}",
+        "        return func(*args, **supported)",
+        "    except TypeError:",
+        "        return func(*args)",
+        "",
+        "def write_metrics_json(metrics, metrics_path):",
+        "    destination = Path(metrics_path)",
+        "    destination.write_text(json.dumps(metrics), encoding='utf-8')",
+        "    return destination",
+        "",
+        "def _autolabos_write_metrics(metrics: Mapping, metrics_path: Path, config=None):",
+        "    writer = _autolabos_resolve_callable(",
+        "        'write_metrics_json',",
+        "        'write_metrics',",
+        "        'save_metrics_json',",
+        "        'persist_metrics',",
+        "    )",
+        "    if writer is not None:",
+        "        written = _autolabos_call_compatible(",
+        "            writer,",
+        "            metrics,",
+        "            metrics=metrics,",
+        "            metrics_path=metrics_path,",
+        "            path=metrics_path,",
+        "            config=config,",
+        "        )",
+        "        if written is not None:",
+        "            return Path(written)",
+        "    return Path(metrics_path)",
+        "",
+        "def main():",
+        `    path = _autolabos_write_metrics({'status': 'failed'}, Path(${JSON.stringify(metricsPath)}))`,
+        "    assert path.exists()",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/metrics_path/);
+
+    const repair = await repairPythonAutolabosMetricsWriterCompatibleCallSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).not.toContain("            metrics,\n            metrics=metrics,");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({ status: "failed" });
+  });
+
+  it("repairs entrypoint metrics writer calls when generated writer is path-first", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-writer-order-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Mapping, Union",
+        "",
+        "def write_metrics_json(metrics_path: Union[str, Path], metrics: Mapping[str, Any]) -> Path:",
+        "    payload = dict(metrics)",
+        "    destination = Path(metrics_path)",
+        "    destination.write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "    return destination",
+        "",
+        "def main():",
+        `    metrics_path = Path(${JSON.stringify(metricsPath)})`,
+        "    payload = {'status': 'completed', 'accuracy_delta_vs_baseline': 0.1}",
+        "    globals()[\"write_metrics_json\"](",
+        "        payload,",
+        "        metrics_path,",
+        "    )",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /PosixPath|not iterable/
+    );
+
+    const repair = await repairPythonEntrypointMetricsWriterCallOrderSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain(
+      [
+        "globals()[\"write_metrics_json\"](",
+        "        metrics_path,",
+        "        payload,"
+      ].join("\n")
+    );
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      accuracy_delta_vs_baseline: 0.1
+    });
+  });
+
+  it("repairs final condition loops to use generated high-level baseline-first runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-high-level-condition-runner-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "import traceback",
+        "from collections import OrderedDict",
+        "from pathlib import Path",
+        "from typing import Any, Dict, List, Mapping, Sequence",
+        "",
+        "def parse_runtime_args():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    return parser.parse_args()",
+        "",
+        "def _locked_condition_order(config):",
+        "    return ['unmodified_base', 'locked_lora_baseline']",
+        "",
+        "def run_baseline_first_conditions(args, instruction_dataset=None, eval_bundle=None):",
+        "    return {",
+        "        'status': 'completed',",
+        "        'conditions': OrderedDict([",
+        "            ('unmodified_base', {",
+        "                'condition_marker': 'unmodified_base',",
+        "                'status': 'completed',",
+        "                'arc_challenge_accuracy': 0.20,",
+        "                'hellaswag_accuracy': 0.30,",
+        "            }),",
+        "            ('locked_lora_baseline', {",
+        "                'condition_marker': 'locked_lora_baseline',",
+        "                'status': 'completed',",
+        "                'arc_challenge_accuracy': 0.40,",
+        "                'hellaswag_accuracy': 0.50,",
+        "            }),",
+        "        ]),",
+        "    }",
+        "",
+        "run_condition_study = run_baseline_first_conditions",
+        "",
+        "def normalize_condition_result(condition_result):",
+        "    marker = condition_result.get('condition_marker') or condition_result.get('condition')",
+        "    return {",
+        "        'condition_marker': marker,",
+        "        'status': condition_result.get('status', 'completed'),",
+        "        'mean_zero_shot_accuracy': (",
+        "            condition_result.get('arc_challenge_accuracy', 0.0)",
+        "            + condition_result.get('hellaswag_accuracy', 0.0)",
+        "        ) / 2.0,",
+        "    }",
+        "",
+        "def aggregate_condition_results(condition_results, baseline_marker='locked_lora_baseline'):",
+        "    normalized_results: List[Dict[str, Any]] = [normalize_condition_result(result) for result in condition_results]",
+        "    return {",
+        "        'condition_order': [row['condition_marker'] for row in normalized_results],",
+        "        'per_recipe_results': {row['condition_marker']: row for row in normalized_results},",
+        "        'baseline_marker': baseline_marker,",
+        "    }",
+        "",
+        "def build_metrics_contract(condition_results, baseline_marker='locked_lora_baseline'):",
+        "    aggregated = aggregate_condition_results(condition_results, baseline_marker=baseline_marker)",
+        "    return {",
+        "        'status': 'completed',",
+        "        'condition_results': condition_results,",
+        "        **aggregated,",
+        "    }",
+        "",
+        "def _execute_condition(condition, config, prepared, results):",
+        "    return {",
+        "        'condition_marker': condition,",
+        "        'status': 'failed',",
+        "        'error': 'No condition execution helper was defined in earlier script sections.',",
+        "    }",
+        "",
+        "def _run_locked_conditions(config: Any, prepared: Mapping[str, Any]) -> OrderedDict[str, Dict[str, Any]]:",
+        "    results: OrderedDict[str, Dict[str, Any]] = OrderedDict()",
+        "    for condition in _locked_condition_order(config):",
+        "        print(f'[AutoLabOS] Running condition: {condition}', flush=True)",
+        "        results[condition] = _execute_condition(condition, config, prepared, results)",
+        "    return results",
+        "",
+        "def _assemble_final_metrics(condition_results, config):",
+        "    try:",
+        "        return build_metrics_contract(condition_results=condition_results)",
+        "    except Exception as exc:",
+        "        return {",
+        "            'status': 'failed',",
+        "            'aggregation_error': {",
+        "                'type': exc.__class__.__name__,",
+        "                'message': str(exc),",
+        "                'traceback': traceback.format_exc(),",
+        "            },",
+        "            'condition_results': condition_results,",
+        "        }",
+        "",
+        "def run_experiment(config):",
+        "    prepared = {'instruction_dataset': [{'prompt': 'p', 'response': 'r'}], 'eval_bundle': {'examples': []}}",
+        "    condition_results = _run_locked_conditions(config, prepared)",
+        "    metrics = _assemble_final_metrics(condition_results, config)",
+        "    Path(config.metrics_path).write_text(json.dumps(metrics, sort_keys=True), encoding='utf-8')",
+        "    return metrics",
+        "",
+        "def main():",
+        "    config = parse_runtime_args()",
+        "    metrics = run_experiment(config)",
+        "    return 1 if metrics.get('status') == 'failed' else 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })
+    ).toThrow(/Command failed/);
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "failed",
+      aggregation_error: {
+        message: expect.stringContaining("'str' object has no attribute 'get'")
+      },
+      condition_results: {
+        unmodified_base: {
+          error: "No condition execution helper was defined in earlier script sections."
+        }
+      }
+    });
+
+    const repair = await repairPythonEntrypointHighLevelConditionRunnerSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_high_level_condition_runner_bridge_marker");
+    expect(repairedSource).toContain("_autolabos_condition_result_rows = list(condition_results.values())");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      condition_order: ["unmodified_base", "locked_lora_baseline"],
+      per_recipe_results: {
+        unmodified_base: {
+          status: "completed",
+          mean_zero_shot_accuracy: 0.25
+        },
+        locked_lora_baseline: {
+          status: "completed",
+          mean_zero_shot_accuracy: 0.45
+        }
+      }
+    });
+  });
+
+  it("normalizes generated baseline-first condition order around the declared locked baseline", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-condition-order-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, List",
+        "",
+        "BASELINE_CONDITION_ID = 'locked_lora_baseline'",
+        "REQUIRED_CONDITION_MARKERS = ['unmodified_base', 'locked_lora_baseline', 'dora']",
+        "CONDITIONS = [",
+        "    {'condition_id': 'unmodified_base'},",
+        "    {'condition_id': 'locked_lora_baseline'},",
+        "    {'condition_id': 'dora'},",
+        "]",
+        "",
+        "@dataclass",
+        "class ExperimentConfig:",
+        "    seed: int = 42",
+        "",
+        "def _condition_id(condition: Any) -> str:",
+        "    if isinstance(condition, dict):",
+        "        return str(condition.get('condition_id') or condition.get('marker'))",
+        "    return str(getattr(condition, 'condition_id', condition))",
+        "",
+        "def _ordered_conditions_for_locked_contract(config: ExperimentConfig) -> List[Any]:",
+        "    configured = globals().get('CONDITIONS') or globals().get('CONDITION_SPECS') or globals().get('PLANNED_CONDITIONS')",
+        "    if configured is None:",
+        "        raise RuntimeError('No configured condition list found; expected CONDITIONS, CONDITION_SPECS, or PLANNED_CONDITIONS')",
+        "    conditions = list(configured)",
+        "    if not conditions:",
+        "        raise RuntimeError('Configured condition list is empty')",
+        "    condition_ids = [_condition_id(condition) for condition in conditions]",
+        "    if BASELINE_CONDITION_ID not in condition_ids:",
+        "        raise RuntimeError(f'Locked baseline condition {BASELINE_CONDITION_ID!r} is missing from configured conditions: {condition_ids}')",
+        "    if condition_ids[0] != BASELINE_CONDITION_ID:",
+        "        raise RuntimeError(",
+        "            'Baseline-first contract violation: first configured condition must be '",
+        "            f'{BASELINE_CONDITION_ID!r}, observed order={condition_ids!r}'",
+        "        )",
+        "    required_markers = globals().get('REQUIRED_CONDITION_MARKERS', [])",
+        "    missing_markers = [marker for marker in required_markers if marker not in condition_ids]",
+        "    if missing_markers:",
+        "        setattr(config, '_missing_condition_markers', missing_markers)",
+        "    else:",
+        "        setattr(config, '_missing_condition_markers', [])",
+        "    return conditions",
+        "",
+        "def main():",
+        "    config = ExperimentConfig()",
+        "    ordered = _ordered_conditions_for_locked_contract(config)",
+        "    print(','.join(_condition_id(condition) for condition in ordered))",
+        "    print(','.join(getattr(config, '_autolabos_normalized_condition_order', [])))",
+        "    print(','.join(getattr(config, '_autolabos_original_condition_order', [])))",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /first configured condition must be 'locked_lora_baseline'/
+    );
+
+    const repair = await repairPythonBaselineFirstConditionOrderSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_condition_order_marker");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })
+      .trim()
+      .split("\n");
+    expect(output[0]).toBe("locked_lora_baseline,unmodified_base,dora");
+    expect(output[1]).toBe("locked_lora_baseline,unmodified_base,dora");
+    expect(output[2]).toBe("unmodified_base,locked_lora_baseline,dora");
+  });
+
+  it("resolves uniquely aliased required condition markers against concrete registry specs", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-required-condition-marker-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from collections import OrderedDict",
+        "from dataclasses import dataclass",
+        "from typing import Optional, Sequence, Tuple",
+        "",
+        "BASELINE_CONDITION_MARKER = 'locked_lora_baseline'",
+        "UNMODIFIED_BASE_MARKER = 'unmodified_base'",
+        "REFERENCE_ROLE_LOCKED_BASELINE = 'locked_baseline'",
+        "REFERENCE_ROLE_BASE_MODEL = 'base_model'",
+        "REFERENCE_ROLE_CANDIDATE = 'candidate'",
+        "",
+        "@dataclass(frozen=True)",
+        "class ConditionSpec:",
+        "    marker: str",
+        "    role: str",
+        "",
+        "ORDERED_CONDITION_SPECS: Tuple[ConditionSpec, ...] = (",
+        "    ConditionSpec(BASELINE_CONDITION_MARKER, REFERENCE_ROLE_LOCKED_BASELINE),",
+        "    ConditionSpec(UNMODIFIED_BASE_MARKER, REFERENCE_ROLE_BASE_MODEL),",
+        "    ConditionSpec('the_strongest_alternative_lightweight_recipe_among_vanilla_lora_and_rslora', REFERENCE_ROLE_CANDIDATE),",
+        "    ConditionSpec('vanilla_lora', REFERENCE_ROLE_CANDIDATE),",
+        "    ConditionSpec('rslora', REFERENCE_ROLE_CANDIDATE),",
+        ")",
+        "",
+        "REQUIRED_CONDITION_MARKERS: Tuple[str, ...] = (",
+        "    'unmodified_base',",
+        "    'locked_lora_baseline',",
+        "    'the_strongest_alternative_lightweight_recipe_amo',",
+        "    'vanilla_lora',",
+        "    'rslora',",
+        ")",
+        "",
+        "COMPARISON_CONTRACT = {",
+        "    'required_condition_markers': list(REQUIRED_CONDITION_MARKERS),",
+        "}",
+        "",
+        "def _registry_sequence_from_module_globals() -> Tuple[ConditionSpec, ...]:",
+        "    return ORDERED_CONDITION_SPECS",
+        "",
+        "def validate_condition_registry(",
+        "    registry: Optional[Sequence[ConditionSpec]] = None,",
+        "    *,",
+        "    require_baseline_first: bool = True,",
+        ") -> Tuple[ConditionSpec, ...]:",
+        "    conditions = tuple(registry if registry is not None else _registry_sequence_from_module_globals())",
+        "    markers = [spec.marker for spec in conditions]",
+        "    if require_baseline_first and markers[0] != BASELINE_CONDITION_MARKER:",
+        "        raise ValueError('baseline_first_locked contract violation')",
+        "    missing_required = [marker for marker in REQUIRED_CONDITION_MARKERS if marker not in markers]",
+        "    if missing_required:",
+        "        raise ValueError(",
+        "            'Condition registry is missing required marker(s) from the governed plan: '",
+        "            + ', '.join(missing_required)",
+        "        )",
+        "    return conditions",
+        "",
+        "CONDITION_SPECS: Tuple[ConditionSpec, ...] = validate_condition_registry()",
+        "CONDITIONS_BY_MARKER = OrderedDict((spec.marker, spec) for spec in CONDITION_SPECS)",
+        "",
+        "def condition_contract_summary():",
+        "    return {",
+        "        **COMPARISON_CONTRACT,",
+        "        'condition_order': list(CONDITIONS_BY_MARKER.keys()),",
+        "        \"missing_required_condition_markers\": [",
+        "            marker for marker in REQUIRED_CONDITION_MARKERS if marker not in CONDITIONS_BY_MARKER",
+        "        ],",
+        "    }",
+        "",
+        "if __name__ == '__main__':",
+        "    print(json.dumps(condition_contract_summary(), sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /the_strongest_alternative_lightweight_recipe_amo/
+    );
+
+    const repair = await repairPythonRequiredConditionMarkerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_required_condition_marker_aliases");
+    const summary = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(summary.missing_required_condition_markers).toEqual([]);
+    expect(summary.required_condition_marker_aliases).toEqual({
+      the_strongest_alternative_lightweight_recipe_amo:
+        "the_strongest_alternative_lightweight_recipe_among_vanilla_lora_and_rslora"
+    });
+    expect(summary.required_condition_markers).toContain(
+      "the_strongest_alternative_lightweight_recipe_among_vanilla_lora_and_rslora"
+    );
+  });
+
+  it("resolves plan-level required markers through declared concrete coverage maps", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-required-plan-marker-coverage-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from collections import OrderedDict",
+        "from dataclasses import dataclass",
+        "from typing import Any, Dict, List, Optional, Sequence, Tuple",
+        "",
+        "UNMODIFIED_BASE_MARKER = 'unmodified_base'",
+        "LOCKED_LORA_BASELINE_MARKER = 'locked_lora_baseline'",
+        "STRONGEST_ALT_MARKER = 'the_strongest_alternative_lightweight_recipe_amo'",
+        "VANILLA_LORA_MARKER = 'vanilla_lora'",
+        "RSLORA_MARKER = 'rslora'",
+        "CONDITION_ROLE_CANDIDATE = 'candidate_lightweight_recipe'",
+        "",
+        "@dataclass(frozen=True)",
+        "class ConditionSpec:",
+        "    marker: str",
+        "    role: str",
+        "",
+        "LOCKED_CONDITION_SPECS: Tuple[ConditionSpec, ...] = (",
+        "    ConditionSpec(UNMODIFIED_BASE_MARKER, 'base_model_reference'),",
+        "    ConditionSpec(LOCKED_LORA_BASELINE_MARKER, 'locked_lora_baseline'),",
+        "    ConditionSpec(VANILLA_LORA_MARKER, CONDITION_ROLE_CANDIDATE),",
+        "    ConditionSpec(RSLORA_MARKER, CONDITION_ROLE_CANDIDATE),",
+        ")",
+        "CONDITION_REGISTRY = OrderedDict((spec.marker, spec) for spec in LOCKED_CONDITION_SPECS)",
+        "REQUIRED_PLAN_CONDITION_MARKERS: Tuple[str, ...] = (",
+        "    UNMODIFIED_BASE_MARKER,",
+        "    LOCKED_LORA_BASELINE_MARKER,",
+        "    STRONGEST_ALT_MARKER,",
+        "    VANILLA_LORA_MARKER,",
+        "    RSLORA_MARKER,",
+        ")",
+        "PLAN_MARKER_COVERAGE: Dict[str, Tuple[str, ...]] = {",
+        "    STRONGEST_ALT_MARKER: (VANILLA_LORA_MARKER, RSLORA_MARKER),",
+        "}",
+        "",
+        "class ConditionRegistryError(RuntimeError):",
+        "    pass",
+        "",
+        "def _coerce_condition_registry(registry: Optional[Any] = None) -> Tuple[ConditionSpec, ...]:",
+        "    raw = CONDITION_REGISTRY if registry is None else registry",
+        "    return tuple(raw.values()) if isinstance(raw, dict) or hasattr(raw, 'values') else tuple(raw)",
+        "",
+        "def _validate_required_marker_coverage(specs: Sequence[ConditionSpec], errors: List[str]) -> None:",
+        "    declared = {spec.marker for spec in specs}",
+        "    required = set(REQUIRED_PLAN_CONDITION_MARKERS)",
+        "    missing = [marker for marker in REQUIRED_PLAN_CONDITION_MARKERS if marker not in declared]",
+        "    unexpected = [spec.marker for spec in specs if spec.marker not in required]",
+        "    if missing:",
+        "        errors.append(f\"Missing required governed condition markers: {missing}\")",
+        "    if unexpected:",
+        "        errors.append(",
+        "            'Unexpected condition markers would violate the no-substitution contract: '",
+        "            f'{unexpected}'",
+        "        )",
+        "",
+        "def validate_condition_registry(registry: Optional[Any] = None) -> Tuple[ConditionSpec, ...]:",
+        "    specs = _coerce_condition_registry(registry)",
+        "    errors: List[str] = []",
+        "    _validate_required_marker_coverage(specs, errors)",
+        "    if errors:",
+        "        raise ConditionRegistryError(",
+        "            'Condition registry validation failed:\\n- ' + '\\n- '.join(errors)",
+        "        )",
+        "    return specs",
+        "",
+        "VALIDATED_CONDITION_REGISTRY: Tuple[ConditionSpec, ...] = validate_condition_registry()",
+        "",
+        "if __name__ == '__main__':",
+        "    print(json.dumps(globals().get('_autolabos_required_condition_marker_aliases', {}), sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Missing required governed condition markers/
+    );
+
+    const repair = await repairPythonRequiredConditionMarkerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("PLAN_MARKER_COVERAGE");
+    const aliases = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(aliases).toEqual({
+      the_strongest_alternative_lightweight_recipe_amo: ["vanilla_lora", "rslora"]
+    });
+  });
+
+  it("repairs entrypoint metrics writer calls when write_metrics_payload requires aggregated_metrics", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-writer-aggregated-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def _call_with_supported_kwargs(func, **kwargs):",
+        "    parameters = inspect.signature(func).parameters",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        return func(**kwargs)",
+        "    return func(**{key: value for key, value in kwargs.items() if key in parameters})",
+        "",
+        "def write_metrics_payload(aggregated_metrics, args=None, device=None, started_at=None, finished_at=None, metrics_path=None):",
+        "    destination = Path(metrics_path)",
+        "    destination.write_text(json.dumps({'aggregated_metrics': aggregated_metrics}, sort_keys=True), encoding='utf-8')",
+        "    return {'metrics_path': str(destination)}",
+        "",
+        "def _resolve_helper(candidate_names, required=False):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _entrypoint_write_metrics(payload, metrics_path):",
+        "    writer = _resolve_helper(['write_metrics_payload', 'write_metrics_json', 'persist_metrics_payload', 'atomic_write_metrics_json'], required=False)",
+        "    if callable(writer):",
+        "        _call_with_supported_kwargs(writer, payload=dict(payload), metrics=payload, metrics_path=metrics_path, path=metrics_path)",
+        "        return",
+        "",
+        "if __name__ == '__main__':",
+        `    _entrypoint_write_metrics({'status': 'failed', 'aggregated_metrics': {'condition_results': []}}, Path(${JSON.stringify(metricsPath)}))`,
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /aggregated_metrics/
+    );
+
+    const repair = await repairPythonEntrypointMetricsWriterAggregatedMetricsCallSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_metrics_writer_aggregated_metrics_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toEqual({
+      aggregated_metrics: { condition_results: [] }
+    });
+  });
+
+  it("repairs metrics writer dispatchers that select raw JSON writers before contract builders", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metrics-dispatcher-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def _call_with_supported_kwargs(func, **kwargs):",
+        "    signature = inspect.signature(func)",
+        "    supported = {key: value for key, value in kwargs.items() if key in signature.parameters}",
+        "    return func(**supported)",
+        "",
+        "def _find_first_callable(candidate_names):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def write_metrics_json(metrics, metrics_path):",
+        "    destination = Path(metrics_path)",
+        "    destination.write_text(json.dumps(metrics, sort_keys=True), encoding='utf-8')",
+        "    return destination",
+        "",
+        "def build_and_write_metrics(study_output, metrics_path, args=None):",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'accuracy_delta_vs_baseline': study_output['delta'],",
+        "        'args_seen': args is not None,",
+        "    }",
+        "    write_metrics_json(payload, metrics_path)",
+        "    return payload",
+        "",
+        "write_study_metrics = build_and_write_metrics",
+        "",
+        "def _invoke_metrics_writer(study_results, config, command):",
+        "    candidates = [",
+        "        \"write_metrics_contract\",",
+        "        \"write_metrics_json\",",
+        "        \"write_study_metrics\",",
+        "        \"build_and_write_metrics\",",
+        "        \"materialize_metrics\",",
+        "    ]",
+        "    helper = _find_first_callable(candidates)",
+        "    if helper is None:",
+        "        raise RuntimeError('missing helper')",
+        "    payload = _call_with_supported_kwargs(",
+        "        helper,",
+        "        study_results=study_results,",
+        "        results=study_results,",
+        "        config=config,",
+        "        args=config,",
+        "        metrics_path=config['metrics_path'],",
+        "        output_dir=config['output_dir'],",
+        "        runnable_command=command,",
+        "        command=command,",
+        "    )",
+        "    return dict(payload) if isinstance(payload, dict) else {'payload': payload}",
+        "",
+        "def main():",
+        `    payload = _invoke_metrics_writer({'delta': 0.25}, {'metrics_path': ${JSON.stringify(metricsPath)}, 'output_dir': ${JSON.stringify(workspace)}}, 'python runner.py')`,
+        "    assert payload['accuracy_delta_vs_baseline'] == 0.25",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/metrics/);
+
+    const repair = await repairPythonMetricsWriterDispatcherPayloadAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_metrics_writer_dispatcher_payload_alias_marker");
+    expect(repairedSource).toContain(
+      [
+        "        \"write_metrics_contract\",",
+        "        \"write_study_metrics\",",
+        "        \"build_and_write_metrics\",",
+        "        \"write_metrics_json\","
+      ].join("\n")
+    );
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      accuracy_delta_vs_baseline: 0.25,
+      args_seen: true
+    });
+  });
+
+  it("repairs failure metrics calls that use the write_json_metrics alias when only write_metrics_json exists", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-write-json-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from collections.abc import Mapping",
+        "import json",
+        "",
+        "def write_metrics_json(path, payload):",
+        "    destination = Path(path)",
+        "    destination.write_text(json.dumps(payload), encoding='utf-8')",
+        "    return destination",
+        "",
+        "def _write_failure_metrics(metrics_path, exc):",
+        "    write_json_metrics(metrics_path, {'status': 'failed', 'error': str(exc)})",
+        "",
+        "def main():",
+        `    _write_failure_metrics(Path(${JSON.stringify(metricsPath)}), RuntimeError('boom'))`,
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/write_json_metrics/);
+
+    const repair = await repairPythonWriteJsonMetricsAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def write_json_metrics(path, payload):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "failed",
+      error: "boom"
+    });
+  });
+
+  it("repairs failure metrics calls that use safe_write_json when only generated metrics writers exist", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-safe-write-json-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "import json",
+        "",
+        "def write_metrics_json(path, payload):",
+        "    destination = Path(path)",
+        "    destination.write_text(json.dumps(payload), encoding='utf-8')",
+        "    return destination",
+        "",
+        "def _write_failure_metrics(metrics_path, exc):",
+        "    safe_write_json(metrics_path, {'status': 'failed', 'error': str(exc)})",
+        "",
+        "def main():",
+        `    _write_failure_metrics(Path(${JSON.stringify(metricsPath)}), RuntimeError('boom'))`,
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/safe_write_json/);
+
+    const repair = await repairPythonWriteJsonMetricsAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def safe_write_json(path, payload):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "failed",
+      error: "boom"
+    });
+  });
+
+  it("repairs metrics payload builders that iterate an entire result mapping as candidate rows", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metrics-payload-mapping-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from collections.abc import Mapping",
+        "",
+        "def _nested_lookup(mapping, paths, default=None):",
+        "    for path in paths:",
+        "        cursor = mapping",
+        "        found = True",
+        "        for key in path:",
+        "            if isinstance(cursor, Mapping) and key in cursor:",
+        "                cursor = cursor[key]",
+        "            else:",
+        "                found = False",
+        "                break",
+        "        if found and cursor is not None:",
+        "            return cursor",
+        "    return default",
+        "",
+        "def _safe_float(value, default=0.0):",
+        "    try:",
+        "        return float(value)",
+        "    except Exception:",
+        "        return default",
+        "",
+        "def _candidate_metric_summary(result):",
+        "    result_map = dict(result) if isinstance(result, Mapping) else {}",
+        "    arc_accuracy = _safe_float(",
+        "        _nested_lookup(",
+        "            result_map,",
+        "            ((\"arc_challenge_accuracy\",), (\"arc_accuracy\",), (\"metrics\", \"arc_challenge_accuracy\")),",
+        "            0.0,",
+        "        )",
+        "    )",
+        "    hellaswag_accuracy = _safe_float(",
+        "        _nested_lookup(",
+        "            result_map,",
+        "            ((\"hellaswag_accuracy\",), (\"metrics\", \"hellaswag_accuracy\")),",
+        "            0.0,",
+        "        )",
+        "    )",
+        "    mean_accuracy = _safe_float(",
+        "        _nested_lookup(",
+        "            result_map,",
+        "            ((\"mean_zero_shot_accuracy\",), (\"primary_metric\",), (\"metrics\", \"mean_zero_shot_accuracy\")),",
+        "            (arc_accuracy + hellaswag_accuracy) / 2.0,",
+        "        )",
+        "    )",
+        "    return {",
+        "        'candidate_id': result_map.get('candidate_id', 'unknown'),",
+        "        'is_baseline': result_map.get('is_baseline', True),",
+        "        'arc_challenge_accuracy': arc_accuracy,",
+        "        'hellaswag_accuracy': hellaswag_accuracy,",
+        "        'mean_zero_shot_accuracy': mean_accuracy,",
+        "    }",
+        "",
+        "def build_metrics_payload(config, execution_results):",
+        "    summaries = [_candidate_metric_summary(result) for result in execution_results]",
+        "    return {'candidate_results': summaries}",
+        "",
+        "def run_baseline_first_experiment(config):",
+        "    return {",
+        "        'candidate_results': [",
+        "            {'candidate_id': 'base', 'is_baseline': True, 'evaluation': {'arc_challenge_accuracy': 0.25, 'hellaswag_accuracy': 0.5, 'mean_zero_shot_accuracy': 0.375}},",
+        "            {'candidate_id': 'vanilla_lora_r8_alpha16_dropout005', 'is_baseline': False, 'evaluation': {'arc_challenge_accuracy': 0.5, 'hellaswag_accuracy': 0.75, 'mean_zero_shot_accuracy': 0.625}},",
+        "        ],",
+        "        'summary': {'completed_candidate_ids': ['base', 'vanilla_lora_r8_alpha16_dropout005']},",
+        "    }",
+        "",
+        "def run_study_and_build_metrics(config):",
+        "    result = run_baseline_first_experiment(config)",
+        "    for call_args in ((result, config), (config, result), (result,), (config,)):",
+        "        try:",
+        "            return build_metrics_payload(*call_args)",
+        "        except TypeError:",
+        "            continue",
+        "    raise RuntimeError('builder failed')",
+        "",
+        "def main():",
+        "    payload = run_study_and_build_metrics(object())",
+        "    assert payload['candidate_results'][0]['candidate_id'] == 'base'",
+        "    assert payload['candidate_results'][1]['is_baseline'] is False",
+        "    assert payload['candidate_results'][0]['arc_challenge_accuracy'] == 0.25",
+        "    assert payload['candidate_results'][1]['mean_zero_shot_accuracy'] == 0.625",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/AssertionError/);
+
+    const repair = await repairPythonMetricsPayloadMappingResultSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("Metrics payload builder received a mapping without candidate result rows.");
+    expect(repairedSource).toContain('("evaluation", "arc_challenge_accuracy")');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs causal-LM training labels so generated Trainer batches can be collated", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-causal-label-padding-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Dict, List",
+        "",
+        "DataCollatorForLanguageModeling = object",
+        "",
+        "class FakeTokenizer:",
+        "    pad_token_id = 0",
+        "    def __call__(self, texts, truncation=True, max_length=5, padding=False):",
+        "        rows = [[1, 2, 3], [1, 2, 3, 4, 5]]",
+        "        if padding == 'max_length':",
+        "            rows = [row + [self.pad_token_id] * (max_length - len(row)) for row in rows]",
+        "        return {'input_ids': rows, 'attention_mask': [[1 if token != self.pad_token_id else 0 for token in row] for row in rows]}",
+        "",
+        "def tokenize_training_texts(tokenizer: Any, texts: List[str], max_seq_length: int) -> Any:",
+        "    def tokenize_batch(batch: Dict[str, List[str]]) -> Dict[str, Any]:",
+        "        encoded = tokenizer(",
+        "            batch['text'],",
+        "            truncation=True,",
+        "            max_length=max_seq_length,",
+        "            padding=False,",
+        "        )",
+        "        encoded[\"labels\"] = [ids.copy() for ids in encoded[\"input_ids\"]]",
+        "        return encoded",
+        "    return tokenize_batch({'text': texts})",
+        "",
+        "def main():",
+        "    result = tokenize_training_texts(FakeTokenizer(), ['short', 'long'], 5)",
+        "    assert {len(row) for row in result['labels']} == {5}",
+        "    assert result['labels'][0][-1] == -100",
+        "    assert result['labels'][1][-1] == 5",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/AssertionError/);
+
+    const repair = await repairPythonCausalLmLabelPaddingSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain('padding="max_length"');
+    expect(repairedSource).toContain("pad_token_id = getattr(tokenizer, \"pad_token_id\", None)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs inline causal-LM tokenizer padding before precomputed labels", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-inline-causal-label-padding-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Dict, List",
+        "",
+        "DataCollatorForLanguageModeling = object",
+        "",
+        "class FakeTokenizer:",
+        "    pad_token_id = 0",
+        "    def __call__(self, texts, truncation=True, max_length=5, padding=False):",
+        "        rows = [[1, 2, 3], [1, 2, 3, 4, 5]]",
+        "        if padding == 'max_length':",
+        "            rows = [row + [self.pad_token_id] * (max_length - len(row)) for row in rows]",
+        "        return {'input_ids': rows, 'attention_mask': [[1 if token != self.pad_token_id else 0 for token in row] for row in rows]}",
+        "",
+        "def load_instruction_subset(tokenizer: Any, texts: List[str], max_seq_length: int) -> Any:",
+        "    def tokenize_batch(batch: Dict[str, List[str]]) -> Dict[str, Any]:",
+        "        encoded = tokenizer(batch['text'], truncation=True, max_length=max_seq_length, padding=False)",
+        "        encoded[\"labels\"] = [ids.copy() for ids in encoded[\"input_ids\"]]",
+        "        return encoded",
+        "    return tokenize_batch({'text': texts})",
+        "",
+        "def main():",
+        "    result = load_instruction_subset(FakeTokenizer(), ['short', 'long'], 5)",
+        "    assert {len(row) for row in result['labels']} == {5}",
+        "    assert result['labels'][0][-1] == -100",
+        "    assert result['labels'][1][-1] == 5",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/AssertionError/);
+
+    const repair = await repairPythonCausalLmLabelPaddingSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain('padding="max_length")');
+    expect(repairedSource).toContain("def __call__(self, texts, truncation=True, max_length=5, padding=False):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs PEFT virtual-token continuation scoring logits alignment before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-virtual-token-eval-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "get_peft_model = object",
+        "",
+        "def continuation_nll(model, tokenizer, prompt: str, continuation: str, device, max_length: int = 768) -> float:",
+        "    full_text = prompt + ' ' + continuation",
+        "    prompt_ids = tokenizer(prompt, return_tensors='pt', add_special_tokens=False).input_ids[0]",
+        "    encoded = tokenizer(full_text, return_tensors='pt', truncation=True, max_length=max_length)",
+        "    inputs = {k: v.to(device) for k, v in encoded.items()}",
+        "    input_ids = inputs['input_ids']",
+        "    labels = input_ids.clone()",
+        "    labels[:, :1] = -100",
+        "    with torch.no_grad():",
+        "        outputs = model(**inputs)",
+        "        logits = outputs.logits[:, :-1, :].float()",
+        "        shifted_labels = labels[:, 1:]",
+        "        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')",
+        "        token_losses = loss_fct(logits.reshape(-1, logits.shape[-1]), shifted_labels.reshape(-1)).reshape(shifted_labels.shape)",
+        "        return float(token_losses.sum().item())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonPeftVirtualTokenEvaluationAlignmentSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("Align PEFT virtual prompt-token logits");
+    expect(repairedSource).toContain("raw_logits = raw_logits[:, -input_ids.shape[1]:, :]");
+    expect(repairedSource).toContain("aligned_steps = min(int(logits.shape[1]), int(shifted_labels.shape[1]))");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+  });
+
+  it("repairs IA3 feedforward module lists so they are a subset of target modules before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-ia3-feedforward-subset-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "class FakeIA3Config:",
+        "    def __init__(self, *, task_type=None, target_modules=None, feedforward_modules=None):",
+        "        if not set(feedforward_modules or ()).issubset(set(target_modules or ())) :",
+        "            raise ValueError('`feedforward_modules` should be a subset of `target_modules`')",
+        "        self.target_modules = list(target_modules or ())",
+        "        self.feedforward_modules = list(feedforward_modules or ())",
+        "",
+        "def infer_peft_targets(base_model, recipe):",
+        "    common_attn = ['q_proj', 'v_proj']",
+        "    common_mlp = ['gate_proj', 'up_proj']",
+        "    linear_suffixes = set(common_attn + common_mlp)",
+        "    if recipe == 'ia3':",
+        "        target = common_attn[:]",
+        "        feedforward = common_mlp[:]",
+        "        if not target:",
+        "            target = sorted(linear_suffixes)[:4]",
+        "        if not feedforward:",
+        "            feedforward = sorted(linear_suffixes)[:2]",
+        "        return {'target_modules': target, 'feedforward_modules': feedforward}",
+        "    target = common_attn + common_mlp",
+        "    return {'target_modules': target}",
+        "",
+        "def make_peft_model(deps, base_model, recipe):",
+        "    targets = infer_peft_targets(base_model, recipe)",
+        "    cfg = deps['IA3Config'](",
+        "        task_type='CAUSAL_LM',",
+        "        target_modules=targets['target_modules'],",
+        "        feedforward_modules=targets['feedforward_modules'],",
+        "    )",
+        "    return cfg",
+        "",
+        "def main():",
+        "    cfg = make_peft_model({'IA3Config': FakeIA3Config}, object(), 'ia3')",
+        "    assert set(cfg.feedforward_modules).issubset(set(cfg.target_modules))",
+        "    assert cfg.target_modules == ['q_proj', 'v_proj', 'gate_proj', 'up_proj']",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /feedforward_modules/
+    );
+
+    const repair = await repairPythonIa3FeedforwardSubsetSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_ia3_feedforward_subset_marker");
+    expect(repairedSource).toContain("target = list(dict.fromkeys(list(target) + list(feedforward)))");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs tuple-returning main argument parser bridges before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-parser-tuple-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from pathlib import Path",
+        "from typing import Optional, Sequence, Tuple",
+        "",
+        "DEFAULT_METRICS_PATH = Path('metrics.json')",
+        "DEFAULT_PUBLIC_OUTPUT_DIR = Path('.')",
+        "",
+        "class RuntimePaths:",
+        "    def __init__(self, metrics_path: Path, output_dir: Path) -> None:",
+        "        self.metrics_path = metrics_path",
+        "        self.output_dir = output_dir",
+        "",
+        "def build_arg_parser() -> argparse.ArgumentParser:",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default=str(DEFAULT_METRICS_PATH))",
+        "    parser.add_argument('--output-dir', default=str(DEFAULT_PUBLIC_OUTPUT_DIR))",
+        "    return parser",
+        "",
+        "def prepare_runtime_paths(metrics_path: str, output_dir: str) -> RuntimePaths:",
+        "    return RuntimePaths(Path(metrics_path), Path(output_dir))",
+        "",
+        "def parse_cli_args(argv: Optional[Sequence[str]] = None) -> Tuple[argparse.Namespace, RuntimePaths]:",
+        "    parser = build_arg_parser()",
+        "    args = parser.parse_args(argv)",
+        "    runtime_paths = prepare_runtime_paths(args.metrics_path, args.output_dir)",
+        "    args.metrics_path = str(runtime_paths.metrics_path)",
+        "    args.output_dir = str(runtime_paths.output_dir)",
+        "    return args, runtime_paths",
+        "",
+        "def _fallback_parse_main_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:",
+        "    return build_arg_parser().parse_args(argv)",
+        "",
+        "def _parse_main_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:",
+        "    for parser_name in ('parse_cli_args', 'parse_args', 'build_args'):",
+        "        parser_fn = globals().get(parser_name)",
+        "        if callable(parser_fn):",
+        "            try:",
+        "                return parser_fn(argv)  # type: ignore[misc]",
+        "            except TypeError:",
+        "                if argv is None:",
+        "                    return parser_fn()  # type: ignore[misc]",
+        "    return _fallback_parse_main_args(argv)",
+        "",
+        "def _coerce_main_paths(args: argparse.Namespace) -> Tuple[Path, Path]:",
+        "    metrics_path = Path(getattr(args, 'metrics_path', DEFAULT_METRICS_PATH))",
+        "    output_dir = Path(getattr(args, 'output_dir', DEFAULT_PUBLIC_OUTPUT_DIR))",
+        "    return metrics_path, output_dir",
+        "",
+        "def main(argv: Optional[Sequence[str]] = None) -> int:",
+        "    args = _parse_main_args(argv)",
+        "    metrics_path, output_dir = _coerce_main_paths(args)",
+        "    setattr(args, 'metrics_path', str(metrics_path))",
+        "    setattr(args, 'output_dir', str(output_dir))",
+        "    assert args.metrics_path == 'metrics.json'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/tuple/);
+
+    const repair = await repairPythonTupleReturningMainArgsSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _autolabos_unwrap_parsed_args");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs recipe execution orchestrator aliases when the generated runner defines a compatible implementation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-orchestrator-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def _optional_callable(*names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def execute_locked_baseline_first_recipes(config=None, device=None):",
+        "    return {'recipe_results': [{'recipe_id': 'baseline'}], 'device': str(device)}",
+        "",
+        "def _run_experiment_and_build_metrics(config, device):",
+        "    orchestrator = _optional_callable(",
+        "        'run_locked_recipe_sequence',",
+        "        'execute_locked_recipe_sequence',",
+        "        'run_baseline_first_recipe_sequence',",
+        "        'run_recipe_execution_orchestrator',",
+        "        'run_peft_recipe_study',",
+        "    )",
+        "    if orchestrator is None:",
+        "        raise RuntimeError('No recipe execution orchestrator is available in the completed runner sections.')",
+        "    return orchestrator(config=config, device=device)",
+        "",
+        "def main():",
+        "    assert _run_experiment_and_build_metrics({}, 'cuda')['device'] == 'cuda'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No recipe execution orchestrator/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_locked_recipe_sequence(config=None, device=None):");
+    expect(repairedSource).toContain("target = execute_locked_baseline_first_recipes");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs chunk 5a orchestration aliases when the generated runner defines execute_candidate_study", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-chunk5a-orchestrator-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def execute_candidate_study(args=None):",
+        "    assert args is not None",
+        "    return {'status': 'completed', 'recipe_results': [{'recipe_id': 'lora_r8'}]}",
+        "",
+        "run_candidate_study = execute_candidate_study",
+        "run_raw_experiment = execute_candidate_study",
+        "",
+        "def _run_raw_experiment_from_available_orchestrator(args):",
+        "    orchestrator_names = (",
+        "        'run_candidate_execution_orchestration',",
+        "        'run_candidate_experiments',",
+        "        'execute_candidate_experiments',",
+        "        'execute_peft_instruction_study',",
+        "        'run_peft_candidate_study',",
+        "        'run_study_orchestration',",
+        "        'run_experiment_orchestration',",
+        "    )",
+        "    for name in orchestrator_names:",
+        "        fn = globals().get(name)",
+        "        if callable(fn):",
+        "            result = fn(args)",
+        "            if isinstance(result, dict):",
+        "                return result",
+        "    raise RuntimeError('No chunk_5a experiment orchestration function was found.')",
+        "",
+        "def main():",
+        "    result = _run_raw_experiment_from_available_orchestrator(object())",
+        "    return 0 if result['status'] == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/No chunk_5a/);
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_candidate_execution_orchestration(args=None):");
+    expect(repairedSource).toContain("target = execute_candidate_study");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs final candidate orchestration aliases when the generated runner defines execute_candidate_study", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-candidate-orchestrator-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "",
+        "SEED = 42",
+        "PLAN_ID = 'plan-1'",
+        "COMPARISON_MODE = 'baseline_first'",
+        "",
+        "def _call_helper(helper, /, **kwargs):",
+        "    signature = inspect.signature(helper)",
+        "    parameters = signature.parameters",
+        "    supported = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return helper(**supported)",
+        "",
+        "def _resolve_global_callable(candidate_names, required=True):",
+        "    for name in candidate_names:",
+        "        value = globals().get(name)",
+        "        if callable(value):",
+        "            return value",
+        "    if required:",
+        "        raise RuntimeError(f\"None of the required helper functions are defined: {', '.join(candidate_names)}\")",
+        "    return None",
+        "",
+        "def execute_candidate_study(args):",
+        "    assert args == {'seed': 42}",
+        "    return {'candidate_results': [{'candidate_id': 'base_unmodified'}, {'candidate_id': 'lora_r8_alpha16'}]}",
+        "",
+        "def _invoke_candidate_orchestration(args, metrics_path, output_dir):",
+        "    executor = _resolve_global_callable(",
+        "        (",
+        "            'execute_peft_instruction_study',",
+        "            'run_peft_instruction_study',",
+        "            'execute_experiment',",
+        "            'run_experiment',",
+        "            'execute_study',",
+        "            'run_study',",
+        "            'orchestrate_experiment',",
+        "            'orchestrate_candidate_execution',",
+        "            'execute_candidates',",
+        "            'run_candidates',",
+        "            'run_all_candidates',",
+        "        ),",
+        "        required=True,",
+        "    )",
+        "    return _call_helper(",
+        "        executor,",
+        "        args=args,",
+        "        metrics_path=metrics_path,",
+        "        output_dir=output_dir,",
+        "        seed=SEED,",
+        "        plan_id=PLAN_ID,",
+        "        comparison_mode=COMPARISON_MODE,",
+        "    )",
+        "",
+        "def main():",
+        "    result = _invoke_candidate_orchestration({'seed': 42}, 'metrics.json', '.')",
+        "    return 0 if result['candidate_results'][1]['candidate_id'] == 'lora_r8_alpha16' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /None of the required helper functions are defined/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def execute_peft_instruction_study(args=None, metrics_path=None, output_dir=None, **keyword):");
+    expect(repairedSource).toContain("target = execute_candidate_study");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs final workflow dispatcher aliases when the generated runner defines a baseline-locked PEFT comparison", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-final-workflow-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "",
+        "def _autolabos_resolve_callable(*names):",
+        "    for name in names:",
+        "        value = globals().get(name)",
+        "        if callable(value):",
+        "            return value",
+        "    return None",
+        "",
+        "def _autolabos_call_compatible(func, /, *args, **kwargs):",
+        "    parameters = inspect.signature(func).parameters",
+        "    supported = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return func(*args, **supported)",
+        "",
+        "def run_baseline_locked_peft_variant_comparison(config):",
+        "    assert config == {'seed': 42}",
+        "    return {'status': 'completed', 'candidate_results': [{'candidate_id': 'base'}, {'candidate_id': 'lora_r8'}]}",
+        "",
+        "run_peft_variant_comparison = run_baseline_locked_peft_variant_comparison",
+        "run_experiment_comparison = run_baseline_locked_peft_variant_comparison",
+        "",
+        "def _autolabos_run_workflow(config, args):",
+        "    workflow = _autolabos_resolve_callable(",
+        "        'run_peft_instruction_study',",
+        "        'run_baseline_first_peft_comparison',",
+        "        'run_peft_variant_comparison_loop',",
+        "        'run_peft_comparison_study',",
+        "        'run_experiment',",
+        "        'execute_experiment',",
+        "    )",
+        "    if workflow is None:",
+        "        raise RuntimeError(",
+        "            'No experiment workflow function was found. Expected one of: '",
+        "            'run_peft_instruction_study, run_baseline_first_peft_comparison, '",
+        "            'run_peft_variant_comparison_loop, run_peft_comparison_study, run_experiment, execute_experiment.'",
+        "        )",
+        "    return _autolabos_call_compatible(workflow, config=config, args=args, experiment_config=config)",
+        "",
+        "def main():",
+        "    result = _autolabos_run_workflow({'seed': 42}, object())",
+        "    return 0 if result['candidate_results'][1]['candidate_id'] == 'lora_r8' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No experiment workflow function/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_peft_instruction_study(config=None, args=None, experiment_config=None, **keyword):");
+    expect(repairedSource).toContain("target = run_baseline_locked_peft_variant_comparison");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs final workflow dispatcher aliases when the generated runner defines run_baseline_first_experiment", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-first-workflow-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "from types import SimpleNamespace",
+        "",
+        "def _call_with_compatible_signature(func, /, **kwargs):",
+        "    parameters = inspect.signature(func).parameters",
+        "    supported = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return func(**supported)",
+        "",
+        "def run_baseline_first_experiment(args):",
+        "    assert getattr(args, 'seed', None) == 42",
+        "    return {'status': 'completed', 'condition_results': [{'condition_name': 'base_unmodified'}]}",
+        "",
+        "def _dispatch_experiment_workflow(args):",
+        "    workflow_names = (",
+        "        'run_baseline_first_experiment_workflow',",
+        "        'run_baseline_first_workflow',",
+        "        'run_experiment_workflow',",
+        "        'execute_experiment_workflow',",
+        "        'orchestrate_experiment_workflow',",
+        "        'run_full_experiment',",
+        "        'run_locked_experiment',",
+        "        'run_study_workflow',",
+        "    )",
+        "    for name in workflow_names:",
+        "        workflow = globals().get(name)",
+        "        if callable(workflow):",
+        "            result = workflow(args)",
+        "            if not isinstance(result, dict):",
+        "                raise RuntimeError(f'Workflow {name} returned a non-dict result')",
+        "            return dict(result)",
+        "    raise RuntimeError('No experiment workflow function was found. Expected one of: run_baseline_first_experiment_workflow, run_baseline_first_workflow, run_experiment_workflow, execute_experiment_workflow, orchestrate_experiment_workflow, run_full_experiment, run_locked_experiment, run_study_workflow')",
+        "",
+        "def main():",
+        "    result = _dispatch_experiment_workflow(SimpleNamespace(seed=42))",
+        "    return 0 if result['condition_results'][0]['condition_name'] == 'base_unmodified' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No experiment workflow function/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("target = run_baseline_first_experiment");
+    expect(repairedSource).toContain("run_baseline_first_experiment_workflow = run_peft_instruction_study");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs entrypoint orchestration resolver aliases when the runner defines run_baseline_first_orchestration", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-entrypoint-orchestration-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from collections.abc import Mapping",
+        "",
+        "def _first_existing_callable(candidate_names):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _invoke_flexibly(func, /, **kwargs):",
+        "    parameters = inspect.signature(func).parameters",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        return func(**kwargs)",
+        "    supported = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    if supported:",
+        "        return func(**supported)",
+        "    return func()",
+        "",
+        "def run_baseline_first_orchestration(parsed_args=None):",
+        "    return {'conditions': [{'condition_marker': 'unmodified_base', 'status': 'completed'}]}",
+        "",
+        "def build_metrics_schema(orchestration_result=None):",
+        "    conditions = orchestration_result.get('conditions') or orchestration_result.get('condition_results')",
+        "    assert conditions[0]['condition_marker'] == 'unmodified_base'",
+        "    return {'status': 'completed', 'condition_count': len(conditions)}",
+        "",
+        "def _run_entrypoint_workflow(config):",
+        "    orchestration_fn = _first_existing_callable((",
+        "        'run_locked_peft_study',",
+        "        'run_peft_instruction_study',",
+        "        'run_experiment',",
+        "        'orchestrate_experiment',",
+        "        'run_orchestration_loop',",
+        "        'execute_experiment',",
+        "    ))",
+        "    if orchestration_fn is None:",
+        "        raise RuntimeError('No experiment orchestration function was defined before the entrypoint section.')",
+        "    run_result = _invoke_flexibly(orchestration_fn, config=config)",
+        "    raw_result = dict(run_result) if isinstance(run_result, Mapping) else {'results': run_result}",
+        "    aggregation_fn = _first_existing_callable(('build_metrics_schema', 'aggregate_metrics'))",
+        "    metrics = _invoke_flexibly(aggregation_fn, config=config, orchestration_result=raw_result, run_result=raw_result, results=raw_result)",
+        "    return dict(metrics)",
+        "",
+        "def main():",
+        "    metrics = _run_entrypoint_workflow(argparse.Namespace(seed=42))",
+        "    return 0 if metrics['condition_count'] == 1 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No experiment orchestration function was defined/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("target = run_baseline_first_orchestration");
+    expect(repairedSource).toContain("run_peft_instruction_study = run_experiment");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs condition-study orchestration aliases when the generated runner defines baseline-first condition execution", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-orchestrator-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def run_baseline_first_condition_execution(args):",
+        "    assert args == {'seed': 42}",
+        "    return {'status': 'completed', 'conditions': [{'condition_id': 'vanilla_lora', 'is_baseline': False}]}",
+        "",
+        "def _dispatch_experiment(args):",
+        "    for name in (",
+        "        'run_locked_experiment',",
+        "        'run_experiment',",
+        "        'execute_experiment',",
+        "        'run_condition_study',",
+        "        'run_all_conditions',",
+        "        'execute_all_conditions',",
+        "        'run_conditions',",
+        "        'execute_conditions',",
+        "    ):",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate(args)",
+        "    raise RuntimeError('No experiment orchestration function is available. Expected one of: run_locked_experiment, run_experiment, execute_experiment, run_condition_study, run_all_conditions, execute_all_conditions, run_conditions, execute_conditions.')",
+        "",
+        "def main():",
+        "    result = _dispatch_experiment({'seed': 42})",
+        "    return 0 if result['status'] == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No experiment orchestration function/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_locked_experiment(args=None):");
+    expect(repairedSource).toContain("target = run_baseline_first_condition_execution");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs locked experiment runner aliases when generated runners define execute_locked_condition_study", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-locked-runner-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from types import SimpleNamespace",
+        "",
+        "def execute_locked_condition_study(config):",
+        "    assert getattr(config, 'seed', None) == 42",
+        "    return {'status': 'completed', 'conditions': [{'condition_id': 'locked_lora_baseline'}]}",
+        "",
+        "def _resolve_callable(*names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _run_locked_study(config):",
+        "    runner = _resolve_callable(",
+        "        'run_locked_experiment',",
+        "        'run_locked_condition_study',",
+        "        'execute_locked_experiment',",
+        "        'execute_condition_study',",
+        "        'run_experiment',",
+        "    )",
+        "    if runner is None:",
+        "        raise RuntimeError('No locked experiment runner function is available.')",
+        "    result = runner(config)",
+        "    if isinstance(result, dict):",
+        "        return result",
+        "    return {'raw_result': result}",
+        "",
+        "def main():",
+        "    result = _run_locked_study(SimpleNamespace(seed=42))",
+        "    return 0 if result['conditions'][0]['condition_id'] == 'locked_lora_baseline' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No locked experiment runner function/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_locked_experiment(config=None, args=None, **keyword):");
+    expect(repairedSource).toContain("target = execute_locked_condition_study");
+    expect(repairedSource).toContain("run_locked_condition_study = run_locked_experiment");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs chunk-5c condition dispatch aliases when generated runners define baseline-first condition helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-chunk5c-condition-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "",
+        "def detect_device():",
+        "    return 'cpu'",
+        "",
+        "def execute_baseline_first_conditions(args, device, *, eval_examples=None, output_dir=None):",
+        "    assert getattr(args, 'seed', None) == 42",
+        "    assert device == 'cpu'",
+        "    assert output_dir == 'out'",
+        "    return {'status': 'completed', 'conditions': [{'condition_id': 'locked_lora_baseline'}]}",
+        "",
+        "run_baseline_first_conditions = execute_baseline_first_conditions",
+        "run_condition_study = execute_baseline_first_conditions",
+        "execute_condition_study = execute_baseline_first_conditions",
+        "",
+        "def _chunk5c_first_global_callable(names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _chunk5c_call_flexibly(func, *positional, **keyword):",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    has_var_keyword = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())",
+        "    has_var_positional = any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in parameters.values())",
+        "    filtered = dict(keyword) if has_var_keyword else {key: value for key, value in keyword.items() if key in parameters}",
+        "    positional_slots = [",
+        "        parameter for parameter in parameters.values()",
+        "        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)",
+        "    ]",
+        "    filtered_positional = positional if has_var_positional else positional[:len(positional_slots)]",
+        "    return func(*filtered_positional, **filtered)",
+        "",
+        "def _chunk5c_run_condition_study(config):",
+        "    runner = _chunk5c_first_global_callable((",
+        "        'run_locked_peft_instruction_study',",
+        "        'run_peft_instruction_study',",
+        "        'execute_locked_peft_instruction_study',",
+        "        'execute_locked_study',",
+        "        'run_locked_condition_study',",
+        "        'run_all_conditions',",
+        "        'execute_all_conditions',",
+        "        'run_condition_execution_plan',",
+        "        'run_experiment_conditions',",
+        "        'run_experiment',",
+        "    ))",
+        "    if runner is None:",
+        "        raise RuntimeError(",
+        "            'No condition execution helper was found from earlier chunks; expected one of '",
+        "            'run_locked_peft_instruction_study/run_all_conditions/run_experiment_conditions.'",
+        "        )",
+        "    namespace = argparse.Namespace(**dict(config))",
+        "    return _chunk5c_call_flexibly(runner, namespace, config=config, args=namespace, **dict(config))",
+        "",
+        "def main():",
+        "    result = _chunk5c_run_condition_study({'seed': 42, 'output_dir': 'out'})",
+        "    return 0 if result['conditions'][0]['condition_id'] == 'locked_lora_baseline' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No condition execution helper/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_locked_peft_instruction_study(*positional, **keyword):");
+    expect(repairedSource).toContain("target = execute_baseline_first_conditions");
+    expect(repairedSource).toContain("run_all_conditions = run_locked_peft_instruction_study");
+    expect(repairedSource).toContain("run_experiment_conditions = run_locked_peft_instruction_study");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs completed-script condition runner aliases when generated runners define locked condition suites", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-completed-condition-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "",
+        "CONDITION_ORDER = ('baseline',)",
+        "",
+        "def run_locked_condition_suite(args, runtime=None):",
+        "    assert isinstance(args, argparse.Namespace)",
+        "    assert args.seed == 42",
+        "    return {'status': 'completed', 'condition_results': [{'condition_marker': 'baseline'}]}",
+        "",
+        "def _call_with_supported_kwargs(function, **kwargs):",
+        "    signature = inspect.signature(function)",
+        "    parameters = signature.parameters",
+        "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):",
+        "        return function(**kwargs)",
+        "    supported = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return function(**supported)",
+        "",
+        "def _invoke_condition_runner(config):",
+        "    candidate_names = (",
+        "        'run_locked_baseline_first_study',",
+        "        'execute_locked_baseline_first_study',",
+        "        'run_peft_instruction_study',",
+        "        'execute_peft_instruction_study',",
+        "        'run_condition_study',",
+        "        'execute_condition_study',",
+        "        'run_all_conditions',",
+        "        'execute_all_conditions',",
+        "        'run_study',",
+        "        'execute_study',",
+        "    )",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return _call_with_supported_kwargs(",
+        "                candidate,",
+        "                config=dict(config),",
+        "                run_config=dict(config),",
+        "                args=config,",
+        "                condition_markers=list(config.get('conditions', CONDITION_ORDER)),",
+        "                conditions=list(config.get('conditions', CONDITION_ORDER)),",
+        "                seed=int(config.get('seed', 0)),",
+        "            )",
+        "    single_condition_runner = globals().get('run_condition') or globals().get('execute_condition')",
+        "    if callable(single_condition_runner):",
+        "        return [_call_with_supported_kwargs(single_condition_runner, marker='baseline', config=dict(config))]",
+        "    raise RuntimeError(",
+        "        'No condition runner was found in the completed script sections. Expected one of: '",
+        "        + ', '.join(candidate_names)",
+        "        + ', run_condition, execute_condition.'",
+        "    )",
+        "",
+        "def main():",
+        "    result = _invoke_condition_runner({'seed': 42, 'conditions': ['baseline']})",
+        "    return 0 if result['condition_results'][0]['condition_marker'] == 'baseline' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No condition runner was found/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_locked_baseline_first_study(*positional, **keyword):");
+    expect(repairedSource).toContain("target = run_locked_condition_suite");
+    expect(repairedSource).toContain("run_all_conditions = run_locked_baseline_first_study");
+    expect(repairedSource).toContain("run_condition = run_locked_baseline_first_study");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs final condition workflow aliases when generated runners define condition execution workflows", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-workflow-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from types import SimpleNamespace",
+        "",
+        "def build_condition_registry(args):",
+        "    assert getattr(args, 'seed', None) == 42",
+        "    return {'locked_lora_baseline': {'condition_id': 'locked_lora_baseline'}}",
+        "",
+        "def build_shared_training_budget(args):",
+        "    return {'seed': getattr(args, 'seed', None), 'max_steps': 1}",
+        "",
+        "def load_study_data(args):",
+        "    return SimpleNamespace(",
+        "        train_examples=[{'instruction': 'say hi', 'output': 'hi'}],",
+        "        eval_examples={'arc_challenge': [{'question': 'q', 'answer_index': 0}]},",
+        "    )",
+        "",
+        "def run_condition_execution_workflow(args, condition_registry, budget, train_records, eval_sets, device):",
+        "    assert isinstance(args, argparse.Namespace)",
+        "    assert condition_registry['locked_lora_baseline']['condition_id'] == 'locked_lora_baseline'",
+        "    assert budget['seed'] == 42",
+        "    assert train_records[0]['instruction'] == 'say hi'",
+        "    assert 'arc_challenge' in eval_sets",
+        "    assert device == 'cpu'",
+        "    return {'condition_results': [{'condition_id': 'locked_lora_baseline', 'status': 'completed'}]}",
+        "",
+        "def _run_conditions_via_available_api(args, device, output_dir, cache_dir):",
+        "    workflow_candidates = (",
+        "        'run_condition_workflow',",
+        "        'run_all_conditions',",
+        "        'execute_condition_workflow',",
+        "        'execute_all_conditions',",
+        "        'run_peft_condition_study',",
+        "        'run_study_conditions',",
+        "        'run_recipe_comparison',",
+        "        'execute_recipe_comparison',",
+        "    )",
+        "    for name in workflow_candidates:",
+        "        fn = globals().get(name)",
+        "        if not callable(fn):",
+        "            continue",
+        "        attempts = (",
+        "            ((args,), {'device': device, 'output_dir': output_dir, 'cache_dir': cache_dir}),",
+        "            ((), {'args': args, 'device': device, 'output_dir': output_dir, 'cache_dir': cache_dir}),",
+        "            ((args, device, output_dir, cache_dir), {}),",
+        "            ((args, device), {}),",
+        "            ((args,), {}),",
+        "            ((), {}),",
+        "        )",
+        "        last_error = None",
+        "        for positional, keyword in attempts:",
+        "            try:",
+        "                return fn(*positional, **keyword)",
+        "            except TypeError as exc:",
+        "                last_error = exc",
+        "                continue",
+        "        if last_error is not None:",
+        "            raise last_error",
+        "    per_condition_candidates = ('run_condition', 'execute_condition', 'train_and_evaluate_condition', 'run_single_condition', 'execute_single_condition')",
+        "    raise RuntimeError(f'No condition workflow callable was found. Expected one of {workflow_candidates} or {per_condition_candidates}.')",
+        "",
+        "def main():",
+        "    args = argparse.Namespace(seed=42, output_dir='out', cache_dir='cache')",
+        "    result = _run_conditions_via_available_api(args, 'cpu', 'out', 'cache')",
+        "    return 0 if result['condition_results'][0]['condition_id'] == 'locked_lora_baseline' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No condition workflow callable/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_condition_workflow(args=None, device=None, output_dir=None, cache_dir=None, **keyword):");
+    expect(repairedSource).toContain("target = run_condition_execution_workflow");
+    expect(repairedSource).toContain("run_all_conditions = run_condition_workflow");
+    expect(repairedSource).toContain("run_study_conditions = run_condition_workflow");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("materializes AutoLabOS condition context for per-condition runners requiring dataset bundles and device info", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-context-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import inspect",
+        "import traceback",
+        "from types import SimpleNamespace",
+        "from typing import Any, Callable, Mapping, Sequence",
+        "",
+        "SEED = 42",
+        "",
+        "def load_public_datasets(*, train_examples=2, eval_examples_per_benchmark=1, seed=42, cache_dir=None):",
+        "    assert train_examples == 2",
+        "    assert eval_examples_per_benchmark == 1",
+        "    return SimpleNamespace(",
+        "        train_examples=[{'instruction': 'say hi', 'output': 'hi'}],",
+        "        eval_examples={'arc_challenge': [{'question': 'q', 'answer_index': 0}]},",
+        "    )",
+        "",
+        "def run_single_condition(condition_marker: str, *, dataset_bundle: Any, device_info: Mapping[str, Any], seed: int = SEED, **kwargs):",
+        "    assert dataset_bundle.train_examples[0]['instruction'] == 'say hi'",
+        "    assert device_info['device'] == 'cpu'",
+        "    return {'condition_marker': condition_marker, 'status': 'succeeded', 'mean_zero_shot_accuracy': 0.5}",
+        "",
+        "def _autolabos_call_with_supported_kwargs(func: Callable[..., Any], **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    accepted = {name: value for name, value in kwargs.items() if name in parameters}",
+        "    required_positional = [",
+        "        name for name, param in parameters.items()",
+        "        if param.default is inspect._empty",
+        "        and param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)",
+        "        and name not in accepted",
+        "    ]",
+        "    if required_positional:",
+        "        marker = kwargs.get('condition_marker') or kwargs.get('marker')",
+        "        if len(required_positional) == 1 and marker is not None:",
+        "            return func(marker, **accepted)",
+        "    return func(**accepted)",
+        "",
+        "def _autolabos_execute_condition(marker: str, study_context: Mapping[str, Any]) -> dict[str, Any]:",
+        "    runner = run_single_condition",
+        "    try:",
+        "        raw_result = _autolabos_call_with_supported_kwargs(",
+        "            runner,",
+        "            condition_marker=marker,",
+        "            marker=marker,",
+        "            recipe_name=marker,",
+        "            recipe_marker=marker,",
+        "            condition_config={'condition_marker': marker},",
+        "            recipe_config={'condition_marker': marker},",
+        "            config={'condition_marker': marker},",
+        "            study_context=study_context,",
+        "            context=study_context,",
+        "            device=study_context.get('device'),",
+        "            train_examples=study_context.get('train_examples'),",
+        "            eval_examples_per_dataset=study_context.get('eval_examples_per_dataset'),",
+        "            output_dir=study_context.get('output_dir'),",
+        "            seed=study_context.get('seed', SEED),",
+        "        )",
+        "        return dict(raw_result)",
+        "    except Exception as exc:",
+        "        return {'condition_marker': marker, 'status': 'failed', 'error': f'{type(exc).__name__}: {exc}', 'traceback': traceback.format_exc(limit=6)}",
+        "",
+        "def run_recipe_comparison(**overrides: Any) -> dict[str, Any]:",
+        "    study_context: dict[str, Any] = {",
+        "        'condition_order': ['locked_lora_baseline'],",
+        "        'seed': 42,",
+        "        'train_examples': 2,",
+        "        'eval_examples_per_dataset': 1,",
+        "        'device': 'cpu',",
+        "        'device_info': {'device': 'cpu'},",
+        "    }",
+        "    study_context.update(overrides)",
+        "",
+        "    condition_results: list[dict[str, Any]] = []",
+        "    for marker in study_context['condition_order']:",
+        "        condition_results.append(_autolabos_execute_condition(marker, study_context))",
+        "    return {'condition_results': condition_results}",
+        "",
+        "def main():",
+        "    results = run_recipe_comparison()['condition_results']",
+        "    return 0 if results[0]['status'] == 'succeeded' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonAutolabosConditionContextMaterializationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_condition_context_materialization_marker = True");
+    expect(repairedSource).toContain("dataset_bundle=study_context.get(\"dataset_bundle\")");
+    expect(repairedSource).toContain("device_info=study_context.get(\"device_info\")");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("materializes a top-level entrypoint workflow facade from composable generated runner helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-composable-workflow-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "import time",
+        "from pathlib import Path",
+        "from types import SimpleNamespace",
+        "",
+        "def _entrypoint_first_callable(names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _entrypoint_call_supported(func, /, *args, **kwargs):",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    supported = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return func(*args, **supported)",
+        "",
+        "def _entrypoint_parse_args(argv=None):",
+        `    return argparse.Namespace(seed=42, metrics_path=${JSON.stringify(metricsPath)}, output_dir=${JSON.stringify(workspace)})`,
+        "",
+        "def _entrypoint_metrics_path(args):",
+        "    return args.metrics_path",
+        "",
+        "def get_device_metadata():",
+        "    return {'device': 'cpu'}",
+        "",
+        "def get_execution_device():",
+        "    return 'cpu'",
+        "",
+        "def build_workflow_controls(args):",
+        "    return SimpleNamespace(seed=args.seed, dry_run=False)",
+        "",
+        "def load_instruction_dataset_subset(args=None, seed=42, cache_dir=None):",
+        "    assert seed == 42",
+        "    return SimpleNamespace(dataset=[{'instruction': 'say hi', 'output': 'hi'}], records=[{'instruction': 'say hi'}])",
+        "",
+        "def load_compact_base_model(args=None, device_info=None, for_training=False):",
+        "    assert device_info['device'] == 'cpu'",
+        "    return SimpleNamespace(model='base-model', tokenizer='tok', model_id='tiny-local')",
+        "",
+        "def load_zero_shot_benchmark_examples(controls):",
+        "    assert controls.seed == 42",
+        "    return {'arc_challenge': [{'question': 'q'}], 'hellaswag': [{'ctx': 'c'}]}",
+        "",
+        "def build_ordered_condition_specs(args=None):",
+        "    return [{'condition_marker': 'unmodified_base'}, {'condition_marker': 'locked_lora_baseline'}]",
+        "",
+        "def collect_condition_results(experiment_state, controls, device, conditions=None):",
+        "    assert experiment_state['train_dataset'][0]['instruction'] == 'say hi'",
+        "    assert experiment_state['model'] == 'base-model'",
+        "    assert experiment_state['tokenizer'] == 'tok'",
+        "    assert 'arc_challenge' in experiment_state['eval_datasets']",
+        "    assert device == 'cpu'",
+        "    return [",
+        "        {'condition_marker': 'unmodified_base', 'status': 'success', 'success': True, 'mean_zero_shot_accuracy': 0.40},",
+        "        {'condition_marker': 'locked_lora_baseline', 'status': 'success', 'success': True, 'mean_zero_shot_accuracy': 0.55},",
+        "    ]",
+        "",
+        "def aggregate_condition_results_into_metrics(workflow_results, *, args=None, device_info=None, run_started_at=None, wall_clock_seconds=None, metrics_path=None):",
+        "    return {",
+        "        'status': 'completed',",
+        "        'accuracy_delta_vs_baseline': 0.15,",
+        "        'condition_results': list(workflow_results),",
+        "        'device_info': dict(device_info),",
+        "    }",
+        "",
+        "def _entrypoint_run_workflow(args, device_info):",
+        "    workflow_func = _entrypoint_first_callable([",
+        "        'run_peft_instruction_study',",
+        "        'run_experiment_workflow',",
+        "        'run_condition_workflow',",
+        "        'execute_condition_workflow',",
+        "        'run_all_conditions',",
+        "        'execute_study',",
+        "    ])",
+        "    if workflow_func is None:",
+        "        raise RuntimeError('No experiment workflow function was found in the runner. Expected one of: run_peft_instruction_study, run_experiment_workflow, run_condition_workflow, execute_condition_workflow, run_all_conditions, execute_study.')",
+        "    return _entrypoint_call_supported(workflow_func, args=args, device_info=device_info, metrics_path=args.metrics_path, seed=args.seed)",
+        "",
+        "def main():",
+        "    args = _entrypoint_parse_args([])",
+        "    workflow_output = _entrypoint_run_workflow(args, {'device': 'cpu'})",
+        "    Path(args.metrics_path).write_text(json.dumps(workflow_output, sort_keys=True), encoding='utf-8')",
+        "    return 0 if workflow_output['accuracy_delta_vs_baseline'] == 0.15 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No experiment workflow function/
+    );
+
+    const repair = await repairPythonEntrypointComposableWorkflowAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_peft_instruction_study(config=None, args=None, experiment_config=None");
+    expect(repairedSource).toContain("collect_condition_results");
+    expect(repairedSource).toContain("aggregate_condition_results_into_metrics");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.accuracy_delta_vs_baseline).toBe(0.15);
+    expect(metrics.condition_results).toHaveLength(2);
+    expect(metrics.device_info.device).toBe("cpu");
+  });
+
+  it("repairs failure-safe top-level orchestration aliases when the generated runner defines locked condition execution", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-top-level-orchestrator-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from types import SimpleNamespace",
+        "import json",
+        "",
+        "def run_locked_baseline_first_conditions(args, device=None, tokenizer=None, eval_datasets=None, instruction_examples=None, condition_catalog=None):",
+        "    assert args.seed == 42",
+        "    return [{'condition_marker': 'locked_lora_baseline', 'status': 'completed', 'mean_zero_shot_accuracy': 0.5}]",
+        "",
+        "def aggregate_primary_and_secondary_metrics(condition_results):",
+        "    return {'condition_count': len(condition_results), 'best_recipe_marker': condition_results[0]['condition_marker']}",
+        "",
+        "def write_metrics_artifact(args, condition_results, aggregate_metrics, started_at, ended_at=None, run_status='completed', failure=None):",
+        "    payload = {'status': run_status, 'condition_results': condition_results, 'metrics': aggregate_metrics}",
+        "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _resolve_orchestration_callable():",
+        "    candidates = (",
+        "        'run_experiment',",
+        "        'run_peft_instruction_study',",
+        "        'run_full_experiment',",
+        "        'execute_experiment',",
+        "        'execute_study',",
+        "        'orchestrate_experiment',",
+        "        'orchestrate_study',",
+        "        'run_study',",
+        "    )",
+        "    for name in candidates:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    raise RuntimeError('No experiment orchestration callable found. Expected one of: ' + ', '.join(candidates))",
+        "",
+        "def main():",
+        `    args = SimpleNamespace(seed=42, metrics_path=${JSON.stringify(metricsPath)})`,
+        "    result = _resolve_orchestration_callable()(args)",
+        "    return 0 if result['status'] == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No experiment orchestration callable/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_experiment(args=None, **keyword):");
+    expect(repairedSource).toContain("target = run_locked_baseline_first_conditions");
+    expect(repairedSource).toContain("run_peft_instruction_study = run_experiment");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.metrics.best_recipe_marker).toBe("locked_lora_baseline");
+  });
+
+  it("materializes baseline-first workflow dataset inputs before calling generated condition executors", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-workflow-inputs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    const outputDir = path.join(workspace, "out");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from types import SimpleNamespace",
+        "import inspect",
+        "import json",
+        "",
+        "def _invoke_with_compatible_signature(function, **kwargs):",
+        "    signature = inspect.signature(function)",
+        "    parameters = signature.parameters",
+        "    accepted = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    missing = [",
+        "        name for name, param in parameters.items()",
+        "        if param.default is inspect.Parameter.empty",
+        "        and param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)",
+        "        and name not in accepted",
+        "    ]",
+        "    if missing:",
+        "        raise TypeError(f\"Cannot call {function.__name__}; missing required arguments: {missing}\")",
+        "    return function(**accepted)",
+        "",
+        "def load_instruction_subset(max_train_examples, seed=42):",
+        "    assert max_train_examples == 3",
+        "    return ([{'text': 'train', 'seed': seed}], {'selected_examples': 1})",
+        "",
+        "def load_compact_benchmark_subsets(max_eval_examples_per_benchmark, seed=42):",
+        "    assert max_eval_examples_per_benchmark == 2",
+        "    return ({'arc_challenge': [{'question': 'q', 'seed': seed}], 'hellaswag': [{'question': 'h', 'seed': seed}]}, {'selected_examples': 2})",
+        "",
+        "def execute_baseline_first_conditions(args, instruction_examples, benchmark_samples, output_dir):",
+        "    assert instruction_examples[0]['text'] == 'train'",
+        "    assert benchmark_samples['arc_challenge'][0]['seed'] == 42",
+        "    assert str(output_dir).endswith('out')",
+        "    return [{'marker': 'locked_lora_baseline', 'status': 'completed'}]",
+        "",
+        "def run_experiment(args=None):",
+        "    args_dict = dict(vars(args))",
+        "    metrics_path = Path(args_dict['metrics_path'])",
+        "    output_dir = Path(args_dict['output_dir'])",
+        "    seed = args_dict['seed']",
+        "    max_train_examples = args_dict['max_train_examples']",
+        "    max_eval_examples = args_dict['max_eval_examples']",
+        "    workflow_fn = execute_baseline_first_conditions",
+        "    workflow_result = _invoke_with_compatible_signature(",
+        "        workflow_fn,",
+        "        args=args,",
+        "        args_dict=args_dict,",
+        "        config=args_dict,",
+        "        output_dir=output_dir,",
+        "        metrics_path=metrics_path,",
+        "        seed=seed,",
+        "        max_train_examples=max_train_examples,",
+        "        max_eval_examples=max_eval_examples,",
+        "        locked_recipe_order=['unmodified_base', 'locked_lora_baseline'],",
+        "    )",
+        "    payload = {'status': 'completed', 'condition_results': workflow_result}",
+        "    metrics_path.write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def main():",
+        `    args = SimpleNamespace(seed=42, metrics_path=${JSON.stringify(metricsPath)}, output_dir=${JSON.stringify(outputDir)}, max_train_examples=3, max_eval_examples=2)`,
+        "    result = run_experiment(args)",
+        "    return 0 if result['status'] == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing required arguments: \['instruction_examples', 'benchmark_samples'\]/
+    );
+
+    const repair = await repairPythonBaselineFirstWorkflowInputMaterializationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_materialize_baseline_first_workflow_inputs");
+    expect(repairedSource).toContain("instruction_examples=_autolabos_workflow_inputs.get(\"instruction_examples\")");
+    expect(repairedSource).toContain("benchmark_samples=_autolabos_workflow_inputs.get(\"benchmark_samples\")");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.condition_results[0].marker).toBe("locked_lora_baseline");
+  });
+
+  it("materializes baseline-first study-loop runtime and dataset inputs before invoking generated study runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-study-loop-inputs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    const outputDir = path.join(workspace, "out");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from types import SimpleNamespace",
+        "import json",
+        "",
+        "def load_instruction_tuning_subset(args):",
+        "    assert args.train_subset_size == 3",
+        "    return ([{'text': 'train', 'seed': args.seed}], {'selected_examples': 1})",
+        "",
+        "def load_evaluation_dataset_bundle(args):",
+        "    assert args.eval_subset_size == 2",
+        "    return ({'arc_challenge': [{'question': 'q', 'seed': args.seed}], 'hellaswag': [{'question': 'h', 'seed': args.seed}]}, {'selected_examples': 2})",
+        "",
+        "def run_baseline_first_study(args, runtime, train_examples, eval_bundle, condition_markers=None, output_dir=None):",
+        "    assert args.seed == 42",
+        "    assert runtime['device_info']['device'] == 'cpu'",
+        "    assert runtime['seed'] == 42",
+        "    assert train_examples[0]['text'] == 'train'",
+        "    assert eval_bundle['arc_challenge'][0]['seed'] == 42",
+        "    assert condition_markers == ['unmodified_base', 'locked_lora_baseline']",
+        "    assert str(output_dir).endswith('out')",
+        "    return [{'condition': 'locked_lora_baseline', 'status': 'completed', 'mean_zero_shot_accuracy': 0.5}]",
+        "",
+        "def _condition_result_as_dict(item):",
+        "    return dict(item)",
+        "",
+        "def _invoke_baseline_first_study(args, config, device_info):",
+        "    candidate_names = (",
+        "        'run_baseline_first_study',",
+        "    )",
+        "    last_type_error = None",
+        "    for name in candidate_names:",
+        "        func = globals().get(name)",
+        "        if not callable(func):",
+        "            continue",
+        "        call_attempts = (",
+        "            lambda: func(args=args, config=dict(config), device_info=dict(device_info)),",
+        "            lambda: func(config=dict(config), args=args),",
+        "            lambda: func(dict(config)),",
+        "            lambda: func(args),",
+        "            lambda: func(),",
+        "        )",
+        "        for attempt in call_attempts:",
+        "            try:",
+        "                raw_results = attempt()",
+        "                return [_condition_result_as_dict(item) for item in list(raw_results)]",
+        "            except TypeError as exc:",
+        "                last_type_error = exc",
+        "                continue",
+        "    if last_type_error is not None:",
+        "        raise RuntimeError(f\"Could not call baseline-first study loop with supported signatures: {last_type_error}\")",
+        "    raise RuntimeError('No baseline-first training/evaluation loop function was found in the materialized script.')",
+        "",
+        "def main():",
+        `    args = SimpleNamespace(seed=42, metrics_path=${JSON.stringify(metricsPath)}, output_dir=${JSON.stringify(outputDir)}, train_subset_size=3, eval_subset_size=2)`,
+        "    config = {'seed': 42, 'metrics_path': args.metrics_path, 'output_dir': args.output_dir, 'condition_order': ['unmodified_base', 'locked_lora_baseline']}",
+        "    results = _invoke_baseline_first_study(args=args, config=config, device_info={'device': 'cpu'})",
+        "    Path(args.metrics_path).write_text(json.dumps({'status': 'completed', 'condition_results': results}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing .*args.*runtime.*train_examples.*eval_bundle|missing .*required positional/
+    );
+
+    const repair = await repairPythonBaselineFirstStudyLoopInputMaterializationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_materialize_baseline_first_study_loop_inputs");
+    expect(repairedSource).toContain("runtime=_autolabos_study_inputs.get(\"runtime\")");
+    expect(repairedSource).toContain("train_examples=_autolabos_study_inputs.get(\"train_examples\")");
+    expect(repairedSource).toContain("eval_bundle=_autolabos_study_inputs.get(\"eval_bundle\")");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.condition_results[0].condition).toBe("locked_lora_baseline");
+  });
+
+  it("materializes baseline-first entrypoint context inputs before invoking generated condition loops", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-entrypoint-context-inputs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from types import SimpleNamespace",
+        "import inspect",
+        "import json",
+        "",
+        "def detect_device(prefer_mps=True):",
+        "    assert prefer_mps is True",
+        "    return 'cpu', {'device': 'cpu'}",
+        "",
+        "def load_instruction_dataset(dataset_name=None, split=None, max_examples=None, seed=None):",
+        "    assert dataset_name == 'tiny-instructions'",
+        "    assert split == 'train'",
+        "    assert max_examples == 3",
+        "    return ([{'text': 'train', 'seed': seed}], {'selected_examples': 1})",
+        "",
+        "def load_zero_shot_benchmark_subsets(max_examples_per_benchmark=None, seed=42):",
+        "    assert max_examples_per_benchmark == 2",
+        "    return {'benchmarks': {'arc_challenge': [{'question': 'q', 'seed': seed}], 'hellaswag': [{'question': 'h', 'seed': seed}]}}",
+        "",
+        "def run_baseline_first_condition_loop(args, device, instruction_dataset, benchmark_datasets):",
+        "    assert args.seed == 42",
+        "    assert device == 'cpu'",
+        "    assert instruction_dataset[0]['text'] == 'train'",
+        "    assert benchmark_datasets['arc_challenge'][0]['seed'] == 42",
+        "    return {'condition_records': [{'condition': 'locked_lora_baseline', 'status': 'completed'}]}",
+        "",
+        "def _call_entrypoint_helper(helper, context):",
+        "    signature = inspect.signature(helper)",
+        "    kwargs = {}",
+        "    positional = []",
+        "    for name, param in signature.parameters.items():",
+        "        if name in context:",
+        "            if param.kind == inspect.Parameter.POSITIONAL_ONLY:",
+        "                positional.append(context[name])",
+        "            else:",
+        "                kwargs[name] = context[name]",
+        "    return helper(*positional, **kwargs)",
+        "",
+        "def _locate_first_callable(names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _locked_baseline_first_condition_order():",
+        "    return ['unmodified_base', 'locked_lora_baseline']",
+        "",
+        "def _run_orchestration_from_cli(args):",
+        "    loop_helper = _locate_first_callable((",
+        "        'run_baseline_first_condition_loop',",
+        "        'execute_baseline_first_condition_loop',",
+        "    ))",
+        "    condition_order = _locked_baseline_first_condition_order()",
+        "    context = {",
+        "        'args': args,",
+        "        'condition_order': condition_order,",
+        "        'conditions': condition_order,",
+        "        'output_dir': Path(args.output_dir),",
+        "        'metrics_path': Path(args.metrics_path),",
+        "        'instruction_dataset': args.instruction_dataset,",
+        "        'train_subset_size': args.train_subset_size,",
+        "        'eval_subset_size': args.eval_subset_size,",
+        "        'seed': args.seed,",
+        "    }",
+        "    study_result = _call_entrypoint_helper(loop_helper, context)",
+        "    return study_result, study_result.get('condition_records', [])",
+        "",
+        "def main():",
+        `    args = SimpleNamespace(seed=42, metrics_path=${JSON.stringify(metricsPath)}, output_dir='out', instruction_dataset='tiny-instructions', train_subset_size=3, eval_subset_size=2)`,
+        "    study_result, condition_records = _run_orchestration_from_cli(args)",
+        "    Path(args.metrics_path).write_text(json.dumps({'status': 'completed', 'condition_records': condition_records}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing .*device.*benchmark_datasets|missing .*required positional/
+    );
+
+    const repair = await repairPythonBaselineFirstEntrypointContextMaterializationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_materialize_entrypoint_condition_loop_context");
+    expect(repairedSource).toContain("context.update(_autolabos_materialize_entrypoint_condition_loop_context(args, context))");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.condition_records[0].condition).toBe("locked_lora_baseline");
+  });
+
+  it("materializes train and benchmark inputs for final _main_execute_conditions dispatch", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-execute-conditions-inputs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from collections.abc import Iterable, Mapping",
+        "from types import SimpleNamespace",
+        "import inspect",
+        "",
+        "SEED = 42",
+        "DEFAULT_OUTPUT_DIR = 'out'",
+        "DEFAULT_CACHE_DIR = 'cache'",
+        "DEFAULT_ADAPTER_DIR = 'adapters'",
+        "DEFAULT_METRICS_PATH = 'metrics.json'",
+        "MAX_INSTRUCTION_EXAMPLES = 5",
+        "DEFAULT_EVAL_EXAMPLES_PER_BENCHMARK = 2",
+        "",
+        "def _main_get_arg(args, names, default=None):",
+        "    for name in names:",
+        "        if hasattr(args, name):",
+        "            value = getattr(args, name)",
+        "            if value is not None:",
+        "                return value",
+        "    return default",
+        "",
+        "def _main_call_with_supported_kwargs(helper, **kwargs):",
+        "    parameters = inspect.signature(helper).parameters",
+        "    supported = {key: value for key, value in kwargs.items() if key in parameters and value is not None}",
+        "    missing = [",
+        "        name for name, param in parameters.items()",
+        "        if param.default is inspect.Parameter.empty",
+        "        and param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)",
+        "        and name not in supported",
+        "    ]",
+        "    if missing:",
+        "        raise TypeError(f\"Cannot call '{helper.__name__}'; missing required arguments: {missing}\")",
+        "    return helper(**supported)",
+        "",
+        "def load_instruction_dataset(args, seed=SEED):",
+        "    assert args.max_train_examples == 3",
+        "    assert seed == 42",
+        "    return [{'instruction': 'say hi'}], {'kind': 'train'}",
+        "",
+        "def load_benchmark_datasets(args):",
+        "    assert args.max_eval_examples == 2",
+        "    return {'arc_challenge': [{'seed': args.seed}]}, {'kind': 'eval'}",
+        "",
+        "def execute_all_conditions(args, train_dataset, benchmark_data, device):",
+        "    assert train_dataset[0]['instruction'] == 'say hi'",
+        "    assert benchmark_data['arc_challenge'][0]['seed'] == 42",
+        "    assert device == 'cpu'",
+        "    return {'conditions': [{'condition_id': 'locked_lora_baseline', 'status': 'completed'}]}",
+        "",
+        "def _main_execute_conditions(args, run_context, device, device_info):",
+        "    runner_names = (",
+        "        'run_baseline_first_conditions',",
+        "        'execute_all_conditions',",
+        "    )",
+        "    runner = None",
+        "    for name in runner_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            runner = candidate",
+        "            break",
+        "    if runner is None:",
+        "        raise RuntimeError('No condition runner found.')",
+        "    output_dir = Path(_main_get_arg(args, ('output_dir',), DEFAULT_OUTPUT_DIR))",
+        "    cache_dir = Path(_main_get_arg(args, ('cache_dir',), DEFAULT_CACHE_DIR))",
+        "    adapter_dir = Path(_main_get_arg(args, ('adapter_dir',), DEFAULT_ADAPTER_DIR))",
+        "    for directory in (output_dir, cache_dir, adapter_dir):",
+        "        directory.mkdir(parents=True, exist_ok=True)",
+        "    result = _main_call_with_supported_kwargs(",
+        "        runner,",
+        "        args=args,",
+        "        run_context=run_context,",
+        "        context=run_context,",
+        "        device=device,",
+        "        device_info=device_info,",
+        "        output_dir=output_dir,",
+        "        cache_dir=cache_dir,",
+        "        adapter_dir=adapter_dir,",
+        "        metrics_path=Path(_main_get_arg(args, ('metrics_path', 'metrics'), DEFAULT_METRICS_PATH)),",
+        "        seed=int(_main_get_arg(args, ('seed',), SEED)),",
+        "    )",
+        "    if isinstance(result, Mapping) and 'conditions' in result:",
+        "        result = result['conditions']",
+        "    if not isinstance(result, list):",
+        "        result = list(result) if isinstance(result, Iterable) and not isinstance(result, (str, bytes, Mapping)) else [result]",
+        "    return [dict(item) if isinstance(item, Mapping) else {'condition_marker': repr(item), 'status': 'failed'} for item in result]",
+        "",
+        "def main():",
+        "    args = SimpleNamespace(seed=42, max_train_examples=3, max_eval_examples=2, output_dir='out', cache_dir='cache', adapter_dir='adapters', metrics_path='metrics.json')",
+        "    records = _main_execute_conditions(args, {}, 'cpu', {'device': 'cpu'})",
+        "    assert records[0]['condition_id'] == 'locked_lora_baseline'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing required arguments: \['train_dataset', 'benchmark_data'\]/
+    );
+
+    const repair = await repairPythonMainExecuteConditionsInputMaterializationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_materialize_main_condition_inputs");
+    expect(repairedSource).toContain("**_autolabos_materialize_main_condition_inputs(args, run_context)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("accepts salt aliases for deterministic sample-record helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-sample-records-salt-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Dict, List, Mapping, Optional, Sequence",
+        "",
+        "SEED = 42",
+        "",
+        "def deterministic_indices(length: int, limit: Optional[int], *, seed: int = SEED, namespace: str = '') -> List[int]:",
+        "    assert namespace == 'arc_challenge'",
+        "    return list(range(min(length, int(limit))))",
+        "",
+        "def row_to_plain_record(row):",
+        "    return dict(row)",
+        "",
+        "def deterministic_sample_records(",
+        "    records: Sequence[Mapping[str, Any]],",
+        "    limit: Optional[int],",
+        "    *,",
+        "    seed: int = SEED,",
+        "    namespace: str = \"records\",",
+        ") -> List[Dict[str, Any]]:",
+        "    \"\"\"Select a deterministic bounded subset from normalized records.\"\"\"",
+        "    indices = deterministic_indices(len(records), limit, seed=seed, namespace=namespace)",
+        "    return [row_to_plain_record(records[idx]) for idx in indices]",
+        "",
+        "def prepare_arc_challenge_benchmark():",
+        "    rows = [{'id': 1}, {'id': 2}]",
+        "    return deterministic_sample_records(rows, 1, seed=SEED, salt='arc_challenge')",
+        "",
+        "if __name__ == '__main__':",
+        "    records = prepare_arc_challenge_benchmark()",
+        "    assert records == [{'id': 1}]",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /unexpected keyword argument 'salt'/
+    );
+
+    const repair = await repairPythonDeterministicSampleRecordsSaltAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_sample_records_salt_alias");
+    expect(repairedSource).toContain("salt = None");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("adds required ConditionConfig aliases for generated condition factories", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-config-required-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass, field",
+        "from typing import Any, Dict, Mapping, Optional, Sequence, Tuple",
+        "import dataclasses",
+        "",
+        "@dataclass(frozen=True)",
+        "class ConditionConfig:",
+        "    marker: str",
+        "    display_name: str",
+        "    adapter_recipe_type: str",
+        "    train_enabled: bool",
+        "    eval_enabled: bool = True",
+        "    is_unmodified_baseline: bool = False",
+        "    is_locked_lora_baseline: bool = False",
+        "    hyperparameter_metadata: Mapping[str, Any] = field(default_factory=dict)",
+        "    implementation_notes: str = ''",
+        "    required_peft_features: Tuple[str, ...] = field(default_factory=tuple)",
+        "    failure_if_unsupported: bool = True",
+        "",
+        "def _condition_config_class() -> Any:",
+        "    return ConditionConfig",
+        "",
+        "def _make_condition_config(",
+        "    *,",
+        "    marker: str,",
+        "    display_name: str,",
+        "    recipe_type: str,",
+        "    description: str,",
+        "    is_baseline: bool = False,",
+        "    should_train: bool = True,",
+        "    notes: Optional[Sequence[str]] = None,",
+        ") -> Any:",
+        "    cls = _condition_config_class()",
+        "    metadata = {'marker': marker, 'recipe_type': recipe_type, 'notes': list(notes or [])}",
+        "    desired_values = {",
+        "        'marker': marker,",
+        "        'display_name': display_name,",
+        "        'recipe_type': recipe_type,",
+        "        'description': description,",
+        "        'is_baseline': is_baseline,",
+        "        'should_train': should_train,",
+        "        'metadata': metadata,",
+        "    }",
+        "    if dataclasses.is_dataclass(cls):",
+        "        accepted_fields = {field_info.name for field_info in dataclasses.fields(cls)}",
+        "        kwargs = {key: value for key, value in desired_values.items() if key in accepted_fields}",
+        "        return cls(**kwargs)",
+        "    return cls(**desired_values)",
+        "",
+        "ORDERED_CONDITION_CONFIGS = [",
+        "    _make_condition_config(marker='unmodified_base', display_name='Base', recipe_type='baseline_no_adapter', description='baseline', is_baseline=True, should_train=False),",
+        "    _make_condition_config(marker='locked_lora_baseline', display_name='Locked LoRA', recipe_type='locked_lora_baseline', description='lora'),",
+        "]",
+        "",
+        "if __name__ == '__main__':",
+        "    assert ORDERED_CONDITION_CONFIGS[0].adapter_recipe_type == 'none'",
+        "    assert ORDERED_CONDITION_CONFIGS[0].train_enabled is False",
+        "    assert ORDERED_CONDITION_CONFIGS[0].is_unmodified_baseline is True",
+        "    assert ORDERED_CONDITION_CONFIGS[1].adapter_recipe_type == 'locked_lora_baseline'",
+        "    assert ORDERED_CONDITION_CONFIGS[1].train_enabled is True",
+        "    assert ORDERED_CONDITION_CONFIGS[1].is_locked_lora_baseline is True",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /adapter_recipe_type.*train_enabled|train_enabled.*adapter_recipe_type|missing .*required positional/
+    );
+
+    const repair = await repairPythonConditionConfigRequiredFieldAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_condition_config_required_field_alias_marker");
+    expect(repairedSource).toContain('"adapter_recipe_type"');
+    expect(repairedSource).toContain('"train_enabled"');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs baseline-first condition runner aliases when the generated runner defines run_all_conditions_baseline_first", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-first-conditions-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from types import SimpleNamespace",
+        "",
+        "def run_all_conditions_baseline_first(args, *, output_dir=None, eval_datasets=None):",
+        "    assert args.seed == 42",
+        "    assert output_dir == 'out'",
+        "    assert eval_datasets == {'arc': []}",
+        "    return [{'condition_id': 'baseline_unmodified'}, {'condition_id': 'vanilla_lora'}]",
+        "",
+        "def _run_conditions_from_cli(args):",
+        "    runner_names = (",
+        "        'run_baseline_first_conditions',",
+        "        'execute_baseline_first_conditions',",
+        "        'run_condition_study',",
+        "        'run_peft_instruction_study',",
+        "        'run_study_conditions',",
+        "    )",
+        "    for name in runner_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate(args=args, output_dir='out', eval_datasets={'arc': []})",
+        "    raise RuntimeError(f\"No baseline-first condition runner found; tried {', '.join(runner_names)}\")",
+        "",
+        "def main():",
+        "    result = _run_conditions_from_cli(SimpleNamespace(seed=42))",
+        "    return 0 if result[1]['condition_id'] == 'vanilla_lora' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No baseline-first condition runner/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_baseline_first_conditions(args=None, **keyword):");
+    expect(repairedSource).toContain("target = run_all_conditions_baseline_first");
+    expect(repairedSource).toContain("execute_baseline_first_conditions = run_baseline_first_conditions");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("adds condition-suite aliases when execute_selected_conditions misses run_baseline_first_conditions", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-suite-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Callable",
+        "",
+        "def _call_with_supported_arguments(function: Callable[..., Any], *positional: Any, **keyword: Any) -> Any:",
+        "    signature = inspect.signature(function)",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):",
+        "        return function(*positional, **keyword)",
+        "    accepted = {name for name, param in signature.parameters.items() if param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)}",
+        "    filtered = {key: value for key, value in keyword.items() if key in accepted}",
+        "    return function(*positional, **filtered)",
+        "",
+        "def run_baseline_first_conditions(args=None, train_dataset=None, eval_bundle=None, device_info=None):",
+        "    assert args.seed == 42",
+        "    assert device_info == {'backend': 'cpu'}",
+        "    return [",
+        "        {'condition_id': 'unmodified_base', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.0},",
+        "        {'condition_id': 'lora_baseline', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.2},",
+        "    ]",
+        "",
+        "def execute_selected_conditions(args: argparse.Namespace, device_info: Any):",
+        "    suite_runner_names = (",
+        "        'run_condition_suite',",
+        "        'execute_condition_suite',",
+        "        'run_experiment_conditions',",
+        "        'execute_all_conditions',",
+        "        'run_all_conditions',",
+        "    )",
+        "    common_kwargs = {",
+        "        'args': args,",
+        "        'conditions': ['unmodified_base', 'lora_baseline'],",
+        "        'device_info': device_info,",
+        "        'output_dir': Path(args.output_dir),",
+        "    }",
+        "    for function_name in suite_runner_names:",
+        "        function = globals().get(function_name)",
+        "        if callable(function) and function is not execute_selected_conditions:",
+        "            return list(_call_with_supported_arguments(function, **common_kwargs))",
+        "    raise RuntimeError('No condition execution function found. Expected one of run_condition_suite, execute_condition_suite, run_condition, or execute_condition from earlier sections.')",
+        "",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    parser.add_argument('--output-dir', default='out')",
+        "    parser.add_argument('--seed', type=int, default=42)",
+        "    args = parser.parse_args(argv)",
+        "    results = execute_selected_conditions(args, {'backend': 'cpu'})",
+        "    with open(args.metrics_path, 'w', encoding='utf8') as handle:",
+        "        json.dump({'accuracy_delta_vs_baseline': results[-1]['accuracy_delta_vs_baseline'], 'conditions': results}, handle)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })
+    ).toThrow(/No condition execution function found/);
+
+    const repair = await repairPythonConditionSuiteAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_condition_suite(*positional, **keyword):");
+    expect(repairedSource).toContain("target = run_baseline_first_conditions");
+    expect(repairedSource).toContain("run_all_conditions = run_condition_suite");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      accuracy_delta_vs_baseline: 0.2,
+      conditions: [
+        { condition_id: "unmodified_base", status: "completed" },
+        { condition_id: "lora_baseline", status: "completed" }
+      ]
+    });
+  });
+
+  it("adds condition-suite aliases for main orchestration helper resolver variants", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-condition-suite-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "",
+        "def _pick_global_callable(*names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _call_with_compatible_signature(function, **keyword):",
+        "    parameters = inspect.signature(function).parameters",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        return function(**keyword)",
+        "    supported = {key: value for key, value in keyword.items() if key in parameters}",
+        "    return function(**supported)",
+        "",
+        "def execute_baseline_first_conditions(args=None, instruction_examples=None, benchmark_samples=None, output_dir=None):",
+        "    assert args.seed == 42",
+        "    assert instruction_examples == [{'instruction': 'x'}]",
+        "    assert benchmark_samples == {'arc_challenge': [{'answer': 'A'}]}",
+        "    return [",
+        "        {'condition_id': 'unmodified_base', 'status': 'completed'},",
+        "        {'condition_id': 'locked_lora_baseline', 'status': 'completed'},",
+        "    ]",
+        "",
+        "run_condition_execution = execute_baseline_first_conditions",
+        "run_conditions_baseline_first = execute_baseline_first_conditions",
+        "",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    parser.add_argument('--seed', type=int, default=42)",
+        "    args = parser.parse_args(argv)",
+        "    instruction_examples = [{'instruction': 'x'}]",
+        "    benchmark_samples = {'arc_challenge': [{'answer': 'A'}]}",
+        "    condition_runner = _pick_global_callable(",
+        "        'run_condition_suite',",
+        "        'run_peft_conditions',",
+        "        'execute_condition_suite',",
+        "        'execute_conditions',",
+        "        'run_all_conditions',",
+        "    )",
+        "    if condition_runner is None:",
+        "        raise RuntimeError('No condition execution helper is available; cannot run the baseline-first PEFT study.')",
+        "    rows = _call_with_compatible_signature(",
+        "        condition_runner,",
+        "        args=args,",
+        "        instruction_examples=instruction_examples,",
+        "        benchmark_samples=benchmark_samples,",
+        "        output_dir='out',",
+        "    )",
+        "    with open(args.metrics_path, 'w', encoding='utf8') as handle:",
+        "        json.dump({'conditions': rows}, handle)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })
+    ).toThrow(/No condition execution helper is available/);
+
+    const repair = await repairPythonConditionSuiteAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_condition_suite(*positional, **keyword):");
+    expect(repairedSource).toContain("target = execute_baseline_first_conditions");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      conditions: [
+        { condition_id: "unmodified_base", status: "completed" },
+        { condition_id: "locked_lora_baseline", status: "completed" }
+      ]
+    });
+  });
+
+  it("adds condition-suite aliases when locked-condition helpers use generated study names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-condition-suite-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "",
+        "def _runner_get_callable(names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _call_with_compatible_signature(function, **keyword):",
+        "    parameters = inspect.signature(function).parameters",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        return function(**keyword)",
+        "    supported = {key: value for key, value in keyword.items() if key in parameters}",
+        "    return function(**supported)",
+        "",
+        "def run_baseline_first_locked_conditions(args=None, device_metadata=None):",
+        "    assert args.seed == 42",
+        "    assert device_metadata == {'backend': 'cpu'}",
+        "    return [{'condition_marker': 'locked_lora_baseline', 'status': 'completed'}]",
+        "",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    parser.add_argument('--seed', type=int, default=42)",
+        "    args = parser.parse_args(argv)",
+        "    execution_fn = _runner_get_callable([",
+        "        'run_baseline_first_condition_study',",
+        "        'run_condition_study',",
+        "        'run_baseline_first_study',",
+        "        'execute_baseline_first_conditions',",
+        "        'execute_condition_suite',",
+        "        'run_condition_suite',",
+        "        'run_all_conditions',",
+        "    ])",
+        "    if execution_fn is None:",
+        "        rows = [{'condition_marker': 'locked_lora_baseline', 'status': 'failed', 'failure_reason': 'No condition execution function was available in the materialized runner skeleton.'}]",
+        "    else:",
+        "        rows = _call_with_compatible_signature(execution_fn, args=args, device_metadata={'backend': 'cpu'})",
+        "    with open(args.metrics_path, 'w', encoding='utf8') as handle:",
+        "        json.dump({'conditions': rows}, handle)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(readFileSync(metricsPath, "utf8")).toContain("materialized runner skeleton");
+
+    const repair = await repairPythonConditionSuiteAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("target = run_baseline_first_locked_conditions");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      conditions: [{ condition_marker: "locked_lora_baseline", status: "completed" }]
+    });
+  });
+
+  it("aliases locked condition studies into final experiment orchestration resolvers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-condition-study-orchestration-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from types import SimpleNamespace",
+        "from typing import Any, Callable, Optional, Sequence",
+        "",
+        "def _call_with_supported_kwargs(func: Callable[..., Any], **kwargs: Any) -> Any:",
+        "    import inspect",
+        "    parameters = inspect.signature(func).parameters",
+        "    return func(**{key: value for key, value in kwargs.items() if key in parameters})",
+        "",
+        "def _first_available_callable(names: Sequence[str], *, required: bool = True) -> Optional[Callable[..., Any]]:",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    if required:",
+        "        raise RuntimeError(f\"None of the required helper callables are available: {', '.join(names)}\")",
+        "    return None",
+        "",
+        "def detect_device():",
+        "    return ('cpu-device', {'device': 'cpu'})",
+        "",
+        "def run_locked_condition_study(config: Any, device: Any):",
+        "    assert config.seed == 42",
+        "    assert device == 'cpu-device'",
+        "    return {'comparison_mode': 'baseline_first_locked', 'condition_order': ['unmodified_base', 'locked_lora_baseline']}",
+        "",
+        "def _invoke_experiment_orchestration(args):",
+        "    config = args",
+        "    orchestration = _first_available_callable([",
+        "        'run_locked_condition_experiment',",
+        "        'execute_locked_condition_experiment',",
+        "        'run_condition_experiment',",
+        "        'execute_conditions',",
+        "        'run_conditions',",
+        "    ])",
+        "    return _call_with_supported_kwargs(orchestration, args=args, config=config)",
+        "",
+        "if __name__ == '__main__':",
+        "    result = _invoke_experiment_orchestration(SimpleNamespace(seed=42))",
+        "    assert result['condition_order'][0] == 'unmodified_base'",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /None of the required helper callables/
+    );
+
+    const repair = await repairPythonLockedConditionStudyOrchestrationAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_locked_condition_study_orchestration_alias_marker");
+    expect(repairedSource).toContain("def run_locked_condition_experiment");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("materializes entrypoint condition datasets for baseline-first orchestrators", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-condition-datasets-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from pathlib import Path",
+        "from typing import Any, Callable, Dict, List, Mapping, Tuple",
+        "",
+        "DEFAULT_OUTPUT_DIR = 'out'",
+        "DEFAULT_SEED = 42",
+        "",
+        "class PublicDatasetBundle:",
+        "    def __init__(self):",
+        "        self.train = [{'instruction': 'say hi'}]",
+        "        self.arc_challenge = [{'answer': 'A'}]",
+        "        self.hellaswag = [{'label': 'B'}]",
+        "",
+        "def load_public_dataset_bundle(args):",
+        "    assert args.seed == 42",
+        "    return PublicDatasetBundle()",
+        "",
+        "def run_baseline_first_condition_orchestrator(args: Any, train_dataset: Any, eval_datasets: Any, *, output_dir: Path = None):",
+        "    assert train_dataset == [{'instruction': 'say hi'}]",
+        "    assert eval_datasets['arc_challenge'] == [{'answer': 'A'}]",
+        "    assert eval_datasets['hellaswag'] == [{'label': 'B'}]",
+        "    return [{'condition_marker': 'locked_lora_baseline', 'status': 'completed', 'output_dir': str(output_dir)}]",
+        "",
+        "execute_baseline_first_conditions = run_baseline_first_condition_orchestrator",
+        "",
+        "def _entrypoint_get_metrics_path(args):",
+        "    return Path('metrics.json')",
+        "",
+        "def _entrypoint_call_with_supported_signature(fn: Callable[..., Any], args: argparse.Namespace, **extra: Any) -> Any:",
+        "    attempts: List[Tuple[Tuple[Any, ...], Dict[str, Any]]] = []",
+        "    metrics_path = _entrypoint_get_metrics_path(args)",
+        "    common_kwargs: Dict[str, Any] = {",
+        "        'args': args,",
+        "        'config': args,",
+        "        'metrics_path': metrics_path,",
+        "        'output_dir': Path(getattr(args, 'output_dir', DEFAULT_OUTPUT_DIR)),",
+        "        'seed': int(getattr(args, 'seed', DEFAULT_SEED)),",
+        "    }",
+        "    common_kwargs.update(extra)",
+        "",
+        "    attempts.append(((args,), {}))",
+        "    attempts.append(((), common_kwargs))",
+        "",
+        "    try:",
+        "        signature = inspect.signature(fn)",
+        "        accepted: Dict[str, Any] = {}",
+        "        accepts_var_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values())",
+        "        for key, value in common_kwargs.items():",
+        "            if accepts_var_kwargs or key in signature.parameters:",
+        "                accepted[key] = value",
+        "        positional_required = [",
+        "            p for p in signature.parameters.values()",
+        "            if p.default is inspect._empty",
+        "            and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)",
+        "        ]",
+        "        if len(positional_required) == 1 and positional_required[0].name not in accepted:",
+        "            attempts.insert(0, ((args,), accepted))",
+        "        attempts.insert(0, ((), accepted))",
+        "    except Exception:",
+        "        pass",
+        "",
+        "    last_error = None",
+        "    for positional, keyword in attempts:",
+        "        try:",
+        "            return fn(*positional, **keyword)",
+        "        except TypeError as exc:",
+        "            last_error = exc",
+        "            continue",
+        "    raise last_error",
+        "",
+        "def _entrypoint_run_conditions(args):",
+        "    return _entrypoint_call_with_supported_signature(execute_baseline_first_conditions, args)",
+        "",
+        "if __name__ == '__main__':",
+        "    rows = _entrypoint_run_conditions(argparse.Namespace(seed=42, output_dir='out'))",
+        "    assert rows[0]['status'] == 'completed'",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /unexpected keyword argument 'config'/
+    );
+
+    const repair = await repairPythonEntrypointConditionDatasetInputMaterializationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_condition_dataset_inputs_marker");
+    expect(repairedSource).toContain("_autolabos_entrypoint_condition_dataset_inputs(fn, args)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("adds PEFT acronym class aliases when staged chunks disagree on config casing", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-acronym-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass, field",
+        "from typing import Tuple",
+        "import json",
+        "",
+        "@dataclass",
+        "class PeftConditionConfig:",
+        "    name: str",
+        "    is_baseline: bool = False",
+        "",
+        "@dataclass",
+        "class StudyConfig:",
+        "    conditions: Tuple[PeftConditionConfig, ...] = field(default_factory=tuple)",
+        "",
+        "CONDITION_DESCRIPTORS = (",
+        "    PEFTConditionConfig('unmodified_base', True),",
+        "    PEFTConditionConfig('lora_baseline', False),",
+        ")",
+        "",
+        "def main():",
+        `    with open(${JSON.stringify(metricsPath)}, 'w', encoding='utf8') as handle:`,
+        "        json.dump({'condition_count': len(CONDITION_DESCRIPTORS), 'baseline': CONDITION_DESCRIPTORS[0].name}, handle)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /PEFTConditionConfig/
+    );
+
+    const repair = await repairPythonPeftAcronymClassAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("# _autolabos_peft_acronym_alias_marker");
+    expect(repairedSource).toContain("PEFTConditionConfig = PeftConditionConfig");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      condition_count: 2,
+      baseline: "unmodified_base"
+    });
+  });
+
+  it("bridges abstract condition-spec kwargs into concrete generated factory signatures", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-spec-factory-kwargs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import asdict, dataclass, field",
+        "from typing import Any, Mapping, Optional, Tuple",
+        "import json",
+        "",
+        "@dataclass(frozen=True)",
+        "class ConditionSpec:",
+        "    marker: str",
+        "    display_name: str",
+        "    role: str",
+        "    family: str",
+        "    recipe_kind: str",
+        "    trainable: bool",
+        "    description: str",
+        "    lora_r: Optional[int] = None",
+        "    lora_alpha: Optional[int] = None",
+        "    target_modules: Tuple[str, ...] = field(default_factory=tuple)",
+        "    use_dora: bool = False",
+        "    adapter_name: Optional[str] = None",
+        "    peft_method: Optional[str] = None",
+        "    neftune_noise_alpha: Optional[float] = None",
+        "    peft_kwargs: Mapping[str, Any] = field(default_factory=dict)",
+        "    trainer_kwargs: Mapping[str, Any] = field(default_factory=dict)",
+        "    notes: Tuple[str, ...] = field(default_factory=tuple)",
+        "",
+        "def make_condition_spec(",
+        "    marker: str,",
+        "    *,",
+        "    display_name: str,",
+        "    role: str,",
+        "    family: str,",
+        "    recipe_kind: str,",
+        "    trainable: bool,",
+        "    description: str,",
+        "    lora_r: Optional[int] = None,",
+        "    lora_alpha: Optional[int] = None,",
+        "    target_modules = None,",
+        "    use_dora: bool = False,",
+        "    adapter_name: Optional[str] = None,",
+        "    peft_method: Optional[str] = None,",
+        "    neftune_noise_alpha: Optional[float] = None,",
+        "    peft_kwargs: Optional[Mapping[str, Any]] = None,",
+        "    trainer_kwargs: Optional[Mapping[str, Any]] = None,",
+        "    notes = None,",
+        ") -> ConditionSpec:",
+        "    return ConditionSpec(",
+        "        marker=marker,",
+        "        display_name=display_name,",
+        "        role=role,",
+        "        family=family,",
+        "        recipe_kind=recipe_kind,",
+        "        trainable=trainable,",
+        "        description=description,",
+        "        lora_r=lora_r,",
+        "        lora_alpha=lora_alpha,",
+        "        target_modules=tuple(target_modules or ()),",
+        "        use_dora=use_dora,",
+        "        adapter_name=adapter_name,",
+        "        peft_method=peft_method,",
+        "        neftune_noise_alpha=neftune_noise_alpha,",
+        "        peft_kwargs=dict(peft_kwargs or {}),",
+        "        trainer_kwargs=dict(trainer_kwargs or {}),",
+        "        notes=tuple(notes or ()),",
+        "    )",
+        "",
+        "def _construct_condition_spec(",
+        "    marker: str,",
+        "    *,",
+        "    display_name: str,",
+        "    role: str,",
+        "    family: str,",
+        "    recipe_kind: str,",
+        "    description: str,",
+        "    peft_config = None,",
+        "    training_overrides = None,",
+        "    feature_flags = None,",
+        "    expected_support: str = 'required',",
+        "    notes = None,",
+        "):",
+        "    factory = globals().get('make_condition_spec')",
+        "    if callable(factory):",
+        "        return factory(",
+        "            marker=marker,",
+        "            display_name=display_name,",
+        "            role=role,",
+        "            family=family,",
+        "            recipe_kind=recipe_kind,",
+        "            description=description,",
+        "            peft_config=dict(peft_config or {}),",
+        "            training_overrides=dict(training_overrides or {}),",
+        "            feature_flags=dict(feature_flags or {}),",
+        "            expected_support=expected_support,",
+        "            notes=list(notes or []),",
+        "        )",
+        "    raise RuntimeError('missing factory')",
+        "",
+        "LOCKED_CONDITION = _construct_condition_spec(",
+        "    'dora',",
+        "    display_name='DoRA',",
+        "    role='tuned_comparator',",
+        "    family='lora',",
+        "    recipe_kind='comparator',",
+        "    description='DoRA comparator',",
+        "    peft_config={'r': 16, 'lora_alpha': 32, 'target_modules': ['q_proj'], 'use_dora': True},",
+        "    training_overrides={'train': True, 'adapter': 'dora', 'neftune_noise_alpha': 5},",
+        "    feature_flags={'use_dora': True},",
+        "    notes=['locked'],",
+        ")",
+        "",
+        "def main():",
+        `    with open(${JSON.stringify(metricsPath)}, 'w', encoding='utf8') as handle:`,
+        "        json.dump(asdict(LOCKED_CONDITION), handle, sort_keys=True)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /unexpected keyword argument 'peft_config'/
+    );
+
+    const repair = await repairPythonConditionSpecFactoryKwargBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_condition_spec_factory_kwarg_bridge_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      marker: "dora",
+      trainable: true,
+      lora_r: 16,
+      lora_alpha: 32,
+      target_modules: ["q_proj"],
+      use_dora: true,
+      adapter_name: "dora",
+      peft_method: "dora",
+      neftune_noise_alpha: 5,
+      peft_kwargs: { r: 16, lora_alpha: 32, use_dora: true },
+      trainer_kwargs: { train: true, adapter: "dora", neftune_noise_alpha: 5 },
+      notes: ["locked"]
+    });
+  });
+
+  it("aliases locked baseline-first workflows and payload builders for final entrypoints", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-final-entrypoint-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from typing import Any, Mapping, Optional, Sequence",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "import sys",
+        "import time",
+        "import traceback",
+        "",
+        "JsonDict = dict",
+        "ConditionResult = dict",
+        "",
+        "def run_baseline_first_locked_workflow(runtime_config=None, **_kwargs):",
+        "    return [",
+        "        {'condition_id': 'locked_lora_baseline', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.0},",
+        "        {'condition_id': 'dora', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.03},",
+        "    ]",
+        "",
+        "run_locked_baseline_first_workflow = run_baseline_first_locked_workflow",
+        "execute_baseline_first_locked_workflow = run_baseline_first_locked_workflow",
+        "",
+        "def build_final_metrics_payload(condition_results, *, metrics_path, started_at=None, finished_at=None, runtime_config=None, **_kwargs):",
+        "    return {",
+        "        'status': 'completed',",
+        "        'metrics_path': str(metrics_path),",
+        "        'condition_results': list(condition_results),",
+        "        'runtime_config': dict(runtime_config or {}),",
+        "        'wall_clock_seconds': float((finished_at or started_at or 0) - (started_at or finished_at or 0)),",
+        "    }",
+        "",
+        "def write_metrics_json(payload: Mapping[str, Any], metrics_path):",
+        "    output_path = Path(metrics_path)",
+        "    output_path.parent.mkdir(parents=True, exist_ok=True)",
+        "    with output_path.open('w', encoding='utf8') as handle:",
+        "        json.dump(dict(payload), handle, sort_keys=True)",
+        "    return output_path",
+        "",
+        "def build_and_write_metrics_payload(condition_results, *, metrics_path, started_at=None, finished_at=None, runtime_config=None, **kwargs):",
+        "    payload = build_final_metrics_payload(",
+        "        condition_results,",
+        "        metrics_path=metrics_path,",
+        "        started_at=started_at,",
+        "        finished_at=finished_at,",
+        "        runtime_config=runtime_config,",
+        "        **kwargs,",
+        "    )",
+        "    write_metrics_json(payload, metrics_path)",
+        "    return payload",
+        "",
+        "def _call_with_supported_keywords(function, **kwargs):",
+        "    signature = inspect.signature(function)",
+        "    parameters = signature.parameters",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        return function(**kwargs)",
+        "    supported_kwargs = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return function(**supported_kwargs)",
+        "",
+        "def _resolve_callable(candidate_names):",
+        "    for name in candidate_names:",
+        "        value = globals().get(name)",
+        "        if callable(value):",
+        "            return value",
+        "    return None",
+        "",
+        "def invoke_baseline_first_workflow(runtime_config: Mapping[str, Any]):",
+        "    workflow = _resolve_callable((",
+        "        'run_baseline_first_condition_workflow',",
+        "        'run_baseline_first_condition_orchestration',",
+        "        'execute_baseline_first_condition_orchestration',",
+        "        'execute_baseline_first_study',",
+        "        'run_baseline_first_study',",
+        "        'run_condition_study',",
+        "        'execute_condition_study',",
+        "        'run_experiment_conditions',",
+        "        'run_all_conditions',",
+        "    ))",
+        "    if workflow is None:",
+        "        raise RuntimeError('No baseline-first workflow function was found. Expected an orchestration helper from chunk_3d.')",
+        "    return _call_with_supported_keywords(workflow, runtime_config=dict(runtime_config), config=dict(runtime_config))",
+        "",
+        "def write_final_metrics_from_cli(*, metrics_path, runtime_config, condition_results, started_at, completed_at):",
+        "    writer = _resolve_callable((",
+        "        'write_final_metrics_payload',",
+        "        'write_metrics_payload',",
+        "        'write_metrics_json',",
+        "        'build_and_write_metrics_payload',",
+        "        'serialize_metrics_json',",
+        "    ))",
+        "    payload = _call_with_supported_keywords(",
+        "        writer,",
+        "        metrics_path=metrics_path,",
+        "        path=metrics_path,",
+        "        output_path=metrics_path,",
+        "        runtime_config=dict(runtime_config),",
+        "        config=dict(runtime_config),",
+        "        condition_results=list(condition_results),",
+        "        results=list(condition_results),",
+        "        started_at=started_at,",
+        "        completed_at=completed_at,",
+        "        finished_at=completed_at,",
+        "        runnable_command=' '.join(sys.argv),",
+        "    )",
+        "    return dict(payload)",
+        "",
+        "def build_argument_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    return parser",
+        "",
+        "def run_cli(args: Optional[Sequence[str]] = None):",
+        "    parsed_args = build_argument_parser().parse_args(args=args)",
+        "    metrics_path = Path(parsed_args.metrics_path)",
+        "    runtime_config = {'metrics_path': str(metrics_path)}",
+        "    started_at = time.time()",
+        "    condition_results = []",
+        "    try:",
+        "        condition_results = invoke_baseline_first_workflow(runtime_config)",
+        "    except Exception as exc:",
+        "        condition_results = [{'condition_id': 'experiment_orchestration_failure', 'status': 'failed', 'error': str(exc), 'traceback': traceback.format_exc()}]",
+        "    return write_final_metrics_from_cli(",
+        "        metrics_path=metrics_path,",
+        "        runtime_config=runtime_config,",
+        "        condition_results=condition_results,",
+        "        started_at=started_at,",
+        "        completed_at=time.time(),",
+        "    )",
+        "",
+        "def main(argv=None):",
+        "    run_cli(argv)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })).toThrow(
+      /missing 1 required positional argument: 'payload'/
+    );
+
+    const workflowRepair = await repairPythonBaselineFirstLockedWorkflowAliasSurface(scriptPath);
+    const writerRepair = await repairPythonMetricsPayloadBuilderAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(workflowRepair.repaired).toBe(true);
+    expect(writerRepair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_locked_workflow_alias_marker");
+    expect(repairedSource).toContain("_autolabos_metrics_payload_builder_alias_marker");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      condition_results: [
+        { condition_id: "locked_lora_baseline", status: "completed" },
+        { condition_id: "dora", status: "completed", accuracy_delta_vs_baseline: 0.03 }
+      ]
+    });
+  });
+
+  it("aliases derived accuracy delta helpers into final metrics document builders", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-accuracy-delta-builder-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
+        "",
+        "def derive_accuracy_deltas(condition_results):",
+        "    rows = [dict(row) for row in condition_results]",
+        "    baseline = rows[0]['mean_accuracy']",
+        "    for row in rows:",
+        "        row[PRIMARY_METRIC_KEY] = row['mean_accuracy'] - baseline",
+        "        row['succeeded'] = True",
+        "    return {",
+        "        'condition_results': rows,",
+        "        'baseline_result': rows[0],",
+        "        'best_condition': rows[1],",
+        "    }",
+        "",
+        "def build_metrics_document(condition_results):",
+        "    derived = compute_accuracy_deltas_and_best(condition_results)",
+        "    return {",
+        "        'condition_results': derived['condition_results'],",
+        "        'best_condition': derived['best_condition'],",
+        "        'unmodified_base_result': derived['unmodified_base_result'],",
+        "    }",
+        "",
+        "def main():",
+        "    payload = build_metrics_document([",
+        "        {'condition_marker': 'unmodified_base', 'mean_accuracy': 0.4},",
+        "        {'condition_marker': 'dora', 'mean_accuracy': 0.45},",
+        "    ])",
+        "    enriched, best = compute_accuracy_deltas_and_best_condition(payload['condition_results'])",
+        "    assert best['condition_marker'] == 'dora'",
+        "    assert enriched[1][PRIMARY_METRIC_KEY] > 0",
+        "    return 0 if payload['unmodified_base_result']['condition_marker'] == 'unmodified_base' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /compute_accuracy_deltas_and_best/
+    );
+
+    const repair = await repairPythonAccuracyDeltaBuilderAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def compute_accuracy_deltas_and_best(condition_results):");
+    expect(repairedSource).toContain("def compute_accuracy_deltas_and_best_condition(condition_results):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("exposes generated baseline-first condition sequences as final orchestration facades", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-sequence-facade-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "",
+        "def load_instruction_dataset(dataset_name='tatsu-lab/alpaca', split='train', subset_size=3, seed=42):",
+        "    return [{'text': f'train-{seed}-{index}'} for index in range(int(subset_size or 3))], {'dataset': dataset_name, 'split': split}",
+        "",
+        "def load_benchmark_records(eval_limit=2, seed=42):",
+        "    return {",
+        "        'arc_challenge': [{'id': f'arc-{seed}', 'answer': 'A'} for _ in range(int(eval_limit or 2))],",
+        "        'hellaswag': [{'id': f'hs-{seed}', 'answer': 'B'} for _ in range(int(eval_limit or 2))],",
+        "    }, {'seed': seed, 'eval_limit': eval_limit}",
+        "",
+        "def select_device(prefer_cuda=True):",
+        "    return 'cpu'",
+        "",
+        "def get_device_info(selected_device=None, device=None):",
+        "    return {'device': str(selected_device or device or 'cpu'), 'torch_available': False}",
+        "",
+        "def run_baseline_first_condition_sequence(args, device, device_info, train_dataset, eval_bundle):",
+        "    return {",
+        "        'comparison_mode': 'baseline_first_locked',",
+        "        'device': dict(device_info),",
+        "        'train_count': len(train_dataset),",
+        "        'eval_keys': sorted(eval_bundle.keys()),",
+        "        'conditions': [",
+        "            {'condition': 'unmodified_base', 'status': 'success', 'mean_zero_shot_accuracy': 0.41},",
+        "            {'condition': 'locked_lora_baseline', 'status': 'success', 'mean_zero_shot_accuracy': 0.45},",
+        "        ],",
+        "    }",
+        "",
+        "def build_study_metrics_payload(condition_records, *, args=None, device_info=None, extra=None):",
+        "    payload = dict(extra or {})",
+        "    payload['status'] = 'completed'",
+        "    payload['conditions'] = list(condition_records)",
+        "    payload['device'] = dict(device_info or {})",
+        "    return payload",
+        "",
+        "def _normalise_metrics_payload(result):",
+        "    return dict(result)",
+        "",
+        "def _invoke_orchestration(args: argparse.Namespace, run_metadata):",
+        "    candidate_names = [",
+        "        'run_baseline_first_experiment',",
+        "        'run_baseline_first_study',",
+        "        'run_peft_instruction_study',",
+        "        'run_experiment',",
+        "        'orchestrate_experiment',",
+        "        'orchestrate_baseline_first_experiment',",
+        "        'execute_experiment',",
+        "    ]",
+        "    last_errors = []",
+        "    for name in candidate_names:",
+        "        fn = globals().get(name)",
+        "        if not callable(fn):",
+        "            continue",
+        "        call_patterns = [",
+        "            lambda f=fn: f(args),",
+        "            lambda f=fn: f(args, run_metadata),",
+        "            lambda f=fn: f(",
+        "                model_name=args.model_name,",
+        "                instruction_dataset=args.instruction_dataset,",
+        "                output_dir=args.output_dir,",
+        "                metrics_path=args.metrics_path,",
+        "                max_train_examples=args.max_train_examples,",
+        "                max_eval_examples=args.max_eval_examples,",
+        "                seed=args.seed,",
+        "                run_metadata=dict(run_metadata),",
+        "            ),",
+        "        ]",
+        "        for call in call_patterns:",
+        "            try:",
+        "                return _normalise_metrics_payload(call())",
+        "            except TypeError as exc:",
+        "                last_errors.append(f'{name} signature mismatch: {exc}')",
+        "                continue",
+        "    raise RuntimeError(",
+        "        'No compatible baseline-first orchestration function was available. '",
+        "        f\"Tried {candidate_names}. Signature errors: {' | '.join(last_errors[-6:])}\"",
+        "    )",
+        "",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    parser.add_argument('--output-dir', default='out')",
+        "    parser.add_argument('--model-name', default='Qwen/Qwen2.5-1.5B')",
+        "    parser.add_argument('--instruction-dataset', default='tatsu-lab/alpaca')",
+        "    parser.add_argument('--max-train-examples', type=int, default=3)",
+        "    parser.add_argument('--max-eval-examples', type=int, default=2)",
+        "    parser.add_argument('--seed', type=int, default=7)",
+        "    parsed = parser.parse_args(argv)",
+        "    payload = _invoke_orchestration(parsed, {})",
+        "    Path(parsed.metrics_path).write_text(json.dumps(payload, sort_keys=True), encoding='utf8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })).toThrow(
+      /No compatible baseline-first orchestration function/
+    );
+
+    const repair = await repairPythonBaselineFirstConditionSequenceEntrypointFacadeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_condition_sequence_facade_marker");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      train_count: 3,
+      eval_keys: ["arc_challenge", "hellaswag"],
+      device: { device: "cpu", torch_available: false },
+      conditions: [
+        { condition: "unmodified_base", status: "success" },
+        { condition: "locked_lora_baseline", status: "success" }
+      ]
+    });
+  });
+
+  it("repairs recipe evaluation loop aliases when the generated runner defines recipe execution and evaluation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-loop-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "",
+        "def run_recipe_execution_and_evaluation_loop(args, device_info=None):",
+        "    assert args == {'seed': 42}",
+        "    assert device_info == {'backend': 'cpu'}",
+        "    return {'recipe_results': [{'recipe_id': 'lora_r8', 'status': 'success'}]}",
+        "",
+        "run_peft_recipe_study = run_recipe_execution_and_evaluation_loop",
+        "",
+        "def _invoke_recipe_runner(args, device, output_dir, device_info):",
+        "    runner = None",
+        "    for candidate in (",
+        "        'run_recipe_evaluation_loop',",
+        "        'run_recipe_study',",
+        "        'run_all_recipes',",
+        "        'evaluate_recipe_conditions',",
+        "        'run_peft_recipe_comparison',",
+        "        'run_recipes',",
+        "    ):",
+        "        maybe_runner = globals().get(candidate)",
+        "        if callable(maybe_runner):",
+        "            runner = maybe_runner",
+        "            break",
+        "    if runner is None:",
+        "        raise RuntimeError('No recipe evaluation loop was found. Expected one of: run_recipe_evaluation_loop, run_recipe_study, run_all_recipes, evaluate_recipe_conditions, run_peft_recipe_comparison, run_recipes.')",
+        "    return runner(args=args, device=device, output_dir=output_dir, seed=42, recipes=['base'], recipe_configs=['base'], device_info=dict(device_info))",
+        "",
+        "def main():",
+        "    result = _invoke_recipe_runner({'seed': 42}, 'cpu', Path('.'), {'backend': 'cpu'})",
+        "    return 0 if result['recipe_results'][0]['recipe_id'] == 'lora_r8' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No recipe evaluation loop/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_recipe_evaluation_loop(*positional, **keyword):");
+    expect(repairedSource).toContain("target = run_recipe_execution_and_evaluation_loop");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("aliases locked-order condition study helpers into CLI orchestration condition runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-cli-condition-runner-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from pathlib import Path",
+        "",
+        "def _orchestration_find_callable(candidate_names):",
+        "    for candidate_name in candidate_names:",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _orchestration_call(func, /, *args, **kwargs):",
+        "    return func(*args)",
+        "",
+        "def run_locked_order_condition_study(args: argparse.Namespace):",
+        "    return {'status': 'completed', 'seed': args.seed, 'conditions': {'unmodified_base': {'status': 'completed'}}}",
+        "",
+        "def _cli_run_study(args: argparse.Namespace):",
+        "    condition_runner = _orchestration_find_callable(",
+        "        [",
+        "            'run_locked_condition_order',",
+        "            'run_experiment_conditions',",
+        "            'run_condition_study',",
+        "            'execute_condition_study',",
+        "            '_run_locked_condition_order',",
+        "        ]",
+        "    )",
+        "    if condition_runner is None:",
+        "        raise RuntimeError('No condition runner was defined by the orchestration_condition_runner section.')",
+        "    return _orchestration_call(",
+        "        condition_runner,",
+        "        args,",
+        "        args=args,",
+        "        output_dir=Path('out'),",
+        "        metrics_path=Path('metrics.json'),",
+        "    )",
+        "",
+        "def main():",
+        "    result = _cli_run_study(argparse.Namespace(seed=42))",
+        "    return 0 if result['seed'] == 42 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No condition runner was defined/
+    );
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_locked_condition_order(*positional, **keyword):");
+    expect(repairedSource).toContain("target = run_locked_order_condition_study");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("aliases generated RuntimeConfig builders into build_experiment_config entrypoints", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-build-experiment-config-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "",
+        "@dataclass(frozen=True)",
+        "class RuntimeConfig:",
+        "    metrics_path: Path",
+        "    results_dir: Path",
+        "    adapter_dir: Path",
+        "    seed: int",
+        "",
+        "def config_from_args(argv=None):",
+        "    if isinstance(argv, argparse.Namespace):",
+        "        args = argv",
+        "    else:",
+        "        parser = argparse.ArgumentParser()",
+        "        parser.add_argument('--metrics-path', type=Path, default=Path('metrics.json'))",
+        "        parser.add_argument('--results-dir', type=Path, default=Path('results'))",
+        "        parser.add_argument('--adapter-dir', type=Path, default=Path('adapters'))",
+        "        parser.add_argument('--seed', type=int, default=42)",
+        "        args = parser.parse_args(argv)",
+        "    return RuntimeConfig(",
+        "        metrics_path=args.metrics_path,",
+        "        results_dir=args.results_dir,",
+        "        adapter_dir=args.adapter_dir,",
+        "        seed=args.seed,",
+        "    )",
+        "",
+        "def main():",
+        "    args = argparse.Namespace(",
+        "        metrics_path=Path('metrics.json'),",
+        "        results_dir=Path('results'),",
+        "        adapter_dir=Path('adapters'),",
+        "        seed=42,",
+        "    )",
+        "    config = build_experiment_config(args)",
+        "    assert config.metrics_path == Path('metrics.json')",
+        "    return 0 if config.seed == 42 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /build_experiment_config/
+    );
+
+    const repair = await repairPythonMissingBuildExperimentConfigSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def build_experiment_config(args=None):");
+    expect(repairedSource).toContain("config_from_args_fn = globals().get(\"config_from_args\")");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("aliases main execution loops and exception serializers into generated CLI entrypoints", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-execution-loop-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Dict, Mapping, Optional, Sequence",
+        "",
+        "RUN_ID = 'test-run'",
+        "DEFAULT_METRICS_PATH = Path('metrics.json')",
+        "DEFAULT_OUTPUT_DIR = Path('out')",
+        "DEFAULT_MODEL_NAME = 'tiny-model'",
+        "SEED = 42",
+        "LOCKED_CONDITION_ORDER = ['locked_lora_baseline', 'ia3']",
+        "REQUIRED_CONDITION_MARKERS = LOCKED_CONDITION_ORDER",
+        "",
+        "def _lookup_callable(*names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _args_get(args, key, default=None):",
+        "    return getattr(args, key, default)",
+        "",
+        "def exception_to_evidence(exc: BaseException, *, context: Optional[str] = None, include_traceback: bool = True) -> Dict[str, Any]:",
+        "    return {'type': type(exc).__name__, 'message': str(exc), 'context': context}",
+        "",
+        "def execute_baseline_first_conditions(args):",
+        "    return {'condition_results': [{'condition_marker': 'locked_lora_baseline', 'status': 'completed'}], 'runtime': {'seed': args.seed}}",
+        "",
+        "def write_metrics_artifact(args, condition_results, runtime, extra):",
+        "    payload = {'status': 'completed', 'condition_results': condition_results, 'runtime': runtime, 'best_condition': 'locked_lora_baseline'}",
+        "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _write_top_level_error_metrics(args: argparse.Namespace, exc: BaseException, elapsed_sec: float) -> Path:",
+        "    metrics_path = Path(_args_get(args, 'metrics_path', DEFAULT_METRICS_PATH))",
+        "    error_record = serialize_exception(exc)",
+        "    metrics_path.write_text(json.dumps({'status': 'failed', 'error': error_record}), encoding='utf-8')",
+        "    return metrics_path",
+        "",
+        "def main(argv: Optional[Sequence[str]] = None) -> int:",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default=DEFAULT_METRICS_PATH)",
+        "    parser.add_argument('--seed', type=int, default=SEED)",
+        "    args = parser.parse_args(argv)",
+        "    try:",
+        "        run_callable = _lookup_callable(",
+        "            'run_locked_baseline_first_experiment',",
+        "            'run_experiment_conditions',",
+        "            'execute_locked_condition_loop',",
+        "            'run_condition_execution_loop',",
+        "        )",
+        "        if run_callable is None:",
+        "            raise RuntimeError('No orchestration execution-loop helper is available in the generated script.')",
+        "        artifact_callable = _lookup_callable('write_metrics_artifact')",
+        "        execution_result = run_callable(args)",
+        "        artifact_callable(args, execution_result['condition_results'], execution_result['runtime'], execution_result)",
+        "        return 0",
+        "    except Exception as exc:",
+        "        _write_top_level_error_metrics(args, exc, 0.0)",
+        "        return 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })
+    ).toThrow(/serialize_exception/);
+
+    const repair = await repairPythonMainExecutionLoopAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("run_locked_baseline_first_experiment = _autolabos_main_execution_loop_target");
+    expect(repairedSource).toContain("serialize_exception = globals()[\"exception_to_evidence\"]");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(readFileSync(metricsPath, "utf8")).toContain("\"status\": \"completed\"");
+  });
+
+  it("wraps main metrics payload builders that receive duplicated condition_results arguments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-metrics-payload-call-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "import time",
+        "from typing import Any, Dict, Mapping, MutableMapping, Optional",
+        "",
+        "def build_metrics_payload(args, condition_results, aggregated_metrics, run_started_at, run_finished_at=None):",
+        "    return {",
+        "        'status': 'completed',",
+        "        'seed': args['seed'],",
+        "        'condition_count': len(condition_results),",
+        "        'started': run_started_at,",
+        "        'best': aggregated_metrics[0]['condition_marker'],",
+        "    }",
+        "",
+        "def _autolabos_call_flexibly(func, *candidate_args, **candidate_kwargs):",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    accepts_varargs = any(param.kind == inspect.Parameter.VAR_POSITIONAL for param in parameters.values())",
+        "    accepts_varkw = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())",
+        "    usable_kwargs = dict(candidate_kwargs) if accepts_varkw else {key: value for key, value in candidate_kwargs.items() if key in parameters}",
+        "    positional_capacity = sum(",
+        "        1",
+        "        for param in parameters.values()",
+        "        if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)",
+        "    )",
+        "    usable_args = candidate_args if accepts_varargs else candidate_args[:positional_capacity]",
+        "    try:",
+        "        return func(*usable_args, **usable_kwargs)",
+        "    except TypeError:",
+        "        return func()",
+        "",
+        "def _finalize_main_metrics_payload(",
+        "    aggregated_results: Any,",
+        "    args: Dict[str, Any],",
+        "    runtime_context: MutableMapping[str, Any],",
+        "    status: str = 'completed',",
+        "    failure: Optional[BaseException] = None,",
+        ") -> Dict[str, Any]:",
+        "    for helper_name in ('build_metrics_payload',):",
+        "        helper = globals().get(helper_name)",
+        "        if callable(helper):",
+        "            return _autolabos_call_flexibly(",
+        "                helper,",
+        "                aggregated_results,",
+        "                args,",
+        "                runtime_context,",
+        "                status,",
+        "                aggregated_results=aggregated_results,",
+        "                condition_results=aggregated_results,",
+        "                args=args,",
+        "                runtime_context=runtime_context,",
+        "                status=status,",
+        "            )",
+        "    return {'status': status}",
+        "",
+        "def main():",
+        "    payload = _finalize_main_metrics_payload(",
+        "        [{'condition_marker': 'locked_lora_baseline'}],",
+        "        {'seed': 42},",
+        "        {'start_time_unix': 123.0},",
+        "    )",
+        "    assert payload['seed'] == 42",
+        "    assert payload['condition_count'] == 1",
+        "    assert payload['started'] == 123.0",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing 4 required positional arguments|multiple values for argument 'condition_results'/
+    );
+
+    const repair = await repairPythonMainMetricsPayloadBuilderCallSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_original_build_metrics_payload = build_metrics_payload");
+    expect(repairedSource).toContain("def build_metrics_payload(*positional, **keyword):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("rejects helper-only python runners that would exit without writing metrics", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-helper-only-runner-"));
     tempDirs.push(workspace);
@@ -10182,6 +16993,103 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("parser.add_argument('--output-dir'");
   });
 
+  it("repairs a missing --private-run-dir argparse alias when config construction reads args.private_run_dir", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-private-run-dir-alias-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Private Run Dir Argparse Alias",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "PRIVATE_RUN_DIR = '.autolabos/runs/example'",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    return parser",
+        "",
+        "def build_config_from_args(args):",
+        "    private_run_dir = Path(args.private_run_dir)",
+        "    return {'private_run_dir': str(private_run_dir), 'metrics_path': args.metrics_path}",
+        "",
+        "def main(argv=None):",
+        "    args = build_arg_parser().parse_args(argv)",
+        "    payload = build_config_from_args(args)",
+        "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        scriptPath,
+        workingDir: publicDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain("parser.add_argument('--private-run-dir'");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: publicDir });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      private_run_dir: ".autolabos/runs/example"
+    });
+  });
+
   it("repairs --model-name-or-path argparse destination when runtime reads args.model_name", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-model-name-dest-"));
     tempDirs.push(workspace);
@@ -10284,6 +17192,124 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("dest=\"model_name\"");
   });
 
+  it("adds run_command aliases for semantically equivalent train and eval argparse flags", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-run-command-argparse-alias-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Run Command Argparse Alias",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    parser.add_argument('--output-dir')",
+        "    parser.add_argument('--train-examples', type=int, default=16)",
+        "    parser.add_argument('--eval-limit-per-benchmark', type=int, default=4)",
+        "    return parser",
+        "",
+        "def build_secondary_parser():",
+        "    parser = argparse.ArgumentParser(add_help=False)",
+        "    parser.add_argument('--max-train-examples', type=int, default=5000)",
+        "    return parser",
+        "",
+        "def main(argv=None):",
+        "    args = build_arg_parser().parse_args(argv)",
+        "    Path(args.metrics_path).write_text(json.dumps({",
+        "        'train_examples': args.train_examples,",
+        "        'eval_limit_per_benchmark': args.eval_limit_per_benchmark,",
+        "    }), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)} --max-train-examples 5000 --eval-limit 64`,
+        scriptPath,
+        workingDir: publicDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain("parser.add_argument('--train-examples', \"--max-train-examples\"");
+    expect(repairedSource).toContain("parser.add_argument('--eval-limit-per-benchmark', \"--eval-limit\"");
+
+    execFileSync(
+      "python3",
+      [
+        scriptPath,
+        "--metrics-path",
+        metricsPath,
+        "--output-dir",
+        publicDir,
+        "--max-train-examples",
+        "5000",
+        "--eval-limit",
+        "64"
+      ],
+      { cwd: publicDir }
+    );
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      train_examples: 5000,
+      eval_limit_per_benchmark: 64
+    });
+  });
+
   it("repairs duplicate positional and keyword args in flexible CLI normalization calls", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-flex-duplicate-"));
     tempDirs.push(workspace);
@@ -10378,6 +17404,290 @@ describe("ImplementSessionManager", () => {
     expect(report.status).toBe("pass");
     expect(repairedSource).toContain("return _call_flexibly(normalizer, args, parser)");
     expect(repairedSource).not.toContain("args=args, parser=parser");
+  });
+
+  it("signature-filters _call_flexible helper kwargs before second-stage handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-flex-signature-filter-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Flexible Signature Filter",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "",
+        "def _call_flexible(fn, *args, **kwargs):",
+        "    attempts = [",
+        "        (args, kwargs),",
+        "        (args, {}),",
+        "        ((), kwargs),",
+        "    ]",
+        "    last_exc = None",
+        "    for call_args, call_kwargs in attempts:",
+        "        try:",
+        "            return fn(*call_args, **call_kwargs)",
+        "        except TypeError as exc:",
+        "            last_exc = exc",
+        "            continue",
+        "    raise last_exc",
+        "",
+        "def collect_device_info(device):",
+        "    return {'device': device}",
+        "",
+        "def _entry_find_callable(names):",
+        "    return globals().get(names[0])",
+        "",
+        "def _prepare_entry_environment(args):",
+        "    device = 'cpu'",
+        "    device_info_fn = _entry_find_callable(('collect_device_info', 'get_device_info'))",
+        "    device_info = _call_flexible(device_info_fn, device=device, args=args)",
+        "    return device_info",
+        "",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    args = parser.parse_args(argv)",
+        "    device_info = _prepare_entry_environment(args)",
+        "    with open(args.metrics_path, 'w', encoding='utf8') as handle:",
+        "        json.dump({'device_info': device_info}, handle)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: publicDir })
+    ).toThrow(/unexpected keyword argument 'args'/);
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        scriptPath,
+        workingDir: publicDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain("inspect as _autolabos_call_inspect");
+    expect(repairedSource).toContain("filtered_kwargs");
+
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: publicDir });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      device_info: { device: "cpu" }
+    });
+  });
+
+  it("adds args and output_path aliases for condition-study supported-call adapters", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-adapter-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Condition Adapter Args",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Callable, Mapping",
+        "",
+        "def _call_supported(callable_obj: Callable[..., Any], **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(callable_obj)",
+        "    parameters = signature.parameters",
+        "    accepts_var_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())",
+        "    if accepts_var_kwargs:",
+        "        return callable_obj(**kwargs)",
+        "    supported = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return callable_obj(**supported)",
+        "",
+        "def run_locked_condition_study(args: argparse.Namespace):",
+        "    assert args.seed == 42",
+        "    return [",
+        "        {'condition_id': 'unmodified_base', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.0},",
+        "        {'condition_id': 'lora_baseline', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.12},",
+        "    ]",
+        "",
+        "def _selected_conditions(args: argparse.Namespace):",
+        "    return ['unmodified_base', 'lora_baseline']",
+        "",
+        "def _orchestrator_candidates():",
+        "    return [run_locked_condition_study]",
+        "",
+        "def _run_condition_study(args: argparse.Namespace):",
+        "    selected_conditions = _selected_conditions(args)",
+        "    common_kwargs = {",
+        "        'conditions': selected_conditions,",
+        "        'output_dir': args.output_dir,",
+        "        'seed': args.seed,",
+        "    }",
+        "    candidates = _orchestrator_candidates()",
+        "    last_error = None",
+        "    for candidate in candidates:",
+        "        try:",
+        "            result = _call_supported(candidate, **common_kwargs)",
+        "            return result",
+        "        except TypeError as exc:",
+        "            last_error = exc",
+        "            continue",
+        "    raise RuntimeError(f'Unable to invoke any condition orchestrator with supported CLI arguments: {last_error}')",
+        "",
+        "def write_json_atomic(payload: Mapping[str, Any], output_path: Path) -> Path:",
+        "    output_path = Path(output_path)",
+        "    output_path.parent.mkdir(parents=True, exist_ok=True)",
+        "    with output_path.open('w', encoding='utf8') as handle:",
+        "        json.dump(payload, handle)",
+        "    return output_path",
+        "",
+        "def _emitter_candidates():",
+        "    return [write_json_atomic]",
+        "",
+        "def _write_payload(metrics_path: Path, payload: Mapping[str, Any]) -> None:",
+        "    for candidate in _emitter_candidates():",
+        "        _call_supported(candidate, path=metrics_path, metrics_path=metrics_path, payload=payload, metrics=payload, data=payload)",
+        "        return",
+        "",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    parser.add_argument('--output-dir', default='out')",
+        "    parser.add_argument('--seed', type=int, default=42)",
+        "    args = parser.parse_args(argv)",
+        "    try:",
+        "        conditions = _run_condition_study(args)",
+        "        payload = {'conditions': conditions, 'accuracy_delta_vs_baseline': conditions[-1]['accuracy_delta_vs_baseline']}",
+        "    except Exception as exc:",
+        "        payload = {'conditions': [{'condition_id': 'all', 'status': 'failed', 'error_message': str(exc)}], 'accuracy_delta_vs_baseline': None}",
+        "    _write_payload(Path(args.metrics_path), payload)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: publicDir })
+    ).toThrow(/missing 1 required positional argument: 'output_path'/);
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        scriptPath,
+        workingDir: publicDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain('"args": args,');
+    expect(repairedSource).toContain("output_path=metrics_path");
+
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: publicDir });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      accuracy_delta_vs_baseline: 0.12,
+      conditions: [
+        { condition_id: "unmodified_base", status: "completed" },
+        { condition_id: "lora_baseline", status: "completed" }
+      ]
+    });
   });
 
   it("blocks auto-handoff when a python run_command uses flags missing from argparse", async () => {
@@ -10593,7 +17903,7 @@ describe("ImplementSessionManager", () => {
     expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(false);
   });
 
-  it("repairs a missing ExperimentConfig metadata field before handing a python runner off to run_experiments", async () => {
+  it("repairs a missing ExperimentConfig metadata field and dataclasses.field import before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metadata-repair-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -10643,7 +17953,7 @@ describe("ImplementSessionManager", () => {
               content: [
                 "from __future__ import annotations",
                 "",
-                "from dataclasses import dataclass, field",
+                "from dataclasses import dataclass",
                 "from typing import Any, Dict, Optional",
                 "",
                 "@dataclass",
@@ -10684,8 +17994,1129 @@ describe("ImplementSessionManager", () => {
 
     const result = await manager.run(run);
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain("from dataclasses import field");
     expect(repairedSource).toContain("metadata: Dict[str, Any] = field(default_factory=dict)");
     expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("repairs PEFTRecipeConfig metadata aliases before module-level locked recipe projection", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-recipe-config-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, Dict, List, Mapping, Tuple",
+        "import dataclasses",
+        "",
+        "@dataclass(frozen=True)",
+        "class PEFTRecipeConfig:",
+        "    candidate_id: str",
+        "    display_name: str",
+        "    adapter_method: str = 'lora'",
+        "    train_dataset_name: str = 'alpaca'",
+        "    train_subset_size: int = 32",
+        "    train_seed: int = 42",
+        "    lora_target_modules: Tuple[str, ...] = ('q_proj', 'v_proj')",
+        "    enabled: bool = True",
+        "",
+        "LOCKED_BASE_MODEL_NAME = 'tiny'",
+        "LOCKED_INSTRUCTION_DATASET_NAME = 'alpaca'",
+        "LOCKED_INSTRUCTION_DATASET_CONFIG = None",
+        "LOCKED_INSTRUCTION_DATASET_SPLIT = 'train'",
+        "LOCKED_INSTRUCTION_SUBSET_SIZE = 32",
+        "LOCKED_DATASET_SEED = 42",
+        "LOCKED_MAX_SEQ_LENGTH = 128",
+        "LOCKED_MAX_TRAIN_STEPS = 1",
+        "LOCKED_PER_DEVICE_TRAIN_BATCH_SIZE = 1",
+        "LOCKED_GRADIENT_ACCUMULATION_STEPS = 1",
+        "LOCKED_LEARNING_RATE = 0.0002",
+        "LOCKED_WARMUP_RATIO = 0.0",
+        "LOCKED_WEIGHT_DECAY = 0.0",
+        "",
+        "LOCKED_RECIPE_METADATA: List[Dict[str, Any]] = [",
+        "    {'recipe_id': 'base_unmodified', 'display_name': 'Base', 'peft_method': 'none', 'dataset_name': 'alpaca', 'subset_size': 16, 'subset_seed': 7, 'target_modules': []},",
+        "]",
+        "",
+        "def _coerce_recipe_metadata_to_config(metadata: Mapping[str, Any]) -> Any:",
+        "    recipe_cls = globals().get('PEFTRecipeConfig')",
+        "    if recipe_cls is None:",
+        "        return dict(metadata)",
+        "    shared_fields: Dict[str, Any] = {",
+        "        'model_name': LOCKED_BASE_MODEL_NAME,",
+        "        'dataset_name': LOCKED_INSTRUCTION_DATASET_NAME,",
+        "        'dataset_config': LOCKED_INSTRUCTION_DATASET_CONFIG,",
+        "        'dataset_split': LOCKED_INSTRUCTION_DATASET_SPLIT,",
+        "        'subset_size': LOCKED_INSTRUCTION_SUBSET_SIZE,",
+        "        'subset_seed': LOCKED_DATASET_SEED,",
+        "        'max_seq_length': LOCKED_MAX_SEQ_LENGTH,",
+        "        'max_train_steps': LOCKED_MAX_TRAIN_STEPS,",
+        "        'per_device_train_batch_size': LOCKED_PER_DEVICE_TRAIN_BATCH_SIZE,",
+        "        'gradient_accumulation_steps': LOCKED_GRADIENT_ACCUMULATION_STEPS,",
+        "        'learning_rate': LOCKED_LEARNING_RATE,",
+        "        'warmup_ratio': LOCKED_WARMUP_RATIO,",
+        "        'weight_decay': LOCKED_WEIGHT_DECAY,",
+        "    }",
+        "    complete_metadata = {**shared_fields, **dict(metadata)}",
+        "    if dataclasses.is_dataclass(recipe_cls):",
+        "        valid_fields = {field_info.name for field_info in dataclasses.fields(recipe_cls)}",
+        "        kwargs = {key: value for key, value in complete_metadata.items() if key in valid_fields}",
+        "        field_aliases: Dict[str, str] = {",
+        "            'name': 'recipe_id',",
+        "            'id': 'recipe_id',",
+        "            'method': 'peft_method',",
+        "            'adapter_type': 'peft_method',",
+        "            'train': 'should_train',",
+        "            'train_adapter': 'should_train',",
+        "            'base_model_name': 'model_name',",
+        "            'instruction_dataset_name': 'dataset_name',",
+        "            'instruction_dataset_config': 'dataset_config',",
+        "            'instruction_dataset_split': 'dataset_split',",
+        "            'instruction_subset_size': 'subset_size',",
+        "            'seed': 'subset_seed',",
+        "        }",
+        "        for destination, source in field_aliases.items():",
+        "            if destination in valid_fields and destination not in kwargs and source in complete_metadata:",
+        "                kwargs[destination] = complete_metadata[source]",
+        "        return recipe_cls(**kwargs)",
+        "    return recipe_cls(**complete_metadata)",
+        "",
+        "LOCKED_BASELINE_FIRST_RECIPES: Tuple[Any, ...] = tuple(",
+        "    _coerce_recipe_metadata_to_config(metadata)",
+        "    for metadata in LOCKED_RECIPE_METADATA",
+        ")",
+        "",
+        "if __name__ == '__main__':",
+        "    recipe = LOCKED_BASELINE_FIRST_RECIPES[0]",
+        "    assert recipe.candidate_id == 'base_unmodified'",
+        "    assert recipe.adapter_method == 'none'",
+        "    assert recipe.train_dataset_name == 'alpaca'",
+        "    assert recipe.train_subset_size == 16",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/candidate_id/);
+
+    const repair = await repairPythonPeftRecipeConfigMetadataAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_peft_recipe_config_metadata_alias_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("adds _canonical_string when locked recipe identity helpers reference it without defining it", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-canonical-string-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Dict, List",
+        "",
+        "def _recipe_attr(recipe: Any, *names: str, default: Any = None) -> Any:",
+        "    for name in names:",
+        "        if isinstance(recipe, dict) and name in recipe:",
+        "            return recipe[name]",
+        "    return default",
+        "",
+        "def _recipe_identity(recipe: Any) -> str:",
+        "    value = _recipe_attr(recipe, 'recipe_id', 'name', default='recipe')",
+        "    return _canonical_string(value, default='recipe').lower()",
+        "",
+        "def _recipe_peft_type(recipe: Any) -> str:",
+        "    value = _recipe_attr(recipe, 'peft_type', 'adapter_type', default='unknown')",
+        "    return _canonical_string(value, default='unknown').lower()",
+        "",
+        "LOCKED_BASELINE_FIRST_RECIPES: List[Dict[str, Any]] = [",
+        "    {'recipe_id': 'Base Checkpoint', 'peft_type': 'none'},",
+        "    {'recipe_id': 'Vanilla LoRA', 'peft_type': 'LoRA'},",
+        "]",
+        "LOCKED_BASELINE_FIRST_IDS = [_recipe_identity(recipe) for recipe in LOCKED_BASELINE_FIRST_RECIPES]",
+        "",
+        "if __name__ == '__main__':",
+        "    assert LOCKED_BASELINE_FIRST_IDS[0] == 'base_checkpoint'",
+        "    assert _recipe_peft_type(LOCKED_BASELINE_FIRST_RECIPES[1]) == 'lora'",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/_canonical_string/);
+
+    const repair = await repairPythonCanonicalStringHelperAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _canonical_string(value, default=\"\"):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs candidate executor argument bridges for runtime and candidate index parameters", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-candidate-executor-args-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from typing import Any, Callable, Dict, Mapping",
+        "import dataclasses",
+        "import inspect",
+        "",
+        "def execute_candidate_recipe(recipe, config, runtime, candidate_index, total_candidates):",
+        "    recipe_id = recipe['recipe_id']",
+        "    candidate_dir = Path(config['output_dir']) / f'{candidate_index:02d}_{recipe_id}'",
+        "    return {",
+        "        'recipe_id': recipe_id,",
+        "        'candidate_dir': str(candidate_dir),",
+        "        'candidate_index': candidate_index,",
+        "        'total_candidates': total_candidates,",
+        "        'runtime_seen': runtime['comparison_mode'],",
+        "    }",
+        "",
+        "def _call_candidate_executor(",
+        "    executor: Callable[..., Any],",
+        "    *,",
+        "    config: Any,",
+        "    recipe_id: str,",
+        "    recipe: Any,",
+        "    candidate_dir: Path,",
+        "    order_index: int,",
+        "    runtime_context: Mapping[str, Any],",
+        ") -> Dict[str, Any]:",
+        "    signature = inspect.signature(executor)",
+        "    available_kwargs: Dict[str, Any] = {",
+        "        'config': config,",
+        "        'cfg': config,",
+        "        'experiment_config': config,",
+        "        'recipe_id': recipe_id,",
+        "        'candidate_id': recipe_id,",
+        "        'recipe': recipe,",
+        "        'recipe_config': recipe,",
+        "        'candidate_dir': candidate_dir,",
+        "        'output_dir': candidate_dir,",
+        "        'order_index': order_index,",
+        "        'locked_order_index': order_index,",
+        "        'runtime_context': runtime_context,",
+        "        'context': runtime_context,",
+        "    }",
+        "    positional_by_name: Dict[str, Any] = {",
+        "        'config': config,",
+        "        'cfg': config,",
+        "        'experiment_config': config,",
+        "        'recipe_id': recipe_id,",
+        "        'candidate_id': recipe_id,",
+        "        'recipe': recipe,",
+        "        'recipe_config': recipe,",
+        "        'candidate_dir': candidate_dir,",
+        "        'output_dir': candidate_dir,",
+        "        'order_index': order_index,",
+        "        'locked_order_index': order_index,",
+        "        'runtime_context': runtime_context,",
+        "        'context': runtime_context,",
+        "    }",
+        "    args = []",
+        "    kwargs: Dict[str, Any] = {}",
+        "    accepts_var_kwargs = False",
+        "    for param in signature.parameters.values():",
+        "        if param.kind == inspect.Parameter.VAR_KEYWORD:",
+        "            accepts_var_kwargs = True",
+        "            continue",
+        "        if param.kind == inspect.Parameter.VAR_POSITIONAL:",
+        "            continue",
+        "        if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):",
+        "            if param.name in positional_by_name:",
+        "                args.append(positional_by_name[param.name])",
+        "            elif param.default is inspect.Parameter.empty:",
+        "                fallback_values = [config, recipe_id, recipe, candidate_dir, order_index, runtime_context]",
+        "                if len(args) < len(fallback_values):",
+        "                    args.append(fallback_values[len(args)])",
+        "        elif param.kind == inspect.Parameter.KEYWORD_ONLY and param.name in available_kwargs:",
+        "            kwargs[param.name] = available_kwargs[param.name]",
+        "    if accepts_var_kwargs:",
+        "        kwargs.update({k: v for k, v in available_kwargs.items() if k not in kwargs})",
+        "    result = executor(*args, **kwargs)",
+        "    return dict(result)",
+        "",
+        "if __name__ == '__main__':",
+        "    record = _call_candidate_executor(",
+        "        execute_candidate_recipe,",
+        "        config={'output_dir': '.'},",
+        "        recipe_id='vanilla_lora',",
+        "        recipe={'recipe_id': 'vanilla_lora'},",
+        "        candidate_dir=Path('wrong'),",
+        "        order_index=1,",
+        "        runtime_context={'candidate_recipe_ids': ['base', 'vanilla_lora'], 'comparison_mode': 'baseline_first_locked'},",
+        "    )",
+        "    assert record['candidate_dir'].endswith('01_vanilla_lora')",
+        "    assert record['candidate_index'] == 1",
+        "    assert record['total_candidates'] == 2",
+        "    assert record['runtime_seen'] == 'baseline_first_locked'",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/PosixPath.__format__/);
+
+    const repair = await repairPythonCandidateExecutorArgumentBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_candidate_executor_argument_bridge_marker");
+    expect(repairedSource).toContain('"candidate_index": order_index');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs entrypoint workflow resolver and metrics schema signature bridges", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-entrypoint-workflow-signature-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "import time",
+        "from pathlib import Path",
+        "from typing import Any, Dict, Mapping, MutableMapping, Optional",
+        "",
+        "def run_baseline_and_tuned_recipe_sequence(args):",
+        "    return {'status': 'success', 'accuracy_delta_vs_baseline': 0.125}",
+        "",
+        "def build_final_metrics_schema(args: argparse.Namespace, study_result: Mapping[str, Any]) -> Dict[str, Any]:",
+        "    return {",
+        "        'status': study_result['status'],",
+        "        'accuracy_delta_vs_baseline': study_result['accuracy_delta_vs_baseline'],",
+        "        'metrics_path': args.metrics_path,",
+        "    }",
+        "",
+        "assemble_final_metrics = build_final_metrics_schema",
+        "",
+        "def _entrypoint_call_with_supported_signature(fn: Any, *preferred_args: Any, **preferred_kwargs: Any) -> Any:",
+        "    import inspect",
+        "    signature = inspect.signature(fn)",
+        "    parameters = signature.parameters",
+        "    accepts_var_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())",
+        "    accepts_var_args = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in parameters.values())",
+        "    if accepts_var_args and accepts_var_kwargs:",
+        "        return fn(*preferred_args, **preferred_kwargs)",
+        "    filtered_kwargs: Dict[str, Any] = {}",
+        "    if accepts_var_kwargs:",
+        "        filtered_kwargs = dict(preferred_kwargs)",
+        "    else:",
+        "        filtered_kwargs = {k: v for k, v in preferred_kwargs.items() if k in parameters}",
+        "    positional_capacity = sum(",
+        "        1",
+        "        for p in parameters.values()",
+        "        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)",
+        "    )",
+        "    if accepts_var_args:",
+        "        filtered_args = preferred_args",
+        "    else:",
+        "        filtered_args = preferred_args[:positional_capacity]",
+        "    try:",
+        "        return fn(*filtered_args, **filtered_kwargs)",
+        "    except TypeError:",
+        "        if len(preferred_args) == 1 and not filtered_kwargs:",
+        "            return fn(preferred_args[0])",
+        "        if 'args' in parameters:",
+        "            return fn(args=preferred_args[0] if preferred_args else preferred_kwargs.get('args'))",
+        "        raise",
+        "",
+        "def _entrypoint_run_study(args: argparse.Namespace) -> Mapping[str, Any]:",
+        "    workflow_candidates = (",
+        "        'run_peft_instruction_study',",
+        "        'execute_peft_instruction_study',",
+        "        'run_instruction_tuning_study',",
+        "        'run_peft_study',",
+        "        'run_study',",
+        "        'execute_study',",
+        "        'run_experiment',",
+        "        'run_locked_baseline_and_tuned_recipes',",
+        "        'evaluate_baseline_and_recipes',",
+        "    )",
+        "    for name in workflow_candidates:",
+        "        fn = globals().get(name)",
+        "        if callable(fn) and fn is not _entrypoint_run_study:",
+        "            result = _entrypoint_call_with_supported_signature(fn, args, args=args, config=args)",
+        "            if isinstance(result, Mapping):",
+        "                return result",
+        "            return {'study_result': result}",
+        "    raise RuntimeError('No PEFT study workflow function was found.')",
+        "",
+        "def _entrypoint_assemble_metrics(args, study_result, started_at, finished_at, error=None):",
+        "    schema_candidates = ('assemble_final_metrics',)",
+        "    for name in schema_candidates:",
+        "        fn = globals().get(name)",
+        "        if callable(fn):",
+        "            metrics = _entrypoint_call_with_supported_signature(",
+        "                fn,",
+        "                args,",
+        "                study_result,",
+        "                started_at,",
+        "                finished_at,",
+        "                error,",
+        "                args=args,",
+        "                config=args,",
+        "                study_result=study_result,",
+        "                result=study_result,",
+        "                started_at=started_at,",
+        "                finished_at=finished_at,",
+        "                wall_clock_seconds=finished_at - started_at,",
+        "                error=error,",
+        "            )",
+        "            return dict(metrics)",
+        "    return dict(study_result)",
+        "",
+        "def main():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    args = parser.parse_args()",
+        "    started_at = time.time()",
+        "    study_result = _entrypoint_run_study(args)",
+        "    metrics = _entrypoint_assemble_metrics(args, study_result, started_at, time.time())",
+        "    Path(args.metrics_path).write_text(json.dumps(metrics), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })).toThrow(
+      /No PEFT study workflow function/
+    );
+
+    const repair = await repairPythonEntrypointWorkflowSignatureBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_signature_bridge_marker");
+    expect(repairedSource).toContain("'run_baseline_and_tuned_recipe_sequence'");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.accuracy_delta_vs_baseline).toBe(0.125);
+  });
+
+  it("repairs final metrics schema kwargs and missing inline assembly helper drift", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-final-metrics-schema-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import copy",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Mapping",
+        "",
+        "def _json_safe(value: Any) -> Any:",
+        "    if isinstance(value, Mapping):",
+        "        return {str(k): _json_safe(v) for k, v in value.items()}",
+        "    if isinstance(value, (list, tuple)):",
+        "        return [_json_safe(v) for v in value]",
+        "    return value",
+        "",
+        "def _as_mapping(value: Any) -> dict[str, Any]:",
+        "    if value is None:",
+        "        return {}",
+        "    safe = _json_safe(value)",
+        "    if isinstance(safe, Mapping):",
+        "        return dict(safe)",
+        "    return {'value': safe}",
+        "",
+        "def _extract_benchmark_results(study_result: Mapping[str, Any]) -> dict[str, Any]:",
+        "    return dict(study_result.get('benchmark_results') or {})",
+        "",
+        "def _derive_primary_metric(study_result: Mapping[str, Any], benchmark_results: Mapping[str, Any]) -> float | None:",
+        "    objective_metrics = _as_mapping(study_result.get('objective_metrics'))",
+        "    if 'mean_zero_shot_accuracy' in objective_metrics:",
+        "        return float(objective_metrics['mean_zero_shot_accuracy'])",
+        "    return None",
+        "",
+        "def build_final_metrics_schema(",
+        "    study_result: Mapping[str, Any] | None,",
+        "    *,",
+        "    args: Any | None = None,",
+        "    run_metadata: Mapping[str, Any] | None = None,",
+        "    comparison_contract: Mapping[str, Any] | None = None,",
+        "    adapter_metadata: Mapping[str, Any] | None = None,",
+        "    timing: Mapping[str, Any] | None = None,",
+        "    device_metadata: Mapping[str, Any] | None = None,",
+        ") -> dict[str, Any]:",
+        "    if study_result is None:",
+        "        raise ValueError('study_result is required')",
+        "    normalized_study_result = _as_mapping(copy.deepcopy(study_result))",
+        "    benchmark_results = _extract_benchmark_results(normalized_study_result)",
+        "    primary_metric = _derive_primary_metric(normalized_study_result, benchmark_results)",
+        "    args_mapping = _as_mapping(vars(args) if args is not None and hasattr(args, '__dict__') else args)",
+        "    run_metadata_mapping = _as_mapping(run_metadata)",
+        "    comparison_contract_mapping = _as_mapping(comparison_contract)",
+        "    adapter_metadata_mapping = _as_mapping(adapter_metadata)",
+        "    timing_mapping = _as_mapping(timing)",
+        "    device_metadata_mapping = _as_mapping(device_metadata)",
+        "    return _assemble_final_metrics_payload(",
+        "        study_result=normalized_study_result,",
+        "        primary_metric=primary_metric,",
+        "        benchmark_results=benchmark_results,",
+        "        args=args_mapping,",
+        "        run_metadata=run_metadata_mapping,",
+        "        comparison_contract=comparison_contract_mapping,",
+        "        adapter_metadata=adapter_metadata_mapping,",
+        "        timing=timing_mapping,",
+        "        device_metadata=device_metadata_mapping,",
+        "    )",
+        "",
+        "    study_result_mapping = _as_mapping(study_result)",
+        "    benchmark_results = _extract_benchmark_results(study_result_mapping)",
+        "    primary_metric = _derive_primary_metric(study_result_mapping, benchmark_results)",
+        "    return _json_safe({",
+        "        'status': study_result_mapping.get('status', 'completed'),",
+        "        'primary_metric': primary_metric,",
+        "        'benchmark_results': benchmark_results,",
+        "        'objective_metrics': study_result_mapping.get('objective_metrics'),",
+        "        'run_metadata': study_result_mapping.get('run_metadata'),",
+        "        'device_metadata': study_result_mapping.get('device_metadata'),",
+        "    })",
+        "",
+        "def assemble_final_metrics_payload(args: Any, study_result: Mapping[str, Any]) -> dict[str, Any]:",
+        "    objective_metrics = {'mean_zero_shot_accuracy': 0.73}",
+        "    benchmark_results = {'arc_challenge': {'accuracy': 0.71}, 'hellaswag': {'accuracy': 0.75}}",
+        "    return build_final_metrics_schema(",
+        "        study_result=study_result,",
+        "        run_metadata={'seed': 7},",
+        "        objective_metrics=objective_metrics,",
+        "        benchmark_results=benchmark_results,",
+        "        device_metadata={'device': 'cpu'},",
+        "    )",
+        "",
+        "if __name__ == '__main__':",
+        "    payload = assemble_final_metrics_payload(None, {'status': 'completed'})",
+        "    Path(" + JSON.stringify(metricsPath) + ").write_text(json.dumps(payload), encoding='utf-8')",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/objective_metrics/);
+
+    const repair = await repairPythonFinalMetricsSchemaCompatibilitySurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_final_metrics_schema_bridge_marker");
+    expect(repairedSource).toContain("**_autolabos_extra_metadata");
+    expect(repairedSource).not.toContain("return _assemble_final_metrics_payload(");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.primary_metric).toBe(0.73);
+    expect(metrics.run_metadata.seed).toBe(7);
+    expect(metrics.device_metadata.device).toBe("cpu");
+    expect(metrics.benchmark_results.arc_challenge.accuracy).toBe(0.71);
+  });
+
+  it("repairs final metrics document dispatch by bridging condition evaluation into metrics assembly", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-metrics-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "import time",
+        "from pathlib import Path",
+        "from typing import Any, Dict, Mapping, Optional, Sequence",
+        "",
+        "def detect_runtime_device():",
+        "    return 'cpu', {'device': 'cpu', 'cuda_available': False}",
+        "",
+        "def load_instruction_subset_from_args(args):",
+        "    return ([{'instruction': 'classify', 'input': 'sample', 'output': 'A'}], {'status': 'ok'})",
+        "",
+        "def load_benchmark_examples(per_benchmark_limit=None, seed=42):",
+        "    return (",
+        "        {",
+        "            'arc_challenge': [{'id': 'arc-1', 'choices': ['A', 'B'], 'answer_index': 0}],",
+        "            'hellaswag': [{'id': 'hs-1', 'choices': ['A', 'B'], 'answer_index': 1}],",
+        "        },",
+        "        {'status': 'ok', 'seed': seed, 'limit': per_benchmark_limit},",
+        "    )",
+        "",
+        "def run_ordered_condition_evaluation(args, train_samples, eval_sets, device):",
+        "    assert train_samples[0]['instruction'] == 'classify'",
+        "    assert eval_sets['arc_challenge'][0]['id'] == 'arc-1'",
+        "    assert device == 'cpu'",
+        "    return {",
+        "        'condition_order': ['unmodified_base', 'locked_lora_baseline', 'dora'],",
+        "        'condition_results': [",
+        "            {'condition_id': 'unmodified_base', 'status': 'success', 'mean_accuracy': 0.30},",
+        "            {'condition_id': 'locked_lora_baseline', 'status': 'success', 'mean_accuracy': 0.40},",
+        "            {'condition_id': 'dora', 'status': 'success', 'mean_accuracy': 0.55, 'accuracy_delta_vs_baseline': 0.15},",
+        "        ],",
+        "    }",
+        "",
+        "def build_final_metrics_document(",
+        "    *,",
+        "    args: Any,",
+        "    condition_results: Sequence[Mapping[str, Any]],",
+        "    dataset_metadata: Optional[Mapping[str, Any]] = None,",
+        "    device_info: Optional[Mapping[str, Any]] = None,",
+        "    dependency_report: Optional[Mapping[str, Any]] = None,",
+        "    run_started_at: Optional[float] = None,",
+        "    run_wall_time_seconds: Optional[float] = None,",
+        "    errors: Optional[Sequence[Mapping[str, Any]]] = None,",
+        ") -> Dict[str, Any]:",
+        "    return {",
+        "        'status': 'success',",
+        "        'condition_results': [dict(item) for item in condition_results],",
+        "        'dataset_metadata': dict(dataset_metadata or {}),",
+        "        'device_info': dict(device_info or {}),",
+        "        'dependency_report': dict(dependency_report or {}),",
+        "        'run_started_at': run_started_at,",
+        "        'run_wall_time_seconds': run_wall_time_seconds,",
+        "    }",
+        "",
+        "def _resolve_metrics_path(args):",
+        "    return Path(args.metrics_path)",
+        "",
+        "def _call_metrics_assembly_with_supported_signature(args, output_dir, metrics_path, started_at):",
+        "    candidate_names = (",
+        "        'assemble_final_metrics',",
+        "        'build_final_metrics',",
+        "        'assemble_study_metrics',",
+        "        'run_ordered_condition_evaluation_and_assemble_metrics',",
+        "        'evaluate_conditions_and_assemble_metrics',",
+        "    )",
+        "    assembly_fn = None",
+        "    for name in candidate_names:",
+        "        maybe_fn = globals().get(name)",
+        "        if callable(maybe_fn):",
+        "            assembly_fn = maybe_fn",
+        "            break",
+        "    if assembly_fn is None:",
+        "        raise RuntimeError('No metrics assembly function is available')",
+        "    return assembly_fn(args, output_dir=output_dir, metrics_path=metrics_path, started_at=started_at)",
+        "",
+        "def main():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    args = parser.parse_args()",
+        "    args.seed = 7",
+        "    args.train_subset_size = 1",
+        "    args.eval_samples_per_task = 1",
+        "    metrics_path = _resolve_metrics_path(args)",
+        "    metrics = _call_metrics_assembly_with_supported_signature(args, Path('.'), metrics_path, time.time())",
+        "    metrics_path.write_text(json.dumps(metrics), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })).toThrow(
+      /No metrics assembly function/
+    );
+
+    const repair = await repairPythonConditionEvaluationMetricsAssemblyBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def assemble_final_metrics(");
+    expect(repairedSource).toContain("_autolabos_condition_evaluation_metrics_bridge_marker");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.condition_results.map((item: { condition_id: string }) => item.condition_id)).toEqual([
+      "unmodified_base",
+      "locked_lora_baseline",
+      "dora"
+    ]);
+    expect(metrics.dataset_metadata.train_sample_count).toBe(1);
+    expect(metrics.dataset_metadata.benchmark_sample_counts.arc_challenge).toBe(1);
+    expect(metrics.device_info.device).toBe("cpu");
+    expect(metrics.study.condition_order).toEqual(["unmodified_base", "locked_lora_baseline", "dora"]);
+  });
+
+  it("repairs chunk-5 orchestration helper dispatch without fabricating metrics", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-chunk5-orchestration-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "import time",
+        "from pathlib import Path",
+        "from typing import Any, Dict, Mapping, Optional, Sequence, Tuple",
+        "",
+        "def _build_run_config_from_args(args):",
+        "    return {",
+        "        'from_builder': True,",
+        "        'seed': args.seed,",
+        "        'metrics_path': args.metrics_path,",
+        "    }",
+        "",
+        "def _instantiate_config_if_available(config_dict):",
+        "    return dict(config_dict)",
+        "",
+        "def run_ordered_peft_instruction_study(config):",
+        "    assert config['from_builder'] is True",
+        "    return {",
+        "        'status': 'completed',",
+        "        'condition_results': [",
+        "            {'marker': 'unmodified_base', 'status': 'success', 'mean_accuracy': 0.20},",
+        "            {'marker': 'locked_lora_baseline', 'status': 'success', 'mean_accuracy': 0.35},",
+        "            {'marker': 'dora', 'status': 'success', 'mean_accuracy': 0.41, 'accuracy_delta_vs_baseline': 0.06},",
+        "        ],",
+        "        'study_called_with_config': config['from_builder'],",
+        "    }",
+        "",
+        "def run_study(args):",
+        "    return run_ordered_peft_instruction_study(args)",
+        "",
+        "def orchestrate_study(args):",
+        "    return run_ordered_peft_instruction_study(args)",
+        "",
+        "def _prepare_final_metrics_payload(args, config_dict, study_metrics, started_at):",
+        "    return {",
+        "        'status': study_metrics['status'],",
+        "        'condition_results': study_metrics['condition_results'],",
+        "        'config': dict(config_dict),",
+        "        'study_called_with_config': study_metrics['study_called_with_config'],",
+        "        'started_at_is_float': isinstance(started_at, float),",
+        "    }",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    parser.add_argument('--seed', type=int, default=42)",
+        "    return parser",
+        "",
+        "def _coerce_orchestration_result(result: Any, fallback_args: Optional[argparse.Namespace]) -> Tuple[Optional[argparse.Namespace], Dict[str, Any], int]:",
+        "    return fallback_args, dict(result), 0",
+        "",
+        "def _invoke_chunk_5b_orchestration(argv: Optional[Sequence[str]]) -> Tuple[Optional[argparse.Namespace], Dict[str, Any], int]:",
+        "    parsed_args = build_arg_parser().parse_args(argv)",
+        "    orchestration_names = (",
+        "        'prepare_final_metrics_payload',",
+        "        'run_main_orchestration',",
+        "        'run_experiment_orchestration',",
+        "        'orchestrate_from_args',",
+        "        'run_from_parsed_args',",
+        "        'run_experiment_from_args',",
+        "        'build_final_metrics_payload',",
+        "    )",
+        "    for name in orchestration_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return _coerce_orchestration_result(candidate(parsed_args), parsed_args)",
+        "    if callable(globals().get('run_ordered_study')):",
+        "        result = globals()['run_ordered_study'](parsed_args)",
+        "        return _coerce_orchestration_result(result, parsed_args)",
+        "    raise RuntimeError(",
+        "        'No chunk-5b orchestration helper was found. Expected one of: '",
+        "        + ', '.join(orchestration_names)",
+        "        + ', or run_ordered_study.'",
+        "    )",
+        "",
+        "def main(argv: Optional[Sequence[str]] = None) -> int:",
+        "    args, payload, exit_code = _invoke_chunk_5b_orchestration(argv)",
+        "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf-8')",
+        "    return exit_code",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })).toThrow(
+      /No chunk-5b orchestration helper/
+    );
+
+    const repair = await repairPythonChunk5OrchestrationHelperBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def prepare_final_metrics_payload(args):");
+    expect(repairedSource).toContain("_autolabos_chunk5_orchestration_bridge_marker");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.condition_results.map((item: { marker: string }) => item.marker)).toEqual([
+      "unmodified_base",
+      "locked_lora_baseline",
+      "dora"
+    ]);
+    expect(metrics.config.from_builder).toBe(true);
+    expect(metrics.study_called_with_config).toBe(true);
+    expect(metrics.started_at_is_float).toBe(true);
+  });
+
+  it("bridges build_metrics_payload_from_options to generated study helpers without fallback rows", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-build-metrics-options-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Dict, List, Mapping, Optional, Sequence",
+        "",
+        "CALL_TRACE = []",
+        "",
+        "class RecipeCondition:",
+        "    def __init__(self, marker: str, display_name: str, recipe_kind: str = 'lora') -> None:",
+        "        self.marker = marker",
+        "        self.display_name = display_name",
+        "        self.recipe_kind = recipe_kind",
+        "",
+        "class ConditionState:",
+        "    def __init__(self, condition: RecipeCondition) -> None:",
+        "        self.marker = condition.marker",
+        "        self.display_name = condition.display_name",
+        "        self.recipe_kind = condition.recipe_kind",
+        "        self.status = 'completed'",
+        "        self.model = {'model_for': condition.marker}",
+        "        self.tokenizer = {'tokenizer_for': condition.marker}",
+        "",
+        "    def to_public_dict(self) -> Dict[str, Any]:",
+        "        return {",
+        "            'marker': self.marker,",
+        "            'display_name': self.display_name,",
+        "            'recipe_kind': self.recipe_kind,",
+        "            'status': self.status,",
+        "        }",
+        "",
+        "RECIPE_CONDITIONS = (",
+        "    RecipeCondition('unmodified_base', 'Unmodified base', 'base_model_no_tuning'),",
+        "    RecipeCondition('locked_lora_baseline', 'Locked LoRA baseline'),",
+        "    RecipeCondition('dora', 'DoRA'),",
+        ")",
+        "EXECUTABLE_RECIPE_CONDITIONS = RECIPE_CONDITIONS",
+        "",
+        "def validate_recipe_registry() -> None:",
+        "    CALL_TRACE.append('validate')",
+        "",
+        "def load_study_datasets(*, train_subset_size: Optional[int] = None, eval_samples_per_task: Optional[int] = None, seed: int = 42):",
+        "    CALL_TRACE.append(f'load:{train_subset_size}:{eval_samples_per_task}:{seed}')",
+        "    return (",
+        "        [{'text': 'train-example'}],",
+        "        {'arc_challenge': [{'prompt': 'arc'}], 'hellaswag': [{'prompt': 'hella'}]},",
+        "        {'train_subset_size': train_subset_size, 'eval_samples_per_task': eval_samples_per_task, 'seed': seed},",
+        "    )",
+        "",
+        "def train_or_prepare_condition(condition: RecipeCondition, train_records: Sequence[Mapping[str, Any]], args: Any, run_dir: Any) -> ConditionState:",
+        "    CALL_TRACE.append(f'train:{condition.marker}:{getattr(args, \"seed\", None)}:{Path(run_dir).name}')",
+        "    assert train_records and train_records[0]['text'] == 'train-example'",
+        "    return ConditionState(condition)",
+        "",
+        "def run_bounded_condition_training(conditions: Sequence[RecipeCondition], train_records: Sequence[Mapping[str, Any]], args: Any, run_dir: Any) -> List[ConditionState]:",
+        "    ordered = list(conditions)",
+        "    validate_recipe_registry(ordered)",
+        "    return [train_or_prepare_condition(condition, train_records, args, run_dir) for condition in ordered]",
+        "",
+        "def evaluate_all_conditions_on_benchmarks(condition_results: Sequence[Dict[str, Any]], benchmark_samples: Mapping[str, Any], device: Optional[Any] = None, benchmark_names: Sequence[str] = ('arc_challenge', 'hellaswag')) -> List[Dict[str, Any]]:",
+        "    CALL_TRACE.append('evaluate')",
+        "    assert set(benchmark_samples.keys()) == {'arc_challenge', 'hellaswag'}",
+        "    evaluated = []",
+        "    for index, row in enumerate(condition_results):",
+        "        assert 'model' in row and 'tokenizer' in row",
+        "        next_row = dict(row)",
+        "        next_row['mean_zero_shot_accuracy'] = 0.2 + (index * 0.1)",
+        "        next_row['accuracy_delta_vs_baseline'] = index * 0.05",
+        "        evaluated.append(next_row)",
+        "    return evaluated",
+        "",
+        "def build_metrics_payload(condition_results: Sequence[Mapping[str, Any]], args: Optional[Any] = None, *, started_at: Optional[str] = None, finished_at: Optional[str] = None, wall_clock_seconds: Optional[float] = None, extra: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:",
+        "    CALL_TRACE.append('build')",
+        "    rows = []",
+        "    for row in condition_results:",
+        "        rows.append({key: value for key, value in dict(row).items() if key not in {'model', 'tokenizer'}})",
+        "    return {",
+        "        'condition_results': rows,",
+        "        'extra': dict(extra or {}),",
+        "        'call_trace': list(CALL_TRACE),",
+        "        'args_seed': getattr(args, 'seed', None),",
+        "        'wall_clock_seconds_is_float': isinstance(wall_clock_seconds, float),",
+        "        'timestamps_present': bool(started_at and finished_at),",
+        "    }",
+        "",
+        "def _namespace_to_mapping(options: Any) -> Dict[str, Any]:",
+        "    if isinstance(options, Mapping):",
+        "        return dict(options)",
+        "    if hasattr(options, '__dict__'):",
+        "        return vars(options)",
+        "    return {}",
+        "",
+        "def _call_with_supported_arguments(fn, **kwargs):",
+        "    signature = inspect.signature(fn)",
+        "    parameters = signature.parameters",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        return fn(**kwargs)",
+        "    return fn(**{key: value for key, value in kwargs.items() if key in parameters})",
+        "",
+        "def _run_study_workflow(options: Any) -> Dict[str, Any]:",
+        "    option_map = _namespace_to_mapping(options)",
+        "    workflow_candidates = (",
+        "        'run_study',",
+        "        'build_metrics_payload_from_options',",
+        "    )",
+        "    attempted = []",
+        "    errors = {}",
+        "    for name in workflow_candidates:",
+        "        fn = globals().get(name)",
+        "        if not callable(fn):",
+        "            continue",
+        "        attempted.append(name)",
+        "        try:",
+        "            result = _call_with_supported_arguments(fn, options=options, args=options, runtime_options=options, **option_map)",
+        "        except Exception as exc:",
+        "            errors[name] = f'{type(exc).__name__}: {exc}'",
+        "            continue",
+        "        if isinstance(result, Mapping):",
+        "            return dict(result)",
+        "    builder = globals().get('build_metrics_payload')",
+        "    if callable(builder):",
+        "        attempted.append('build_metrics_payload')",
+        "        try:",
+        "            result = _call_with_supported_arguments(builder, options=options, runtime_options=options, **option_map)",
+        "            if isinstance(result, Mapping):",
+        "                return dict(result)",
+        "        except Exception as exc:",
+        "            errors['build_metrics_payload'] = f'{type(exc).__name__}: {exc}'",
+        "    raise RuntimeError(f'No runnable study workflow was available or all workflow candidates failed. attempted={attempted}; errors={errors}')",
+        "",
+        "def main(argv: Optional[Sequence[str]] = None) -> int:",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    parser.add_argument('--output-dir', default='experiment-output')",
+        "    parser.add_argument('--seed', type=int, default=7)",
+        "    parser.add_argument('--train-subset-size', type=int, default=3)",
+        "    parser.add_argument('--eval-samples-per-task', type=int, default=2)",
+        "    args = parser.parse_args(argv)",
+        "    payload = _run_study_workflow(args)",
+        "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })).toThrow(
+      /missing 1 required positional argument: 'condition_results'/
+    );
+
+    const repair = await repairPythonBuildMetricsPayloadFromOptionsBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def build_metrics_payload_from_options(");
+    expect(repairedSource).toContain("_autolabos_build_metrics_payload_from_options_bridge_marker");
+    expect(repairedSource).toContain("validate_recipe_registry()");
+    expect(repairedSource).not.toContain("validate_recipe_registry(ordered)");
+
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.condition_results.map((item: { condition_id: string }) => item.condition_id)).toEqual([
+      "unmodified_base",
+      "locked_lora_baseline",
+      "dora"
+    ]);
+    expect(metrics.condition_results.some((item: Record<string, unknown>) => "model" in item || "tokenizer" in item)).toBe(
+      false
+    );
+    expect(metrics.extra.dataset_metadata).toEqual({
+      train_subset_size: 3,
+      eval_samples_per_task: 2,
+      seed: 7
+    });
+    expect(metrics.call_trace).toEqual([
+      "load:3:2:7",
+      "validate",
+      "train:unmodified_base:7:experiment-output",
+      "train:locked_lora_baseline:7:experiment-output",
+      "train:dora:7:experiment-output",
+      "evaluate",
+      "build"
+    ]);
+    expect(metrics.args_seed).toBe(7);
+    expect(metrics.wall_clock_seconds_is_float).toBe(true);
+    expect(metrics.timestamps_present).toBe(true);
+  });
+
+  it("repairs final condition dispatcher aliases without fabricating condition rows", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-dispatch-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Callable, Dict, List, Mapping, Optional",
+        "",
+        "def run_baseline_first_condition_comparison(args: Optional[argparse.Namespace] = None) -> Dict[str, Any]:",
+        "    if args is None:",
+        "        args = argparse.Namespace(seed=-1)",
+        "    return {",
+        "        'status': 'completed',",
+        "        'condition_records': [",
+        "            {'condition_marker': 'unmodified_base', 'status': 'completed', 'seed': args.seed},",
+        "            {'condition_marker': 'locked_lora_baseline', 'status': 'completed', 'seed': args.seed, 'accuracy_delta_vs_baseline': 0.03},",
+        "            {'condition_marker': 'dora', 'status': 'completed', 'seed': args.seed, 'accuracy_delta_vs_baseline': 0.05},",
+        "        ],",
+        "    }",
+        "",
+        "def run_condition_comparison(args: Optional[argparse.Namespace] = None) -> Dict[str, Any]:",
+        "    return run_baseline_first_condition_comparison(args=args)",
+        "",
+        "def _call_with_supported_kwargs(function: Callable[..., Any], **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(function)",
+        "    parameters = signature.parameters",
+        "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):",
+        "        return function(**kwargs)",
+        "    accepted = {",
+        "        key: value",
+        "        for key, value in kwargs.items()",
+        "        if key in parameters and parameters[key].kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)",
+        "    }",
+        "    return function(**accepted)",
+        "",
+        "def _resolve_callable(candidates):",
+        "    for name in candidates:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _run_conditions_from_config(config: Mapping[str, Any]) -> List[Any]:",
+        "    runner = _resolve_callable((",
+        "        'run_baseline_first_condition_execution',",
+        "        'run_baseline_first_conditions',",
+        "        'run_condition_study',",
+        "        'run_experiment_conditions',",
+        "        'execute_baseline_first_condition_study',",
+        "    ))",
+        "    if runner is None:",
+        "        raise RuntimeError(",
+        "            'No condition runner function was found. Expected one of: '",
+        "            'run_baseline_first_condition_execution, run_baseline_first_conditions, '",
+        "            'run_condition_study, run_experiment_conditions, execute_baseline_first_condition_study.'",
+        "        )",
+        "    result = _call_with_supported_kwargs(runner, **dict(config))",
+        "    if isinstance(result, Mapping):",
+        "        for key in ('conditions', 'condition_records', 'results', 'condition_results'):",
+        "            value = result.get(key)",
+        "            if isinstance(value, list):",
+        "                return value",
+        "        return [result]",
+        "    if isinstance(result, list):",
+        "        return result",
+        "    return []",
+        "",
+        "def main() -> int:",
+        "    condition_records = _run_conditions_from_config({'seed': 17, 'metrics_path': " + JSON.stringify(metricsPath) + "})",
+        "    Path(" + JSON.stringify(metricsPath) + ").write_text(json.dumps({'conditions': condition_records}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No condition runner function/
+    );
+
+    const repair = await repairPythonRunConditionsFromConfigRunnerBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_baseline_first_condition_execution(**kwargs):");
+    expect(repairedSource).toContain("_autolabos_condition_comparison_runner_bridge_marker");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.conditions.map((item: { condition_marker: string }) => item.condition_marker)).toEqual([
+      "unmodified_base",
+      "locked_lora_baseline",
+      "dora"
+    ]);
+    expect(metrics.conditions.every((item: { seed: number }) => item.seed === 17)).toBe(true);
+  });
+
+  it("repairs runtime MutableMapping imports that py_compile cannot catch", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-mutable-mapping-runtime-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Mapping",
+        "",
+        "def persist_metrics_json(metrics: Mapping[str, Any], metrics_path: str) -> None:",
+        "    payload = dict(metrics)",
+        "    if isinstance(payload, MutableMapping):",
+        "        payload['mutable_mapping_seen'] = True",
+        "    Path(metrics_path).write_text(json.dumps(payload), encoding='utf-8')",
+        "",
+        "if __name__ == '__main__':",
+        "    persist_metrics_json({'status': 'success'}, " + JSON.stringify(metricsPath) + ")",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/MutableMapping/);
+
+    const repair = await repairPythonConditionEvaluationMetricsAssemblyBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("from collections.abc import MutableMapping");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.mutable_mapping_seen).toBe(true);
   });
 
   it("repairs a missing PEFTRecipe compatibility dataclass before handing a python runner off to run_experiments", async () => {
@@ -11037,6 +19468,154 @@ describe("ImplementSessionManager", () => {
     expect(result.testCommand).toContain("py_compile");
   });
 
+  it("repairs missing dataclasses module imports for RecipeSpec required-field coercion", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-dataclasses-import-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair RecipeSpec required-field coercion",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-recipe-dataclasses-import-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented the experiment runner.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "from dataclasses import dataclass, field",
+                "from typing import Any, Dict, Mapping, Optional, Tuple",
+                "",
+                "@dataclass",
+                "class RecipeSpec:",
+                "    name: str",
+                "    display_name: str",
+                "    recipe_type: str",
+                "    description: str = ''",
+                "    peft_type: Optional[str] = None",
+                "    adapter_type: Optional[str] = None",
+                "    target_modules: Tuple[str, ...] = field(default_factory=tuple)",
+                "",
+                "def _recipe_spec_field_names() -> set[str]:",
+                "    return set(getattr(RecipeSpec, '__dataclass_fields__', {}).keys())",
+                "",
+                "def _recipe_spec_required_field_names() -> set[str]:",
+                "    required: set[str] = set()",
+                "    dataclass_fields = getattr(RecipeSpec, '__dataclass_fields__', {})",
+                "    if not dataclass_fields:",
+                "        return required",
+                "    missing = getattr(dataclasses, 'MISSING', None) if 'dataclasses' in globals() else None",
+                "    for field_name, field_obj in dataclass_fields.items():",
+                "        has_default = getattr(field_obj, 'default', missing) is not missing",
+                "        has_default_factory = getattr(field_obj, 'default_factory', missing) is not missing",
+                "        if not has_default and not has_default_factory:",
+                "            required.add(field_name)",
+                "    return required",
+                "",
+                "def _coerce_recipe_spec_kwargs(raw_kwargs: Mapping[str, Any]) -> Dict[str, Any]:",
+                "    field_names = _recipe_spec_field_names()",
+                "    aliases: Dict[str, Tuple[str, ...]] = {",
+                "        'peft_type': ('adapter_type', 'method'),",
+                "        'adapter_type': ('peft_type', 'method'),",
+                "    }",
+                "    kwargs: Dict[str, Any] = {}",
+                "    for field_name in field_names:",
+                "        if field_name in raw_kwargs:",
+                "            kwargs[field_name] = raw_kwargs[field_name]",
+                "            continue",
+                "        for alias in aliases.get(field_name, ()):",
+                "            if alias in raw_kwargs:",
+                "                kwargs[field_name] = raw_kwargs[alias]",
+                "                break",
+                "    for field_name in _recipe_spec_required_field_names() - set(kwargs):",
+                "        lower = field_name.lower()",
+                "        recipe_name = str(raw_kwargs.get('name', raw_kwargs.get('recipe_id', 'recipe')))",
+                "        peft_type = str(raw_kwargs.get('peft_type', raw_kwargs.get('adapter_type', 'none')))",
+                "        if 'name' in lower:",
+                "            kwargs[field_name] = recipe_name",
+                "        elif 'display' in lower:",
+                "            kwargs[field_name] = raw_kwargs.get('display_name', recipe_name)",
+                "        elif 'type' in lower:",
+                "            kwargs[field_name] = peft_type",
+                "        else:",
+                "            kwargs[field_name] = raw_kwargs.get(field_name, None)",
+                "    return kwargs",
+                "",
+                "def make_recipe_spec(**kwargs: Any) -> RecipeSpec:",
+                "    return RecipeSpec(**_coerce_recipe_spec_kwargs(kwargs))",
+                "",
+                "LOCKED_RECIPE_SPECS = (",
+                "    make_recipe_spec(",
+                "        name='unmodified_base',",
+                "        display_name='Unmodified base checkpoint',",
+                "        peft_type='none',",
+                "        adapter_type='none',",
+                "    ),",
+                ")",
+                "",
+                "if __name__ == '__main__':",
+                "    assert LOCKED_RECIPE_SPECS[0].recipe_type == 'none'",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain("import dataclasses");
+    expect(result.testCommand).toContain("py_compile");
+    execFileSync("python3", [result.scriptPath!], { stdio: "ignore" });
+  });
+
   it("repairs a missing RecipeSpec name property before handing a python runner off to run_experiments", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-name-repair-"));
     tempDirs.push(workspace);
@@ -11135,6 +19714,138 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("def name(self) -> str:");
     expect(repairedSource).toContain("return str(self.recipe_id)");
     expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("repairs a missing RecipeSpec train_adapter property before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-train-adapter-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import dataclasses",
+        "from dataclasses import dataclass",
+        "from typing import Any",
+        "",
+        "@dataclass",
+        "class RecipeSpec:",
+        "    recipe_id: str",
+        "    recipe_name: str",
+        "    enable_training: bool = True",
+        "    save_adapter: bool = True",
+        "",
+        "def _recipe_spec(**kwargs: Any) -> RecipeSpec:",
+        "    allowed = {field_obj.name for field_obj in dataclasses.fields(RecipeSpec)}",
+        "    return RecipeSpec(**{key: value for key, value in kwargs.items() if key in allowed})",
+        "",
+        "RECIPE_SPECS = [",
+        "    _recipe_spec(recipe_id='base_unmodified', recipe_name='Base', train_adapter=False, enable_training=False, save_adapter=False),",
+        "    _recipe_spec(recipe_id='lora_vanilla_r8', recipe_name='Vanilla LoRA', train_adapter=True, enable_training=True, save_adapter=True),",
+        "]",
+        "",
+        "if RECIPE_SPECS[1].recipe_id != 'lora_vanilla_r8' or not RECIPE_SPECS[1].train_adapter:",
+        "    raise RuntimeError('Locked recipe order violation: vanilla LoRA baseline must be second.')",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(0)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/train_adapter/);
+
+    const repair = await repairPythonRecipeSpecTrainAdapterSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def train_adapter(self) -> bool:");
+    expect(repairedSource).toContain("return bool(self.enable_training)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs RecipeSpec validation so no-training baselines can use inert hyperparameters", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-inert-hparams-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Optional",
+        "",
+        "PEFT_METHOD_NONE = 'none'",
+        "PEFT_METHOD_LORA = 'lora'",
+        "SUPPORTED_PEFT_METHODS = {PEFT_METHOD_NONE, PEFT_METHOD_LORA}",
+        "",
+        "@dataclass(frozen=True)",
+        "class RecipeSpec:",
+        "    recipe_id: str",
+        "    display_name: str",
+        "    method: str",
+        "    requires_training: bool",
+        "    learning_rate: float",
+        "    train_epochs: float",
+        "    max_train_steps: Optional[int]",
+        "",
+        "    def __post_init__(self) -> None:",
+        "        if self.method not in SUPPORTED_PEFT_METHODS:",
+        "            raise ValueError('unsupported method')",
+        "        if self.method == PEFT_METHOD_NONE and self.requires_training:",
+        "            raise ValueError('untuned baseline cannot require training')",
+        "        if self.method != PEFT_METHOD_NONE and not self.requires_training:",
+        "            raise ValueError('tuned PEFT recipe must require training')",
+        "        if self.learning_rate <= 0.0:",
+        "            raise ValueError(f\"Recipe {self.recipe_id!r} learning_rate must be positive\")",
+        "        if self.train_epochs <= 0.0:",
+        "            raise ValueError(f\"Recipe {self.recipe_id!r} train_epochs must be positive\")",
+        "        if self.max_train_steps is not None and self.max_train_steps <= 0:",
+        "            raise ValueError(f\"Recipe {self.recipe_id!r} max_train_steps must be positive when set\")",
+        "",
+        "LOCKED_BASELINE_RECIPE = RecipeSpec(",
+        "    recipe_id='baseline_unmodified_base',",
+        "    display_name='Unmodified base checkpoint',",
+        "    method=PEFT_METHOD_NONE,",
+        "    requires_training=False,",
+        "    learning_rate=0.0,",
+        "    train_epochs=0.0,",
+        "    max_train_steps=0,",
+        ")",
+        "",
+        "def main():",
+        "    assert LOCKED_BASELINE_RECIPE.recipe_id == 'baseline_unmodified_base'",
+        "    try:",
+        "        RecipeSpec(",
+        "            recipe_id='bad_tuned_lora',",
+        "            display_name='Bad tuned LoRA',",
+        "            method=PEFT_METHOD_LORA,",
+        "            requires_training=True,",
+        "            learning_rate=0.0,",
+        "            train_epochs=1.0,",
+        "            max_train_steps=None,",
+        "        )",
+        "    except ValueError as exc:",
+        "        return 0 if 'learning_rate must be positive' in str(exc) else 1",
+        "    return 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /learning_rate must be positive/
+    );
+
+    const repair = await repairPythonRecipeSpecUntunedNoTrainingHyperparameterSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("if self.requires_training and self.learning_rate <= 0.0:");
+    expect(repairedSource).toContain("if self.requires_training and self.train_epochs <= 0.0:");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
   it("repairs object-backed recipe subscript access and broad TypeError entrypoint fallback before handoff", async () => {
@@ -11253,6 +19964,115 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("inspect as _autolabos_entrypoint_inspect");
     expect(repairedSource).not.toContain("except TypeError:\n        payload = orchestrator()");
     expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("repairs object-backed PEFT_RECIPE_DEFINITIONS subscript access before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-definitions-subscript-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Recipe Definitions Subscript",
+      topic: "parameter efficient tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-recipe-definitions-subscript-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented the experiment runner.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "import argparse",
+                "from dataclasses import dataclass",
+                "from typing import Tuple",
+                "",
+                "@dataclass(frozen=True)",
+                "class _PeftRecipeDefinition:",
+                "    condition_id: str",
+                "    label: str",
+                "",
+                "PEFT_RECIPE_DEFINITIONS: Tuple[_PeftRecipeDefinition, ...] = (",
+                "    _PeftRecipeDefinition(condition_id='c0_base', label='unmodified base'),",
+                "    _PeftRecipeDefinition(condition_id='c1_lora', label='vanilla LoRA'),",
+                ")",
+                "",
+                "def normalize_cli_args(args):",
+                "    args.condition_ids = [recipe['condition_id'] for recipe in PEFT_RECIPE_DEFINITIONS]",
+                "    return args",
+                "",
+                "def parse_cli_args(argv=None):",
+                "    parser = argparse.ArgumentParser()",
+                "    parser.add_argument('--metrics-path')",
+                "    parser.add_argument('--output-dir')",
+                "    return normalize_cli_args(parser.parse_args(argv))",
+                "",
+                "def main(argv=None):",
+                "    args = parse_cli_args(argv)",
+                "    return 0 if args.condition_ids == ['c0_base', 'c1_lora'] else 1",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain("class _PeftRecipeDefinition:");
+    expect(repairedSource).toContain("def __getitem__(self, key):");
+    expect(repairedSource).toContain("return getattr(self, key)");
+    execFileSync("python3", [result.scriptPath!, "--metrics-path", metricsPath, "--output-dir", publicDir], {
+      cwd: workspace
+    });
   });
 
   it("repairs a missing generated orchestration candidate before handing a python runner off to run_experiments", async () => {
@@ -11442,6 +20262,96 @@ describe("ImplementSessionManager", () => {
 
     await expect(manager.run(run)).rejects.toThrow(/recipe\/study workflow function names that are never defined/i);
     expect(calls).toBe(3);
+  });
+
+  it("accepts recipe workflow dispatchers whose searched workflow is defined by module alias assignment", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-workflow-alias-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Accept Workflow Alias",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-workflow-alias",
+        finalText: JSON.stringify({
+          summary: "Implemented a runner whose dispatcher target is defined via a module alias.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "def orchestrate_peft_instruction_study(config=None):",
+                "    return {'status': 'completed', 'accuracy_delta_vs_baseline': 0.0}",
+                "",
+                "run_peft_instruction_study = orchestrate_peft_instruction_study",
+                "",
+                "def _call_experiment_orchestrator(config=None):",
+                "    for name in ('run_peft_instruction_study', 'run_study', 'execute_experiment', 'orchestrate_experiment'):",
+                "        candidate = globals().get(name)",
+                "        if callable(candidate):",
+                "            return candidate(config)",
+                "    raise RuntimeError('No experiment orchestration function was found')",
+                "",
+                "def main(argv=None):",
+                "    return 0 if _call_experiment_orchestrator({})['status'] == 'completed' else 1",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    expect(result.scriptPath).toBe(scriptPath);
   });
 
   it("rejects python runners whose study orchestration dispatcher has no defined orchestration function", async () => {
@@ -11863,6 +20773,116 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
+  it("rejects python runners whose final baseline-first resolver misses all materialized study runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-final-baseline-runner-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Missing Final Baseline Runner",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-missing-final-baseline-runner",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose final resolver misses the materialized lower-level helpers.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "def evaluate_locked_unmodified_baseline(*args, **kwargs):",
+                  "    return {'candidate_id': 'baseline_unmodified_base'}",
+                  "",
+                  "def run_peft_candidate_evaluations(*args, **kwargs):",
+                  "    return [{'candidate_id': 'lora_r8_alpha16'}], {'best_recipe': 'lora_r8_alpha16'}",
+                  "",
+                  "def _autolabos_callable(name):",
+                  "    candidate = globals().get(name)",
+                  "    return candidate if callable(candidate) else None",
+                  "",
+                  "def _run_locked_baseline_first_comparison(config, args):",
+                  "    runner_names = (",
+                  "        'run_baseline_first_peft_study',",
+                  "        'run_baseline_first_comparison',",
+                  "        'execute_baseline_first_study',",
+                  "        'run_recipe_comparison',",
+                  "        'run_peft_recipe_comparison',",
+                  "        'run_peft_instruction_comparison',",
+                  "        'run_baseline_and_peft_recipes',",
+                  "        'execute_experiment',",
+                  "    )",
+                  "    for name in runner_names:",
+                  "        runner = _autolabos_callable(name)",
+                  "        if runner is not None:",
+                  "            return runner(config, args=args)",
+                  "    raise RuntimeError('No baseline-first study runner was found in the materialized script. Expected one of: ' + ', '.join(runner_names))",
+                  "",
+                  "def main(argv=None):",
+                  "    _run_locked_baseline_first_comparison({}, argv)",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/recipe\/study workflow function names that are never defined/i);
+    expect(calls).toBe(3);
+  });
+
   it("rejects python runners whose completed-sections study resolver misses generated row-loop helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-completed-sections-helper-"));
     tempDirs.push(workspace);
@@ -12164,6 +21184,129 @@ describe("ImplementSessionManager", () => {
     });
 
     await expect(manager.run(run)).rejects.toThrow(/select no PEFT recipes/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects python runners that record every condition as worker_discovery without a real condition worker", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-condition-worker-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Missing Condition Worker",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-missing-condition-worker",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner that only records worker-discovery failures.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "import argparse",
+                  "import json",
+                  "from pathlib import Path",
+                  "",
+                  "LOCKED_CONDITIONS = [{'condition_id': 'unmodified_base'}, {'condition_id': 'lora_baseline'}]",
+                  "",
+                  "def _find_condition_worker():",
+                  "    for name in (",
+                  "        'run_locked_condition',",
+                  "        'run_single_locked_condition',",
+                  "        'execute_single_locked_condition',",
+                  "        'run_peft_condition',",
+                  "        'train_and_evaluate_condition',",
+                  "        'train_evaluate_condition',",
+                  "        'run_condition',",
+                  "    ):",
+                  "        fn = globals().get(name)",
+                  "        if callable(fn) and fn is not execute_locked_condition_plan:",
+                  "            return fn",
+                  "    return None",
+                  "",
+                  "def execute_locked_condition_plan(condition_plan, runtime_context=None):",
+                  "    worker = _find_condition_worker()",
+                  "    if worker is None:",
+                  "        return {",
+                  "            'condition_results': [",
+                  "                {",
+                  "                    'condition_id': item['condition_id'],",
+                  "                    'status': 'failed',",
+                  "                    'failure_stage': 'worker_discovery',",
+                  "                    'error': 'No real per-condition execution worker is registered; refusing to substitute a synthetic recipe.',",
+                  "                }",
+                  "                for item in condition_plan",
+                  "            ]",
+                  "        }",
+                  "    return {'condition_results': [worker(item, runtime_context or {}) for item in condition_plan]}",
+                  "",
+                  "def main(argv=None):",
+                  "    parser = argparse.ArgumentParser()",
+                  "    parser.add_argument('--metrics-path', default='metrics.json')",
+                  "    args = parser.parse_args(argv)",
+                  "    payload = execute_locked_condition_plan(LOCKED_CONDITIONS)",
+                  "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf8')",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/no concrete per-condition execution worker/i);
     expect(calls).toBe(3);
   });
 
@@ -12546,6 +21689,210 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
+  it("repairs benchmark evaluator dispatch that binds Namespace as benchmark samples", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-benchmark-evaluator-args-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import json",
+        "from typing import Any, Dict, Mapping, Sequence",
+        "",
+        "class Spec:",
+        "    marker = 'locked_lora_baseline'",
+        "    recipe = 'lora'",
+        "",
+        "def _training_result_model_payload(training_result):",
+        "    return {'model_bundle': training_result}",
+        "",
+        "def _normalize_benchmark_metrics(value):",
+        "    return value",
+        "",
+        "def evaluate_condition_on_benchmarks(",
+        "    condition_marker: str,",
+        "    benchmark_samples: Mapping[str, Sequence[Any]],",
+        "    model_bundle: Any = None,",
+        "    prefer_model_scoring: bool = True,",
+        "    max_examples_per_task: int | None = None,",
+        ") -> Dict[str, Any]:",
+        "    samples = list(benchmark_samples.get('arc_challenge', [])) + list(benchmark_samples.get('hellaswag', []))",
+        "    return {",
+        "        'condition_marker': condition_marker,",
+        "        'benchmark_count': len(samples),",
+        "        'max_examples_per_task': max_examples_per_task,",
+        "        'model_bundle': model_bundle,",
+        "    }",
+        "",
+        "def _call_benchmark_evaluator(spec, args, runtime, benchmark_examples, training_result) -> Dict[str, Any]:",
+        "    model_payload = _training_result_model_payload(training_result)",
+        "    candidate_names = (",
+        "        'evaluate_zero_shot_benchmarks',",
+        "        'evaluate_condition_on_benchmarks',",
+        "        'run_benchmark_evaluation',",
+        "    )",
+        "    for name in candidate_names:",
+        "        fn = globals().get(name)",
+        "        if not callable(fn):",
+        "            continue",
+        "        call_patterns = (",
+        "            lambda: fn(spec=spec, args=args, runtime=runtime, benchmark_examples=benchmark_examples, training_result=training_result, **model_payload),",
+        "            lambda: fn(condition_marker=spec.marker, recipe=spec.recipe, benchmark_examples=benchmark_examples, args=args, **model_payload),",
+        "            lambda: fn(spec, args, runtime, benchmark_examples, training_result),",
+        "            lambda: fn(spec, args, benchmark_examples, training_result),",
+        "            lambda: fn(benchmark_examples, condition_marker=spec.marker, **model_payload),",
+        "        )",
+        "        for call in call_patterns:",
+        "            try:",
+        "                return _normalize_benchmark_metrics(call())",
+        "            except TypeError:",
+        "                continue",
+        "    raise RuntimeError('No compatible benchmark evaluator call was available')",
+        "",
+        "if __name__ == '__main__':",
+        "    payload = _call_benchmark_evaluator(",
+        "        Spec(),",
+        "        argparse.Namespace(eval_examples_per_task=3),",
+        "        {},",
+        "        {'arc_challenge': [1], 'hellaswag': [2, 3]},",
+        "        {'status': 'trained'},",
+        "    )",
+        "    print(json.dumps(payload, sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { encoding: "utf8" })).toThrow(
+      /Namespace|object has no attribute 'get'/
+    );
+
+    const repair = await repairPythonBenchmarkEvaluatorArgumentSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+
+    const output = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    const payload = JSON.parse(output);
+    expect(payload).toMatchObject({
+      benchmark_count: 3,
+      condition_marker: "locked_lora_baseline",
+      max_examples_per_task: 3,
+      model_bundle: { status: "trained" }
+    });
+  });
+
+  it("rejects python runners whose required-helper benchmark resolver misses generated recipe evaluators", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-required-helper-benchmark-evaluator-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Required Helper Benchmark Evaluator Dispatch",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-required-helper-benchmark-evaluator",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose generic helper resolver misses the generated recipe evaluator.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "def _call_helper(name_candidates, **kwargs):",
+                  "    for name in name_candidates:",
+                  "        helper = globals().get(name)",
+                  "        if callable(helper):",
+                  "            return helper(**kwargs)",
+                  "    candidates = ', '.join(name_candidates)",
+                  "    raise RuntimeError(f'required helper missing; expected one of: {candidates}')",
+                  "",
+                  "def evaluate_benchmark(model=None, tokenizer=None, examples=None, benchmark_name='arc_challenge'):",
+                  "    return {'accuracy': 0.25}",
+                  "",
+                  "def evaluate_recipe_model(recipe_name, model=None, tokenizer=None, benchmark_examples=None, device=None):",
+                  "    return {'arc_challenge': {'accuracy': 0.25}, 'hellaswag': {'accuracy': 0.5}}",
+                  "",
+                  "def _evaluate_recipe_model(model=None, tokenizer=None, config=None, device=None):",
+                  "    return _call_helper(",
+                  "        (",
+                  "            'evaluate_zero_shot_benchmarks',",
+                  "            'evaluate_benchmarks',",
+                  "            'run_benchmark_evaluation',",
+                  "            'evaluate_model_on_benchmarks',",
+                  "        ),",
+                  "        model=model,",
+                  "        tokenizer=tokenizer,",
+                  "        config=config,",
+                  "        device=device,",
+                  "    )",
+                  "",
+                  "def run_baseline_first_experiment(argv=None):",
+                  "    return _evaluate_recipe_model()",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    run_baseline_first_experiment()",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/benchmark evaluator dispatch mismatch/i);
+    expect(calls).toBe(3);
+  });
+
   it("rejects python runners whose benchmark loader dispatch cannot find the generated loader", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-benchmark-loader-"));
     tempDirs.push(workspace);
@@ -12638,6 +21985,432 @@ describe("ImplementSessionManager", () => {
     });
 
     await expect(manager.run(run)).rejects.toThrow(/benchmark loader dispatch mismatch/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects python runners whose run-level benchmark loader resolver misses generated bounded loaders", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-run-benchmark-loader-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Missing Run Benchmark Loader Dispatch",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-missing-run-benchmark-loader",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose run-level loader resolver cannot find the generated bounded benchmark loader.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "def load_all_benchmark_examples(eval_examples_per_benchmark=None, seed=0):",
+                  "    return {'arc_challenge': [], 'hellaswag': []}",
+                  "",
+                  "def _load_benchmarks_for_run(config=None):",
+                  "    loader_names = (",
+                  "        'load_benchmark_datasets',",
+                  "        'load_evaluation_benchmarks',",
+                  "        'prepare_benchmark_datasets',",
+                  "        'load_eval_datasets',",
+                  "    )",
+                  "    for helper_name in loader_names:",
+                  "        helper = globals().get(helper_name)",
+                  "        if callable(helper):",
+                  "            return helper()",
+                  "    raise RuntimeError('No benchmark dataset loading helper is available.')",
+                  "",
+                  "def run_baseline_first_experiment(argv=None):",
+                  "    return _load_benchmarks_for_run(None)",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    run_baseline_first_experiment()",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/benchmark loader dispatch mismatch/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects python runners whose ARC and HellaSwag bundle resolver misses generated benchmark subset loaders", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-benchmark-bundle-loader-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Missing Benchmark Bundle Loader Dispatch",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-missing-benchmark-bundle-loader",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose ARC/HellaSwag bundle resolver cannot find generated subset loaders.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "def load_benchmark_subsets(arc_limit=None, hellaswag_limit=None, seed=0):",
+                  "    return {'arc_challenge': [], 'hellaswag': []}, {}",
+                  "",
+                  "def load_normalized_evaluation_sets(arc_limit=1, hellaswag_limit=1, seed=0):",
+                  "    return {'arc_challenge': [], 'hellaswag': []}",
+                  "",
+                  "def _load_benchmark_bundle(args=None):",
+                  "    helper_names = (",
+                  "        'load_benchmark_tasks',",
+                  "        'load_benchmarks',",
+                  "        'prepare_benchmark_tasks',",
+                  "        'prepare_benchmarks',",
+                  "        'load_evaluation_benchmarks',",
+                  "    )",
+                  "    for helper_name in helper_names:",
+                  "        helper = globals().get(helper_name)",
+                  "        if callable(helper):",
+                  "            return helper()",
+                  "    arc_helper = globals().get('load_arc_challenge') or globals().get('load_arc_challenge_examples') or globals().get('prepare_arc_challenge')",
+                  "    hs_helper = globals().get('load_hellaswag') or globals().get('load_hellaswag_examples') or globals().get('prepare_hellaswag')",
+                  "    if arc_helper is None or hs_helper is None:",
+                  "        raise RuntimeError('No benchmark loading helper found for ARC-Challenge and HellaSwag.')",
+                  "    return {'arc_challenge': list(arc_helper()), 'hellaswag': list(hs_helper())}",
+                  "",
+                  "def run_baseline_first_experiment(argv=None):",
+                  "    return _load_benchmark_bundle(None)",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    run_baseline_first_experiment()",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/benchmark loader dispatch mismatch/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects python runners whose run-level ARC and HellaSwag resolver misses generated example loaders despite a suite loader", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-arc-hellaswag-loader-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Missing ARC HellaSwag Loader Dispatch",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-missing-arc-hellaswag-loader",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose run-level ARC/HellaSwag resolver misses generated example loaders.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "def load_evaluation_benchmarks(seed=None):",
+                  "    return {'metadata': {'seed': seed}}",
+                  "",
+                  "def load_arc_challenge_examples(max_examples=None, seed=0):",
+                  "    return [{'answerKey': 'A'}]",
+                  "",
+                  "def load_hellaswag_examples(max_examples=None, seed=0):",
+                  "    return [{'label': '0'}]",
+                  "",
+                  "def _first_callable(*names):",
+                  "    for name in names:",
+                  "        helper = globals().get(name)",
+                  "        if callable(helper):",
+                  "            return helper",
+                  "    return None",
+                  "",
+                  "def _load_benchmarks_for_run(config=None):",
+                  "    suite_loader = _first_callable(",
+                  "        'load_benchmark_suite',",
+                  "        'load_evaluation_benchmarks',",
+                  "        'load_zero_shot_benchmarks',",
+                  "        'prepare_benchmark_datasets',",
+                  "    )",
+                  "    if suite_loader is not None:",
+                  "        loaded = suite_loader()",
+                  "        if 'arc_challenge' in loaded or 'hellaswag' in loaded:",
+                  "            return loaded",
+                  "    arc_loader = _first_callable(",
+                  "        'load_arc_challenge_subset',",
+                  "        'load_arc_challenge',",
+                  "        'load_arc_dataset',",
+                  "        'prepare_arc_challenge_examples',",
+                  "    )",
+                  "    hellaswag_loader = _first_callable(",
+                  "        'load_hellaswag_subset',",
+                  "        'load_hellaswag',",
+                  "        'load_hellaswag_dataset',",
+                  "        'prepare_hellaswag_examples',",
+                  "    )",
+                  "    if arc_loader is None or hellaswag_loader is None:",
+                  "        raise RuntimeError('No ARC-Challenge/HellaSwag benchmark loaders were defined in earlier sections.')",
+                  "    return {'arc_challenge': arc_loader(), 'hellaswag': hellaswag_loader()}",
+                  "",
+                  "def run_baseline_first_experiment(argv=None):",
+                  "    return _load_benchmarks_for_run(None)",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    run_baseline_first_experiment()",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/benchmark loader dispatch mismatch/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects python runners whose failure metrics path calls required-argument device metrics helper with no arguments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-device-metrics-arity-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Device Metrics Arity Mismatch",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-device-metrics-arity",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose failure metrics device helper call has the wrong arity.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "from typing import Any, Mapping",
+                  "",
+                  "def _collect_device_metrics(orchestration_result: Mapping[str, Any]):",
+                  "    return {'device': orchestration_result.get('device', 'cpu')}",
+                  "",
+                  "def collect_device_info():",
+                  "    return {'device': 'cpu'}",
+                  "",
+                  "def _write_failure_metrics(exc):",
+                  "    return {",
+                  "        'status': 'failed',",
+                  "        'device': _collect_device_metrics() if callable(globals().get('_collect_device_metrics')) else collect_device_info(),",
+                  "        'error': str(exc),",
+                  "    }",
+                  "",
+                  "def run_baseline_first_experiment(argv=None):",
+                  "    return {'status': 'ok'}",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    run_baseline_first_experiment()",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/device metrics helper call arity mismatch/i);
     expect(calls).toBe(3);
   });
 
@@ -13163,6 +22936,1741 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
+  it("repairs instruction dataset helper aliases when generated loaders use train-dataset names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-instruction-loader-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Mapping, Sequence, Tuple",
+        "",
+        "class RuntimeConfig:",
+        "    instruction_dataset = 'tatsu-lab/alpaca'",
+        "    seed = 42",
+        "    max_train_examples = 8",
+        "",
+        "def _call_with_supported_kwargs(func, **kwargs):",
+        "    import inspect",
+        "    parameters = inspect.signature(func).parameters",
+        "    return func(**{name: value for name, value in kwargs.items() if name in parameters})",
+        "",
+        "def build_instruction_training_dataset(config: RuntimeConfig, tokenizer: Any = None) -> Tuple[str, Mapping[str, Any]]:",
+        "    return 'dataset-from-training-builder', {'num_rows': config.max_train_examples}",
+        "",
+        "def _resolve_helper(primary_name: str, alternatives: Sequence[str]) -> Any:",
+        "    for helper_name in (primary_name, *alternatives):",
+        "        helper = globals().get(helper_name)",
+        "        if callable(helper):",
+        "            return helper",
+        "    searched = ', '.join((primary_name, *alternatives))",
+        "    raise NameError(f'Required experiment helper not found. Searched: {searched}')",
+        "",
+        "def _load_main_datasets(config: RuntimeConfig) -> Tuple[Any, Mapping[str, Any]]:",
+        "    train_loader = _resolve_helper(",
+        "        'load_instruction_dataset_subset',",
+        "        (",
+        "            'load_instruction_subset',",
+        "            'load_training_dataset',",
+        "            'prepare_instruction_dataset',",
+        "            'build_instruction_dataset',",
+        "        ),",
+        "    )",
+        "    train_dataset = _call_with_supported_kwargs(",
+        "        train_loader,",
+        "        config=config,",
+        "        dataset_name=config.instruction_dataset,",
+        "        seed=config.seed,",
+        "        max_examples=config.max_train_examples,",
+        "        max_train_examples=config.max_train_examples,",
+        "    )",
+        "    return train_dataset, {'arc_challenge': []}",
+        "",
+        "def main() -> int:",
+        "    train_dataset, _ = _load_main_datasets(RuntimeConfig())",
+        "    return 0 if train_dataset == 'dataset-from-training-builder' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Required experiment helper not found/
+    );
+
+    const repair = await repairPythonInstructionDatasetHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def load_instruction_dataset_subset(config=None, tokenizer=None, args=None, *positional, **keyword):");
+    expect(repairedSource).toContain("\"build_instruction_training_dataset\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs instruction dataset helper aliases when generated loaders use instruction-tuning names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-instruction-tuning-loader-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "from typing import Any, Dict, Tuple",
+        "",
+        "def _call_with_supported_kwargs(func, **kwargs):",
+        "    import inspect",
+        "    parameters = inspect.signature(func).parameters",
+        "    return func(**{name: value for name, value in kwargs.items() if name in parameters})",
+        "",
+        "def load_instruction_tuning_dataset(args: argparse.Namespace) -> Tuple[str, Dict[str, Any]]:",
+        "    return f'dataset-from-{args.seed}', {'selected_subset_size': 8}",
+        "",
+        "def maybe_load_instruction_dataset_for_orchestration(args: argparse.Namespace) -> Any:",
+        "    candidates = (",
+        "        'load_instruction_tuning_subset',",
+        "        'load_instruction_dataset_subset',",
+        "        'load_instruction_dataset',",
+        "        'prepare_instruction_dataset',",
+        "    )",
+        "    last_error = None",
+        "    for name in candidates:",
+        "        func = globals().get(name)",
+        "        if not callable(func):",
+        "            continue",
+        "        for call in (lambda: func(args), lambda: func(seed=int(getattr(args, 'seed', 42)), args=args), lambda: func()):",
+        "            try:",
+        "                return call()",
+        "            except TypeError as exc:",
+        "                last_error = exc",
+        "                continue",
+        "    if last_error is not None:",
+        "        raise RuntimeError(f'Unable to invoke instruction dataset loader: {last_error!r}')",
+        "    raise RuntimeError('No instruction dataset loader was defined before orchestration.')",
+        "",
+        "def main() -> int:",
+        "    dataset = maybe_load_instruction_dataset_for_orchestration(argparse.Namespace(seed=42))",
+        "    return 0 if dataset == 'dataset-from-42' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No instruction dataset loader was defined before orchestration/
+    );
+
+    const repair = await repairPythonInstructionDatasetHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def load_instruction_dataset_subset(config=None, tokenizer=None, args=None, *positional, **keyword):");
+    expect(repairedSource).toContain("\"load_instruction_tuning_dataset\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs instruction dataset helper aliases when orchestration misses training-examples loaders", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-instruction-examples-loader-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from typing import Any, Dict, List, Tuple",
+        "",
+        "def _call_with_supported_arguments(func, **available):",
+        "    signature = inspect.signature(func)",
+        "    return func(**{name: value for name, value in available.items() if name in signature.parameters})",
+        "",
+        "def _select_existing_callable(*names: str):",
+        "    for name in names:",
+        "        obj = globals().get(name)",
+        "        if callable(obj):",
+        "            return obj",
+        "    return None",
+        "",
+        "def load_instruction_training_examples(args: argparse.Namespace) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:",
+        "    return [{'instruction': 'say hi', 'output': f'hi-{args.seed}'}], {'selected_subset_size': 1}",
+        "",
+        "def _load_instruction_examples_for_run(args: argparse.Namespace, runtime_context: Dict[str, Any]) -> Any:",
+        "    loader = _select_existing_callable(",
+        "        'prepare_instruction_dataset',",
+        "        'load_instruction_dataset_subset',",
+        "        'load_instruction_examples',",
+        "        'build_instruction_dataset',",
+        "    )",
+        "    if loader is None:",
+        "        raise RuntimeError('No instruction dataset loader function was materialized in earlier sections.')",
+        "    return _call_with_supported_arguments(loader, args=args, runtime_context=runtime_context, seed=args.seed)",
+        "",
+        "def main() -> int:",
+        "    examples = _load_instruction_examples_for_run(argparse.Namespace(seed=7), {})",
+        "    return 0 if examples and examples[0]['output'] == 'hi-7' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No instruction dataset loader function was materialized/
+    );
+
+    const repair = await repairPythonInstructionDatasetHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def load_instruction_dataset_subset(config=None, tokenizer=None, args=None, *positional, **keyword):");
+    expect(repairedSource).toContain("\"load_instruction_training_examples\"");
+    expect(repairedSource).toContain("_call_with_supported_arguments");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs instruction dataset helper aliases when generated canonical loader is not searched by final dispatcher", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-instruction-canonical-loader-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "from typing import Any",
+        "",
+        "class RunConfig:",
+        "    instruction_dataset_name = 'tatsu-lab/alpaca'",
+        "    instruction_dataset_config = None",
+        "    train_subset_size = 3",
+        "    seed = 42",
+        "",
+        "def _call_supported(fn, **kwargs):",
+        "    parameters = inspect.signature(fn).parameters",
+        "    return fn(**{name: value for name, value in kwargs.items() if name in parameters})",
+        "",
+        "def _find_callable(*names: str):",
+        "    for name in names:",
+        "        helper = globals().get(name)",
+        "        if callable(helper):",
+        "            return helper",
+        "    return None",
+        "",
+        "def load_instruction_dataset(*, dataset_name=None, dataset_config=None, split=None, max_examples=None, seed=None):",
+        "    return {'dataset_name': dataset_name, 'max_examples': max_examples, 'seed': seed, 'split': split}",
+        "",
+        "def _load_instruction_subset_for_run(config: RunConfig) -> Any:",
+        "    loader = _find_callable(",
+        "        'load_instruction_dataset_subset',",
+        "        'load_instruction_subset',",
+        "        'prepare_instruction_dataset',",
+        "        'load_training_dataset',",
+        "    )",
+        "    if loader is None:",
+        "        raise RuntimeError('No instruction dataset loader is defined. Expected load_instruction_dataset_subset, load_instruction_subset, prepare_instruction_dataset, or load_training_dataset.')",
+        "    return _call_supported(",
+        "        loader,",
+        "        dataset_name=config.instruction_dataset_name,",
+        "        dataset_config=config.instruction_dataset_config,",
+        "        split='train',",
+        "        max_examples=config.train_subset_size,",
+        "        seed=config.seed,",
+        "        config=config,",
+        "    )",
+        "",
+        "def main() -> int:",
+        "    payload = _load_instruction_subset_for_run(RunConfig())",
+        "    return 0 if payload['dataset_name'] == 'tatsu-lab/alpaca' and payload['max_examples'] == 3 and payload['seed'] == 42 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No instruction dataset loader is defined/
+    );
+
+    const repair = await repairPythonInstructionDatasetHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def load_instruction_dataset_subset(config=None, tokenizer=None, args=None, *positional, **keyword):");
+    expect(repairedSource).toContain("\"load_instruction_dataset\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs model loader aliases when generated compact loader is not searched by final dispatcher", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-compact-model-loader-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "from typing import Any",
+        "",
+        "class RunConfig:",
+        "    model_name = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'",
+        "    seed = 42",
+        "    local_files_only = False",
+        "    trust_remote_code = False",
+        "",
+        "def _call_supported(fn, **kwargs):",
+        "    parameters = inspect.signature(fn).parameters",
+        "    return fn(**{name: value for name, value in kwargs.items() if name in parameters})",
+        "",
+        "def _find_callable(*names: str):",
+        "    for name in names:",
+        "        helper = globals().get(name)",
+        "        if callable(helper):",
+        "            return helper",
+        "    return None",
+        "",
+        "def _as_plain_dict(value: Any):",
+        "    if isinstance(value, dict):",
+        "        return dict(value)",
+        "    if hasattr(value, '__dict__'):",
+        "        return dict(vars(value))",
+        "    return {}",
+        "",
+        "def load_compact_model_and_tokenizer(model_name='fallback-model', seed=0, revision=None):",
+        "    return {'model': 'model:' + str(model_name), 'tokenizer': 'tokenizer', 'seed': seed, 'revision': revision}",
+        "",
+        "def _run_base_model_helper(config: RunConfig):",
+        "    load_fn = _find_callable('load_model_and_tokenizer', 'load_base_model_and_tokenizer', 'load_causal_lm_and_tokenizer')",
+        "    if load_fn is None:",
+        "        raise RuntimeError('No model loading helper is defined for unmodified_base. Expected load_model_and_tokenizer, load_base_model_and_tokenizer, or load_causal_lm_and_tokenizer.')",
+        "    result = _call_supported(load_fn, model_name=config.model_name, config=config, run_config=config)",
+        "    return _as_plain_dict(result)",
+        "",
+        "def main() -> int:",
+        "    bundle = _run_base_model_helper(RunConfig())",
+        "    return 0 if bundle.get('model') == 'model:TinyLlama/TinyLlama-1.1B-Chat-v1.0' and bundle.get('tokenizer') == 'tokenizer' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No model loading helper is defined/
+    );
+
+    const repair = await repairPythonModelLoaderAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def load_model_and_tokenizer(model_name=None, tokenizer_name=None, config=None");
+    expect(repairedSource).toContain("\"load_compact_model_and_tokenizer\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs evaluation dataset helper aliases when generated loaders use public dataset names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-eval-loader-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from collections.abc import Mapping",
+        "",
+        "def _entrypoint_callable(*names):",
+        "    for name in names:",
+        "        helper = globals().get(name)",
+        "        if callable(helper):",
+        "            return helper",
+        "    return None",
+        "",
+        "def _entrypoint_call(func, **kwargs):",
+        "    parameters = inspect.signature(func).parameters",
+        "    return func(**{name: value for name, value in kwargs.items() if name in parameters})",
+        "",
+        "def load_bounded_public_evaluation_datasets(args=None, seed=42, max_examples=2):",
+        "    return {'arc_challenge': ['arc-row'], 'hellaswag': ['hellaswag-row']}, {'seed': seed, 'max_examples': max_examples}",
+        "",
+        "def _entrypoint_load_datasets(args, output_dir):",
+        "    seed = int(getattr(args, 'seed', 42))",
+        "    eval_samples = int(getattr(args, 'eval_samples', 2))",
+        "    for loader_name in ('load_evaluation_datasets', 'load_bounded_evaluation_datasets', 'prepare_evaluation_datasets'):",
+        "        loader = _entrypoint_callable(loader_name)",
+        "        if callable(loader):",
+        "            datasets_obj = _entrypoint_call(loader, args=args, output_dir=output_dir, seed=seed, max_examples=eval_samples)",
+        "            if isinstance(datasets_obj, tuple) and datasets_obj:",
+        "                datasets_obj = datasets_obj[0]",
+        "            if isinstance(datasets_obj, Mapping):",
+        "                return dict(datasets_obj)",
+        "    arc_loader = _entrypoint_callable('load_arc_challenge_examples', 'load_arc_challenge_dataset', 'load_arc_challenge')",
+        "    hellaswag_loader = _entrypoint_callable('load_hellaswag_examples', 'load_hellaswag_dataset', 'load_hellaswag')",
+        "    if arc_loader is None or hellaswag_loader is None:",
+        "        raise RuntimeError('No evaluation dataset loader is available in the materialized script')",
+        "    return {'arc_challenge': _entrypoint_call(arc_loader, seed=seed, max_examples=eval_samples), 'hellaswag': _entrypoint_call(hellaswag_loader, seed=seed, max_examples=eval_samples)}",
+        "",
+        "def main() -> int:",
+        "    datasets = _entrypoint_load_datasets(argparse.Namespace(seed=7, eval_samples=3), '.')",
+        "    return 0 if datasets == {'arc_challenge': ['arc-row'], 'hellaswag': ['hellaswag-row']} else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No evaluation dataset loader is available/
+    );
+
+    const repair = await repairPythonEvaluationDatasetHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def load_bounded_evaluation_datasets(*positional, args=None");
+    expect(repairedSource).toContain("\"load_bounded_public_evaluation_datasets\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs singular bounded eval dataset aliases when generated helpers use plural names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-bounded-eval-singular-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "",
+        "def assemble_bounded_eval_datasets(eval_examples_per_benchmark=2, seed=42, use_public_datasets=True):",
+        "    return {",
+        "        'arc_challenge': [{'seed': seed, 'limit': eval_examples_per_benchmark, 'public': use_public_datasets}],",
+        "        'hellaswag': [{'seed': seed, 'limit': eval_examples_per_benchmark, 'public': use_public_datasets}],",
+        "    }, {'source': 'plural-helper'}",
+        "",
+        "build_bounded_eval_datasets = assemble_bounded_eval_datasets",
+        "prepare_bounded_eval_datasets = assemble_bounded_eval_datasets",
+        "load_bounded_eval_datasets = assemble_bounded_eval_datasets",
+        "",
+        "def run_experiment(args):",
+        "    eval_examples = assemble_bounded_eval_dataset(",
+        "        eval_examples_per_benchmark=int(getattr(args, 'eval_examples_per_benchmark', 2)),",
+        "        seed=int(getattr(args, 'seed', 42)),",
+        "        output_dir='ignored-by-plural-helper',",
+        "    )",
+        "    expected = {",
+        "        'arc_challenge': [{'seed': 7, 'limit': 3, 'public': True}],",
+        "        'hellaswag': [{'seed': 7, 'limit': 3, 'public': True}],",
+        "    }",
+        "    return 0 if eval_examples == expected else 1",
+        "",
+        "def main() -> int:",
+        "    return run_experiment(argparse.Namespace(seed=7, eval_examples_per_benchmark=3))",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /assemble_bounded_eval_dataset/
+    );
+
+    const repair = await repairPythonEvaluationDatasetHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def assemble_bounded_eval_dataset(*positional, **keyword):");
+    expect(repairedSource).toContain("\"assemble_bounded_eval_datasets\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs condition-runner eval aliases when generated loaders use benchmark eval dataset names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-benchmark-eval-loader-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "",
+        "DEFAULT_MAX_EVAL_EXAMPLES = 64",
+        "DEFAULT_SEED = 42",
+        "",
+        "def load_benchmark_eval_datasets(max_eval_examples=64, seed=42):",
+        "    return {",
+        "        'arc_challenge': [f'arc-{seed}-{max_eval_examples}'],",
+        "        'hellaswag': [f'hellaswag-{seed}-{max_eval_examples}'],",
+        "    }, {'source': 'benchmark-eval-datasets'}",
+        "",
+        "def _resolve_helper(names):",
+        "    for name in names:",
+        "        helper = globals().get(name)",
+        "        if callable(helper):",
+        "            return helper",
+        "    return None",
+        "",
+        "def _call_with_supported_kwargs(func, **kwargs):",
+        "    parameters = inspect.signature(func).parameters",
+        "    return func(**{name: value for name, value in kwargs.items() if name in parameters})",
+        "",
+        "def _get_arg(args, name, default):",
+        "    return getattr(args, name, default)",
+        "",
+        "def _load_eval_datasets_for_conditions(args):",
+        "    helper = _resolve_helper((",
+        "        'load_evaluation_datasets',",
+        "        'load_benchmark_datasets',",
+        "        'prepare_eval_datasets',",
+        "        'load_zero_shot_eval_datasets',",
+        "        'load_eval_datasets',",
+        "    ))",
+        "    if helper is None:",
+        "        raise RuntimeError('no ARC-Challenge/HellaSwag evaluation dataset helper is available')",
+        "    return _call_with_supported_kwargs(",
+        "        helper,",
+        "        args=args,",
+        "        seed=int(_get_arg(args, 'seed', DEFAULT_SEED)),",
+        "        max_eval_examples=int(_get_arg(args, 'max_eval_examples', DEFAULT_MAX_EVAL_EXAMPLES)),",
+        "    )",
+        "",
+        "def main() -> int:",
+        "    eval_payload = _load_eval_datasets_for_conditions(argparse.Namespace(seed=7, max_eval_examples=3))",
+        "    expected = {'arc_challenge': ['arc-7-3'], 'hellaswag': ['hellaswag-7-3']}",
+        "    return 0 if eval_payload == expected else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /no ARC-Challenge\/HellaSwag evaluation dataset helper is available/
+    );
+
+    const repair = await repairPythonEvaluationDatasetHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def load_benchmark_datasets(*positional, args=None");
+    expect(repairedSource).toContain("\"load_benchmark_eval_datasets\"");
+    expect(repairedSource).toContain("def _autolabos_normalize_evaluation_dataset_payload(");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs evaluation dataset helper aliases when final orchestration reports missing helpers but load_evaluation_examples exists", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-eval-examples-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from collections.abc import Mapping",
+        "",
+        "def _resolve_callable(*names):",
+        "    for name in names:",
+        "        helper = globals().get(name)",
+        "        if callable(helper):",
+        "            return helper",
+        "    return None",
+        "",
+        "def _call_with_available_kwargs(func, **kwargs):",
+        "    parameters = inspect.signature(func).parameters",
+        "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):",
+        "        return func(**kwargs)",
+        "    return func(**{name: value for name, value in kwargs.items() if name in parameters})",
+        "",
+        "def _arg_value(args, names, default=None):",
+        "    for name in names:",
+        "        if hasattr(args, name):",
+        "            value = getattr(args, name)",
+        "            if value is not None:",
+        "                return value",
+        "    return default",
+        "",
+        "def load_instruction_tuning_dataset(args=None, seed=42, subset_size=None):",
+        "    return [{'text': f'train-{seed}-{subset_size}'}]",
+        "",
+        "def load_evaluation_examples(args=None, seed=42, eval_size=None):",
+        "    return {'arc_challenge': [f'arc-{seed}-{eval_size}'], 'hellaswag': [f'hellaswag-{seed}-{eval_size}']}",
+        "",
+        "def _load_experiment_datasets(args):",
+        "    loader = _resolve_callable(",
+        "        'load_experiment_datasets',",
+        "        'prepare_experiment_datasets',",
+        "        'load_all_datasets',",
+        "    )",
+        "    if loader is not None:",
+        "        loaded = _call_with_available_kwargs(loader, args=args, seed=_arg_value(args, ('seed',), 42))",
+        "        if isinstance(loaded, Mapping):",
+        "            return dict(loaded)",
+        "        return {'loaded': loaded}",
+        "    train_loader = _resolve_callable(",
+        "        'load_instruction_tuning_dataset',",
+        "        'load_instruction_dataset',",
+        "        'prepare_instruction_dataset',",
+        "    )",
+        "    eval_loader = _resolve_callable(",
+        "        'load_evaluation_datasets',",
+        "        'load_eval_datasets',",
+        "        'prepare_evaluation_datasets',",
+        "    )",
+        "    if train_loader is None or eval_loader is None:",
+        "        missing = []",
+        "        if train_loader is None:",
+        "            missing.append('instruction dataset loader')",
+        "        if eval_loader is None:",
+        "            missing.append('evaluation dataset loader')",
+        "        raise RuntimeError('Missing required dataset helper(s): ' + ', '.join(missing))",
+        "    train_examples = _call_with_available_kwargs(",
+        "        train_loader,",
+        "        args=args,",
+        "        seed=_arg_value(args, ('seed',), 42),",
+        "        subset_size=_arg_value(args, ('train_subset_size', 'max_train_examples'), None),",
+        "    )",
+        "    eval_sets = _call_with_available_kwargs(",
+        "        eval_loader,",
+        "        args=args,",
+        "        seed=_arg_value(args, ('seed',), 42),",
+        "        eval_size=_arg_value(args, ('eval_subset_size', 'max_eval_examples'), None),",
+        "    )",
+        "    if isinstance(eval_sets, Mapping):",
+        "        return {'train_examples': train_examples, 'eval_sets': dict(eval_sets), **dict(eval_sets)}",
+        "    return {'train_examples': train_examples, 'eval_sets': eval_sets}",
+        "",
+        "def main() -> int:",
+        "    datasets = _load_experiment_datasets(argparse.Namespace(seed=7, max_train_examples=11, max_eval_examples=3))",
+        "    expected = {",
+        "        'train_examples': [{'text': 'train-7-11'}],",
+        "        'eval_sets': {'arc_challenge': ['arc-7-3'], 'hellaswag': ['hellaswag-7-3']},",
+        "        'arc_challenge': ['arc-7-3'],",
+        "        'hellaswag': ['hellaswag-7-3'],",
+        "    }",
+        "    return 0 if datasets == expected else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Missing required dataset helper\(s\): evaluation dataset loader/
+    );
+
+    const repair = await repairPythonEvaluationDatasetHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def load_evaluation_datasets(*positional, args=None");
+    expect(repairedSource).toContain("def load_eval_datasets(*positional, args=None");
+    expect(repairedSource).toContain("\"load_evaluation_examples\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs evaluation dataset helper aliases when generated loaders use raw ARC and HellaSwag names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-eval-raw-loader-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "",
+        "def _entrypoint_callable(*names):",
+        "    for name in names:",
+        "        helper = globals().get(name)",
+        "        if callable(helper):",
+        "            return helper",
+        "    return None",
+        "",
+        "def _entrypoint_call(func, **kwargs):",
+        "    parameters = inspect.signature(func).parameters",
+        "    return func(**{name: value for name, value in kwargs.items() if name in parameters})",
+        "",
+        "def load_arc_challenge_raw_dataset(seed=42, max_examples=2):",
+        "    return ['arc-row'], {'seed': seed, 'max_examples': max_examples}",
+        "",
+        "def load_hellaswag_raw_dataset(seed=42, max_examples=2):",
+        "    return ['hellaswag-row'], {'seed': seed, 'max_examples': max_examples}",
+        "",
+        "def _entrypoint_load_datasets(args, output_dir):",
+        "    seed = int(getattr(args, 'seed', 42))",
+        "    eval_samples = int(getattr(args, 'eval_samples', 2))",
+        "    for loader_name in ('load_evaluation_datasets', 'load_bounded_evaluation_datasets', 'prepare_evaluation_datasets'):",
+        "        loader = _entrypoint_callable(loader_name)",
+        "        if callable(loader):",
+        "            return _entrypoint_call(loader, args=args, output_dir=output_dir, seed=seed, max_examples=eval_samples)",
+        "    arc_loader = _entrypoint_callable('load_arc_challenge_examples', 'load_arc_challenge_dataset', 'load_arc_challenge')",
+        "    hellaswag_loader = _entrypoint_callable('load_hellaswag_examples', 'load_hellaswag_dataset', 'load_hellaswag')",
+        "    if arc_loader is None or hellaswag_loader is None:",
+        "        raise RuntimeError('No evaluation dataset loader is available in the materialized script')",
+        "    return {",
+        "        'arc_challenge': _entrypoint_call(arc_loader, seed=seed, max_examples=eval_samples),",
+        "        'hellaswag': _entrypoint_call(hellaswag_loader, seed=seed, max_examples=eval_samples),",
+        "    }",
+        "",
+        "def main() -> int:",
+        "    datasets = _entrypoint_load_datasets(argparse.Namespace(seed=7, eval_samples=3), '.')",
+        "    return 0 if datasets == {'arc_challenge': ['arc-row'], 'hellaswag': ['hellaswag-row']} else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No evaluation dataset loader is available/
+    );
+
+    const repair = await repairPythonEvaluationDatasetHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def load_arc_challenge_examples(*positional, **keyword):");
+    expect(repairedSource).toContain("def load_hellaswag_examples(*positional, **keyword):");
+    expect(repairedSource).toContain("\"load_arc_challenge_raw_dataset\"");
+    expect(repairedSource).toContain("\"load_hellaswag_raw_dataset\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs evaluation dataset loader sample-limit argument aliases", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-eval-loader-arg-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from typing import Any, Callable",
+        "",
+        "SEED = 42",
+        "DEFAULT_ARC_EVAL_SAMPLES = 3",
+        "DEFAULT_HELLASWAG_EVAL_SAMPLES = 4",
+        "",
+        "def _arg_value(args: argparse.Namespace, name: str, default: Any = None) -> Any:",
+        "    return getattr(args, name, default)",
+        "",
+        "def _invoke_with_supported_kwargs(fn: Callable[..., Any], **kwargs: Any) -> Any:",
+        "    inspect_module = __import__('inspect')",
+        "    try:",
+        "        signature = inspect_module.signature(fn)",
+        "    except (TypeError, ValueError):",
+        "        return fn(**kwargs)",
+        "    parameters = signature.parameters",
+        "    if any(param.kind == inspect_module.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        return fn(**kwargs)",
+        "    supported = {",
+        "        key: value",
+        "        for key, value in kwargs.items()",
+        "        if key in parameters",
+        "    }",
+        "    return fn(**supported)",
+        "",
+        "def load_arc_challenge_examples(max_examples: int, seed: int = SEED, split: str = 'validation'):",
+        "    return {'task': 'arc_challenge', 'examples': list(range(max_examples)), 'seed': seed, 'split': split}",
+        "",
+        "def load_hellaswag_examples(requested_examples: int, seed: int = SEED, split: str = 'validation'):",
+        "    return {'task': 'hellaswag', 'examples': list(range(requested_examples)), 'seed': seed, 'split': split}",
+        "",
+        "def _load_study_datasets(args: argparse.Namespace):",
+        "    seed = int(_arg_value(args, 'seed', SEED))",
+        "    arc_samples = int(_arg_value(args, 'arc_eval_samples', DEFAULT_ARC_EVAL_SAMPLES))",
+        "    hellaswag_samples = int(_arg_value(args, 'hellaswag_eval_samples', DEFAULT_HELLASWAG_EVAL_SAMPLES))",
+        "    arc_payload = _invoke_with_supported_kwargs(",
+        "        load_arc_challenge_examples,",
+        "        split='validation',",
+        "        sample_size=arc_samples,",
+        "        max_samples=arc_samples,",
+        "        seed=seed,",
+        "    )",
+        "    hellaswag_payload = _invoke_with_supported_kwargs(",
+        "        load_hellaswag_examples,",
+        "        split='validation',",
+        "        sample_size=hellaswag_samples,",
+        "        max_samples=hellaswag_samples,",
+        "        seed=seed,",
+        "    )",
+        "    return {'arc_challenge': arc_payload, 'hellaswag': hellaswag_payload}",
+        "",
+        "def main() -> int:",
+        "    datasets = _load_study_datasets(argparse.Namespace(seed=7, arc_eval_samples=2, hellaswag_eval_samples=5))",
+        "    if len(datasets['arc_challenge']['examples']) != 2:",
+        "        return 1",
+        "    if len(datasets['hellaswag']['examples']) != 5:",
+        "        return 2",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing 1 required positional argument: 'max_examples'/
+    );
+
+    const repair = await repairPythonEvaluationDatasetLoaderArgumentAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_sample_limit_aliases");
+    expect(repairedSource).toContain('"requested_examples"');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs benchmark evaluator aliases without fabricating metrics", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-benchmark-evaluator-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from typing import Any",
+        "",
+        "SEED = 42",
+        "",
+        "class RunConfig:",
+        "    def __init__(self):",
+        "        self.seed = 7",
+        "        self.data_cache_dir = 'cache-dir'",
+        "        self.arc_eval_samples = 2",
+        "        self.hellaswag_eval_samples = 3",
+        "        self.eval_batch_size = 1",
+        "",
+        "def _call_with_supported_kwargs(fn, **kwargs):",
+        "    signature = inspect.signature(fn)",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):",
+        "        return fn(**kwargs)",
+        "    return fn(**{key: value for key, value in kwargs.items() if key in signature.parameters})",
+        "",
+        "def _get_callable(*names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _device_from_device_info(device_info):",
+        "    return 'cpu'",
+        "",
+        "def load_evaluation_datasets(args=None, seed=SEED):",
+        "    assert getattr(args, 'dataset_cache_dir') == 'cache-dir'",
+        "    return {",
+        "        'arc_challenge': [{'benchmark': 'arc_challenge'} for _ in range(int(args.arc_challenge_eval_examples))],",
+        "        'hellaswag': [{'benchmark': 'hellaswag'} for _ in range(int(args.hellaswag_eval_examples))],",
+        "    }",
+        "",
+        "def evaluate_zero_shot_accuracy(model=None, tokenizer=None, benchmarks=None, device=None, args=None, include_predictions=False):",
+        "    total = len(benchmarks['arc_challenge']) + len(benchmarks['hellaswag'])",
+        "    return {",
+        "        'mean_zero_shot_accuracy': 0.5,",
+        "        'arc_challenge_accuracy': 0.5,",
+        "        'hellaswag_accuracy': 0.5,",
+        "        'total_evaluated': total,",
+        "    }",
+        "",
+        "def _evaluate_condition_model(model: Any, tokenizer: Any, config: RunConfig, device_info: Any):",
+        "    evaluator = _get_callable(",
+        "        'evaluate_zero_shot_benchmarks',",
+        "        'evaluate_model_on_benchmarks',",
+        "        'run_zero_shot_evaluation',",
+        "        'evaluate_multiple_choice_benchmarks',",
+        "        'evaluate_model',",
+        "    )",
+        "    if evaluator is None:",
+        "        raise RuntimeError(",
+        "            'No benchmark evaluator was defined. Expected one of: '",
+        "            'evaluate_zero_shot_benchmarks, evaluate_model_on_benchmarks, '",
+        "            'run_zero_shot_evaluation, evaluate_multiple_choice_benchmarks, evaluate_model.'",
+        "        )",
+        "    return _call_with_supported_kwargs(",
+        "        evaluator,",
+        "        model=model,",
+        "        tokenizer=tokenizer,",
+        "        config=config,",
+        "        device=_device_from_device_info(device_info),",
+        "        device_info=device_info,",
+        "        arc_eval_samples=config.arc_eval_samples,",
+        "        hellaswag_eval_samples=config.hellaswag_eval_samples,",
+        "        eval_batch_size=config.eval_batch_size,",
+        "        seed=config.seed,",
+        "        cache_dir=str(config.data_cache_dir),",
+        "    )",
+        "",
+        "def main() -> int:",
+        "    metrics = _evaluate_condition_model(object(), object(), RunConfig(), {'device': 'cpu'})",
+        "    if metrics.get('total_evaluated') != 5:",
+        "        return 1",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No benchmark evaluator was defined/
+    );
+
+    const repair = await repairPythonBenchmarkEvaluatorAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def evaluate_zero_shot_benchmarks(");
+    expect(repairedSource).toContain("def _autolabos_load_benchmark_examples_for_evaluator(");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs evaluator compatible-call helpers that pass unsupported sample-limit kwargs", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-supported-signature-kwargs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Callable",
+        "",
+        "def evaluate_arc_challenge(model, tokenizer, device=None, limit=None, seed=None, score_mode='label'):",
+        "    assert device == 'cuda'",
+        "    assert limit == 3",
+        "    assert seed == 7",
+        "    return {'accuracy': 1.0, 'evaluated': limit}",
+        "",
+        "def _safe_call_with_supported_signature(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:",
+        "    attempts = [",
+        "        (args, kwargs),",
+        "        (args, {key: value for key, value in kwargs.items() if value is not None}),",
+        "    ]",
+        "    if len(args) >= 3:",
+        "        attempts.extend([",
+        "            ((args[0], args[1], args[2]), {key: value for key, value in kwargs.items() if key in {'max_examples', 'seed'}}),",
+        "            ((args[0], args[1]), {key: value for key, value in kwargs.items() if key in {'device', 'max_examples', 'seed'}}),",
+        "        ])",
+        "    last_error = None",
+        "    for call_args, call_kwargs in attempts:",
+        "        try:",
+        "            return fn(*call_args, **call_kwargs)",
+        "        except TypeError as exc:",
+        "            last_error = exc",
+        "    raise last_error",
+        "",
+        "def _evaluate_candidate_model(model, tokenizer, device, max_eval_examples, seed):",
+        "    return _safe_call_with_supported_signature(",
+        "        evaluate_arc_challenge,",
+        "        model,",
+        "        tokenizer,",
+        "        device,",
+        "        max_examples=max_eval_examples,",
+        "        seed=seed,",
+        "    )",
+        "",
+        "def main() -> int:",
+        "    result = _evaluate_candidate_model(object(), object(), 'cuda', 3, 7)",
+        "    if result.get('evaluated') != 3:",
+        "        return 1",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /unexpected keyword argument 'max_examples'/
+    );
+
+    const repair = await repairPythonSupportedSignatureKwargAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _autolabos_filter_supported_signature_kwargs(");
+    expect(repairedSource).toContain('"limit"');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs deterministic subset helpers generated with keyword-only subset sizes", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-subset-arity-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any",
+        "",
+        "SEED = 42",
+        "MAX_ALLOWED_INSTRUCTION_EXAMPLES = 8",
+        "",
+        "def dataset_num_rows(dataset_obj):",
+        "    return len(dataset_obj)",
+        "",
+        "def validate_subset_size(subset_size, *, max_allowed, dataset_role):",
+        "    return min(int(subset_size), int(max_allowed))",
+        "",
+        "def deterministic_subset_indices(total_rows, requested, *, seed):",
+        "    return list(range(min(int(total_rows), int(requested))))",
+        "",
+        "def select_deterministic_subset(dataset_obj: Any, *, subset_size: int, seed: int = SEED, max_allowed: int, dataset_role: str) -> Any:",
+        "    requested = validate_subset_size(subset_size, max_allowed=max_allowed, dataset_role=dataset_role)",
+        "    return [dataset_obj[index] for index in deterministic_subset_indices(dataset_num_rows(dataset_obj), requested, seed=seed)]",
+        "",
+        "def _select_instruction_subset(dataset_obj: Any, requested_examples: int, seed: int) -> Any:",
+        "    helper = globals().get('select_deterministic_subset')",
+        "    try:",
+        "        return helper(dataset_obj, requested_examples, seed=seed, max_allowed=MAX_ALLOWED_INSTRUCTION_EXAMPLES, dataset_role='instruction-tuning')",
+        "    except TypeError:",
+        "        try:",
+        "            return helper(dataset_obj, requested_examples, seed=seed)",
+        "        except TypeError:",
+        "            return helper(dataset_obj, requested_examples)",
+        "",
+        "def main() -> int:",
+        "    subset = _select_instruction_subset(['a', 'b', 'c'], 2, 7)",
+        "    return 0 if subset == ['a', 'b'] else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/positional argument/);
+
+    const repair = await repairPythonDeterministicSubsetHelperAritySurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_original_select_deterministic_subset = select_deterministic_subset");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs tokenizer helper aliases when generated loaders use configure-tokenizer names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-tokenizer-loader-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "",
+        "DEFAULT_MODEL_NAME = 'sshleifer/tiny-gpt2'",
+        "DEFAULT_MAX_SEQ_LENGTH = 192",
+        "",
+        "def _call_with_supported_kwargs(func, **kwargs):",
+        "    import inspect",
+        "    parameters = inspect.signature(func).parameters",
+        "    return func(**{name: value for name, value in kwargs.items() if name in parameters})",
+        "",
+        "def _get_arg(args, name, default=None):",
+        "    return getattr(args, name, default)",
+        "",
+        "def load_and_configure_tokenizer(model_name, cache_dir=None, model_max_length=128):",
+        "    return {'model_name': model_name, 'cache_dir': cache_dir, 'model_max_length': model_max_length}",
+        "",
+        "def _workflow_load_tokenizer(args: argparse.Namespace, cache_dir):",
+        "    model_name = _get_arg(args, 'model_name', DEFAULT_MODEL_NAME)",
+        "    for helper_name in ('load_tokenizer', 'prepare_tokenizer', 'get_tokenizer'):",
+        "        helper = globals().get(helper_name)",
+        "        if callable(helper):",
+        "            return _call_with_supported_kwargs(helper, model_name=model_name, cache_dir=str(cache_dir), args=args)",
+        "    raise RuntimeError('No tokenizer loading helper was found.')",
+        "",
+        "def main() -> int:",
+        "    args = argparse.Namespace(model_name='local-model', max_seq_length=256)",
+        "    tokenizer = _workflow_load_tokenizer(args, '/tmp/cache')",
+        "    return 0 if tokenizer == {'model_name': 'local-model', 'cache_dir': '/tmp/cache', 'model_max_length': 256} else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No tokenizer loading helper was found/
+    );
+
+    const repair = await repairPythonTokenizerHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def load_tokenizer(model_name=None, cache_dir=None, args=None, **keyword):");
+    expect(repairedSource).toContain("\"load_and_configure_tokenizer\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs ExperimentDefaults when parser defaults reference trust_remote_code", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-defaults-hf-runtime-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import dataclasses",
+        "",
+        "DEFAULT_TRUST_REMOTE_CODE = False",
+        "DEFAULT_MODEL_NAME = 'sshleifer/tiny-gpt2'",
+        "DEFAULT_TOKENIZER_NAME = 'sshleifer/tiny-gpt2'",
+        "DEFAULT_MODEL_REVISION = 'main'",
+        "",
+        "@dataclasses.dataclass(frozen=True)",
+        "class ExperimentDefaults:",
+        "    model_name: str = DEFAULT_MODEL_NAME",
+        "    tokenizer_name: str = DEFAULT_TOKENIZER_NAME",
+        "    model_revision: str = DEFAULT_MODEL_REVISION",
+        "",
+        "def build_arg_parser():",
+        "    defaults = ExperimentDefaults()",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--model-name', default=defaults.model_name)",
+        "    parser.add_argument('--trust-remote-code', action='store_true', default=defaults.trust_remote_code)",
+        "    return parser",
+        "",
+        "def main():",
+        "    args = build_arg_parser().parse_args([])",
+        "    return 0 if args.trust_remote_code is False else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /trust_remote_code/
+    );
+
+    const repair = await repairPythonExperimentDefaultsHfRuntimeFieldSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("trust_remote_code: bool = DEFAULT_TRUST_REMOTE_CODE");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs baseline evaluator calls that omit model tokenizer and benchmark datasets", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-eval-args-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "from typing import Any, Callable, Dict, Mapping, Sequence",
+        "",
+        "def _resolve_callable(names, required=True):",
+        "    for name in names:",
+        "        value = globals().get(name)",
+        "        if callable(value):",
+        "            return value",
+        "    if required:",
+        "        raise RuntimeError('missing callable')",
+        "    return None",
+        "",
+        "def _call_with_supported_kwargs(func: Callable[..., Any], **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    filtered = {name: value for name, value in kwargs.items() if name in parameters}",
+        "    missing = [",
+        "        name",
+        "        for name, parameter in parameters.items()",
+        "        if parameter.default is inspect._empty and name not in filtered",
+        "    ]",
+        "    if missing:",
+        "        raise RuntimeError(f\"Cannot call {func.__name__}; missing required supported arguments: {', '.join(missing)}\")",
+        "    return func(**filtered)",
+        "",
+        "def load_model_and_tokenizer(model_name_or_path=None, cache_dir=None, device=None):",
+        "    return 'model:' + str(model_name_or_path), 'tokenizer', 'cpu', {'loaded': True}",
+        "",
+        "def load_benchmark_datasets(eval_subset_size=None, seed=None):",
+        "    return {'arc_challenge': [{'answer': 'A'}], 'hellaswag': [{'answer': 'B'}]}, {'seed': seed}",
+        "",
+        "def evaluate_baseline_zero_shot(model, tokenizer, benchmark_datasets):",
+        "    assert model == 'model:tiny-model'",
+        "    assert tokenizer == 'tokenizer'",
+        "    assert 'arc_challenge' in benchmark_datasets",
+        "    return {'mean_accuracy': 0.5}",
+        "",
+        "def run_peft_instruction_study(args):",
+        "    seed = 42",
+        "    output_dir = '.'",
+        "    common_kwargs = {",
+        "        'args': args,",
+        "        'seed': seed,",
+        "        'model_name': 'tiny-model',",
+        "        'output_dir': output_dir,",
+        "        'eval_subset_size': 2,",
+        "    }",
+        "    dataset_bundle = {}",
+        "    baseline_func = _resolve_callable(('run_baseline_zero_shot_evaluation', 'evaluate_baseline_zero_shot'), required=True)",
+        "    baseline_raw = _call_with_supported_kwargs(baseline_func, dataset_bundle=dataset_bundle, **common_kwargs)",
+        "    return baseline_raw",
+        "",
+        "def main():",
+        "    result = run_peft_instruction_study(object())",
+        "    return 0 if result['mean_accuracy'] == 0.5 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing required supported arguments: model, tokenizer, benchmark_datasets/
+    );
+
+    const repair = await repairPythonBaselineEvaluatorArgumentSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_prepare_baseline_evaluator_inputs");
+    expect(repairedSource).toContain("**_autolabos_baseline_eval_inputs");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs baseline-first condition-loop invocations that pass config positionally", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-first-loop-inputs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "from typing import Any, Callable, Sequence",
+        "",
+        "def _call_with_supported_kwargs(func: Callable[..., Any], **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    accepted = {",
+        "        name",
+        "        for name, param in parameters.items()",
+        "        if param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)",
+        "    }",
+        "    return func(**{key: value for key, value in kwargs.items() if key in accepted})",
+        "",
+        "def _get_config_value(config, key, default=None):",
+        "    return config.get(key, default)",
+        "",
+        "def detect_device(prefer_cuda=True):",
+        "    return 'cpu' if prefer_cuda else 'unknown'",
+        "",
+        "def load_instruction_subset(dataset_name=None, split=None, subset_size=None, seed=None, dataset_config_name=None):",
+        "    assert dataset_name == 'tiny-instructions'",
+        "    assert split == 'train'",
+        "    assert subset_size == 3",
+        "    return [{'prompt': 'p', 'response': 'r', 'seed': seed}]",
+        "",
+        "def load_benchmark_subsets(eval_examples_per_benchmark=None, seed=None):",
+        "    assert eval_examples_per_benchmark == 2",
+        "    return {'arc_challenge': [{'answer': 'A', 'seed': seed}]}",
+        "",
+        "def log(message):",
+        "    return None",
+        "",
+        "def _invoke_named_helper(helper_names: Sequence[str], *args: Any, **kwargs: Any) -> Any:",
+        "    for helper_name in helper_names:",
+        "        helper = globals().get(helper_name)",
+        "        if callable(helper):",
+        "            return helper(*args, **kwargs)",
+        "    raise RuntimeError('missing helper')",
+        "",
+        "def execute_baseline_first_condition_loop(*, config, device, train_examples=None, eval_examples=None, logger=None):",
+        "    assert config['seed'] == 7",
+        "    assert device == 'cpu'",
+        "    assert train_examples and train_examples[0]['seed'] == 7",
+        "    assert eval_examples['arc_challenge'][0]['seed'] == 7",
+        "    assert callable(logger)",
+        "    return {'status': 'completed'}",
+        "",
+        "def run_peft_instruction_study(config):",
+        "    run_result = _invoke_named_helper(",
+        "        (",
+        "            'run_locked_baseline_first_conditions',",
+        "            'execute_locked_baseline_first_conditions',",
+        "            'run_baseline_first_condition_loop',",
+        "            'execute_baseline_first_condition_loop',",
+        "            'run_condition_execution_loop',",
+        "        ),",
+        "        config,",
+        "    )",
+        "    return run_result",
+        "",
+        "def main():",
+        "    result = run_peft_instruction_study({",
+        "        'seed': 7,",
+        "        'dataset_name': 'tiny-instructions',",
+        "        'dataset_config_name': None,",
+        "        'train_subset_size': 3,",
+        "        'eval_examples_per_benchmark': 2,",
+        "    })",
+        "    return 0 if result['status'] == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /takes 0 positional arguments but 1 was given/
+    );
+
+    const repair = await repairPythonBaselineFirstConditionLoopInvocationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_loop_inputs");
+    expect(repairedSource).toContain("**_autolabos_baseline_first_loop_inputs(config)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs locked recipe workflow invokers that omit materialized dataset and device inputs", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-locked-workflow-inputs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from typing import Any, Dict, Mapping, Optional",
+        "",
+        "def load_all_benchmark_examples(examples_per_benchmark=None, seed=None, cache_dir=None):",
+        "    assert examples_per_benchmark == 2",
+        "    assert cache_dir == 'cache'",
+        "    return {'arc_challenge': [{'seed': seed, 'answer': 'A'}]}",
+        "",
+        "def load_instruction_tuning_examples(train_examples=None, validation_examples=None, seed=None, cache_dir=None):",
+        "    assert train_examples == 3",
+        "    assert validation_examples == 1",
+        "    return ([{'seed': seed, 'text': 'train'}], [{'seed': seed, 'text': 'validation'}])",
+        "",
+        "def get_default_device_info():",
+        "    return {'device': 'cpu'}",
+        "",
+        "def run_condition_execution_loop(args, eval_examples_by_benchmark, train_examples, device_info):",
+        "    assert args.seed == 7",
+        "    assert eval_examples_by_benchmark['arc_challenge'][0]['seed'] == 7",
+        "    assert train_examples[0]['text'] == 'train'",
+        "    assert device_info['device'] == 'cpu'",
+        "    return [{'condition_id': 'locked_lora_baseline', 'status': 'completed'}]",
+        "",
+        "def _invoke_locked_recipe_workflow(args: argparse.Namespace) -> Dict[str, Any]:",
+        "    workflow_names = (",
+        "        'run_locked_recipe_evaluation_workflow',",
+        "        'run_condition_execution_loop',",
+        "    )",
+        "    last_error: Optional[BaseException] = None",
+        "    for workflow_name in workflow_names:",
+        "        workflow = globals().get(workflow_name)",
+        "        if not callable(workflow):",
+        "            continue",
+        "        try:",
+        "            result = workflow(args)",
+        "        except TypeError as exc:",
+        "            last_error = exc",
+        "            kwargs = vars(args).copy()",
+        "            try:",
+        "                result = workflow(**kwargs)",
+        "            except TypeError as retry_exc:",
+        "                last_error = retry_exc",
+        "                continue",
+        "        if isinstance(result, Mapping):",
+        "            return dict(result)",
+        "        return {'conditions': result}",
+        "    if last_error is not None:",
+        "        raise RuntimeError('No compatible locked recipe workflow could be invoked') from last_error",
+        "    raise RuntimeError('missing workflow')",
+        "",
+        "def main():",
+        "    args = argparse.Namespace(seed=7, eval_examples_per_benchmark=2, train_examples=3, validation_examples=1, cache_dir='cache', metrics_path='metrics.json')",
+        "    payload = _invoke_locked_recipe_workflow(args)",
+        "    assert payload['conditions'][0]['condition_id'] == 'locked_lora_baseline'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No compatible locked recipe workflow/
+    );
+
+    const repair = await repairPythonLockedRecipeWorkflowInputMaterializationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_locked_recipe_workflow_input_materialization_marker");
+    expect(repairedSource).toContain("result = _autolabos_call_locked_recipe_workflow");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs singular condition-result normalization calls using the generated plural helper", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-normalizer-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Dict, List, Mapping, Sequence",
+        "",
+        "def _ordered_condition_markers():",
+        "    return ['unmodified_base', 'locked_lora_baseline']",
+        "",
+        "def normalize_condition_results(condition_results: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:",
+        "    normalized = []",
+        "    for record in condition_results:",
+        "        copied = dict(record)",
+        "        copied['normalized'] = True",
+        "        normalized.append(copied)",
+        "    return normalized",
+        "",
+        "def _ensure_required_condition_records(condition_results: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:",
+        "    by_marker = {str(record.get('condition_marker')): dict(record) for record in condition_results}",
+        "    ordered = []",
+        "    for marker in _ordered_condition_markers():",
+        "        if marker in by_marker:",
+        "            ordered.append(by_marker[marker])",
+        "        else:",
+        "            ordered.append(",
+        "                normalize_condition_result(",
+        "                    {",
+        "                        'condition_marker': marker,",
+        "                        'status': 'failed',",
+        "                        'failure_reason': 'missing required condition',",
+        "                    }",
+        "                )",
+        "            )",
+        "    return ordered",
+        "",
+        "def main():",
+        "    records = normalize_condition_results([{'condition_marker': 'unmodified_base', 'status': 'completed'}])",
+        "    records = _ensure_required_condition_records(records)",
+        "    assert records[1]['condition_marker'] == 'locked_lora_baseline'",
+        "    assert records[1]['normalized'] is True",
+        "    assert records[1]['status'] == 'failed'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /normalize_condition_result/
+    );
+
+    const repair = await repairPythonConditionResultNormalizerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def normalize_condition_result(record):");
+    expect(repairedSource).toContain("normalize_condition_results([record])");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs flexible model-loader calls that omit a required device_or_info argument", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-model-loader-device-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "from typing import Any, Callable",
+        "",
+        "def _call_flex(func: Callable[..., Any], /, **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    accepted = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return func(**accepted)",
+        "",
+        "def load_model_and_tokenizer(model_name_or_path: str, device_or_info: Any, *, trust_remote_code=False):",
+        "    return 'model:' + model_name_or_path, 'tokenizer', {'device': str(device_or_info)}",
+        "",
+        "def _load_base_model_for_loop(args, device):",
+        "    loader = load_model_and_tokenizer",
+        "    loaded = _call_flex(",
+        "        loader,",
+        "        model_name_or_path='tiny-model',",
+        "        model_name='tiny-model',",
+        "        args=args,",
+        "        device=device,",
+        "        seed=42,",
+        "    )",
+        "    return loaded",
+        "",
+        "def main():",
+        "    model, tokenizer, metadata = _load_base_model_for_loop(object(), 'cpu')",
+        "    assert model == 'model:tiny-model'",
+        "    assert tokenizer == 'tokenizer'",
+        "    assert metadata['device'] == 'cpu'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/device_or_info/);
+
+    const repair = await repairPythonModelLoaderDeviceInfoAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("device_or_info=device,");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs NEFTune embedding monkeypatches to replica-safe forward hooks", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-neftune-hook-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import torch",
+        "",
+        "def install_neftune_embedding_noise(model, alpha):",
+        "    if alpha is None or alpha <= 0:",
+        "        return None",
+        "    embedding = model.get_input_embeddings()",
+        "    original_forward = embedding.forward",
+        "",
+        "    def noisy_forward(input_ids):",
+        "        outputs = original_forward(input_ids)",
+        "        if embedding.training:",
+        "            dims = max(1, int(outputs.shape[-1]))",
+        "            scale = float(alpha) / (float(dims) ** 0.5)",
+        "            outputs = outputs + torch.empty_like(outputs).uniform_(-scale, scale)",
+        "        return outputs",
+        "",
+        "    embedding.forward = noisy_forward",
+        "    return original_forward",
+        "",
+        "def restore_embedding_forward(model, original_forward):",
+        "    if original_forward is not None:",
+        "        model.get_input_embeddings().forward = original_forward",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonNeftuneEmbeddingForwardHookSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("AutoLabOS replica-safe NEFTune forward hook");
+    expect(repairedSource).toContain("register_forward_hook");
+    expect(repairedSource).toContain("original_forward.remove()");
+    expect(repairedSource).not.toContain("embedding.forward = noisy_forward");
+    expect(repairedSource).not.toContain("outputs = original_forward(input_ids)");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+  });
+
+  it("repairs final orchestration calls to undefined detect_device using generated device helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-detect-device-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def discover_device():",
+        "    return 'cuda'",
+        "",
+        "def run_experiment():",
+        "    device = detect_device()",
+        "    assert device == 'cuda'",
+        "    return {'device': device}",
+        "",
+        "def main():",
+        "    payload = run_experiment()",
+        "    assert payload['device'] == 'cuda'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /detect_device/
+    );
+
+    const repair = await repairPythonDeviceHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def detect_device():");
+    expect(repairedSource).toContain('"discover_device"');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs baseline-first pipeline calls to undefined detect_device_info using generated device helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-detect-device-info-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def detect_torch_device():",
+        "    return 'cuda', {'device': 'cuda', 'cuda_available': True}",
+        "",
+        "def run_baseline_first_pipeline():",
+        "    device_info = detect_device_info()",
+        "    assert device_info['device'] == 'cuda'",
+        "    assert device_info['cuda_available'] is True",
+        "    return device_info",
+        "",
+        "def main():",
+        "    payload = run_baseline_first_pipeline()",
+        "    assert payload['device'] == 'cuda'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /detect_device_info/
+    );
+
+    const repair = await repairPythonDeviceHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def detect_device_info():");
+    expect(repairedSource).toContain('"detect_torch_device"');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs device_info detect_device calls using generated detect_execution_device metadata", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-detect-execution-device-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def detect_execution_device():",
+        "    return 'cuda', {'selected_device': 'cuda', 'cuda_available': True}",
+        "",
+        "def main():",
+        "    device_info = detect_device()",
+        "    assert device_info['selected_device'] == 'cuda'",
+        "    refreshed_device_info = detect_device()",
+        "    device_info.update(refreshed_device_info)",
+        "    assert device_info['cuda_available'] is True",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /detect_device/
+    );
+
+    const repair = await repairPythonDeviceHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def detect_device():");
+    expect(repairedSource).toContain('"detect_execution_device"');
+    expect(repairedSource).toContain("_autolabos_normalize_device_helper_result");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs final orchestration calls to undefined get_device using generated device info helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-get-device-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def get_device_info():",
+        "    return {'device': 'cuda'}",
+        "",
+        "def run_experiment():",
+        "    device = get_device()",
+        "    assert device == 'cuda'",
+        "    return {'device': device}",
+        "",
+        "def main():",
+        "    payload = run_experiment()",
+        "    assert payload['device'] == 'cuda'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/get_device/);
+
+    const repair = await repairPythonDeviceHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def get_device():");
+    expect(repairedSource).toContain("def _autolabos_device_from_device_info():");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("rejects python runners whose atomic JSON writer is payload-first but called with a path first", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-atomic-json-order-"));
     tempDirs.push(workspace);
@@ -13347,7 +24855,7 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
-  it("rejects python runners whose exception serializer calls undefined normalize_for_json", async () => {
+  it("repairs python runners whose exception serializer calls undefined normalize_for_json", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-undefined-normalize-json-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -13430,8 +24938,12 @@ describe("ImplementSessionManager", () => {
       workspaceRoot: workspace
     });
 
-    await expect(manager.run(run)).rejects.toThrow(/normalize_for_json/i);
-    expect(calls).toBe(3);
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+
+    expect(calls).toBe(1);
+    expect(repairedSource).toContain("def normalize_for_json(value):");
+    expect(result.verifyReport.status).toBe("pass");
   });
 
   it("rejects python runners that access dict recipe configs with object attributes", async () => {
@@ -13631,6 +25143,113 @@ describe("ImplementSessionManager", () => {
 
     await expect(manager.run(run)).rejects.toThrow(/RecipeSpec constructor keyword mismatch/i);
     expect(calls).toBe(3);
+  });
+
+  it("repairs CandidateSpec-backed PEFT recipe normalization before locked baseline validation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-candidate-spec-peft-normalization-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, List, Mapping, Optional, Sequence, Tuple",
+        "",
+        "@dataclass(frozen=True)",
+        "class CandidateSpec:",
+        "    candidate_id: str",
+        "    display_name: str",
+        "    recipe_type: str",
+        "    description: str",
+        "    train: bool",
+        "    lora_r: Optional[int] = None",
+        "    lora_alpha: Optional[int] = None",
+        "    lora_dropout: float = 0.0",
+        "    target_modules: Tuple[str, ...] = ()",
+        "    @property",
+        "    def is_unmodified_baseline(self) -> bool:",
+        "        return self.recipe_type == 'unmodified_base'",
+        "",
+        "@dataclass(frozen=True)",
+        "class PeftRecipe:",
+        "    recipe_id: str",
+        "    display_name: str",
+        "    recipe_type: str",
+        "    description: str",
+        "    rank: Optional[int] = None",
+        "    alpha: Optional[int] = None",
+        "    dropout: float = 0.0",
+        "    target_modules: Tuple[str, ...] = ()",
+        "    bias: str = 'none'",
+        "    task_type: str = 'CAUSAL_LM'",
+        "    trainable: bool = True",
+        "    locked_baseline: bool = False",
+        "    expected_order: int = 0",
+        "    def to_metrics_dict(self):",
+        "        return dict(self.__dict__)",
+        "",
+        "CANDIDATE_SPECS = (",
+        "    CandidateSpec('base_unmodified', 'Base', 'unmodified_base', 'no training', False),",
+        "    CandidateSpec('lora_r8_alpha16_all_linear', 'Vanilla LoRA', 'lora', 'locked tuned baseline', True, lora_r=8, lora_alpha=16, lora_dropout=0.05, target_modules=('q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj')),",
+        ")",
+        "",
+        "def _recipe_value(raw: Any, key: str, default: Any = None) -> Any:",
+        "    if raw is None:",
+        "        return default",
+        "    if isinstance(raw, Mapping):",
+        "        return raw.get(key, default)",
+        "    return getattr(raw, key, default)",
+        "",
+        "def _coerce_target_modules(value: Any, default: Sequence[str] = ('q_proj', 'k_proj', 'v_proj', 'o_proj')) -> Tuple[str, ...]:",
+        "    if value is None:",
+        "        return tuple(default)",
+        "    return tuple(value)",
+        "",
+        "def normalize_peft_recipe(raw: Any, expected_order: int) -> PeftRecipe:",
+        "    recipe_id = str(_recipe_value(raw, 'recipe_id', _recipe_value(raw, 'id', _recipe_value(raw, 'name', f'candidate_{expected_order}'))))",
+        "    recipe_type = str(_recipe_value(raw, 'recipe_type', _recipe_value(raw, 'kind', 'base' if expected_order == 0 or 'base' in recipe_id.lower() else 'lora'))).lower()",
+        "    rank = _recipe_value(raw, 'rank', _recipe_value(raw, 'r', None))",
+        "    alpha = _recipe_value(raw, 'alpha', _recipe_value(raw, 'lora_alpha', None))",
+        "    target_modules = _coerce_target_modules(_recipe_value(raw, 'target_modules', None), default=())",
+        "    return PeftRecipe(recipe_id=recipe_id, display_name=str(_recipe_value(raw, 'display_name', recipe_id)), recipe_type=recipe_type, description=str(_recipe_value(raw, 'description', recipe_id)), rank=rank, alpha=alpha, dropout=float(_recipe_value(raw, 'dropout', _recipe_value(raw, 'lora_dropout', 0.0)) or 0.0), target_modules=target_modules, trainable=bool(_recipe_value(raw, 'trainable', recipe_type != 'base')), locked_baseline=bool(_recipe_value(raw, 'locked_baseline', expected_order in (0, 1))), expected_order=expected_order)",
+        "",
+        "def get_locked_peft_recipes(config: Any = None) -> List[PeftRecipe]:",
+        "    return validate_locked_recipe_order([normalize_peft_recipe(candidate, idx) for idx, candidate in enumerate(CANDIDATE_SPECS)])",
+        "",
+        "def validate_locked_recipe_order(recipes: Sequence[PeftRecipe]) -> List[PeftRecipe]:",
+        "    normalized = [normalize_peft_recipe(recipe, idx) for idx, recipe in enumerate(recipes)]",
+        "    first = normalized[0]",
+        "    second = normalized[1]",
+        "    if first.recipe_type != 'base' or first.trainable:",
+        "        raise ValueError('Baseline-first contract violation: candidate 0 must be the unmodified non-trainable base checkpoint.')",
+        "    if second.recipe_type not in {'lora', 'qlora'}:",
+        "        raise ValueError('Baseline-first contract violation: candidate 1 must be the locked vanilla LoRA baseline.')",
+        "    if not (second.rank == 8 and second.alpha == 16 and abs(second.dropout - 0.05) < 1e-12 and tuple(second.target_modules) == ('q_proj', 'k_proj', 'v_proj', 'o_proj')):",
+        "        raise ValueError('Locked LoRA baseline must be rank=8, alpha=16, dropout=0.05, target_modules=q_proj/k_proj/v_proj/o_proj.')",
+        "    return normalized",
+        "",
+        "LOCKED_PEFT_RECIPES: List[PeftRecipe] = get_locked_peft_recipes()",
+        "",
+        "if __name__ == '__main__':",
+        "    assert LOCKED_PEFT_RECIPES[0].recipe_type == 'base'",
+        "    assert LOCKED_PEFT_RECIPES[0].trainable is False",
+        "    assert LOCKED_PEFT_RECIPES[1].rank == 8",
+        "    assert LOCKED_PEFT_RECIPES[1].target_modules == ('q_proj', 'k_proj', 'v_proj', 'o_proj')",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /candidate 0 must be the unmodified non-trainable base checkpoint/
+    );
+
+    const repair = await repairPythonCandidateSpecPeftRecipeNormalizationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _autolabos_candidate_spec_peft_recipe_normalization_marker():");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
   it("repairs generated baseline-first PEFT runners that sort the untuned reference before the locked tuned baseline", async () => {
@@ -13837,6 +25456,471 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("LOCKED_STANDARD_LORA_BASELINE_ID = STANDARD_LORA_BASELINE_ID");
     expect(repairedSource).toContain("STANDARD_LORA_BASELINE_ID = 'standard_lora_r8_all_linear'");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs locked recipe catalogs backed by generated candidate IDs and dataclass rows", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-locked-recipe-catalog-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from collections import OrderedDict",
+        "from dataclasses import dataclass",
+        "from typing import Any, Dict, List, Mapping, Optional",
+        "",
+        "UNMODIFIED_BASE_CANDIDATE_ID = '00_unmodified_base_checkpoint'",
+        "LOCKED_LORA_BASELINE_CANDIDATE_ID = '01_locked_vanilla_lora_baseline'",
+        "",
+        "@dataclass(frozen=True)",
+        "class RecipeDefinition:",
+        "    candidate_id: str",
+        "    display_name: str",
+        "    family: str",
+        "    tune: bool",
+        "",
+        "CANDIDATE_RECIPES = OrderedDict([",
+        "    (UNMODIFIED_BASE_CANDIDATE_ID, RecipeDefinition(UNMODIFIED_BASE_CANDIDATE_ID, 'Unmodified base checkpoint', 'base_model_reference', False)),",
+        "    (LOCKED_LORA_BASELINE_CANDIDATE_ID, RecipeDefinition(LOCKED_LORA_BASELINE_CANDIDATE_ID, 'Locked vanilla LoRA baseline', 'lora', True)),",
+        "])",
+        "",
+        "BASELINE_UNMODIFIED_RECIPE_ID = \"base_unmodified\"",
+        "VANILLA_LORA_BASELINE_RECIPE_ID = \"vanilla_lora\"",
+        "",
+        "def _recipe_catalog_from_globals() -> 'OrderedDict[str, Dict[str, Any]]':",
+        "    for name in ('RECIPE_CATALOG', 'PEFT_RECIPE_CATALOG', 'PEFT_RECIPES', 'RECIPE_DEFINITIONS', 'CANDIDATE_RECIPES'):",
+        "        value = globals().get(name)",
+        "        if isinstance(value, Mapping) and value:",
+        "            return OrderedDict((str(k), dict(v) if isinstance(v, Mapping) else {\"value\": v}) for k, v in value.items())",
+        "    return OrderedDict()",
+        "",
+        "def locked_recipe_execution_order(recipe_catalog: Optional[Mapping[str, Mapping[str, Any]]] = None) -> List[str]:",
+        "    catalog = OrderedDict(recipe_catalog or _recipe_catalog_from_globals())",
+        "    available = [str(k) for k in catalog.keys()]",
+        "    ordered: List[str] = []",
+        "    for required_id in (BASELINE_UNMODIFIED_RECIPE_ID, VANILLA_LORA_BASELINE_RECIPE_ID):",
+        "        if required_id in catalog and required_id not in ordered:",
+        "            ordered.append(required_id)",
+        "    if BASELINE_UNMODIFIED_RECIPE_ID not in ordered:",
+        "        for alias in ('base', 'unmodified', 'base_model', 'base_checkpoint'):",
+        "            if alias in catalog:",
+        "                ordered.append(alias)",
+        "                break",
+        "    if VANILLA_LORA_BASELINE_RECIPE_ID not in ordered:",
+        "        for alias in ('lora', 'baseline_lora', 'vanilla-lora'):",
+        "            if alias in catalog:",
+        "                ordered.append(alias)",
+        "                break",
+        "    for recipe_id in available:",
+        "        if recipe_id not in ordered:",
+        "            ordered.append(recipe_id)",
+        "    first_config = dict(catalog.get(ordered[0], {}))",
+        "    second_config = dict(catalog.get(ordered[1], {}))",
+        "    first_is_base = ordered[0] == BASELINE_UNMODIFIED_RECIPE_ID or bool(first_config.get('is_unmodified_base')) or str(first_config.get('peft_type', '')).lower() in {'none', 'base'}",
+        "    second_is_lora = ordered[1] == VANILLA_LORA_BASELINE_RECIPE_ID or bool(second_config.get('is_locked_baseline')) or str(second_config.get('peft_type', '')).lower() == 'lora'",
+        "    if not first_is_base or not second_is_lora:",
+        "        raise RuntimeError('Baseline-first comparison contract cannot be satisfied; missing/invalid order: unmodified base checkpoint first, vanilla LoRA baseline second')",
+        "    return ordered",
+        "",
+        "if __name__ == '__main__':",
+        "    order = locked_recipe_execution_order()",
+        "    assert order[:2] == [UNMODIFIED_BASE_CANDIDATE_ID, LOCKED_LORA_BASELINE_CANDIDATE_ID]",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/Baseline-first comparison contract/);
+
+    const repair = await repairPythonLockedRecipeCatalogAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _autolabos_locked_recipe_catalog_alias_marker():");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs final recipe registries that ignore generated PEFT_RECIPES mappings", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-recipes-registry-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from dataclasses import asdict, dataclass",
+        "from typing import Any, Dict, Mapping, Sequence, Tuple",
+        "",
+        "@dataclass(frozen=True)",
+        "class PeftRecipeSpec:",
+        "    recipe_id: str",
+        "    display_name: str",
+        "    is_base_model: bool = False",
+        "    use_rslora: bool = False",
+        "",
+        "BASE_MODEL_RECIPE = PeftRecipeSpec('base_model', 'Untuned base checkpoint', is_base_model=True)",
+        "VANILLA_LORA_RECIPE = PeftRecipeSpec('vanilla_lora', 'Vanilla LoRA baseline')",
+        "RSLORA_RECIPE = PeftRecipeSpec('rslora_lora', 'Rank-stabilized LoRA', use_rslora=True)",
+        "LOCKED_RECIPE_ORDER: Tuple[str, ...] = ('base_model', 'vanilla_lora', 'rslora_lora')",
+        "PEFT_RECIPES: Dict[str, PeftRecipeSpec] = {",
+        "    BASE_MODEL_RECIPE.recipe_id: BASE_MODEL_RECIPE,",
+        "    VANILLA_LORA_RECIPE.recipe_id: VANILLA_LORA_RECIPE,",
+        "    RSLORA_RECIPE.recipe_id: RSLORA_RECIPE,",
+        "}",
+        "",
+        "def _jsonable(value: Any) -> Any:",
+        "    if hasattr(value, '__dataclass_fields__') and not isinstance(value, type):",
+        "        return asdict(value)",
+        "    if isinstance(value, Mapping):",
+        "        return {str(k): _jsonable(v) for k, v in value.items()}",
+        "    return value",
+        "",
+        "def get_recipe_registry() -> Dict[str, Dict[str, Any]]:",
+        "    for candidate_name in (",
+        "        \"RECIPE_CONFIGS\",",
+        "        \"PEFT_RECIPE_CONFIGS\",",
+        "        \"PEFT_RECIPES_BY_NAME\",",
+        "        \"RECIPE_REGISTRY\",",
+        "    ):",
+        "        candidate = globals().get(candidate_name)",
+        "        if isinstance(candidate, Mapping) and candidate:",
+        "            return {str(k): _jsonable(v) for k, v in candidate.items()}",
+        "",
+        "    candidate_list = globals().get('PEFT_RECIPES') or globals().get('LOCKED_RECIPE_ORDER') or []",
+        "    registry: Dict[str, Dict[str, Any]] = {}",
+        "    if isinstance(candidate_list, Sequence) and not isinstance(candidate_list, (str, bytes)):",
+        "        for item in candidate_list:",
+        "            if isinstance(item, str):",
+        "                registry[item] = {'name': item}",
+        "    if registry:",
+        "        return registry",
+        "    return {",
+        "        'lora_vanilla': {'name': 'lora_vanilla'},",
+        "        'lora_rslora': {'name': 'lora_rslora'},",
+        "    }",
+        "",
+        "def validate_args(args: argparse.Namespace) -> argparse.Namespace:",
+        "    registry = get_recipe_registry()",
+        "    requested = [str(name) for name in args.recipes]",
+        "    unknown = [name for name in requested if name not in registry]",
+        "    if unknown:",
+        "        raise ValueError(f\"Unknown recipe(s) requested: {unknown}. Available recipes: {sorted(registry)}\")",
+        "    return args",
+        "",
+        "def main() -> int:",
+        "    args = validate_args(argparse.Namespace(recipes=list(LOCKED_RECIPE_ORDER)))",
+        "    return 0 if args.recipes == list(LOCKED_RECIPE_ORDER) else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Unknown recipe\(s\) requested/
+    );
+
+    const repair = await repairPythonLockedRecipeCatalogAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain('"PEFT_RECIPES",');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs final recipe catalog lookup aliases when generated registries use ORDERED_RECIPE_SPECS", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-final-recipe-catalog-lookup-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import List, Mapping, Tuple",
+        "",
+        "BASE_RECIPE_ID = 'base_model_zero_shot'",
+        "LOCKED_LORA_RECIPE_ID = 'locked_vanilla_lora_r8_alpha16'",
+        "",
+        "@dataclass(frozen=True)",
+        "class RecipeSpec:",
+        "    recipe_id: str",
+        "    order: int",
+        "    is_base_model: bool = False",
+        "    is_locked_baseline: bool = False",
+        "",
+        "ORDERED_RECIPE_SPECS: Tuple[RecipeSpec, ...] = (",
+        "    RecipeSpec(BASE_RECIPE_ID, 0, is_base_model=True),",
+        "    RecipeSpec(LOCKED_LORA_RECIPE_ID, 1, is_locked_baseline=True),",
+        "    RecipeSpec('lora_r4_alpha8_attn_only', 2),",
+        ")",
+        "",
+        "def _get_recipe_catalog() -> List[RecipeSpec]:",
+        "    recipes_obj = globals().get(\"RECIPE_SPECS\", globals().get(\"RECIPES\", None))",
+        "    if recipes_obj is None:",
+        "        raise RuntimeError(\"Recipe catalog not found; expected RECIPE_SPECS or RECIPES from the recipe configuration section.\")",
+        "    recipes = list(recipes_obj.values()) if isinstance(recipes_obj, Mapping) else list(recipes_obj)",
+        "    if not recipes:",
+        "        raise RuntimeError(\"Recipe catalog is empty; cannot run baseline-first comparison.\")",
+        "    return sorted(recipes, key=lambda recipe: int(getattr(recipe, \"order\", 9999)))",
+        "",
+        "def _baseline_first_recipe_order() -> List[RecipeSpec]:",
+        "    recipes = _get_recipe_catalog()",
+        "    base = [recipe for recipe in recipes if getattr(recipe, \"is_base_model\", False) or recipe.recipe_id == BASE_RECIPE_ID]",
+        "    locked = [recipe for recipe in recipes if getattr(recipe, \"is_locked_baseline\", False) or recipe.recipe_id == LOCKED_LORA_RECIPE_ID]",
+        "    candidates = [recipe for recipe in recipes if recipe not in base and recipe not in locked]",
+        "    if len(base) != 1:",
+        "        raise RuntimeError(f\"Expected exactly one base-model recipe, found {[r.recipe_id for r in base]}\")",
+        "    if len(locked) != 1:",
+        "        raise RuntimeError(f\"Expected exactly one locked vanilla LoRA baseline, found {[r.recipe_id for r in locked]}\")",
+        "    return [base[0], locked[0], *sorted(candidates, key=lambda recipe: int(getattr(recipe, \"order\", 9999)))]",
+        "",
+        "if __name__ == '__main__':",
+        "    assert [recipe.recipe_id for recipe in _baseline_first_recipe_order()] == [BASE_RECIPE_ID, LOCKED_LORA_RECIPE_ID, 'lora_r4_alpha8_attn_only']",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/Recipe catalog not found/);
+
+    const repair = await repairPythonLockedRecipeCatalogAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_recipe_catalog_lookup_names");
+    expect(repairedSource).toContain('"ORDERED_RECIPE_SPECS"');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs aggregate metrics finalization so plural candidate results do not call singular row aggregators", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-aggregate-plural-finalizer-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Callable, Dict, Mapping, Sequence",
+        "import inspect",
+        "",
+        "def aggregate_candidate_metrics(candidate_result: Mapping[str, Any]) -> Dict[str, Any]:",
+        "    return {'recipe_id': candidate_result['recipe_id'], 'normalized': True}",
+        "",
+        "def aggregate_all_candidate_metrics(candidate_results: Sequence[Mapping[str, Any]]):",
+        "    return [aggregate_candidate_metrics(row) for row in candidate_results]",
+        "",
+        "def aggregate_and_rank_experiment_results(candidate_results: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:",
+        "    return {'candidate_results': aggregate_all_candidate_metrics(candidate_results)}",
+        "",
+        "def _main_resolve_callable(names):",
+        "    for name in names:",
+        "        value = globals().get(name)",
+        "        if callable(value):",
+        "            return value",
+        "    return None",
+        "",
+        "def _main_call_flex(fn: Callable[..., Any], **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(fn)",
+        "    filtered_kwargs = {name: value for name, value in kwargs.items() if name in signature.parameters}",
+        "    required_missing = [",
+        "        name",
+        "        for name, param in signature.parameters.items()",
+        "        if param.default is inspect._empty and name not in filtered_kwargs",
+        "    ]",
+        "    if required_missing:",
+        "        raise TypeError(f\"Cannot call {getattr(fn, '__name__', fn)!r}; missing required parameters: {required_missing}\")",
+        "    return fn(**filtered_kwargs)",
+        "",
+        "def _main_finalize_metrics(candidate_results):",
+        "    aggregate_fn = _main_resolve_callable((",
+        "        \"aggregate_experiment_metrics\",",
+        "        \"aggregate_candidate_metrics\",",
+        "        \"rank_and_aggregate_results\",",
+        "        \"build_ranked_metrics\",",
+        "    ))",
+        "    aggregate_payload = _main_call_flex(",
+        "        aggregate_fn,",
+        "        candidate_results=list(candidate_results),",
+        "        results=list(candidate_results),",
+        "    )",
+        "    return dict(aggregate_payload) if isinstance(aggregate_payload, Mapping) else {'aggregation': aggregate_payload}",
+        "",
+        "if __name__ == '__main__':",
+        "    payload = _main_finalize_metrics([{'recipe_id': 'base_unmodified'}])",
+        "    assert payload['candidate_results'][0]['recipe_id'] == 'base_unmodified'",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/missing required parameters/);
+
+    const repair = await repairPythonAggregateMetricsPluralFinalizerSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _autolabos_aggregate_experiment_metrics_marker():");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs legacy base_model recipe defaults when the generated registry uses another baseline id", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-base-model-id-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import List, Optional, Sequence",
+        "",
+        "BASELINE_FIRST_REQUIRED = True",
+        "BASELINE_CANDIDATE_ID = 'base_zero_shot'",
+        "",
+        "@dataclass(frozen=True)",
+        "class RecipeSpec:",
+        "    recipe_id: str",
+        "",
+        "RECIPE_SPECS = (",
+        "    RecipeSpec(recipe_id=BASELINE_CANDIDATE_ID),",
+        "    RecipeSpec(recipe_id='vanilla_lora_r8_alpha16'),",
+        "    RecipeSpec(recipe_id='lora_r16_alpha32'),",
+        ")",
+        "",
+        "def _recipe_id_set() -> List[str]:",
+        "    return [recipe.recipe_id for recipe in RECIPE_SPECS]",
+        "",
+        "def _default_recipe_ids_for_cli() -> List[str]:",
+        "    ids = _recipe_id_set()",
+        "    if BASELINE_FIRST_REQUIRED and ids and ids[0] != 'base_model':",
+        "        ids = ['base_model'] + [recipe_id for recipe_id in ids if recipe_id != 'base_model']",
+        "    return ids",
+        "",
+        "def _normalize_recipe_ids(recipe_ids: Optional[Sequence[str]]) -> List[str]:",
+        "    selected = [str(item).strip() for item in (recipe_ids or _default_recipe_ids_for_cli()) if str(item).strip()]",
+        "    deduped: List[str] = []",
+        "    for recipe_id in selected:",
+        "        if recipe_id not in deduped:",
+        "            deduped.append(recipe_id)",
+        "    if BASELINE_FIRST_REQUIRED:",
+        "        if 'base_model' in deduped:",
+        "            deduped = ['base_model'] + [recipe_id for recipe_id in deduped if recipe_id != 'base_model']",
+        "        else:",
+        "            deduped.insert(0, 'base_model')",
+        "    known = set(_recipe_id_set())",
+        "    unknown = [recipe_id for recipe_id in deduped if known and recipe_id not in known]",
+        "    if unknown:",
+        "        raise ValueError(f\"Unknown recipe ID(s): {unknown}. Known recipes: {sorted(known)}\")",
+        "    return deduped",
+        "",
+        "def main() -> int:",
+        "    assert _normalize_recipe_ids(None)[0] == BASELINE_CANDIDATE_ID",
+        "    try:",
+        "        _normalize_recipe_ids(['not_a_real_tuned_recipe'])",
+        "    except ValueError as exc:",
+        "        return 0 if 'not_a_real_tuned_recipe' in str(exc) else 1",
+        "    return 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/Unknown recipe ID/);
+
+    const repair = await repairPythonLegacyBaseModelRecipeIdSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("ids[0] != BASELINE_CANDIDATE_ID");
+    expect(repairedSource).toContain("deduped.insert(0, BASELINE_CANDIDATE_ID)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs broader-target LoRA marker aliases before locked recipe coverage validation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-broader-target-marker-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, List, Optional",
+        "import argparse",
+        "",
+        "COMPARISON_MODE = 'baseline_first_locked'",
+        "BROADER_TARGET_LORA_RECIPE_ID = 'lora_r16_qkvo_mlp'",
+        "BROADER_LORA_TARGET_MODULES = ('q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj')",
+        "",
+        "@dataclass(frozen=True)",
+        "class CandidateRecipe:",
+        "    recipe_id: str",
+        "    recipe_type: str",
+        "",
+        "CANDIDATE_RECIPES = (",
+        "    CandidateRecipe('unmodified_base', 'baseline'),",
+        "    CandidateRecipe('lora_r16_qv_locked', 'lora'),",
+        "    CandidateRecipe('lora_r8_qv', 'lora'),",
+        "    CandidateRecipe(BROADER_TARGET_LORA_RECIPE_ID, 'lora'),",
+        ")",
+        "",
+        "def _recipe_identifier(recipe: Any) -> str:",
+        "    return str(recipe.recipe_id)",
+        "",
+        "def _recipe_kind(recipe: Any) -> str:",
+        "    return str(recipe.recipe_type)",
+        "",
+        "def _recipe_rank(recipe: Any, default_index: int) -> int:",
+        "    rid = _recipe_identifier(recipe).lower()",
+        "    if 'base' in rid or 'unmodified' in rid:",
+        "        return 0",
+        "    if \"r16\" in rid and \"broad\" not in rid:",
+        "        return 1",
+        "    if \"r8\" in rid:",
+        "        return 2",
+        "    if \"broad\" in rid or \"all_linear\" in rid or \"broader\" in rid:",
+        "        return 3",
+        "    return default_index",
+        "",
+        "def _candidate_recipe_list() -> List[Any]:",
+        "    return list(CANDIDATE_RECIPES)",
+        "",
+        "def get_locked_recipe_order(args: argparse.Namespace) -> List[Any]:",
+        "    requested: Optional[set[str]] = None",
+        "    recipes = _candidate_recipe_list()",
+        "    ordered = sorted(enumerate(recipes), key=lambda item: (_recipe_rank(item[1], item[0]), item[0]))",
+        "    locked = [recipe for _, recipe in ordered]",
+        "    present = ' '.join(_recipe_identifier(recipe).lower() for recipe in locked)",
+        "    if requested is None:",
+        "        required_markers = {",
+        "            'lora_r16': ('r16', 'standard LoRA r16 baseline'),",
+        "            'lora_r8': ('r8', 'low-rank LoRA r8 comparator'),",
+        "            'broader': ('broad', 'broader-target LoRA comparator'),",
+        "        }",
+        "        missing = [label for marker, label in required_markers.values() if marker not in present]",
+        "        if missing:",
+        "            raise RuntimeError('Locked recipe definitions are missing: ' + ', '.join(missing))",
+        "    return locked",
+        "",
+        "if __name__ == '__main__':",
+        "    ordered = get_locked_recipe_order(argparse.Namespace(recipes=None))",
+        "    assert [recipe.recipe_id for recipe in ordered] == ['unmodified_base', 'lora_r16_qv_locked', 'lora_r8_qv', 'lora_r16_qkvo_mlp']",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/broader-target LoRA comparator/);
+
+    const repair = await repairPythonBroaderTargetLoraMarkerSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain('"mlp", "qkvo"');
+    expect(repairedSource).toContain("marker_aliases");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
@@ -14115,6 +26199,266 @@ describe("ImplementSessionManager", () => {
     expect(result.testCommand).toContain("py_compile");
   });
 
+  it("repairs a missing set_global_seed alias without recursive self lookup", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-set-global-seed-no-recursion-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Nonrecursive Global Seed Alias",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-set-global-seed-no-recursion",
+        finalText: JSON.stringify({
+          summary: "Implemented the experiment runner.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "try:",
+                "    from transformers import set_seed as transformers_set_seed",
+                "except Exception:",
+                "    transformers_set_seed = None",
+                "",
+                "def main(argv=None):",
+                "    set_global_seed(42)",
+                "    return 0",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain("def set_global_seed(seed: int) -> None:");
+    expect(repairedSource).not.toContain("globals().get(\"set_global_seed\")");
+    execFileSync("python3", [result.scriptPath!], { cwd: publicDir });
+  });
+
+  it("repairs a missing set_global_seed alias when setup_runtime is the generated seed helper", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-setup-runtime-seed-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Setup Runtime Seed Alias",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-setup-runtime-seed-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented the experiment runner.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "from transformers import set_seed",
+                "",
+                "def setup_runtime(seed: int = 42):",
+                "    set_seed(seed)",
+                "    return {'seed': seed}",
+                "",
+                "def main(argv=None):",
+                "    set_global_seed(42)",
+                "    return 0",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain("def set_global_seed(seed: int) -> None:");
+    expect(repairedSource).toContain("globals().get(\"setup_runtime\")");
+    expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("repairs a missing set_reproducible_seed alias before handing a python runner off to run_experiments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-set-reproducible-seed-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Reproducible Seed Alias",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-set-reproducible-seed-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented the experiment runner.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "def set_reproducibility(seed: int) -> None:",
+                "    assert isinstance(seed, int)",
+                "",
+                "def main(argv=None):",
+                "    set_reproducible_seed(42)",
+                "    return 0",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain("def set_reproducible_seed(seed: int) -> None:");
+    expect(repairedSource).toContain("globals().get(\"set_reproducibility\")");
+    expect(result.testCommand).toContain("py_compile");
+  });
+
   it("repairs a missing set_all_seeds alias before handing a python runner off to run_experiments", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-set-all-seeds-repair-"));
     tempDirs.push(workspace);
@@ -14290,8 +26634,14 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
 
     expect(repairedSource).toContain("def _autolabos_json_safe(value):");
+    expect(repairedSource).toContain("value.strip().lower() in {'nan', 'inf', '+inf', '-inf', 'infinity', '+infinity', '-infinity'}");
     expect(repairedSource).toContain("json.dump(_autolabos_json_safe(payload), handle, indent=2, sort_keys=True, allow_nan=False)");
     expect(result.testCommand).toContain("py_compile");
+    execFileSync("python3", [result.scriptPath!]);
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      train_loss: null
+    });
   });
 
   it("repairs Python metrics json.dumps serialization for PathLike values", async () => {

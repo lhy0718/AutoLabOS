@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-04-28
+Last updated: 2026-05-02
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -13,7 +13,68 @@ Usage rules:
 
 ## Current active status
 
-- Active live-validation defects:
+- Live-validation status and tracked defects:
+  - `LV-319` active: same-flow Web API revalidation after the LV-318 metrics-payload arity repair advanced through final payload construction, but the generated runner now writes only failed condition rows because `EleutherAI/pythia-410m` model configuration cannot be loaded in the validation environment. The metrics contract then fails because `accuracy_delta_vs_baseline` is absent and 0 successful tuned conditions were observed.
+  - `LV-318` repair implemented; same-flow live revalidation advanced to LV-319 on 2026-05-02. The repair wraps generated `build_metrics_payload(...)` calls so final entrypoints that pass `(aggregated_results, args, runtime_context, status)` do not bind `condition_results` twice and can supply `args`, `condition_results`, `aggregated_metrics`, and `run_started_at`.
+  - `LV-317` repair implemented; same-flow live revalidation advanced to LV-318 on 2026-05-02. The repair aliases generated `execute_baseline_first_conditions(...)` into the final main execution-loop resolver names and aliases generated exception serializers such as `exception_to_evidence(...)` into `serialize_exception(...)`.
+  - `LV-316` repair implemented; same-flow live revalidation advanced to LV-317 on 2026-05-02. The repair exposes generated `derive_accuracy_deltas(...)` through the canonical `compute_accuracy_deltas_and_best(...)` helper names expected by final metrics assembly.
+  - `LV-315` repair implemented; same-flow live revalidation advanced to LV-316 on 2026-05-02. The repair exposes generated `config_from_args(...)`/`RuntimeConfig` builders through the process-entrypoint `build_experiment_config(...)` facade without fabricating metrics.
+  - `LV-314` repair implemented; same-flow live revalidation advanced to LV-315 on 2026-05-02. The repair aliases generated locked-order condition helpers such as `run_locked_order_condition_study(...)` into the final CLI orchestration resolver names without fabricating condition rows.
+  - `LV-313` repair implemented; same-flow live revalidation advanced to LV-314 on 2026-05-02. The repair materializes generated train/evaluation dataset inputs before dispatching to baseline-first condition orchestrators without fabricating condition rows.
+  - `LV-312` repair implemented; same-flow live revalidation advanced to LV-313 on 2026-05-02. The repair aliases generated `run_locked_condition_study(config, device)` into final orchestration names such as `run_locked_condition_experiment(...)` without fabricating condition rows or skipping node-owned execution.
+  - `LV-311` repair implemented; same-flow live revalidation advanced to LV-312 on 2026-05-02. The repair adds required `ConditionConfig` constructor aliases from existing generated fields such as `recipe_type` and `should_train` to `adapter_recipe_type` and `train_enabled` without changing condition order or fabricating condition rows.
+  - `LV-310` repair implemented; same-flow live revalidation advanced to LV-311 on 2026-05-02. The repair broadens condition-suite aliasing to expose generated baseline-first locked-condition helpers such as `run_baseline_first_locked_conditions(...)` and `execute_locked_peft_study_conditions(...)` under the searched suite names.
+  - `LV-309` repair implemented; same-flow live revalidation advanced to LV-310 on 2026-05-02. The repair accepts `salt` as a deterministic sampling-domain alias for helpers that otherwise use `namespace`, and the rebuilt live flow no longer reproduced the `deterministic_sample_records(..., salt=...)` TypeError.
+  - `LV-308` repair implemented; same-flow live revalidation advanced to LV-309 on 2026-05-02. The repair materializes real generated train/benchmark loader outputs before `_main_execute_conditions(...)` dispatches to `execute_all_conditions(...)`, and the rebuilt live flow no longer reproduced the missing `train_dataset`/`benchmark_data` failure.
+  - `LV-307` repair implemented; same-flow live revalidation advanced to LV-308 on 2026-05-02. The repair normalizes object-backed tuple device metadata through JSON-safe/dataclass-aware conversion before converting to a plain dict, and the rebuilt live flow no longer reproduced the `RuntimeDeviceInfo` iterable failure.
+  - `LV-306` repair implemented; same-flow live revalidation advanced to LV-307 on 2026-05-02. The repair filters the alias currently being defined out of generated seed-helper lookup chains, so `set_global_seed(...)` no longer selects itself from `globals()` while preserving distinct generated seed helpers.
+  - `LV-305` repair implemented; same-flow live revalidation advanced to LV-306 on 2026-05-02. The repair recognizes `_run_entrypoint_workflow(...)` missing-orchestration resolvers and bridges existing generated orchestration helpers such as `run_baseline_first_orchestration(...)` into searched entrypoint names without fabricating metrics.
+  - `LV-304` repair implemented; same-flow live revalidation advanced to LV-305 on 2026-05-02. The repair aliases `current_utc_timestamp(...)` to generated timestamp helpers such as `utc_timestamp(...)` where possible, without fabricating experimental rows.
+  - `LV-303` repair implemented; same-flow live revalidation advanced through LV-304 to LV-305 before fully confirming the runtime payload-dispatch boundary. The repair adds a no-fallback bridge from generated dataset/training/evaluation helpers into `build_metrics_payload_from_options(...)` when the generated top-level workflow searches for that name but omits it.
+  - `LV-302` broader repair implemented and same-flow live revalidation advanced to LV-303 on 2026-05-01: regenerated PEFT runners can include the concrete condition marker `the_strongest_alternative_lightweight_recipe_among_vanilla_lora_and_rslora` in `ORDERED_CONDITION_SPECS`, while later required-marker blocks can either truncate the governed marker to `the_strongest_alternative_lightweight_recipe_amo` or declare it as a plan-level marker covered by concrete candidate markers. Registry validation now resolves exact aliases and declared coverage without fabricating condition rows; the next observed blocker is LV-303.
+  - `LV-301` repair implemented; same-flow live re-validation advanced to LV-302 on 2026-05-01: regenerated PEFT runners can now reach the high-level baseline-first condition runner, but the runner's `_ordered_conditions_for_locked_contract(...)` treats `BASELINE_CONDITION_ID='locked_lora_baseline'` as the required first configured condition while `CONDITIONS` begins with `unmodified_base`. Second-stage execution stops before condition execution with `RuntimeError: Baseline-first contract violation: first configured condition must be 'locked_lora_baseline'`.
+  - `LV-300` repair implemented; same-flow live re-validation advanced to LV-301 on 2026-05-01: regenerated PEFT runners can define a real high-level `run_baseline_first_conditions(...)` loop, but the final CLI entrypoint ignores it and uses a later per-condition `_execute_condition(...)` resolver that searches only `run_condition`, `execute_condition`, `run_recipe_condition`, and similar single-condition names. All governed conditions are recorded as failed with `No condition execution helper was defined in earlier script sections`; final metrics assembly then passes an `OrderedDict` condition map into a sequence-oriented aggregator and records `AttributeError: 'str' object has no attribute 'get'`.
+  - `LV-299` repair implemented; same-flow re-validation advanced to LV-300 on 2026-05-01: regenerated PEFT runners can define a path-first `write_metrics_json(metrics_path, metrics)` writer, while the final CLI entrypoint calls it as `write_metrics_json(payload, metrics_path)`. The writer then executes `dict(metrics)` against a `PosixPath`, causing second-stage execution to fail with `TypeError: 'PosixPath' object is not iterable` before normal metrics validation.
+  - `LV-298` reproduced: regenerated PEFT runners can define `evaluate_condition_on_benchmarks(condition_marker, benchmark_samples, ...)`, but the generated `_call_benchmark_evaluator(...)` dispatcher retries incompatible positional call patterns and only treats `TypeError` as a signature mismatch. The first non-`TypeError` wrong-argument failure passes `argparse.Namespace` as `benchmark_samples`, records every governed condition as failed with `AttributeError: 'Namespace' object has no attribute 'get'`, and the metrics contract observes zero successful tuned conditions.
+  - `LV-294` reproduced: regenerated PEFT runners can define `make_condition_spec(...)` with concrete `ConditionSpec` fields such as `trainable`, `peft_kwargs`, and LoRA parameters, but later registry construction calls it through `_construct_condition_spec(...)` with higher-level `peft_config`, `training_overrides`, and `feature_flags`, causing module import to fail before metrics can be written.
+  - `LV-293` reproduced: regenerated PEFT runners can define `run_conditions_baseline_first(...)`, but the final `run_experiment(...)` sequence-runner resolver omits that available helper, falls back to per-condition `execute_condition(...)`, and calls it without `eval_examples`, causing every governed condition to fail immediately.
+  - `LV-292` mitigated to next boundary: regenerated PEFT runners can define real device helpers such as `detect_torch_device(...)` and `probe_torch_device_capabilities(...)`, but the baseline-first pipeline calls missing `detect_device_info()`, causing second-stage execution to fail before any condition can complete.
+  - `LV-291` mitigated to next boundary: regenerated PEFT runners can expose loader/model/eval/collector/aggregator helpers but no top-level workflow facade searched by `_entrypoint_run_workflow(...)`, causing second-stage execution to stop with `No experiment workflow function was found in the runner`.
+  - `LV-290` repair implemented; same-flow re-validation reached a different earlier boundary before re-exercising this symptom: regenerated PEFT runners can define a real `run_single_condition(condition_marker, *, dataset_bundle, device_info, ...)`, but `_autolabos_execute_condition(...)` can call it without `dataset_bundle` and `device_info`, causing every governed condition to fail immediately and the metrics contract to observe zero successful tuned conditions.
+  - `LV-289` mitigated to next boundary: regenerated PEFT runners can define `run_condition_execution_workflow(args, condition_registry, budget, train_records, eval_sets, device)`, but the final `_run_conditions_via_available_api(...)` resolver searches only `run_condition_workflow`, `run_all_conditions`, `execute_condition_workflow`, `execute_all_conditions`, `run_peft_condition_study`, `run_study_conditions`, `run_recipe_comparison`, and related per-condition names, causing second-stage execution to stop before the real condition workflow is invoked.
+  - `LV-288` mitigated to next boundary: regenerated PEFT runners can define `run_locked_condition_suite(args, runtime=None)`, but the completed-script `_invoke_condition_runner(...)` resolver searches only `run_locked_baseline_first_study`, `run_peft_instruction_study`, `run_condition_study`, `run_all_conditions`, and related names, causing second-stage execution to stop before the real condition suite is invoked.
+  - `LV-287` mitigated to next boundary: regenerated PEFT runners can define and alias `execute_baseline_first_conditions(...)`/`run_condition_study(...)`, but the final `_chunk5c_run_condition_study(...)` resolver searches only `run_locked_peft_instruction_study`, `run_all_conditions`, `run_experiment_conditions`, and related names, causing second-stage execution to stop before any condition helper is invoked.
+  - `LV-286` mitigated to next boundary: regenerated PEFT runners can define `execute_locked_condition_study(config)` but the final `_run_locked_study(...)` resolver searches only `run_locked_experiment`, `run_locked_condition_study`, `execute_locked_experiment`, `execute_condition_study`, or `run_experiment`, causing second-stage execution to stop before any locked condition runs.
+  - `LV-285` mitigated to next boundary: regenerated PEFT runners can define `assemble_bounded_eval_datasets(...)` and plural aliases but later call missing singular `assemble_bounded_eval_dataset(...)`, causing second-stage execution to fail before the generated evaluation inputs can reach condition execution.
+  - `LV-284` reproduced: regenerated PEFT runners can define `run_condition_execution_loop(args, eval_examples_by_benchmark, train_examples, device_info)` but the final locked-recipe workflow invoker calls only `workflow(args)` or `workflow(**vars(args))`, so no conditions execute and the metrics contract observes zero successful tuned conditions.
+  - `LV-283` reproduced: regenerated PEFT runners can define a correct high-level `build_and_write_metrics(...)` contract writer but the final metrics dispatcher selects raw `write_metrics_json(...)` first and calls it without a `metrics` payload, causing second-stage execution to fail after experiment orchestration with `TypeError: write_metrics_json() missing 1 required positional argument: 'metrics'`.
+  - `LV-282` reproduced: regenerated PEFT runners can materialize real model/data helpers under names such as `load_compact_model_and_tokenizer(...)` and `load_instruction_dataset(...)`, while the final condition execution dispatcher searches only narrower canonical names, causing every planned condition to fail and the metrics contract to observe zero successful tuned conditions.
+  - `LV-281` reproduced: regenerated PEFT runners can define `cleanup_model_resources(...)` and `cleanup_torch_memory(...)` but call missing `cleanup_model_artifacts()`, causing second-stage execution to fail after local verification passes and failure metrics are written.
+  - `LV-280` reproduced: implement-stage local verification can treat shell output redirection targets such as `>/tmp/peft_study_help.txt` as required pre-existing artifacts, causing verification to fail before `py_compile` or `--help` can run.
+  - `LV-279` reproduced: regenerated PEFT runners can define `run_conditions_baseline_first(...)`, while the final `_entrypoint_run_conditions(...)` resolver searches only narrower helper names and then the failure metrics writer collapses because `write_metrics_payload(...)` requires `aggregated_metrics`.
+  - `LV-278` reproduced: regenerated PEFT runners can define executable condition comparison helpers such as `run_baseline_first_condition_comparison(...)` and `run_condition_comparison(...)`, while the final `_run_conditions_from_config(...)` dispatcher searches only narrower names and fails before any condition executes.
+  - `LV-266` mitigated: objective evaluation now downgrades accuracy-delta success when the winning PEFT alternative violates the objective's runtime/memory regression clause.
+  - `LV-265` mitigated: relative objective evaluation now excludes unmodified/pretrained baseline-like references from the eligible treatment set for named tuned-baseline comparisons.
+  - `LV-264` `analyze_results` can miss nested `metrics.conditions.*.evaluation.pooled_bootstrap.ci95_low/high` confidence intervals, causing the brief evidence gate to fail for missing CIs even when the executed condition metrics contain bootstrap intervals.
+  - `LV-263` `analyze_results` can ignore completed baseline/comparator rows when `metrics.conditions` is an object map instead of an array, leaving `results_table` populated from the contract schema with `baseline=null` and `comparator=null` even after real PEFT conditions complete.
+  - `LV-262` generated PEFT runners can pass local `py_compile` while using typing annotation names such as `MutableMapping` without importing them or postponing annotations, causing second-stage execution to fail at module load.
+  - `LV-261` generated PEFT runners can pass local `py_compile` while defining no concrete per-condition train/evaluate worker, then record every planned condition as `worker_discovery` failure and fail the downstream metrics contract with zero successful tuned conditions.
+  - `LV-260` generated PEFT runners can select `execute_locked_condition_plan(condition_plan, *, args=...)` as the condition-plan runner while the final experiment loop calls the selected runner as `runner(condition_plan, args)`, causing second-stage execution to fail before any condition runs.
+  - `LV-259` generated PEFT runners can define `setup_runtime(seed)` as the seed/runtime initializer while the final entrypoint calls missing `set_global_seed(args.seed)`, causing second-stage execution to fail immediately after import.
+  - `LV-258` generated PEFT runners can define `class PeftConditionConfig` while later module-level condition descriptors reference `PEFTConditionConfig`, causing second-stage execution to fail at module import before condition execution.
+  - `LV-257` generated PEFT runners can define `run_baseline_first_conditions(...)` while the final `execute_selected_conditions(...)` dispatcher searches only `run_condition_suite`, `execute_condition_suite`, `run_all_conditions`, or per-condition hooks, causing second-stage execution to fail before any condition runs.
+  - `LV-256` generated PEFT runners can resolve a condition orchestrator that requires `args`, but the condition-study adapter calls it only with filtered keyword fields, causing all planned conditions to fail and the metrics contract to observe zero successful tuned conditions.
+  - `LV-255` generated PEFT runners can call helper functions through `_call_flexible(..., device=device, args=args)` even when the resolved helper accepts only `device`, causing second-stage execution to fail before any real model/dataset work starts.
+  - `LV-254` generated PEFT runners can expose semantically equivalent active argparse flags such as `--train-examples` and `--eval-limit-per-benchmark` while the AutoLabOS run command passes `--max-train-examples` and `--eval-limit`, causing second-stage execution to fail immediately despite local `py_compile` passing.
+  - `LV-253` generated PEFT runners can define `run_baseline_first_experiment(...)` while the final workflow dispatcher only searches `run_baseline_first_experiment_workflow(...)` and related aliases, causing `run_experiments` to fail immediately after native-Codex implementation succeeds.
+  - `LV-246` generated PEFT runners can define dict-backed `LOCKED_CONDITIONS` but project condition names with `str(dict)` in `parse_args`, causing the runner to reject its own baseline-first contract before any condition executes.
+  - `LV-245` generated PEFT runners can define a valid `execute_locked_condition_order(options)` loop but omit it from the final entrypoint resolver, then fail to persist failure metrics because the entrypoint wrapper calls a payload-first JSON writer with path-first arguments.
+  - `LV-244` generated PEFT runners can define `validate_locked_condition_contract(specs)` but later call it without the required `specs` argument, causing second-stage execution to fail before any condition runs.
+  - `LV-243` generated PEFT runners can import `get_linear_schedule_with_warmup` but call it through the generic `get_scheduler("linear", optimizer=...)` signature, causing every tuned PEFT condition to fail after the baseline completes.
+  - `LV-221` `run_experiments` metrics contract can undercount executed tuned rows when generated metrics use object-map condition schemas, and the current PEFT runner still under-executes the governed four-condition design.
+  - `LV-197` staged native-Codex `implement_experiments` can abort before a runnable implementation when a noisy bootstrap-contract response contains a tool-like JSON object before the real bootstrap contract JSON.
+  - `LV-198` generated PEFT runners can pass implement-stage local verification while the final entrypoint reparses an already parsed `argparse.Namespace` and calls a required-argument dependency checker with no arguments.
+  - `LV-196` generated PEFT runners can pass local `py_compile` while the entrypoint calls `ensure_parent_dir(...)` and only `ensure_parent_directory(...)` is defined, causing second-stage execution to fail before metrics setup.
   - `LV-176` generated PEFT runners can repeatedly leave transformer runtime annotation names such as `PreTrainedTokenizerBase` and `PreTrainedModel` undefined, exhausting native-Codex implement retries even though this can be repaired deterministically by postponing annotations or importing the type-only names.
   - `LV-175` generated PEFT runners can guard `TrainingArguments` through a `kwargs` dictionary but leave unsupported dictionary key `overwrite_output_dir`, causing second-stage real execution to fail under the installed Transformers signature after implement-stage `py_compile` passes.
   - `LV-174` strict metrics JSON repair can corrupt a generated `json.dumps({...}, ...)` line by treating a dict-literal comma as the top-level argument separator, causing final `implement_experiments` verification to fail after all native-Codex attempts.
@@ -57,7 +118,7 @@ Usage rules:
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
-  - `R-004` Deterministic bounded fallback masquerading as PEFT evidence — `ACTIVE`
+  - `R-004` Deterministic bounded fallback masquerading as PEFT evidence — `MITIGATED_FOR_CURRENT_RUN`
   - `R-001` Result-table discipline and claim→evidence linkage — `MITIGATED`
   - `R-002` Scientific gate warnings surfacing — `MITIGATED`
   - `R-003` System-validation paper shape over-promotion — `MITIGATED`
@@ -69,6 +130,567 @@ Usage rules:
 ---
 
 ## Research and paper-readiness watchlist
+
+## Issue: LV-195
+
+- Status: mitigated and same-flow live revalidated on 2026-04-28
+- Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-194 verifier repair.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+- Reproduction steps:
+  1. Re-run `implement_experiments` through the Web API action endpoint against the same run.
+  2. Observe staged native-Codex materialization complete and implement-stage `py_compile` pass after verifier repairs.
+  3. Let auto-handoff run the generated experiment command.
+- Expected behavior:
+  - Implement-stage repair or verification should catch executable entrypoints that call a missing timer helper before handing the runner to `run_experiments`.
+  - If the generated code already defines a compatible `WallClockTimer`, the executable `Timer()` call should be aliased to it with the expected `elapsed()` method.
+- Actual behavior:
+  - `implement_experiments` passed local verification and handed off to `run_experiments`.
+  - `run_experiments` failed with:
+    - `{"error": "name 'Timer' is not defined", "metrics_path": ".../metrics.json", "status": "failed"}`
+  - The generated runner defined `WallClockTimer` and `timed_block(...)`, but the study loop called `Timer()` and later `study_timer.elapsed()`.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; the failing artifact and run report agree on a generated-code helper-name mismatch.
+  - Existing session: same-flow validation reproduced the runtime failure.
+- Dominant root-cause class: `persisted_state_bug`
+- Root-cause hypothesis:
+  - The staged implementation generated timer utilities and final study orchestration independently. The final orchestration used the generic `Timer` name, while the helper section emitted `WallClockTimer` without a compatibility alias or `elapsed()` method.
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - teaches Python name detection to recognize `class` definitions
+      - adds `Timer` to critical runtime-helper detection
+      - extends entrypoint runtime compatibility repair to insert a `Timer` class or subclass alias when generated study loops call `Timer()` without defining it
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for `Timer().elapsed()` repair from generated `WallClockTimer` utilities
+- Regression status:
+  - Targeted regression: pass on 2026-04-28 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "Timer entrypoint|get_device_info entrypoint|JSON-safe helper aliases without requiring|metrics writer adapters that omit|workflow dispatchers whose searched workflow"`.
+  - Build: pass on 2026-04-28 with `npm run build`.
+  - Same-flow live revalidation: pass on 2026-04-28.
+    - Rebuilt Web API from `dist/cli/main.js`.
+    - Re-ran `implement_experiments` through `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node`.
+    - `implement_experiments` passed local verification.
+    - `run_experiments` completed with `exit_code: 0`.
+    - `analyze_results` produced public analysis output and recommended `pause_for_human -> stay` because the results table/evidence package still needs review.
+- Remaining risks:
+  - The runtime blocker is mitigated, but the research gate still reports an incomplete results table and review-needed evidence package.
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/analysis/result_analysis.json`
+
+## Issue: LV-194
+
+- Status: mitigated and same-flow live revalidated on 2026-04-28
+- Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-193 verifier repair.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+- Reproduction steps:
+  1. Continue the same long-running `implement_experiments` request through attempt 3.
+  2. Observe staged materialization complete and local verification run after JSON-safe, `ensure_dir`, and annotation repairs.
+- Expected behavior:
+  - Workflow-dispatch verification should accept searched workflow names that are defined either by `def name(...)` or by a module-level callable alias assignment.
+- Actual behavior:
+  - Attempt 3 failed local verification with:
+    - `Generated Python runner dispatches to recipe/study workflow function names that are never defined.`
+    - searched names included `run_peft_instruction_study`.
+  - The generated runner actually contained:
+    - `def orchestrate_peft_instruction_study(...)`
+    - `run_peft_instruction_study = orchestrate_peft_instruction_study`
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; the issue is a verifier definition-recognition bug over the generated artifact.
+  - Existing session: same-flow validation reproduced the false rejection.
+- Dominant root-cause class: `persisted_state_bug`
+- Root-cause hypothesis:
+  - `detectPythonMissingRegisteredRecipeWorkflow(...)` checks searched workflow names using only `def name(...)`, while the shared Python definition helper already recognizes module-level alias assignments.
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - makes workflow dispatcher verification use `pythonSourceDefinesName(...)`, which recognizes module-level alias assignments.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for a dispatcher searching `run_peft_instruction_study` when the runner defines it via alias assignment.
+- Regression status:
+  - Targeted regression: pass on 2026-04-28 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "workflow dispatchers whose searched workflow is defined by module alias|registered recipe workflow dispatcher has no defined"`.
+  - Build: pass on 2026-04-28 with `npm run build`.
+  - Same-flow live revalidation: pass on 2026-04-28; subsequent rebuilt run completed `run_experiments` with `exit_code: 0` and advanced through `analyze_results`.
+- Remaining risks:
+  - A callable alias assignment can still point to a function with incompatible arity; separate arity/runtime checks may catch that later.
+  - The next same-flow run may advance to real runner execution and expose installed-dependency or model/dataset runtime issues.
+
+## Issue: LV-193
+
+- Status: mitigated and same-flow live revalidated on 2026-04-28
+- Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-192 verifier repair.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+- Reproduction steps:
+  1. Continue the same long-running `implement_experiments` request after attempt 1 exposed LV-192.
+  2. Observe attempt 2 complete staged materialization and enter local verification.
+- Expected behavior:
+  - A runner that records device metadata should either define `get_device_info(...)`, alias it to the generated device metadata helper, or receive a minimal verifier repair before handoff.
+- Actual behavior:
+  - Attempt 2 failed local verification with:
+    - `Undefined helper call(s): get_device_info at run_peft_instruction_study.py:5321`
+  - The run restored generated paths and continued to attempt 3, but the same helper-name drift can recur.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this is a generated-runner contract drift inside the active persisted PEFT validation run.
+  - Existing session: same-flow validation reproduced the mismatch.
+- Dominant root-cause class: `persisted_state_bug`
+- Root-cause hypothesis:
+  - Staged generation emits final entrypoint/device metadata calls independently from helper-generation sections. Existing repair covered `_device_info(...) -> get_device_info(...)`, but not the reverse or the no-helper fallback case.
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extends entrypoint runtime compatibility repair to provide `get_device_info(...)` from `_device_info(...)`, `get_runtime_device_info(...)`, or a minimal local torch-aware fallback.
+      - runs entrypoint runtime repair before undefined-helper detection.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for an entrypoint that calls missing `get_device_info(...)`.
+- Regression status:
+  - Targeted regression: pass on 2026-04-28 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "get_device_info entrypoint"`.
+  - Build: pass on 2026-04-28 with `npm run build`.
+  - Same-flow live revalidation: pass on 2026-04-28; subsequent rebuilt run completed `run_experiments` with `exit_code: 0` and advanced through `analyze_results`.
+- Remaining risks:
+  - Device metadata is non-critical for experimental correctness, but missing helpers can still block the governed handoff.
+  - The same run may reveal another generated entrypoint/helper mismatch after this repair.
+
+## Issue: LV-192
+
+- Status: mitigated and same-flow live revalidated on 2026-04-28
+- Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-191 verifier repair.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+- Reproduction steps:
+  1. Rebuild and restart the Web API after adding LV-191 repair coverage.
+  2. Re-run `implement_experiments` on the same persisted run.
+  3. Observe attempt 1 complete staged materialization and enter local verification.
+- Expected behavior:
+  - Implement-stage verification should either accept a metrics writer adapter that passes both payload and the writer's required path argument, or repair a semantically obvious missing path keyword before handoff.
+- Actual behavior:
+  - Attempt 1 failed local verification with:
+    - `Generated Python runner has a metrics writer adapter mismatch.`
+    - `Entrypoint adapter does not pass required path argument 'path' to write_metrics_json().`
+  - Attempt 2 continued under the same live request, but the mismatch represents another generated cross-section contract drift that can recur.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; the live validation target is the long-running persisted PEFT run and the issue is deterministic in the generated runner artifact.
+  - Existing session: same-flow validation reproduced the mismatch in the persisted run.
+- Dominant root-cause class: `persisted_state_bug`
+- Root-cause hypothesis:
+  - Staged chunk generation defines a concrete `write_metrics_json(...)` signature independently from the entrypoint adapter. The adapter forwards payload aliases but can omit the writer's required path parameter name, so `py_compile` passes but verifier signature analysis correctly blocks handoff.
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds an implement-stage repair that amends metrics writer adapter calls to pass the required path-like keyword, such as `path=metrics_path`, when the selected writer requires it.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for `write_metrics_json(metrics, path)` with an adapter that initially forwards only payload aliases.
+- Regression status:
+  - Targeted regression: pass on 2026-04-28 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "metrics writer adapters that omit"`.
+  - Build: pass on 2026-04-28 with `npm run build`.
+  - Same-flow live revalidation: pass on 2026-04-28; subsequent rebuilt run completed `run_experiments` with `exit_code: 0` and advanced through `analyze_results`.
+- Remaining risks:
+  - Other writer signatures may use less common destination parameter names.
+  - The same run may expose a deeper runtime contract mismatch after this adapter surface is repaired.
+
+## Issue: LV-191
+
+- Status: active, fix implemented and awaiting same-flow live revalidation
+- Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-190 verifier repair.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Rebuild and restart the Web API after adding LV-190 repair coverage.
+  2. Re-run `implement_experiments` on the same persisted run.
+  3. Let staged native-Codex generate the PEFT runner and pass local `python3 -m py_compile`.
+  4. Observe second-stage execution write a failure metrics payload.
+
+- Expected behavior:
+  - If the runner defines a baseline-first recipe executor such as `execute_locked_baseline_first_recipes(...)`, the final metrics path should call it or verifier should insert a compatible alias before handoff.
+  - Runner execution should not fail before model/data loading solely because resolver names drifted across chunks.
+
+- Actual behavior:
+  - The generated runner defined `execute_locked_baseline_first_recipes(config, device)`.
+  - `_run_experiment_and_build_metrics(...)` searched only `run_locked_recipe_sequence`, `execute_locked_recipe_sequence`, `run_baseline_first_recipe_sequence`, `run_recipe_execution_orchestrator`, and `run_peft_recipe_study`.
+  - Second-stage execution wrote `metrics.json` with `status: "failed"` and:
+    `No recipe execution orchestrator is available in the completed runner sections.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; reproduced in the existing persisted live-validation run after rebuilding the Web API.
+  - Existing session: reproduced on the same persisted run during `implement_experiments` second-stage verification.
+  - Divergence: no fresh/existing divergence established.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunk generation created a valid recipe execution implementation under one name but selected a final resolver list that omitted that name. Compile-only verification cannot catch this because the resolver is only evaluated at runtime.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds recipe execution orchestrator alias repair from `execute_locked_baseline_first_recipes(...)` and related implementation names to `run_locked_recipe_sequence(...)`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for a runner that defines `execute_locked_baseline_first_recipes(...)` but searches only alternate orchestrator names
+
+- Regression status:
+  - Targeted regression: pending.
+  - Build: pending.
+  - Full regression: pending.
+  - Harness validation: pending.
+  - Same-flow live revalidation: pending; rebuild/restart Web API and rerun `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+
+- Follow-up risks:
+  - This repair should allow execution to reach dataset/model/training code. It may expose dependency, Hugging Face access, CUDA, or evaluation defects that were previously hidden by entrypoint drift.
+
+## Issue: LV-190
+
+- Status: active, fix implemented and awaiting same-flow live revalidation
+- Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-189 verifier repair.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Rebuild and restart the Web API after adding LV-189 repair coverage.
+  2. Re-run `implement_experiments` on the same persisted run.
+  3. Let staged native-Codex generate the 3-chunk PEFT runner and pass local `python3 -m py_compile`.
+  4. Observe second-stage execution from `implement_experiments`.
+
+- Expected behavior:
+  - Generated entrypoint helper names should be internally consistent before handoff.
+  - If `_device_info(...)` is called but `get_device_info(...)` exists, verifier should add a compatibility alias or reject before second-stage execution.
+  - If a metrics writer returns the sanitized payload dictionary, the entrypoint writer wrapper should still return the metrics path, not call `Path(payload_dict)`.
+
+- Actual behavior:
+  - The runner defined `get_device_info(device)` but `_entrypoint_prepare_device(...)` and the failure path called `_device_info(device)`.
+  - Local `py_compile` passed.
+  - Second-stage execution failed before model/data loading with:
+    `NameError: name '_device_info' is not defined. Did you mean: 'get_device_info'?`
+  - Failure metrics writing then also failed with:
+    `argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'dict'`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; reproduced in the existing persisted live-validation run after rebuilding the Web API.
+  - Existing session: reproduced on the same persisted run during `implement_experiments` second-stage verification.
+  - Divergence: no fresh/existing divergence established.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunk generation selected a final entrypoint using a private helper alias that was never defined, while another chunk defined the public helper name. The generated writer adapter also assumed writer return values are path-like, even though the chosen strict writer returns the payload it wrote.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds `_device_info` to critical runtime helper detection
+      - adds entrypoint runtime compatibility repair for `_device_info(...) -> get_device_info(...)`
+      - repairs `Path(written)` wrappers so dict-returning metrics writers return `metrics_path`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for `_device_info` alias repair and dict-returning metrics writer wrappers
+
+- Regression status:
+  - Targeted regression: pending.
+  - Build: pending.
+  - Full regression: pending.
+  - Harness validation: pending.
+  - Same-flow live revalidation: pending; rebuild/restart Web API and rerun `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+
+- Follow-up risks:
+  - This failure still occurred before model loading, dataset loading, or training. A successful repair may expose deeper experiment-runtime issues.
+
+## Issue: LV-189
+
+- Status: active, fix implemented and awaiting same-flow live revalidation
+- Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-187/LV-188 verifier repairs.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Re-run `implement_experiments` with the rebuilt verifier after the `require_runtime_dependencies` and `setup_logging` helper alias repairs.
+  2. Let staged native-Codex materialize the PEFT runner through chunk 4/4.
+  3. Observe attempt 1 fail local verifier because the generated runner called undefined `normalize_for_json(...)`.
+  4. Observe attempt 2 replace the runner with a JSON-normalization self-check helper and pass `py_compile`.
+  5. Observe second-stage execution write probe metrics containing normalized strings for non-finite floats.
+
+- Expected behavior:
+  - Missing `normalize_for_json(...)` should be repaired in-place when a compatible JSON-safe helper exists, preserving the full experiment runner.
+  - Strict JSON repair should agree with the runtime sentinel watchdog: non-finite values must not leak as `NaN`, `Infinity`, `-Infinity`, or equivalent strings in `metrics.json`.
+  - Helper-only self-check scripts should not be accepted as research experiment execution.
+
+- Actual behavior:
+  - The verifier rejected the fuller attempt-1 runner for undefined `normalize_for_json(...)`.
+  - The next Codex attempt focused narrowly on JSON normalization and produced a helper-only `_json_normalization_self_check(...)` runner.
+  - Second-stage execution failed with:
+    `Sentinel watchdog blocked the run because normalization_probe.non_finite[0] resolved to NaN.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; reproduced in the existing persisted live-validation run after rebuilding the Web API.
+  - Existing session: reproduced on the same persisted run during `implement_experiments` retry.
+  - Divergence: no fresh/existing divergence established.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: compile-only handoff verification treated `normalize_for_json(...)` drift as a retryable generation defect instead of a small helper alias repair, causing retry focus to collapse to a helper-only patch. Separately, strict JSON repair considered exact non-finite strings JSON-safe even though the downstream sentinel rejects them.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds `normalize_for_json(...)` compatibility repair using `_autolabos_json_safe(...)`, `json_safe(...)`, or `make_json_safe(...)` when available
+      - strengthens `_autolabos_json_safe(...)` insertion/repair so exact non-finite sentinel strings normalize to `None`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds direct coverage for missing `normalize_for_json(...)` alias repair
+      - extends strict JSON metrics repair coverage to execute the runner and verify `float('nan')` is written as JSON `null`
+
+- Regression status:
+  - Targeted regression: pending.
+  - Build: pending.
+  - Full regression: pending.
+  - Harness validation: pending.
+  - Same-flow live revalidation: pending; rebuild/restart Web API and rerun `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+
+- Follow-up risks:
+  - LV-161 remains the broader class for helper-only replacement. This issue covers the reproduced JSON-normalization path and should be considered resolved only when the same flow preserves or regenerates a real experiment runner and reaches second-stage execution without sentinel non-finite leakage.
+
+## Issue: LV-188
+
+- Status: active, fix implemented and awaiting same-flow live revalidation
+- Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the LV-187 repair.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Re-run `implement_experiments` with the rebuilt verifier after `run_experiments` reported missing `require_runtime_dependencies`.
+  2. Let staged native-Codex regenerate the PEFT runner and pass local `python3 -m py_compile`.
+  3. Observe second-stage execution from `implement_experiments`.
+
+- Expected behavior:
+  - Generated runner logging helper names should be internally consistent before handoff.
+  - If a final entrypoint calls `setup_logging(...)` while a compatible `configure_logging(...)` helper exists, handoff repair should add an alias or reject the runner before second-stage execution.
+
+- Actual behavior:
+  - The regenerated runner defined `configure_logging(log_level)` but selected a final `main()` that called `setup_logging(args.log_level)`.
+  - Local `py_compile` passed.
+  - Second-stage execution failed with:
+    `NameError: name 'setup_logging' is not defined`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was reproduced in a rebuilt Web API attached to the existing persisted live-validation run.
+  - Existing session: reproduced on the same persisted run during cycle 24 implementation revalidation.
+  - Divergence: no fresh/existing divergence established.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunk generation produced multiple possible orchestration surfaces and selected a final entrypoint whose helper-name contract drifted from the earlier logging utility section. Compile-only verification cannot catch this missing runtime global.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds `setup_logging` to critical runtime helper detection
+      - adds a handoff repair that inserts `setup_logging(...)` as an alias to `configure_logging(...)` when available, or a minimal `logging.basicConfig(...)` helper otherwise
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for generated runners that call `setup_logging(...)` while defining only `configure_logging(...)`
+
+- Regression status:
+  - Targeted regression: pending.
+  - Build: pending.
+  - Full regression: pending.
+  - Harness validation: pending.
+  - Same-flow live revalidation: pending; rerun `implement_experiments -> run_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after rebuilding the Web API.
+
+- Follow-up risks:
+  - The re-run may expose deeper runtime defects after the logging surface is repaired because this failure still occurred before dependency loading, model loading, dataset loading, or training.
+
+## Issue: LV-187
+
+- Status: active, fix implemented and awaiting same-flow live revalidation
+- Validation target: same-flow `design_experiments -> implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the objective-gap backtrack selected `LoRA family retry with replicated best-practical variants`.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Apply the governed `backtrack_to_design -> design_experiments` transition after the previous `analyze_results` evidence gate.
+  2. Let `design_experiments` complete and auto-advance into staged native-Codex `implement_experiments`.
+  3. Let `implement_experiments` pass local `python3 -m py_compile` and auto-handoff into `run_experiments`.
+  4. Observe the first real execution attempt.
+
+- Expected behavior:
+  - Generated runner helper names should be internally consistent before handoff.
+  - If the dependency checker is generated as `validate_runtime_dependencies(...)`, any legacy generated calls to `require_runtime_dependencies(...)` should be rejected or repaired before `run_experiments`.
+
+- Actual behavior:
+  - `implement_experiments` completed and passed local `py_compile`.
+  - `run_experiments` failed immediately before model/data execution with:
+    `NameError: name 'require_runtime_dependencies' is not defined. Did you mean: 'validate_runtime_dependencies'?`
+  - The generated file did define `validate_runtime_dependencies(...)`, and earlier generated helper sections also referenced `require_runtime_dependencies(["transformers"])`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was reproduced in a rebuilt Web API attached to the existing persisted live-validation run.
+  - Existing session: reproduced on the same persisted run after the cycle 23 governed backtrack.
+  - Divergence: no fresh/existing divergence established.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged native-Codex generation used two semantically equivalent runtime dependency helper names across different chunks. `py_compile` cannot catch the missing global because function bodies are not executed during compile-only verification.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds `require_runtime_dependencies` to critical runtime helper detection
+      - adds a handoff repair that inserts a compatibility alias when generated code calls `require_runtime_dependencies(...)` but defines `validate_runtime_dependencies(...)`
+      - normalizes sequence-style calls such as `require_runtime_dependencies(["torch", "transformers"])` into the mapping shape accepted by the generated validator
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for generated runners that call the legacy runtime dependency helper while defining only the validator helper
+
+- Regression status:
+  - Targeted regression: pending.
+  - Build: pending.
+  - Full regression: pending.
+  - Harness validation: pending.
+  - Same-flow live revalidation: pending; rerun `implement_experiments -> run_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after rebuilding the Web API.
+
+- Follow-up risks:
+  - This fix addresses helper-name consistency only. The next same-flow execution may still reveal deeper generated-runner defects once real dependency loading, data loading, model loading, or training begins.
+
+## Issue: LV-186
+
+- Status: resolved by same-flow live revalidation
+- Validation target: same-flow `run_experiments -> analyze_results` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the repaired PEFT runner completed real GPU execution.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Re-run `implement_experiments` after the broader-target locked recipe failure.
+  2. Let `run_experiments` execute the generated PEFT runner to completion on GPU.
+  3. Let `analyze_results` synthesize `result_analysis.json`.
+
+- Expected behavior:
+  - `analyze_results` should project recipe-keyed `metrics.results` objects into baseline/comparator `condition_comparisons` and populated `results_table` rows.
+  - If the objective is not met, the transition reason should reflect the objective gap or evidence limitation, not `incomplete_results_table`.
+
+- Actual behavior:
+  - `run_experiments` completed and wrote `metrics.results` as an object keyed by recipe name.
+  - Each recipe row contains nested numeric values such as `evaluation.arc_challenge.accuracy` and `evaluation.hellaswag.accuracy`.
+  - `baseline_comparisons_bootstrap` contains numeric deltas and confidence intervals.
+  - `analyze_results` wrote `condition_comparisons: []` and every `results_table` row had `baseline: null`, `comparator: null`, and `delta: null`.
+  - The transition recommendation paused with `reason: "incomplete_results_table"`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was reproduced in a rebuilt Web API attached to the existing persisted live-validation run.
+  - Existing session: reproduced after same-flow PEFT execution completed in cycle 22.
+  - Divergence: no fresh/existing divergence established.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: result analysis supports array-shaped `metrics.results`, `metrics.result_rows`, `metrics.conditions`, and `metrics.recipes`, but not object-shaped `metrics.results` keyed by recipe id. It also does not synthesize flat `mean_accuracy`/benchmark accuracy aliases from nested `evaluation` payloads before selecting a comparator.
+
+- Code/test changes:
+  - Code:
+    - `src/core/resultAnalysis.ts`
+      - converts recipe-keyed `metrics.results` objects into comparison rows while preserving the recipe key as `recipe` and `condition_id`
+      - synthesizes flat `arc_challenge_accuracy`, `hellaswag_accuracy`, and `mean_accuracy` aliases from nested `evaluation` payloads
+      - falls back to selecting the best non-baseline comparator when `best_recipe` points at the baseline row
+  - Tests:
+    - `tests/objectiveMetricPropagation.test.ts`
+      - adds regression coverage for object-shaped PEFT `metrics.results` with nested benchmark accuracies
+
+- Regression status:
+  - Targeted regression: pass on 2026-04-28 with `npx vitest run tests/objectiveMetricPropagation.test.ts --testNamePattern "metrics.results is keyed by recipe|metrics.results has baseline|metrics.conditions has completed"`.
+  - Build: pass on 2026-04-28 with `npm run build`.
+  - Full regression: pass on 2026-04-28 with `npm test` (`146` root test files / `1534` tests, plus WebUI `14` tests).
+  - Harness validation: pass on 2026-04-28 with `npm run validate:harness`.
+  - Same-flow live revalidation: pass on 2026-04-28; rerunning `analyze_results` on the completed PEFT metrics populated `condition_comparisons` from `metrics.results`, produced non-null `results_table` rows, and changed the transition from `pause_for_human` / `incomplete_results_table` to the expected evidence-gate `backtrack_to_design` recommendation.
+
+- Follow-up risks:
+  - The objective remains not met; fixing this issue should make the negative result explicit rather than converting it into a paper-ready outcome.
+
+## Issue: LV-185
+
+- Status: resolved by same-flow live revalidation
+- Validation target: same-flow `backtrack_to_design -> design_experiments -> implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the objective-gap backtrack selected the LoRA rank and target-module efficiency sweep.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Apply the recommended `backtrack_to_design -> design_experiments` transition for the existing run.
+  2. Let `design_experiments` select `LoRA rank and target-module efficiency sweep`.
+  3. Let staged native-Codex `implement_experiments` complete and pass local `python3 -m py_compile`.
+  4. Observe auto-handoff into `run_experiments`.
+
+- Expected behavior:
+  - The generated runner should define every locked recipe required by the selected design, including the broader-target LoRA comparator.
+  - Implement-stage verification should reject or repair internal recipe-marker mismatches before handoff to `run_experiments`.
+
+- Actual behavior:
+  - `implement_experiments` completed staged materialization and local `py_compile`.
+  - `run_experiments` failed immediately with:
+    `RuntimeError: Locked recipe definitions are missing: broader-target LoRA comparator`
+  - The generated runner did define `BROADER_TARGET_LORA_RECIPE_ID = "lora_r16_qkvo_mlp"` and a `Broader-target LoRA r16 alpha32 attention+MLP` candidate, but the later locked-order validation searched only for the literal marker `broad`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was reproduced in a rebuilt Web API attached to the existing persisted live-validation run.
+  - Existing session: reproduced on the same persisted run after applying the governed backtrack transition.
+  - Divergence: no fresh/existing divergence established.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation projected the broader-target recipe consistently in the config section, but a later helper independently used a narrower string-marker contract. `py_compile` cannot catch the inconsistency because the missing-recipe check only executes at runtime.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds broader-target LoRA marker alias repair for generated baseline-first PEFT runners
+      - treats `mlp`, `qkvo`, `all_linear`, and `expanded` as valid aliases for broader-target recipe coverage
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for a `lora_r16_qkvo_mlp` broader-target recipe that previously failed a literal `broad` marker check
+
+- Regression status:
+  - Targeted regression: pass on 2026-04-28 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "broader-target LoRA marker|locked standard LoRA id|baseline-first PEFT runners that sort"`.
+  - Build: pass on 2026-04-28 with `npm run build`.
+  - Same-flow live revalidation: pass for this blocker on 2026-04-28; the rebuilt Web API reran `implement_experiments`, then `run_experiments` advanced beyond the previous immediate `Locked recipe definitions are missing: broader-target LoRA comparator` failure and completed real GPU execution.
+
+- Follow-up risks:
+  - Broader PEFT runner compatibility remains fragile because multiple generated sections independently restate recipe identity and execution-order contracts.
+  - The same-flow run exposed the later `analyze_results` object-shaped `metrics.results` projection issue tracked as `LV-186`.
 
 ## Issue: LV-184
 
@@ -1151,7 +1773,7 @@ Usage rules:
   - Full test suite: partial on 2026-04-27 with `npm test`; verifier-related tests passed, but one unrelated `tests/collectPapers.test.ts` afterEach hook timed out
   - Failed-test rerun: pass on 2026-04-27 with `npx vitest run tests/collectPapers.test.ts --testNamePattern "excludes blocked collected items"`
   - Harness: pass on 2026-04-27 with `npm run validate:harness`
-  - Re-validation result: pending
+  - Re-validation result: still pending for the original IA3 execution boundary. The 2026-04-29 same-flow rerun rebuilt the runner through native Codex OAuth and reached second-stage execution, but failed earlier in workflow configuration reparsing with LV-239 (`TypeError: 'Namespace' object is not iterable`) before IA3 recipe construction could be re-exercised.
 
 - Follow-up risks:
   - Same-flow revalidation must confirm these new checks fire before `run_experiments`.
@@ -1286,7 +1908,7 @@ Usage rules:
   - Build: pass on 2026-04-27 with `npm run build`
   - Full test suite: pass on 2026-04-27 with `npm test`
   - Harness: pass on 2026-04-27 with `npm run validate:harness`
-  - Re-validation result: pending
+  - Re-validation result: passed the LV-239 symptom boundary in the same localhost-only Web API flow on 2026-04-29; handoff logged `Made parse_args() calls Namespace-aware`, second-stage execution no longer failed with `TypeError: 'Namespace' object is not iterable`, and the run advanced to LV-240 (`ensure_parent_dir() missing 1 required positional argument: 'path_like'`).
 
 - Follow-up risks:
   - Same-flow revalidation still needs to rerun `implement_experiments` after rebuilding/restarting the Web API with this guard.
@@ -5682,7 +6304,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 ## Issue: LV-098
 
-- Status: in_progress
+- Status: resolved
 - Validation target: fresh external-workspace TUI `/brief start --latest` rerun for IEEE PEFT papers that previously reached `pdf_extract_failed` abstract fallback despite a nominal `pdf_url`
 - Environment/session context:
   - real TUI workspace: `.autolabos-validation/.live/abstract-image-rerun-wgj0hk`
@@ -6292,3 +6914,6896 @@ The resolved entries below are kept as recent validation history and regression 
   - `/tmp/autolabos-localhost-final.png`
   - `lsof -i :4317`
   - `curl -L -s -S -I http://127.0.0.1:4317`
+
+## Issue: LV-089
+
+- Status: resolved
+- Validation target: `analyze_results` should not pause with `incomplete_results_table` when real PEFT metrics contain executed `metrics.conditions` and `condition_summaries`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, revalidated on 2026-04-29 with a rebuilt localhost-only Web API on `127.0.0.1:4318`
+
+- Reproduction steps:
+  1. Use a run whose `metrics.json` has executed rows for `base_unmodified`, `lora_r8`, and `lora_r16`.
+  2. Ensure the rows are represented as `metrics.conditions` plus `condition_summaries`, with nested `evaluation.arc_challenge.accuracy` and `evaluation.hellaswag.accuracy`.
+  3. Run `analyze_results`.
+  4. Inspect `result_analysis.json`, `result_table.json`, `transition_recommendation.json`, and `analysis/evidence_scale_assessment.json`.
+
+- Expected behavior:
+  - `analyze_results` should project the executed baseline/comparator rows into `condition_comparisons`.
+  - `results_table` should contain populated baseline, comparator, and delta values.
+  - Bootstrap CI objects such as `bootstrap_mean_ci: { ci_low, ci_high, mean }` should count as confidence intervals.
+  - The transition should not pause solely because the results table is incomplete.
+
+- Actual behavior:
+  - Before the fix:
+    - `condition_comparisons` was empty.
+    - `results_table` preserved all-null contract placeholder rows.
+    - The transition paused with `reason: incomplete_results_table`.
+    - `confidence_interval_count` was 0 even though `best_condition.bootstrap_mean_ci` was present.
+  - After the fix:
+    - `condition_comparisons[0]` is `lora_r8_vs_base_unmodified`.
+    - `results_table` includes populated rows such as `mean_zero_shot_accuracy`: baseline `0.402344`, comparator `0.398438`, delta `-0.0039`.
+    - `confidence_interval_count` is 1 and the UI displays the interval as `95%`.
+    - The transition no longer pauses for `incomplete_results_table`.
+    - Low-severity, predeclared DoRA/RSLoRA scope limitations no longer block the brief evidence gate by themselves.
+    - The run still correctly backtracks to `design_experiments` because the brief required all planned tuned conditions to execute, while the evidence assessment observed `executed_condition_count=2` against `minimum_condition_count=4`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: started a rebuilt local-only Web API on `127.0.0.1:4318` from `/home/hanyong/.autolabos-validation`.
+  - Existing session: original run artifacts had already reached `analyze_results` with a pause.
+  - Divergence: persisted experiment metrics were sufficient, but the in-memory/persisted analysis projection did not recognize the current metrics shape before the fix.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: result analysis only recognized baselines in `metrics.conditions` via explicit `is_baseline` or older baseline-like names, did not treat `base_unmodified` / `condition_type: baseline_unmodified_checkpoint` as baseline evidence, did not merge `condition_summaries`, and did not parse direct bootstrap CI objects.
+
+- Code/test changes:
+  - Code:
+    - `src/core/resultAnalysis.ts`
+    - `src/core/analysis/briefEvidenceValidator.ts`
+  - Tests:
+    - `tests/resultAnalysis.test.ts`
+    - `tests/objectiveMetricPropagation.test.ts`
+    - `tests/briefEvidenceValidator.test.ts`
+  - Behavioral guardrail:
+    - Scope-limit failures with `severity: low` are treated as documentation risks rather than blocking evidence gaps.
+    - When a brief requires all planned conditions, the evidence gate now infers the planned condition count from the selected design/brief and blocks under-executed runs before they can advance.
+
+- Regression status:
+  - Automated regression test linked: yes, targeted result-analysis and objective-propagation tests cover the current `base_unmodified`/nested-evaluation shape.
+  - Automated guardrail test linked: yes, the brief-evidence validator now covers both non-blocking low-severity scope limitations and blocking planned-vs-executed condition coverage.
+  - Live validation result: pass for the original `incomplete_results_table` symptom after rerunning `analyze_results` through the rebuilt local Web API.
+  - Live validation result: pass for the adjacent gate behavior; rerun artifacts show `requirements.minimum_condition_count=4`, `actual.executed_condition_count=2`, `actual.scope_limit_count=0`, and transition reason `Brief minimum evidence gate failed: Brief evidence gate failed — Executed evidence covers all planned conditions...`.
+
+- Follow-up risks:
+  - The current run still backtracks to `design_experiments`, but now for the stronger and more actionable reason: planned condition coverage is incomplete.
+  - The next design/execute pass should either run the missing planned condition or explicitly revise the governed plan before re-entering `analyze_results`.
+  - The public summary table is now populated, but the stronger paper-readiness gate still correctly treats the evidence as limited until planned coverage is satisfied.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_table.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/analysis/evidence_scale_assessment.json`
+  - `npm test`
+  - `npm run build`
+  - `npm run validate:harness`
+
+## Issue: LV-090
+
+- Status: resolved
+- Validation target: `run_experiments` should not accept a completed metrics payload when a brief/design requires all planned tuned conditions but the runner only executed a subset
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, investigated on 2026-04-29 with run artifacts, generated runner source, and a rebuilt localhost-only Web API on `127.0.0.1:4318`
+
+- Reproduction steps:
+  1. Use a brief whose minimum evidence requires all planned conditions to execute.
+  2. Use a design/plan that specifies one tuned baseline plus three alternative recipe conditions.
+  3. Run a generated PEFT runner whose default recipe list is only `lora_r8,lora_r16`.
+  4. Inspect `metrics.json`, `run_experiments_verify_report.json`, `objective_evaluation.json`, and the downstream `analysis/evidence_scale_assessment.json`.
+
+- Expected behavior:
+  - `run_experiments` should fail verification before manifest success if successful tuned condition coverage is below the brief/design floor.
+  - Untuned reference rows such as `base_unmodified` should not count as planned tuned recipe conditions.
+  - A baseline-improvement objective such as `+1.0 percentage point over the tuned baseline` should require an explicit delta/improvement metric, not raw absolute accuracy.
+
+- Actual behavior:
+  - Before the fix:
+    - The generated runner defaulted to `--recipes lora_r8,lora_r16`.
+    - The metrics payload exposed only `base_unmodified`, `lora_r8`, and `lora_r16`.
+    - `run_experiments` accepted the payload because the contract validator only checked failed top-level status, failed `metrics.recipes`, and optional `metrics.study.aggregate`.
+    - `objective_evaluation.json` accepted `best_condition.arc_challenge_accuracy=0.296875 >= 0.01` even though the declared objective was improvement over a tuned baseline.
+  - After the fix:
+    - `run_experiments` validates planned-condition coverage from the brief and portfolio notes.
+    - The shared condition counter excludes untuned reference rows when the requirement is for tuned/planned recipe conditions.
+    - Relative baseline objectives only match explicit relative metrics such as `accuracy_delta_vs_baseline`, `*_improvement_over_baseline`, or promoted structured primary metrics with relative names.
+    - Rerunning `analyze_results` shows `executed_condition_count=2`, `minimum_condition_count=4`, and objective grounding on `best_vs_baseline_delta=0` rather than raw `arc_challenge_accuracy`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: a targeted `run_experiments` test writes a completed metrics payload with two tuned conditions under a four-condition brief and now fails at the metrics-contract stage.
+  - Existing session: the historical run already persisted a successful `run_experiments` artifact before this stricter guard existed.
+  - Divergence: the persisted runner output was real but under-scoped relative to the governed brief; downstream analysis now catches it, and future execution should catch it earlier.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: execution verification projected success from command completion and objective status without reconciling planned condition coverage against the governed brief, and objective matching allowed raw metric fallthrough for a relative baseline objective.
+
+- Code/test changes:
+  - Code:
+    - `src/core/analysis/plannedConditionCoverage.ts`
+    - `src/core/analysis/briefEvidenceValidator.ts`
+    - `src/core/nodes/runExperiments.ts`
+    - `src/core/objectiveMetric.ts`
+  - Tests:
+    - `tests/runExperimentsExecutionProfile.test.ts`
+    - `tests/briefEvidenceValidator.test.ts`
+    - `tests/objectiveMetric.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, targeted tests cover under-executed planned conditions at `run_experiments`, tuned-only condition counting at `analyze_results`, and relative-objective matching that refuses raw accuracy fallthrough.
+  - Live validation result: downstream `analyze_results` rerun through the rebuilt local Web API reports `actual.executed_condition_count=2`, `requirements.minimum_condition_count=4`, `actual.scope_limit_count=0`, and `best_vs_baseline_delta=0` objective not met.
+  - Direct full re-execution of the generated PEFT runner was not repeated in this turn because it would rerun training; the new `run_experiments` guard is covered by a synthetic completed-metrics regression and will trigger on the next real execution pass.
+
+- Follow-up risks:
+  - The existing run still needs a governed design/implement/execute pass to actually produce the missing tuned baseline plus three alternative recipe conditions, or a formal brief/design revision to a smaller exploratory scope.
+  - The historical `objective_evaluation.json` remains a persisted pre-fix artifact until `run_experiments` is rerun; downstream `analyze_results` now uses the stricter objective interpretation.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/analysis/evidence_scale_assessment.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
+  - `npm test -- --run tests/objectiveMetric.test.ts tests/briefEvidenceValidator.test.ts tests/runExperimentsExecutionProfile.test.ts`
+  - `npm run build`
+
+## Issue: LV-091
+
+- Status: resolved
+- Validation target: governed backtrack from `analyze_results` to `design_experiments` should produce a runner whose `implement_experiments` handoff is executable by `run_experiments`, not only Python-compilable
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Apply the pending `backtrack_to_design` transition for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  2. Run `design_experiments` and allow the governed workflow to continue through `implement_experiments`.
+  3. Observe that `implement_experiments` reports local verification pass using `python3 -m py_compile`.
+  4. Let `run_experiments` execute the generated `run_peft_instruction_study.py`.
+
+- Expected behavior: `implement_experiments` should reject or repair a generated runner whose final entrypoint dispatcher cannot reach the actual experiment orchestration function materialized by earlier chunks.
+- Actual behavior: before the fix, `run_experiments` failed immediately with `RuntimeError: No chunk_5a experiment orchestration function was found.`, and wrote a failure `metrics.json` with zero executed conditions. After the fix, the same Web API flow regenerated the runner and advanced past the chunk-5a dispatcher boundary into real runner execution.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API on `127.0.0.1:4318`, applied the backtrack transition, regenerated the design/implementation, and reproduced the runtime failure during `run_experiments`.
+  - Existing session: the same run previously failed downstream planned-condition coverage after an older generated runner executed only two tuned conditions; after backtracking, the newly generated runner compiled but failed at the orchestration dispatcher boundary before any condition executed.
+  - Divergence: no session divergence observed; the failure boundary moved from downstream evidence adequacy to implementation handoff executability after the governed rerun generated a new runner.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `implement_experiments` projected success from `py_compile` and existing dispatcher-name checks, but the generated entrypoint searched for chunk-5a orchestration aliases that did not include the actual generated function `execute_candidate_study` or its aliases `run_candidate_study` / `run_raw_experiment`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts` covers chunk-5a orchestration alias repair when the generated runner defines `execute_candidate_study`.
+  - Re-validation result: pass for the original chunk-5a failure; the regenerated runner no longer contains the failing `No chunk_5a experiment orchestration function was found` dispatcher path and reached second-stage `run_experiments` execution.
+
+- Follow-up risks:
+  - A compile-only handoff can still hide other runtime-only mismatches; LV-092 tracks the next observed generated-runner metrics aggregation bug.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-103
+
+- Status: resolved
+- Validation target: generated PEFT runner should expose its generated workflow implementation under the final workflow dispatcher names and preserve diagnostic metrics writing on failure
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-102 baseline evaluator argument repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow second-stage `run_experiments` verification to execute the generated script.
+  4. Observe final workflow dispatch and failure diagnostics.
+
+- Expected behavior: the generated runner should define or alias one of `run_peft_instruction_study`, `run_baseline_first_peft_comparison`, `run_peft_variant_comparison_loop`, `run_peft_comparison_study`, `run_experiment`, or `execute_experiment`; if execution fails, diagnostic metrics should still be written with the correct writer signature.
+- Actual behavior: `_autolabos_run_workflow(...)` failed with `RuntimeError: No experiment workflow function was found`, and the exception path then failed to write diagnostics because `write_metrics_json()` was called without required `metrics_path`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API and reproduced the final workflow-dispatch mismatch plus diagnostic-writer mismatch during second-stage verification.
+  - Existing session: earlier attempts failed at baseline evaluator argument passing; after LV-102, execution advanced to final workflow dispatch.
+  - Divergence: no session divergence observed; the failure is a generated-runner callable inventory mismatch with an adjacent diagnostic writer argument mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the PEFT comparison workflow under a different function name than the final dispatcher expects, and the exception handler reused a metrics writer adapter without passing the generated writer's required `metrics_path` parameter.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added final workflow alias repair for `_autolabos_run_workflow(...)` when the generated implementation exists under a compatible but unsearched PEFT comparison name such as `run_baseline_locked_peft_variant_comparison`
+      - added AutoLabOS metrics writer compatible-call repair so `_autolabos_write_metrics(...)` no longer passes `metrics` both positionally and by keyword before `metrics_path`
+      - batches the late metrics-writer repair and workflow/orchestrator alias repair before one re-run, avoiding a repair-one-surface/return-before-next-surface loop
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs AutoLabOS metrics writer compatible-call adapters that duplicate the metrics argument`
+    - `repairs final workflow dispatcher aliases when the generated runner defines a baseline-locked PEFT comparison`
+  - Re-validation result: pass for the LV-103 symptom boundary
+    - targeted tests passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+    - same-flow live rerun no longer fails with `No experiment workflow function was found` or missing `metrics_path`; it advanced into real Hugging Face model/dataset execution and failed later at LV-104
+
+- Follow-up risks:
+  - A generated runner can still pass local compile/handoff checks while failing during real Trainer collation; LV-104 tracks the next runtime-only blocker.
+
+## Issue: LV-104
+
+- Status: resolved
+- Validation target: generated PEFT runner should tokenize instruction-tuning labels so real `Trainer` batches can be collated during second-stage `run_experiments` verification
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-103 workflow/metrics writer repairs.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Allow second-stage `run_experiments` verification to execute the generated PEFT runner against real Hugging Face model and dataset assets.
+
+- Expected behavior: instruction-tuning examples should be tokenized with consistent batchable `input_ids`, `attention_mask`, and `labels`, allowing `DataCollatorForLanguageModeling`/`Trainer` to execute all configured recipe runs and write structured metrics.
+- Actual behavior: the rerun reached real model loading, dataset mapping, and training, then failed in the Trainer data collator with `ValueError: Unable to create tensor, you should probably activate truncation and/or padding...`; the generated tokenizer path used `padding=False` and precomputed variable-length `labels` via `encoded["labels"] = [ids.copy() for ids in encoded["input_ids"]]`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuilding and reproduced the collation failure during real second-stage verification.
+  - Existing session: earlier attempts failed before real training at workflow/diagnostic dispatch; after LV-103, execution advanced to real model/dataset/trainer execution.
+  - Divergence: no session divergence observed; this is a generated-runner runtime collation mismatch hidden by compile-only handoff.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation projected causal-LM labels before padding, but the chosen collator expects either no precomputed variable-length labels or consistently padded labels. The compile check cannot observe this because it only appears when a real batch is collated.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added causal-LM label padding repair that converts generated `padding=False` tokenization plus precomputed `labels` into `padding="max_length"` with pad labels masked to `-100`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs causal-LM training labels so generated Trainer batches can be collated`
+  - Re-validation result: pass for the LV-104 symptom boundary
+    - targeted test passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+    - same-flow live rerun no longer failed in `DataCollatorForLanguageModeling` label collation; it advanced to a later runtime helper alias failure tracked by LV-105
+
+- Follow-up risks:
+  - The repair should preserve real node-owned execution and not replace the training/evaluation artifacts manually. The next rerun may surface a later runtime or quality gate after collation is fixed.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-267
+
+- Status: in_progress; code/test/build complete, pending same-flow Web API re-validation.
+- Validation target: regenerated PEFT runner should expose dataset-loading and failure-serialization helpers accepted by its final entrypoint
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Apply the objective/resource-regression backtrack and rerun `design_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  2. Let minimal approval auto-advance through native Codex `implement_experiments`.
+  3. Allow the second-stage `run_experiments` verifier to execute the generated `run_peft_instruction_study.py`.
+  4. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json` and `exec_logs/run_experiments.txt`.
+
+- Expected behavior: the generated runner should either define the dataset-loading and JSON-serialization helper names used by its final orchestration entrypoint, or the handoff repair layer should reconcile equivalent helper names before accepting the implementation.
+- Actual behavior: `run_experiments` failed before any real experiment evidence was produced. The generated entrypoint raised `RuntimeError: Missing required dataset helper(s): evaluation dataset loader`, then the failure-recording path raised `NameError: name '_jsonable' is not defined. Did you mean: 'to_jsonable'?`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API, reran `design_experiments`, allowed auto-handoff into native Codex `implement_experiments`, and reproduced the generated-runner failure during second-stage `run_experiments`.
+  - Existing session: previous attempts failed at earlier generated-runner helper alias boundaries such as `MutableMapping`, tokenizer helpers, dispatcher aliases, and parent-directory helpers; this attempt advanced to dataset-loader and failure-serialization helper mismatches.
+  - Divergence: no session divergence observed; the same real Web API flow exposed the failure after a fresh implementation handoff.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged materialization generated or preserved semantically equivalent helpers under names that were not reconciled with the final orchestration bridge before handoff. The current implementation verifier still accepts `py_compile` success even when the entrypoint references unresolved runtime helper families.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must not fabricate datasets, metrics, or node-owned experiment artifacts. It should only reconcile helper aliases/entrypoint compatibility or reject the handoff before `run_experiments`.
+  - A broader generated-function inventory check may be needed if new alias families continue to appear after this repair.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-268
+
+- Status: in_progress
+- Validation target: generated baseline-first PEFT orchestration helper should be invoked through a signature-compatible bridge before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-267 alias repairs
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with LV-267 helper alias repairs.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let the auto-handoff second-stage `run_experiments` verification execute the generated `run_peft_instruction_study.py`.
+  5. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`.
+
+- Expected behavior: the generated entrypoint should call `execute_baseline_first_condition_loop` with a signature-compatible argument surface, or the handoff repair layer should adapt helper invocation before accepting the implementation.
+- Actual behavior: the generated runner reached runtime dependency capture and started `run_peft_instruction_study`, but wrote a top-level failed metrics payload because `_invoke_named_helper(...)` called `execute_baseline_first_condition_loop(config)` while the helper accepted no positional arguments, producing `TypeError: execute_baseline_first_condition_loop() takes 0 positional arguments but 1 was given`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: after rebuilding and restarting the Web API, the same live flow advanced past the previous `_jsonable` and evaluation dataset-loader mismatch and failed at the baseline-first condition-loop invocation.
+  - Existing session: earlier attempts failed before condition-loop execution, most recently on missing evaluation dataset helper and `_jsonable` failure serialization.
+  - Divergence: no session divergence observed; the failure boundary moved forward in the same run after the previous repair.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation materialized a baseline-first execution helper and a generic named-helper dispatcher independently. The dispatcher sends positional `config`, but the generated helper has a keyword-only or no-positional signature. Existing repair layers do not reconcile this specific named-helper invocation surface before handoff.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair should adapt invocation only when the target helper exists and the call surface is incompatible; it must not fabricate condition outputs or convert real runtime failures into completed metrics.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-269
+
+- Status: in_progress
+- Validation target: generated PEFT runner should expose a singular condition-result normalization helper when final metrics assembly calls it
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-268 invocation repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-268 baseline-first invocation repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let native Codex regenerate the PEFT runner, pass local `py_compile`, and enter second-stage `run_experiments`.
+  5. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`.
+
+- Expected behavior: the generated runner should either define `normalize_condition_result(...)`, call the plural batch helper consistently, or receive a safe handoff alias before second-stage execution.
+- Actual behavior: the regenerated runner began real `run_experiments`, detected the CUDA RTX 4090 device, and entered final metrics assembly, but `_ensure_required_condition_records(...)` called missing `normalize_condition_result(...)` while only the semantically related plural helper `normalize_condition_results(...)` existed. The script wrote top-level failure metrics and failed with `NameError: name 'normalize_condition_result' is not defined. Did you mean: 'normalize_condition_results'?`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuilding, reran the same live action, and reproduced the generated-runner helper-name mismatch during second-stage `run_experiments`.
+  - Existing session: the previous same-flow attempt failed at the baseline-first condition-loop positional invocation tracked by LV-268; after the repair/rebuild, the failure boundary moved to final metrics assembly.
+  - Divergence: no session divergence observed; this is another generated code handoff mismatch exposed by the real run.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation materialized batch normalization logic under `normalize_condition_results(...)`, but a later metrics-assembly chunk referenced the singular helper name for synthetic required-condition rows. Local `py_compile` cannot catch this missing helper until runtime reaches metrics assembly.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must only bridge singular/plural normalization helper names and must not synthesize completed condition rows or mask genuine experiment failures.
+  - If a generated plural helper has incompatible semantics, the safe behavior is to normalize the single record through that plural helper and return the first normalized row, preserving failure status for missing required records.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-270
+
+- Status: in_progress
+- Validation target: regenerated PEFT runner should expose a top-level experiment orchestration callable that connects the generated locked-condition executor to final metrics emission
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-269 normalization-alias repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-269 condition-normalizer alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let native Codex regenerate all staged chunks and allow second-stage `run_experiments` verification to execute the generated `run_peft_instruction_study.py`.
+  5. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`.
+
+- Expected behavior: the generated runner should either define one of the top-level orchestration names searched by its failure-safe runner, or the handoff repair layer should bridge the generated locked-condition executor through a safe top-level callable before second-stage execution.
+- Actual behavior: local `py_compile` passed and the generated script entered second-stage execution, but `run_failure_safe_experiment(...)` called `_resolve_orchestration_callable(...)`, which searched only `run_experiment`, `run_peft_instruction_study`, `run_full_experiment`, `execute_experiment`, `execute_study`, `orchestrate_experiment`, `orchestrate_study`, and `run_study`. The script defined `run_locked_baseline_first_conditions(...)` and `execute_locked_condition_sequence(...)`, but no searched top-level callable, so it wrote failure metrics and exited with `RuntimeError: No experiment orchestration callable found`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuilding, reran the same live action, and reproduced the missing top-level orchestration callable during second-stage `run_experiments`.
+  - Existing session: the previous same-flow attempt failed at final metrics assembly helper normalization tracked by LV-269; after the repair/rebuild, the failure boundary moved to final entrypoint orchestration resolution.
+  - Divergence: no session divergence observed; this is another generated code handoff mismatch exposed by the real run.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation materialized a real locked-condition execution function and metric-writing helpers, but the final failure-safe entrypoint's top-level callable inventory was not reconciled with those generated functions before handoff. Compile-only validation cannot catch this because all referenced resolver functions exist; the failure appears only at runtime when the resolver finds no candidate.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must only connect existing generated execution and metrics helpers; it must not fabricate condition outputs, benchmark scores, or completed metrics.
+  - If the generated locked-condition executor itself later fails while loading datasets, models, or executing training, that should remain visible as real failure evidence rather than being hidden by the top-level alias.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-271
+
+- Status: in_progress
+- Validation target: regenerated PEFT runner should materialize instruction-training examples and benchmark samples before calling the generated baseline-first condition executor
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-270 top-level orchestration-callable repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-270 top-level orchestration callable bridge.
+  2. Restart the localhost-only Web API from `/home/hanyong/.autolabos-validation` on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let native Codex regenerate all chunks, pass local `py_compile`, and enter second-stage `run_experiments`.
+  5. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`.
+
+- Expected behavior: the top-level `run_experiment(...)` should load or prepare the generated instruction subset and compact benchmark samples, then call `execute_baseline_first_conditions(...)` with signature-compatible `instruction_examples` and `benchmark_samples` arguments.
+- Actual behavior: the runner reached second-stage execution and exited with status code 0, but wrote a failed metrics payload. All five planned condition records failed before condition execution with `TypeError: Cannot call execute_baseline_first_conditions; missing required arguments: ['instruction_examples', 'benchmark_samples']`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuilding, reran the same live action, and reproduced the missing workflow inputs during second-stage `run_experiments`.
+  - Existing session: the previous same-flow attempt failed before this point because no top-level orchestration callable was discoverable. After LV-270, the failure boundary moved into top-level workflow input materialization.
+  - Divergence: no session divergence observed; this is a generated-runner handoff/runtime input mismatch exposed by the real run.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted valid data loaders (`load_instruction_subset(...)`, `load_compact_benchmark_subsets(...)`) and a valid condition executor requiring `instruction_examples` and `benchmark_samples`, but the final `run_experiment(...)` workflow bridge did not reconcile those required executor inputs before invoking `_invoke_with_compatible_signature(...)`.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must call generated dataset/benchmark loaders or pass existing loaded values; it must not substitute fake rows, fabricated benchmark samples, or completed condition metrics.
+  - Once these inputs are supplied, the next real boundary may be external model/dataset availability, tokenizer/model loading, or actual training/evaluation runtime.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-222
+
+- Status: resolved
+- Validation target: generated PEFT runner should support dict-style access for object-backed recipe definition registries during second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  2. Let staged materialization complete all five runner chunks and hand off to second-stage `run_experiments`.
+  3. Observe generated CLI normalization before experiment execution.
+
+- Expected behavior: object-backed recipe definition rows should either be accessed by attributes consistently, or the handoff repair layer should add a safe `__getitem__` compatibility method before second-stage execution.
+- Actual behavior: generated `normalize_cli_args(...)` iterated `PEFT_RECIPE_DEFINITIONS` and called `recipe["condition_id"]`, but each row was an `_PeftRecipeDefinition` object without `__getitem__`, causing `TypeError: '_PeftRecipeDefinition' object is not subscriptable`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-221 counting repair; the failure occurred after staged generation, py_compile, and handoff repairs completed.
+  - Divergence: no evidence yet of session-specific behavior; this appears to be a generated-runner compatibility mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the existing object-backed recipe subscript repair only recognized `PEFT_RECIPES` registries and non-underscored class names ending in `Recipe` or `Spec`, so it missed the semantically equivalent `PEFT_RECIPE_DEFINITIONS` registry backed by `_PeftRecipeDefinition`.
+
+- Code/test changes:
+  - Code:
+    - Added `repairPythonBenchmarkEvaluatorAliasSurface(...)` to bridge existing generated zero-shot benchmark evaluators such as `evaluate_zero_shot_accuracy`, `evaluate_model_zero_shot`, and `evaluate_benchmark_zero_shot` into the searched `evaluate_zero_shot_benchmarks(...)` entrypoint.
+    - Wired the repair into the `implement_experiments` handoff repair sequence before second-stage `run_experiments`.
+  - Tests:
+    - Added `repairs benchmark evaluator aliases without fabricating metrics` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: passed with `npm test -- --run tests/implementSessionManager.test.ts -t "benchmark evaluator aliases"`.
+  - Re-validation result: partial on 2026-04-29; the same localhost-only Web API flow regenerated a script that defines `evaluate_zero_shot_benchmarks`, so the missing-evaluator shape did not appear structurally, but second-stage execution stopped earlier in argument parsing with LV-227 before evaluator execution could be observed end-to-end.
+
+- Follow-up risks:
+  - The repair must only add dictionary-style access to generated recipe-definition value objects and must not mask genuinely missing recipe fields.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-223
+
+- Status: resolved
+- Validation target: generated PEFT runner should reconcile final recipe catalog lookup aliases with the generated recipe registry names before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-222 object-backed recipe-definition subscript repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow local `py_compile` plus second-stage `run_experiments` verification.
+  4. Observe generated runner startup before model/dataset execution.
+
+- Expected behavior: if the generated runner defines the recipe registry as `ORDERED_RECIPE_SPECS`, `ALL_RECIPES`, `PEFT_RECIPE_SPECS`, or `ORDERED_PEFT_RECIPES`, the final recipe-order helper should resolve one of those registries rather than failing before execution.
+- Actual behavior: generated `_get_recipe_catalog()` searched only `RECIPE_SPECS` and `RECIPES`; the same script defined `ORDERED_RECIPE_SPECS`, `ALL_RECIPES`, `PEFT_RECIPE_SPECS`, and `ORDERED_PEFT_RECIPES`, so startup failed with `RuntimeError: Recipe catalog not found; expected RECIPE_SPECS or RECIPES from the recipe configuration section.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-222 repair; local verification passed and failure moved into second-stage runner startup.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated-runner alias mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation split recipe definitions and final orchestration across chunks. The recipe-definition chunk emitted `ORDERED_RECIPE_SPECS` and related registries, while the final orchestration chunk hard-coded a narrower `RECIPE_SPECS`/`RECIPES` lookup.
+
+- Code/test changes:
+  - Code:
+    - Added `repairPythonBenchmarkEvaluatorAliasSurface(...)` in `src/core/agents/implementSessionManager.ts`.
+    - Wired the repair into the staged implementation handoff before deterministic subset repair.
+    - The repair only bridges existing generated evaluator and public benchmark loader functions into `evaluate_zero_shot_benchmarks(...)`; it does not fabricate benchmark metrics.
+  - Tests:
+    - Added `repairs benchmark evaluator aliases without fabricating metrics` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "benchmark evaluator aliases"`, then passed again in the related repair subset `npm test -- --run tests/implementSessionManager.test.ts -t "PEFT_RECIPES mappings|locked recipe catalogs|benchmark evaluator aliases|evaluation dataset"`.
+  - Re-validation result: partial on 2026-04-29; the same localhost-only Web API flow regenerated a script that defines `evaluate_zero_shot_benchmarks`, so the missing-evaluator shape did not appear structurally, but second-stage execution stopped earlier in argument parsing with LV-227 before evaluator execution could be observed end-to-end.
+
+- Follow-up risks:
+  - The repair must only bridge equivalent generated recipe registries and must not fabricate missing recipes or weaken the baseline-first contract.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-224
+
+- Status: in_progress; same-flow revalidation passed the original arity boundary and is now blocked by LV-245
+- Validation target: generated PEFT runner entrypoint should resolve generated ARC-Challenge/HellaSwag evaluation dataset loader aliases before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-223 recipe-catalog alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Allow native Codex staged materialization to complete all 6 generated runner chunks.
+  5. Allow local `py_compile`, handoff repairs, and second-stage `run_experiments` verification to execute the generated runner.
+
+- Expected behavior: the generated runner should load the bounded public ARC-Challenge and HellaSwag evaluation datasets through whichever semantically equivalent loader names were generated, or the handoff repair layer should reconcile those aliases before second-stage execution.
+- Actual behavior: the generated runner defined public evaluation dataset loaders including `load_bounded_public_evaluation_datasets`, `load_arc_challenge_raw_dataset`, and `load_hellaswag_raw_dataset`, but `_entrypoint_load_datasets(...)` searched only narrower aliases such as `load_evaluation_datasets`, `load_bounded_evaluation_datasets`, `prepare_evaluation_datasets`, `load_arc_challenge_examples`, and `load_hellaswag_examples`. Second-stage execution failed with `RuntimeError: No evaluation dataset loader is available in the materialized script`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-223 repair; local verification passed, recipe-definition/catalog alias failures did not recur, and execution advanced to dataset-loader entrypoint startup.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated-runner entrypoint alias mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation split dataset loading and final entrypoint orchestration across chunks. The dataset-loading chunk emitted public loader names with `public` / `raw_dataset` suffixes, while the final entrypoint chunk searched a narrower alias family and did not inspect the generated callable inventory before raising.
+
+- Code/test changes:
+  - Code:
+    - Extended `repairPythonLockedRecipeCatalogAliasSurface(...)` in `src/core/agents/implementSessionManager.ts` so generated final recipe registry lookups include the existing `PEFT_RECIPES` mapping before falling back to hard-coded recipe IDs.
+    - The repair only expands the generated registry lookup surface; it does not create recipes, skip `validate_args(...)`, or weaken the baseline-first recipe-order contract.
+  - Tests:
+    - Added `repairs final recipe registries that ignore generated PEFT_RECIPES mappings` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "PEFT_RECIPES mappings"`, then passed again in the related repair subset `npm test -- --run tests/implementSessionManager.test.ts -t "PEFT_RECIPES mappings|locked recipe catalogs|benchmark evaluator aliases|evaluation dataset"`.
+  - Re-validation result: pending same-flow localhost-only Web API rerun after `npm run build` passed on 2026-04-29.
+
+- Follow-up risks:
+  - The repair must only bridge existing generated public evaluation dataset loaders and must not fabricate evaluation rows or bypass node-owned dataset loading/execution.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-225
+
+- Status: resolved
+- Validation target: generated PEFT runner dataset-loading bridge should pass compatible bounded-sample arguments to generated ARC-Challenge/HellaSwag loaders during second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-224 evaluation dataset helper alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Allow native Codex staged materialization, dynamic chunk re-subdivision, local `py_compile`, handoff repairs, and second-stage `run_experiments` verification to execute the generated runner.
+
+- Expected behavior: if the generated runner exposes an ARC-Challenge or HellaSwag loader that requires `max_examples`, the workflow dataset bridge should supply the equivalent bounded sample count from generated configuration fields such as `max_eval_examples`, `max_eval_examples_per_benchmark`, `eval_samples`, or `max_examples_per_benchmark`.
+- Actual behavior: the regenerated runner advanced past the LV-224 missing-loader boundary and executed second-stage verification, but `_load_study_datasets(...)` called the generated `load_arc_challenge_examples(...)` through `_invoke_with_supported_kwargs(...)` without a `max_examples` value. Execution failed immediately with `TypeError: load_arc_challenge_examples() missing 1 required positional argument: 'max_examples'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-224 repair; local verification passed, the missing evaluation-loader error did not recur, and execution advanced to dataset-loader invocation.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated-runner argument alias mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation split loader definitions and final dataset orchestration across chunks. The final bridge passes semantically equivalent sample-limit names, but the generic `_invoke_with_supported_kwargs(...)` filters by exact parameter names and does not synthesize `max_examples` for loaders that require that canonical argument.
+
+- Code/test changes:
+  - Code:
+    - Added `repairPythonEvaluationDatasetLoaderArgumentAliasSurface(...)` to synthesize equivalent bounded sample-limit argument aliases such as `max_examples`, `requested_examples`, `sample_size`, and `max_samples` inside generated `_invoke_with_supported_kwargs(...)` helpers.
+    - Wired the repair into the `implement_experiments` handoff repair sequence before second-stage `run_experiments`.
+  - Tests:
+    - Added `repairs evaluation dataset loader sample-limit argument aliases` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: passed with `npm test -- --run tests/implementSessionManager.test.ts -t "evaluation dataset loader sample-limit argument aliases"`.
+  - Re-validation result: passed the LV-225 symptom boundary in the same localhost-only Web API flow on 2026-04-29; second-stage `run_experiments` advanced past dataset-loader invocation without the previous `max_examples` `TypeError` and exposed LV-226 instead.
+
+- Follow-up risks:
+  - The repair must only translate equivalent bounded-sample argument names and must not fabricate dataset rows, bypass network/data loading failures, or weaken the baseline-first experiment contract.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-226
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: generated PEFT runner orchestration should recognize semantically equivalent benchmark evaluator function names before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-225 dataset-loader argument alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow native Codex staged materialization, dynamic chunking, local `py_compile`, handoff repairs, and second-stage `run_experiments` verification to execute the generated runner.
+
+- Expected behavior: if the generated runner defines a benchmark evaluator with an equivalent name such as `evaluate_benchmark_zero_shot`, `evaluate_model_zero_shot`, or `evaluate_zero_shot_accuracy`, the final orchestration bridge should resolve and call it instead of requiring one narrow hard-coded alias family.
+- Actual behavior: the regenerated runner advanced past the LV-225 dataset-loader argument mismatch, loaded the runtime device/model path, then failed second-stage execution with `No benchmark evaluator was defined. Expected one of: evaluate_zero_shot_benchmarks, evaluate_model_on_benchmarks, run_zero_shot_evaluation, evaluate_multiple_choice_benchmarks, evaluate_model.` The generated script did define evaluator-like functions including `evaluate_benchmark_zero_shot`, `evaluate_model_zero_shot`, and `evaluate_zero_shot_accuracy`, but the orchestrator alias list did not include them.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-225 repair; local verification passed and the previous `max_examples` failure did not recur.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated-runner evaluator alias mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation split evaluator definitions and final orchestration across chunks. The benchmark-evaluation chunk emitted concrete evaluator names with `benchmark` / `zero_shot` suffixes, while the final runner bridge searched only a narrower alias family before raising.
+
+- Code/test changes:
+  - Code:
+    - Added `repairPythonDeviceHelperAliasSurface(...)` in `src/core/agents/implementSessionManager.ts`.
+    - Wired the repair into late handoff repairs after model-loader device alias repair and before recipe execution alias repair.
+    - The repair only adds a `detect_device()` compatibility alias when the generated runner already defines an equivalent helper such as `discover_device()`, `get_device()`, `select_device()`, `resolve_device()`, or `_resolve_torch_device()`.
+  - Tests:
+    - Added `repairs final orchestration calls to undefined detect_device using generated device helpers` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "undefined detect_device"`, then passed again in the adjacent repair subset `npm test -- --run tests/implementSessionManager.test.ts -t "undefined detect_device|model-loader device_or_info|PEFT_RECIPES mappings|benchmark evaluator aliases|evaluation dataset"`.
+  - Re-validation result: pending same-flow localhost-only Web API rerun after `npm run build` passed on 2026-04-29.
+
+- Follow-up risks:
+  - The repair must only bridge existing generated evaluator functions and must not fabricate benchmark metrics, bypass model evaluation, or weaken the baseline-first experiment contract.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-227
+
+- Status: resolved
+- Validation target: generated PEFT runner CLI validation should resolve locked recipe IDs against the generated recipe registry without rejecting semantically equivalent baseline-first IDs
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-226 benchmark-evaluator alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow native Codex staged materialization, local `py_compile`, handoff repairs, and second-stage `run_experiments` verification to execute the generated runner.
+
+- Expected behavior: if the generated runner defines locked recipe IDs such as `base_model`, `vanilla_lora`, and `rslora_lora`, CLI validation should build its registry from the same generated `PEFT_RECIPES` mapping or otherwise normalize equivalent recipe aliases before rejecting unknown IDs.
+- Actual behavior: second-stage execution failed before experiment execution with `ValueError: Unknown recipe(s) requested: ['base_model', 'vanilla_lora', 'rslora_lora']. Available recipes: ['lora_rslora', 'lora_vanilla']`. The generated script defines `BASE_MODEL_RECIPE`, `VANILLA_LORA_RECIPE`, `RSLORA_RECIPE`, `LOCKED_RECIPE_ORDER`, and `PEFT_RECIPES`, but `get_recipe_registry()` does not inspect the `PEFT_RECIPES` mapping before falling back to a separate `lora_vanilla` / `lora_rslora` registry.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-226 repair; local verification passed and generation reached second-stage `run_experiments`.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated-runner registry alias mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted locked recipe constants and the final CLI parser in separate chunks. The default recipe order reads `LOCKED_RECIPE_ORDER`, while `get_recipe_registry()` ignores the generated `PEFT_RECIPES` mapping because it only checks narrower mapping names and then falls back to hard-coded `lora_*` IDs.
+
+- Code/test changes:
+  - Code:
+    - Extended `repairPythonLockedRecipeCatalogAliasSurface(...)` in `src/core/agents/implementSessionManager.ts` so generated final recipe registry lookups include the existing `PEFT_RECIPES` mapping before falling back to hard-coded recipe IDs.
+    - The repair only expands the generated registry lookup surface; it does not create recipes, skip `validate_args(...)`, or weaken the baseline-first recipe-order contract.
+  - Tests:
+    - Added `repairs final recipe registries that ignore generated PEFT_RECIPES mappings` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "PEFT_RECIPES mappings"`, then passed again in the related repair subset `npm test -- --run tests/implementSessionManager.test.ts -t "PEFT_RECIPES mappings|locked recipe catalogs|benchmark evaluator aliases|evaluation dataset"`.
+  - Re-validation result: passed the LV-227 symptom boundary in the same localhost-only Web API flow on 2026-04-29; second-stage `run_experiments` no longer failed with unknown locked recipe IDs and advanced into experiment orchestration, where LV-228 appeared instead.
+
+- Follow-up risks:
+  - The repair must only align existing generated recipe registries/aliases and must not fabricate missing recipes, skip the baseline-first recipe validation contract, or convert a parser failure into fake experiment completion.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-228
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: generated PEFT runner orchestration should use an existing generated device-discovery helper before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-227 `PEFT_RECIPES` registry lookup repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow native Codex staged materialization, local `py_compile`, handoff repairs, and second-stage `run_experiments` verification to execute the generated runner.
+
+- Expected behavior: if the generated runner defines a device helper such as `discover_device()`, `get_device()`, `select_device()`, or `_resolve_torch_device()`, final orchestration should resolve it consistently instead of calling an undefined helper name.
+- Actual behavior: second-stage execution advanced past the previous locked-recipe parser failure, then failed in `run_experiment(...)` with `NameError: name 'detect_device' is not defined. Did you mean: 'move_to_device'?`. The generated script defines `discover_device()` and other device helpers, but the final orchestration chunk calls `detect_device()`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-227 repair; local verification passed and `metrics.json` recorded the `NameError`.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated-runner helper alias mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted device discovery helpers in an early chunk using `discover_device()`, while the final orchestration chunk referenced the semantically equivalent but undefined `detect_device()` name.
+
+- Code/test changes:
+  - Code:
+    - Added `repairPythonDeviceHelperAliasSurface(...)` in `src/core/agents/implementSessionManager.ts`.
+    - Wired the repair into late handoff repairs after model-loader device alias repair and before recipe execution alias repair.
+    - The repair only adds a `detect_device()` compatibility alias when the generated runner already defines an equivalent helper such as `discover_device()`, `get_device()`, `select_device()`, `resolve_device()`, or `_resolve_torch_device()`.
+  - Tests:
+    - Added `repairs final orchestration calls to undefined detect_device using generated device helpers` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "undefined detect_device"`, then passed again in the adjacent repair subset `npm test -- --run tests/implementSessionManager.test.ts -t "undefined detect_device|model-loader device_or_info|PEFT_RECIPES mappings|benchmark evaluator aliases|evaluation dataset"`.
+  - Re-validation result: passed the LV-228 symptom boundary in the same localhost-only Web API flow on 2026-04-29; second-stage `run_experiments` no longer failed on `detect_device` and advanced into final entrypoint seeding, where LV-229 appeared instead.
+
+- Follow-up risks:
+  - The repair must only alias or bridge existing generated device helper functions and must not bypass actual CUDA/CPU detection, fabricate successful metrics, or skip second-stage experiment execution.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-229
+
+- Status: in_progress
+- Validation target: generated PEFT runner entrypoint should use an existing generated reproducibility/seed helper before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-228 `detect_device` helper alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow native Codex staged materialization, local `py_compile`, handoff repairs, and second-stage `run_experiments` verification to execute the generated runner.
+
+- Expected behavior: if the generated runner defines a reproducibility helper such as `set_reproducibility()`, `seed_everything()`, `set_reproducibility_seed()`, `set_global_seed()`, or a Transformers seed alias, final entrypoint seeding should resolve it consistently instead of calling an undefined helper name.
+- Actual behavior: second-stage execution advanced past the previous `detect_device` failure, then failed in `main(...)` with `NameError: name 'set_reproducible_seed' is not defined. Did you mean: 'set_reproducibility'?`. The generated script defines `set_reproducibility(seed)` and also calls `set_global_seed(...)` in earlier paths, but the final entrypoint calls `set_reproducible_seed(...)`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-228 repair; local verification passed and `metrics.json` recorded the `NameError`.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated-runner helper alias mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted reproducibility helpers in early chunks using `set_reproducibility(...)`, while the final entrypoint chunk referenced the semantically equivalent but undefined `set_reproducible_seed(...)` name.
+
+- Code/test changes:
+  - Code:
+    - Extended `repairPythonTransformersSetSeedAliasSurface(...)` in `src/core/agents/implementSessionManager.ts` to include `set_reproducible_seed(...)` when an equivalent generated seed helper already exists.
+    - The repair prefers `set_reproducibility(...)` for this alias and still falls back through existing generated seeding helpers; it does not skip seeding.
+  - Tests:
+    - Added `repairs a missing set_reproducible_seed alias before handing a python runner off to run_experiments` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "set_reproducible_seed alias"`, then passed again in the adjacent seed/device repair subset `npm test -- --run tests/implementSessionManager.test.ts -t "set_reproducible_seed alias|set_global_seed alias|set_all_seeds alias|Transformers set_seed alias|undefined detect_device"`.
+  - Re-validation result: passed the LV-229 symptom boundary in the same localhost-only Web API flow on 2026-04-29; second-stage `run_experiments` no longer failed on `set_reproducible_seed`, loaded model weights, and advanced into benchmark evaluation, where LV-230 appeared instead.
+
+- Follow-up risks:
+  - The repair must only alias existing generated seeding helpers and must not skip seeding, fabricate successful metrics, or bypass second-stage experiment execution.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-230
+
+- Status: in_progress
+- Validation target: generated benchmark evaluator dispatch should filter unsupported evaluator kwargs before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-229 `set_reproducible_seed` alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow native Codex staged materialization, local `py_compile`, handoff repairs, and second-stage `run_experiments` verification to execute the generated runner.
+
+- Expected behavior: generated evaluator dispatch helpers should call benchmark evaluators only with arguments supported by the target function signature, or with mapped aliases accepted by that evaluator.
+- Actual behavior: second-stage execution advanced past seeding and model loading, then failed during ARC-Challenge evaluation with `TypeError: evaluate_arc_challenge() got an unexpected keyword argument 'max_examples'`. The generated dispatch helper `_safe_call_with_supported_signature(...)` still passed `max_examples` to an evaluator whose signature did not accept it.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-229 repair; local verification passed, model weights loaded, and `metrics.json` recorded the evaluator kwarg TypeError.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated-runner evaluator dispatch argument-filtering mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted evaluator functions and final evaluator dispatch in different chunks. The dispatch path passes sample-limit kwargs such as `max_examples`, while the generated evaluator signature uses a narrower argument set and the generated compatibility caller does not filter kwargs strictly enough before calling the evaluator.
+
+- Code/test changes:
+  - Code:
+    - Added `repairPythonSupportedSignatureKwargAliasSurface(...)` in `src/core/agents/implementSessionManager.ts` and wired it into the late handoff repair set so generated `_safe_call_with_supported_signature(...)` helpers filter kwargs against the target evaluator signature before second-stage execution.
+    - The repair maps bounded sample-limit aliases such as `max_examples`, `max_eval_examples`, `sample_size`, and `max_samples` to accepted evaluator parameters such as `limit` instead of bypassing the real evaluator call.
+  - Tests:
+    - Added `tests/implementSessionManager.test.ts` coverage for evaluator compatible-call helpers that pass unsupported sample-limit kwargs.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`; passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "unsupported sample-limit kwargs"` and again in the adjacent regression subset `npm test -- --run tests/implementSessionManager.test.ts -t "RecipeSpec train_adapter|RecipeSpec name|undefined get_device|unsupported sample-limit kwargs|runtime dependency helper"`.
+  - Re-validation result: passed the LV-240 symptom boundary in the same localhost-only Web API flow on 2026-04-29; second-stage execution no longer failed with `TypeError: ensure_parent_dir() missing 1 required positional argument: 'path_like'` and advanced to LV-241 (`NameError: name '_safe_mkdir' is not defined`).
+
+- Follow-up risks:
+  - The repair must filter or alias evaluator arguments without bypassing real benchmark evaluation, fabricating metrics, or weakening the baseline-first comparison contract.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-231
+
+- Status: resolved
+- Validation target: generated device helper aliases should cover `get_device()` calls before local verification handoff
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-230 signature-aware evaluator kwarg repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged native Codex generation to complete attempt 1 and enter local `py_compile` verification.
+
+- Expected behavior: handoff repairs should define a compatible device helper alias whenever generated orchestration calls `get_device()` but an equivalent device helper or `get_device_info()` helper exists.
+- Actual behavior: local verification failed before second-stage execution with `Python source calls critical runtime helper(s) that are never defined or imported. Undefined helper call(s): get_device at run_peft_instruction_study.py:3855`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-230 code changes; attempt 1 failed during local verification before reaching `run_experiments`.
+  - Divergence: no evidence yet of session-specific behavior; this is a staged-generation helper naming mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunks generated a final orchestration call to `get_device()`, while the existing device alias repair only covered missing `detect_device()` calls. The generated runner can expose either helper name depending on chunk composition.
+
+- Code/test changes:
+  - Code:
+    - Extended `repairPythonDeviceHelperAliasSurface(...)` in `src/core/agents/implementSessionManager.ts` so generated orchestration calls to missing `get_device()` receive a compatibility alias.
+    - The alias prefers generated device helper functions when present and can derive the runtime device from generated `get_device_info()` metadata before falling back to a real torch/cpu device.
+  - Tests:
+    - Added `tests/implementSessionManager.test.ts` coverage for missing `get_device()` calls backed by generated `get_device_info()` helpers.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`; passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "undefined get_device|undefined detect_device"` and again in the adjacent regression subset `npm test -- --run tests/implementSessionManager.test.ts -t "RecipeSpec train_adapter|RecipeSpec name|undefined get_device|unsupported sample-limit kwargs|runtime dependency helper"`.
+  - Re-validation result: passed the LV-231 symptom boundary in the same localhost-only Web API flow on 2026-04-29; local verification no longer failed on undefined `get_device()` and the run advanced to second-stage execution, where LV-232 appeared instead.
+
+- Follow-up risks:
+  - The repair must return a real runtime device from generated helpers and must not skip model/device initialization or fabricate experiment metrics.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-232
+
+- Status: resolved
+- Validation target: generated `RecipeSpec` compatibility properties should cover locked-order recipe assertions before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-231 `get_device()` alias repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged native Codex generation to complete, local verification to pass, and second-stage `run_experiments` to execute the generated runner.
+
+- Expected behavior: generated recipe dataclasses should expose the property names used by locked-order assertions and orchestration, or handoff repair should add compatibility properties without changing the locked comparison semantics.
+- Actual behavior: second-stage execution failed at module import/runtime guard with `AttributeError: 'RecipeSpec' object has no attribute 'train_adapter'. Did you mean: 'save_adapter'?`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-231 repair; attempt 2 passed local `py_compile` and failed only when `run_experiments` executed the generated runner.
+  - Divergence: no evidence yet of session-specific behavior; this is a staged-generation recipe schema alias mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunks used `train_adapter` in recipe constructors and locked-order assertions, while the generated `RecipeSpec` dataclass retained `enable_training`/`save_adapter` as the canonical execution fields. The existing RecipeSpec repair only added a `.name` property.
+
+- Code/test changes:
+  - Code:
+    - Added `repairPythonRecipeSpecTrainAdapterSurface(...)` in `src/core/agents/implementSessionManager.ts` and wired it after the existing RecipeSpec name repair before handoff.
+    - The repair adds a read-only `RecipeSpec.train_adapter` property backed by generated execution fields such as `enable_training`, preserving the locked baseline-first assertion semantics.
+  - Tests:
+    - Added `tests/implementSessionManager.test.ts` coverage for generated `RecipeSpec` classes that filter constructor kwargs but later assert `recipe.train_adapter`.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`; passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "RecipeSpec train_adapter"` and again in the adjacent regression subset `npm test -- --run tests/implementSessionManager.test.ts -t "RecipeSpec train_adapter|RecipeSpec name|undefined get_device|unsupported sample-limit kwargs|runtime dependency helper"`.
+  - Re-validation result: passed the LV-232 symptom boundary in the same localhost-only Web API flow on 2026-04-29; second-stage execution no longer failed on missing `RecipeSpec.train_adapter` and advanced to LV-233 instead.
+
+- Follow-up risks:
+  - The repair must preserve the baseline-first locked comparison and must not convert an untuned base row into a trained adapter condition.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-233
+
+- Status: resolved
+- Validation target: runtime dependency helper aliases should cover underscore and non-underscore generated helper names before second-stage execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-232 `RecipeSpec.train_adapter` compatibility repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged native Codex generation to complete, local verification to pass, and second-stage `run_experiments` to invoke the generated study pipeline.
+
+- Expected behavior: generated calls to `_require_runtime_dependencies(...)` should resolve to an equivalent generated runtime dependency validator or public `require_runtime_dependencies(...)` helper.
+- Actual behavior: second-stage execution failed with `NameError: name '_require_runtime_dependencies' is not defined. Did you mean: 'require_runtime_dependencies'?`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-232 repair; local verification passed and `run_experiments` failed only when the generated study pipeline called `_require_runtime_dependencies(...)`.
+  - Divergence: no evidence yet of session-specific behavior; this is a staged-generation helper naming mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: one staged chunk emitted the public dependency helper name while a later orchestration chunk invoked the underscore-prefixed helper variant. The existing repair only aliased the public legacy name.
+
+- Code/test changes:
+  - Code:
+    - Extended `repairPythonRuntimeDependencyHelperAlias(...)` in `src/core/agents/implementSessionManager.ts` so it inserts compatibility aliases for both public `require_runtime_dependencies(...)` and underscore-prefixed `_require_runtime_dependencies(...)` generated helper calls.
+    - The underscore alias delegates to the generated public dependency helper when present, or to `validate_runtime_dependencies(...)` with list-to-mapping normalization when that is the available generated validator.
+  - Tests:
+    - Added `tests/implementSessionManager.test.ts` coverage for generated runners that define `require_runtime_dependencies(...)` but call `_require_runtime_dependencies(...)` in final orchestration.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`; passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "runtime dependency helper"` and again in the adjacent regression subset `npm test -- --run tests/implementSessionManager.test.ts -t "RecipeSpec train_adapter|RecipeSpec name|undefined get_device|unsupported sample-limit kwargs|runtime dependency helper"`.
+  - Re-validation result: passed the LV-233 symptom boundary in the same localhost-only Web API flow on 2026-04-29; the regenerated runner no longer failed on `_require_runtime_dependencies(...)`, local verification passed, and second-stage execution advanced to LV-234 instead.
+
+- Follow-up risks:
+  - The repair must still validate real runtime dependencies and must not skip missing package checks.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-234
+
+- Status: resolved
+- Validation target: generated status-output helper calls should resolve before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-233 runtime dependency helper alias repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged native Codex generation, local handoff repairs, local `py_compile`, and second-stage `run_experiments` to execute the generated runner.
+
+- Expected behavior: generated status/progress output calls such as `print_status(...)` should resolve to a real logging or print helper and should not stop the experiment before dependency checks, model loading, or benchmark execution.
+- Actual behavior: local verification passed, but second-stage execution failed immediately in `main(...)` with `NameError: name 'print_status' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-233 repair; status/progress output helper calls were only executed during second-stage `run_experiments`.
+  - Divergence: no evidence yet of session-specific behavior; this is a staged-generation helper naming mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the final orchestration chunk emitted `print_status(...)` calls for operator-visible progress output, while no earlier chunk defined that helper and the existing logging helper repair covered `setup_logging`, `log_message`, and direct `logger` usage only.
+
+- Code/test changes:
+  - Code:
+    - Extended `repairPythonLoggingHelperAlias(...)` in `src/core/agents/implementSessionManager.ts` so missing generated `print_status(...)` calls receive a status-output compatibility helper before handoff.
+    - Added `print_status` to critical runtime helper detection so compile-valid runners with missing status-output helpers are caught before second-stage execution in future retries.
+  - Tests:
+    - Added `tests/implementSessionManager.test.ts` coverage for generated runners whose final entrypoint calls `print_status(...)` before any experiment work begins.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`; passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "print_status|log_message|setup_logging|logger aliases"` and again in the adjacent regression subset `npm test -- --run tests/implementSessionManager.test.ts -t "RecipeSpec train_adapter|RecipeSpec name|undefined get_device|unsupported sample-limit kwargs|runtime dependency helper|print_status|log_message|setup_logging|logger aliases"`.
+  - Re-validation result: passed the LV-234 symptom boundary in the same localhost-only Web API flow on 2026-04-29; second-stage execution no longer failed on `print_status(...)` and advanced into real baseline evaluation plus PEFT recipe training/evaluation.
+
+- Follow-up risks:
+  - The repair must only provide status output compatibility and must not skip real experiment execution, dependency validation, model loading, benchmark evaluation, or metrics writing.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-235
+
+- Status: in_progress
+- Validation target: all planned PEFT recipe conditions should produce comparable evaluation metrics, not hide one failed condition under a completed top-level metrics status
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-234 `print_status(...)` compatibility repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow local verification and second-stage `run_experiments` to execute baseline, LoRA, IA3, and prompt-tuning recipe conditions.
+
+- Expected behavior: each planned recipe condition should either complete with comparable benchmark metrics or the top-level run status/readiness should clearly reflect that the planned comparison is incomplete.
+- Actual behavior: the runner produced real baseline, LoRA, and IA3 metrics and marked top-level `metrics.json.status` as `completed`, but the `prompt_tuning` recipe failed during evaluation with `ValueError('Expected input batch_size (67) to match target batch_size (51).')`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-234 repair; execution reached real model loading, training, and benchmark evaluation.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated evaluator shape-alignment issue exposed only by prompt-tuning virtual-token execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted a generic causal-LM continuation negative-log-likelihood evaluator that assumes `outputs.logits` time steps align one-for-one with `input_ids`. Prompt-tuning PEFT wrappers can prepend virtual prompt-token logits, so `outputs.logits[:, :-1, :]` becomes longer than `labels[:, 1:]` and `CrossEntropyLoss` fails with a batch-size mismatch.
+
+- Code/test changes:
+  - Code:
+    - Added `repairPythonPeftVirtualTokenEvaluationAlignmentSurface(...)` in `src/core/agents/implementSessionManager.ts` and wired it into the handoff repair sequence after causal-LM label padding.
+    - The repair aligns prompt-tuning/PEFT virtual prompt-token logits back to the original `input_ids` time dimension before shifting labels for continuation negative-log-likelihood scoring.
+    - Extended `repairPythonRecipeExecutionOrchestratorAlias(...)` so generated `run_all_conditions_baseline_first(...)` implementations are exposed through the entrypoint-dispatched aliases `run_baseline_first_conditions(...)`, `execute_baseline_first_conditions(...)`, `run_condition_study(...)`, and `run_study_conditions(...)`.
+  - Tests:
+    - Added `tests/implementSessionManager.test.ts` coverage for generated continuation scoring code that would otherwise compare PEFT virtual-token-extended logits against shorter shifted labels.
+    - Added `tests/implementSessionManager.test.ts` coverage for generated runners that define `run_all_conditions_baseline_first(...)` but whose CLI entrypoint searches only for baseline-first condition alias names.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`; passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "PEFT virtual-token continuation scoring"`, `npm test -- --run tests/implementSessionManager.test.ts -t "baseline-first condition runner aliases|condition-study orchestration aliases|recipe execution orchestrator aliases"`, and the adjacent regression subset `npm test -- --run tests/implementSessionManager.test.ts -t "PEFT virtual-token continuation scoring|baseline-first condition runner aliases|condition-study orchestration aliases|recipe execution orchestrator aliases|runtime dependency helper|print_status"`.
+  - Re-validation result: narrowed but still pending. The first same-flow rerun advanced past the earlier prompt-tuning batch-size failure but exposed a new generated orchestration alias miss: `No baseline-first condition runner found; tried run_baseline_first_conditions, execute_baseline_first_conditions, run_condition_study, run_peft_instruction_study, run_study_conditions`. After the alias repair, the next same-flow rerun was blocked earlier during module import by LV-236, before the planned-condition execution path could be re-exercised.
+
+- Follow-up risks:
+  - The repair must preserve real continuation scoring and planned recipe comparison semantics; it must not mark prompt-tuning as successful without actually evaluating it.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-236
+
+- Status: resolved
+- Validation target: ExperimentConfig metadata compatibility repair should leave generated Python runners importable before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-235 prompt-tuning logits alignment and condition-runner alias repairs.
+  2. Start the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let local verification, handoff repairs, and second-stage `run_experiments` verification execute the generated PEFT runner.
+
+- Expected behavior: if a handoff repair adds `metadata: Dict[str, Any] = field(default_factory=dict)` to `ExperimentConfig`, the generated runner should also have `field` imported or otherwise available, so module import and second-stage execution can proceed.
+- Actual behavior: the handoff repair inserted `metadata: Dict[str, Any] = field(default_factory=dict)` into `ExperimentConfig`, but the generated runner only imported `dataclass` from `dataclasses`; second-stage `run_experiments` failed during module import with `NameError: name 'field' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-235 repairs; failure occurred before the runner could reach condition orchestration or prompt-tuning evaluation.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated-runner handoff repair consistency issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `repairPythonExperimentConfigMetadataSurface(...)` projects a dataclass `field(default_factory=dict)` line into generated runners but does not reconcile the script's `dataclasses` import surface when the original code imported only `dataclass`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a bounded dataclasses import reconciliation helper so any generated runner repaired to use `field(...)` also gets `from dataclasses import field` when that name is otherwise undefined.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - updated the ExperimentConfig metadata repair regression to start from a generated runner that imports only `dataclass`, then verify the repair adds both the metadata field and the missing `field` import.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`; passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "ExperimentConfig metadata field"` and in the adjacent subset `npm test -- --run tests/implementSessionManager.test.ts -t "ExperimentConfig metadata field|PEFT virtual-token continuation scoring|baseline-first condition runner aliases|runtime dependency helper|print_status"`.
+  - Re-validation result: passed the LV-236 symptom boundary in the same localhost-only Web API flow on 2026-04-29; second-stage `run_experiments` no longer failed with `NameError: name 'field' is not defined` and advanced to LV-237 instead.
+
+- Follow-up risks:
+  - The repair should only make `dataclasses.field` available when generated code actually uses `field(...)`; it must not rewrite experiment configuration semantics or substitute node-owned experiment artifacts.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-237
+
+- Status: resolved
+- Validation target: generated CLI parser should expose every argument namespace field read by generated config builders before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-236 dataclasses `field` import repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let local verification, handoff repairs, and second-stage `run_experiments` execute the generated runner.
+
+- Expected behavior: if generated config construction reads `args.private_run_dir`, the parser should define `--private-run-dir` with a default path before execution reaches `build_config_from_args(...)`.
+- Actual behavior: local `py_compile` passed and LV-236 no longer reproduced, but second-stage execution failed in `build_config_from_args(...)` with `AttributeError: 'Namespace' object has no attribute 'private_run_dir'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-236 repair; failure occurred during config construction before dependency/model/dataset execution.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated CLI/config namespace mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted a config builder that reads `args.private_run_dir` and includes `private_run_dir` in `ExperimentConfig`, but the final parser chunk omitted the corresponding `--private-run-dir` argument. `py_compile` and run-command flag validation do not catch parser fields that are read internally but not supplied by CLI.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a bounded handoff repair that inserts `--private-run-dir` into generated argparse parsers when the runner reads `args.private_run_dir` but the parser omitted that namespace field.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added regression coverage for generated runners whose config builder reads `args.private_run_dir` after parsing only `--metrics-path`.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`; passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "private-run-dir argparse alias|output-dir argparse alias|model-name-or-path argparse destination"` and in the adjacent subset `npm test -- --run tests/implementSessionManager.test.ts -t "private-run-dir argparse alias|ExperimentConfig metadata field|PEFT virtual-token continuation scoring|baseline-first condition runner aliases|runtime dependency helper|print_status"`.
+  - Re-validation result: passed the LV-237 symptom boundary in the same localhost-only Web API flow on 2026-04-29; second-stage execution used `--private-run-dir`, reported `private_run_dir_present: true`, loaded model weights, tokenized the instruction subset, and advanced into PEFT recipe training before LV-238 appeared.
+
+- Follow-up risks:
+  - Similar internally-read parser fields may need a general namespace-field reconciliation pass; the first fix should stay bounded to `private_run_dir` unless more fields are observed.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-239
+
+- Status: in_progress
+- Validation target: generated PEFT runner workflow dispatch should pass parsed CLI/config state without reparsing an `argparse.Namespace` as if it were an argv iterable
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-238 IA3 feedforward subset repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let staged native Codex generation finish, local `py_compile` pass, and second-stage `run_experiments` execute the generated runner.
+
+- Expected behavior: once the entrypoint has parsed CLI arguments into a namespace or config object, downstream workflow helpers should accept that object directly or normalize it before invoking config-resolution helpers.
+- Actual behavior: local verification passed, but second-stage execution failed before model/dataset work because `run_experiment_workflow(...)` passed an already parsed `Namespace` into `resolve_config(...)`; `resolve_config(...)` then called `parser.parse_args(args=args)`, and Python `argparse` raised `TypeError: 'Namespace' object is not iterable`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-238 repair; the failure happened at workflow config normalization before the IA3 recipe boundary could be rechecked.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated-runner handoff/interface mismatch between parsed state and argv-style parsing.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced both CLI parsing and workflow orchestration surfaces, but the final workflow bridge treats all config resolvers as argv-based callables. When the resolver receives an `argparse.Namespace`, it is reparsed instead of returned or converted, and `py_compile` cannot catch this runtime contract mismatch.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a Namespace-aware `parse_args(...)` handoff repair that guards generated parser calls such as `parser.parse_args(args=args)` and reuses an incoming `argparse.Namespace` directly instead of reparsing it as argv.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added regression coverage for a generated workflow that parses CLI args, passes the resulting namespace into workflow orchestration, and then calls a resolver that would otherwise reparse the namespace.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`; passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "Namespace from workflow dispatch|private-run-dir argparse alias|IA3 feedforward module lists"`.
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair should normalize `argparse.Namespace` inputs without hiding genuine required CLI argument failures when raw argv lists are supplied.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-240
+
+- Status: in_progress
+- Validation target: generated PEFT runner helper dispatch should pass filesystem path aliases to helpers whose parameter is named `path_like`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-239 Namespace-aware parse repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let local verification pass and second-stage `run_experiments` execute the generated runner.
+
+- Expected behavior: `_setup_runtime_for_main(...)` should create the metrics parent directory by calling `ensure_parent_dir(...)` with the resolved metrics path regardless of whether the generated helper names its parameter `path`, `file_path`, or `path_like`.
+- Actual behavior: the generated helper was `ensure_parent_dir(path_like: Any)`, but `_setup_runtime_for_main(...)` called `_call_with_supported_main_signature(ensure_dir_function, path=metrics_path, file_path=metrics_path)`. The dispatcher filtered kwargs by exact parameter names, found no supported kwargs, tried positional fallbacks unrelated to filesystem paths, and raised `TypeError: ensure_parent_dir() missing 1 required positional argument: 'path_like'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-239 repair; the failure happened during runtime setup before device/model execution.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated helper-dispatch alias mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created a correct parent-directory helper with a semantically clear `path_like` parameter, but the final generic dispatcher only maps exact keyword names and its positional fallbacks are tuned for args/device helpers, not path helpers.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a bounded generated-runner repair that maps equivalent filesystem path aliases (`path`, `file_path`, `metrics_path`, `output_path`) into `path_like` when `_call_with_supported_main_signature(...)` dispatches to a helper that explicitly declares `path_like`.
+      - wired the repair into local verification handoff after the existing parent-directory helper repair, so generated scripts can still create metrics/output parent directories without bypassing missing path failures.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added regression coverage that first reproduces the generated `ensure_parent_dir(path_like)` dispatcher failure and then verifies the repaired runner completes through the path-like helper.
+
+- Regression status:
+  - Automated regression test linked: yes, passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "path and file_path aliases|Namespace from workflow dispatch|repairs a python runner that calls ensure_parent_dir"`.
+  - Build validation: passed on 2026-04-29 with `npm run build`.
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair should only bridge equivalent path aliases and should not bypass genuine missing metrics-path failures.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-241
+
+- Status: resolved
+- Validation target: generated PEFT runner runtime setup should resolve equivalent directory-creation helper names before second-stage execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-240 `path_like` helper-dispatch alias repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4318` from `/home/hanyong/.autolabos-validation`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let local `py_compile` verification pass and second-stage `run_experiments` invoke the generated runner.
+
+- Expected behavior: generated runtime setup should create output, artifact, cache, metrics, and log directories using a defined helper, whether the helper is named `_safe_mkdir`, `ensure_dir`, or `ensure_directory`.
+- Actual behavior: the regenerated runner defined `ensure_directory(...)` and `ensure_parent_directory(...)`, but `_setup_runtime_for_main(...)` called `_safe_mkdir(path)` for runtime directories. Local `py_compile` passed, then second-stage execution failed immediately with `NameError: name '_safe_mkdir' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-240 repair; the failure happened during runtime directory setup before dependency/device/model execution.
+  - Divergence: no evidence yet of session-specific behavior; this is another generated helper-name mismatch exposed by the same run.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted directory helpers under public names (`ensure_directory`, `ensure_parent_directory`) while a later runtime setup chunk referenced the internal-style alias `_safe_mkdir`. Implement-stage `py_compile` cannot catch undefined names inside functions until second-stage execution calls that path.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended the generated Python directory-helper alias repair to bridge `_safe_mkdir(...)` to `ensure_directory(...)` or `ensure_dir(...)` when either generated helper exists.
+      - falls back to a minimal local `_safe_mkdir(path)` implementation only when no equivalent directory helper exists.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added regression coverage for a generated runner that defines `ensure_directory(...)` but calls `_safe_mkdir(...)` during runtime setup.
+
+- Regression status:
+  - Automated regression test linked: yes, passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "_safe_mkdir|ensure_directory when ensure_dir|ensure_parent_dir when ensure_parent_directory"`.
+  - Build validation: passed on 2026-04-29 with `npm run build`.
+  - Re-validation result: passed the LV-241 symptom boundary in the same localhost-only Web API flow on 2026-04-29; second-stage execution no longer failed with `NameError: name '_safe_mkdir' is not defined` and advanced to the existing LV-221 metrics contract boundary (`accuracy_delta_vs_baseline` missing and planned tuned condition coverage incomplete).
+
+- Follow-up risks:
+  - The repair should only bridge directory-creation helper aliases and should not treat file paths as directories when a parent-directory helper is required.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-242
+
+- Status: resolved
+- Validation target: generated PEFT runner CLI parsing should make optional path arguments safe before second-stage execution when the run command omits those optional flags
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-221 objective/condition repairs.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+  4. Let native Codex complete staged generation, including dynamic re-subdivision of the oversized final metrics chunk.
+  5. Let local `python3 -m py_compile` pass and second-stage verification execute the generated runner with `--metrics-path` and `--output-dir`.
+
+- Expected behavior: if the run command omits an optional path flag such as `--model-output-dir`, the generated or repaired CLI config should default it to an inspectable path such as `<output-dir>/models` before any filesystem or model/dataset work begins.
+- Actual behavior: the generated runner contained a safe `parse_cli_args(...)` implementation that defaulted `model_output_dir` to `<output-dir>/models`, but the executable entrypoint called a later `parse_study_cli_config(...)` helper. That helper parsed the same argparse namespace and `_config_from_namespace(...)` called `model_output_dir=Path(args.model_output_dir)` while `args.model_output_dir` was `None`, causing `TypeError: argument should be a str or an os.PathLike object ... not 'NoneType'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuild and reproduced this boundary through the real Web API action endpoint.
+  - Existing session: reproduced on the same persisted run after previous boundaries had been repaired; native Codex streamed output, local verification passed, handoff repairs ran, and second-stage execution reached CLI config construction.
+  - Divergence: no UI/session divergence observed; this is a generated-runner CLI-default projection bug hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced multiple CLI parser/config helpers with inconsistent optional-path semantics. The handoff repair layer already normalized parser names and namespace handling, but it did not guard `Path(args.optional_path)` calls against argparse defaults of `None`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonOptionalPathArgDefaultsSurface(...)`, which inserts a small `_autolabos_path_arg_or_default(...)` helper and rewrites generated `model_output_dir=Path(args.model_output_dir)` config construction to default to `<output-dir>/models` when the optional flag is omitted.
+      - wired the repair into the `implement_experiments` handoff repair sequence before second-stage `run_experiments` execution.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added a regression that first reproduces `Path(None)` for an omitted `--model-output-dir`, then confirms the repaired runner executes and resolves `public/models`.
+
+- Regression status:
+  - Automated regression test linked: yes, passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts -t "optional model_output_dir|parse_cli_args|missing parse_args helper"`.
+  - Adjacent regression result: passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts tests/objectiveMetric.test.ts tests/plannedConditionCoverage.test.ts tests/runExperimentsExecutionProfile.test.ts -t "optional model_output_dir|parse_cli_args|missing parse_args helper|instruction dataset helper aliases|compact staged_llm prompt|condition object maps|planned condition coverage|fails verification when planned brief conditions are under-executed|_safe_mkdir"`.
+  - Build validation: passed on 2026-04-30 with `npm run build`.
+  - Re-validation result: passed the LV-242 symptom boundary on 2026-04-30. The same localhost-only Web API flow regenerated the runner, recovered once from an unsupported `--timeout-seconds` argparse surface, passed `py_compile`, and then executed real model/dataset work with the generated runner. The prior `Path(args.model_output_dir)` / `NoneType` failure did not recur.
+
+- Follow-up risks:
+  - The repair is intentionally narrow for known optional generated path fields; it should not hide genuinely required missing path arguments or fabricate experiment outputs.
+  - Same-flow revalidation is now blocked by LV-243/LV-221 after real baseline execution: all tuned PEFT conditions failed in the generated runner's scheduler call before producing `accuracy_delta_vs_baseline`.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-243
+
+- Status: in_progress
+- Validation target: generated PEFT runners should call Transformers scheduler helpers with the signature that matches the imported helper so tuned conditions can train and produce baseline-relative metrics.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and second-stage execution on the local RTX 4090 environment.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-242 optional path repair.
+  2. Restart/reuse the localhost-only Web API on `127.0.0.1:4318`.
+  3. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+  4. Let native Codex regenerate the runner, pass local `py_compile`, and run second-stage verification with `--metrics-path`, `--output-dir`, and `--timeout-seconds 1800`.
+
+- Expected behavior: the baseline plus tuned rows `vanilla_lora`, `rslora`, and `dora` should all execute far enough to report metrics, including `accuracy_delta_vs_baseline`, or fail for a real experimental/runtime reason that is recorded per condition.
+- Actual behavior: the baseline row completed with mean zero-shot accuracy `0.45`, but all three tuned rows failed immediately during training with `TypeError: get_linear_schedule_with_warmup() got multiple values for argument 'optimizer'`. The generated runner imported `get_linear_schedule_with_warmup` but called it through a generic `get_scheduler("linear", optimizer=..., ...)` style call. The run ended as `completed_with_failures`, `best_tuned_condition` was `null`, and `run_experiments` blocked progression because `accuracy_delta_vs_baseline` was absent at top level and successful tuned condition coverage was incomplete.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt code was loaded into a restarted localhost-only Web API before rerunning the same action endpoint.
+  - Existing session: reproduced on the persisted run after previous parser/default boundaries were cleared; native Codex streamed intermediate output, local verification passed, and the real runner executed model loading and baseline evaluation.
+  - Divergence: no UI/session divergence observed; this is a generated-runner API compatibility bug surfaced only after real tuned training began.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the staged implementation used the generic Transformers scheduler call shape while binding that callable to `get_linear_schedule_with_warmup`, whose signature expects `optimizer` as the first positional argument. Compile-only verification cannot catch this because the mismatch appears only at runtime when tuned rows enter training.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonTransformersLinearSchedulerSurface(...)`, which inserts `_autolabos_linear_scheduler(...)` and rewrites generated `get_scheduler("linear", optimizer=..., num_warmup_steps=..., num_training_steps=...)` calls through the adapter.
+      - wired the repair into the late-stage handoff repair bundle before second-stage runner execution.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added a regression that first reproduces `get_linear_schedule_with_warmup() got multiple values for argument 'optimizer'`, then confirms the repaired runner preserves optimizer/warmup/training-step values.
+
+- Regression status:
+  - Automated regression test linked: yes, passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts -t "linear scheduler|optional model_output_dir|parse_cli_args|missing parse_args helper"`.
+  - Adjacent regression result: passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts tests/objectiveMetric.test.ts tests/plannedConditionCoverage.test.ts tests/runExperimentsExecutionProfile.test.ts -t "linear scheduler|optional model_output_dir|parse_cli_args|missing parse_args helper|instruction dataset helper aliases|compact staged_llm prompt|condition object maps|planned condition coverage|fails verification when planned brief conditions are under-executed|_safe_mkdir"`.
+  - Build validation: passed on 2026-04-30 with `npm run build`.
+  - Same-flow revalidation result: pending after the localhost-only Web API is restarted/reused with the rebuilt code.
+
+- Follow-up risks:
+  - The repair must not mark failed tuned rows as successful or fabricate deltas; it should only let the generated runner call the installed scheduler API correctly so the workflow can observe real training outcomes.
+  - After LV-243 is cleared, LV-221 still requires same-flow confirmation that all planned conditions successfully execute and satisfy the objective metrics contract.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-244
+
+- Status: in_progress
+- Validation target: generated PEFT runners should validate the locked four-condition contract without crashing on an internal helper arity mismatch before second-stage condition execution begins.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-243 scheduler repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+  4. Let native Codex regenerate the runner, pass local `py_compile`, and enter second-stage `run_experiments`.
+
+- Expected behavior: the generated runner should validate the locked condition sequence and then execute `unmodified_base`, `vanilla_lora`, `rslora`, and `dora`, allowing LV-243/LV-221 to be rechecked against real condition outcomes.
+- Actual behavior: the regenerated runner defined `validate_locked_condition_contract(specs: Sequence[ConditionSpec])`, but `_locked_condition_sequence()` called `validate_locked_condition_contract()` with no arguments. Second-stage execution failed immediately with `TypeError: validate_locked_condition_contract() missing 1 required positional argument: 'specs'`, leaving metrics status `failed` and `accuracy_delta_vs_baseline: null`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the localhost-only Web API was restarted with rebuilt code before rerunning the same action endpoint.
+  - Existing session: reproduced on the persisted run after previous scheduler/parser repairs; native Codex streamed all staged chunks, local verification passed, and second-stage execution failed at the generated condition-contract helper boundary.
+  - Divergence: no UI/session divergence observed; this is a generated-runner internal arity mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the locked condition validator and the later condition sequence helper independently. The validator requires an explicit `specs` sequence, while the downstream helper assumes the validator can read the module-level locked condition specs implicitly.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonLockedConditionContractCallSurface(...)`, which rewrites generated standalone `validate_locked_condition_contract()` calls to pass the real `LOCKED_CONDITION_SPECS` sequence when the validator requires `specs`.
+      - wired the repair into the late-stage handoff repair bundle before second-stage runner execution.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added a regression that first reproduces `validate_locked_condition_contract() missing 1 required positional argument: 'specs'`, then confirms the repaired runner executes the locked four-condition sequence.
+
+- Regression status:
+  - Automated regression test linked: yes, passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts -t "locked condition contract|linear scheduler|optional model_output_dir|parse_cli_args|missing parse_args helper"`.
+  - Adjacent regression result: passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts tests/objectiveMetric.test.ts tests/plannedConditionCoverage.test.ts tests/runExperimentsExecutionProfile.test.ts -t "locked condition contract|linear scheduler|optional model_output_dir|parse_cli_args|missing parse_args helper|instruction dataset helper aliases|compact staged_llm prompt|condition object maps|planned condition coverage|fails verification when planned brief conditions are under-executed|_safe_mkdir"`.
+  - Build validation: passed on 2026-04-30 with `npm run build`.
+- Same-flow revalidation result: partial pass on 2026-04-30. After rebuilding and restarting the localhost-only Web API, the regenerated runner no longer failed with `validate_locked_condition_contract() missing 1 required positional argument: 'specs'`. The run advanced to final entrypoint execution and then exposed LV-245: `_entrypoint_run_conditions(...)` did not include the generated `execute_locked_condition_order(options)` helper, and failure metrics persistence collapsed on a payload-first JSON writer called with path-first arguments.
+
+- Follow-up risks:
+  - The repair must only pass the real generated condition spec sequence into the validator. It must not fabricate successful condition rows or bypass the governed condition contract.
+  - After this arity boundary is cleared, LV-243 still needs same-flow confirmation because the current rerun failed before any tuned scheduler call was reached.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-245
+
+- Status: in_progress; fix implemented and same-flow boundary partially revalidated, now blocked by LV-246
+- Validation target: generated PEFT runners should execute the generated baseline-first condition loop through the final entrypoint and should persist failure metrics even when a later runtime boundary fails.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-244 locked-condition contract repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+  4. Let native Codex regenerate the runner, pass local `py_compile`, and enter second-stage `run_experiments`.
+
+- Expected behavior:
+  - The final entrypoint should discover and call the generated baseline-first helper `execute_locked_condition_order(options)`.
+  - If a runtime failure still occurs, failure metrics should be written to the supplied `--metrics-path` without crashing on a writer call-order mismatch.
+
+- Actual behavior:
+  - The generated runner defined `execute_locked_condition_order(options)` and related condition helpers, but `_entrypoint_run_conditions(...)` searched only `run_locked_experiment_conditions`, `execute_locked_condition_sequence`, `run_condition_sequence`, `execute_experiment_conditions`, and `run_experiment_conditions`.
+  - Second-stage execution failed with `RuntimeError: No condition execution helper was found`.
+  - The exception handler then called `_entrypoint_atomic_write_json(metrics_path, failure_metrics)`, whose wrapper selected a payload-first `atomic_write_json(payload, path)` helper but invoked it as `writer(path, payload)`, causing `TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'dict'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the localhost-only Web API was restarted with rebuilt code before rerunning the same action endpoint.
+  - Existing session: reproduced on the persisted run after previous parser, scheduler, and locked-condition repairs; native Codex streamed all staged chunks, local verification passed, and second-stage execution reached the final entrypoint.
+  - Divergence: no UI/session divergence observed; this is a generated-runner final-entrypoint integration mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created the executable condition loop and the final entrypoint resolver independently. The resolver candidate list omitted the actual generated loop name, while the failure writer adapter assumed all selected JSON writers are path-first even though this runner defined `atomic_write_json(payload, path)`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonEntrypointConditionRunnerResolverSurface(...)`, which inserts real generated baseline-first condition runner names such as `execute_locked_condition_order` into `_entrypoint_run_conditions(...)` resolver candidates before handoff.
+      - added `repairPythonEntrypointAtomicWriterCallOrderSurface(...)`, which makes `_entrypoint_atomic_write_json(...)` signature-aware when it selects a payload-first JSON writer such as `atomic_write_json(payload, path)`.
+      - wired both repairs into the late-stage handoff repair bundle before second-stage runner execution.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added a regression that first reproduces `No condition execution helper was found`, then confirms the repaired runner calls `execute_locked_condition_order(options)`.
+      - added a regression that first reproduces payload-first `atomic_write_json(...)` failing on path-first invocation, then confirms failure metrics can be persisted.
+
+- Regression status:
+  - Automated regression test linked: yes, passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts -t "entrypoint condition resolvers|entrypoint atomic JSON writer|locked condition contract|linear scheduler"`.
+  - Adjacent regression result: passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts tests/objectiveMetric.test.ts tests/plannedConditionCoverage.test.ts tests/runExperimentsExecutionProfile.test.ts -t "entrypoint condition resolvers|entrypoint atomic JSON writer|locked condition contract|linear scheduler|optional model_output_dir|parse_cli_args|missing parse_args helper|instruction dataset helper aliases|compact staged_llm prompt|condition object maps|planned condition coverage|fails verification when planned brief conditions are under-executed|_safe_mkdir"`.
+  - Build validation: passed on 2026-04-30 with `npm run build`.
+  - Same-flow live revalidation result: partial pass on 2026-04-30. After rebuilding and restarting the localhost-only Web API, the regenerated runner no longer failed with `No condition execution helper was found` and no longer reproduced the payload-first atomic JSON writer crash. The run advanced through staged native-Codex generation, local `py_compile`, and second-stage command invocation, then exposed LV-246: `parse_args()` projected dict-backed `LOCKED_CONDITIONS` entries with `str(dict)` and rejected its own locked baseline-first contract with `the locked comparison contract requires unmodified_base as the first condition`.
+
+- Follow-up risks:
+  - The resolver repair must only connect to a real generated execution helper. It must not fabricate condition rows or bypass the governed baseline-first loop.
+  - After this entrypoint boundary is cleared, LV-243/LV-221 still require same-flow confirmation that tuned conditions execute and produce baseline-relative metrics.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-246
+
+- Status: in_progress; fix implemented and same-flow boundary partially revalidated, now blocked by LV-247
+- Validation target: generated PEFT runners should use the semantic condition identifiers from dict-backed `LOCKED_CONDITIONS` when validating the locked baseline-first condition order.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-245 entrypoint resolver and atomic writer call-order repairs.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+  4. Let native Codex regenerate the runner, pass local `py_compile`, and enter second-stage `run_experiments`.
+
+- Expected behavior:
+  - With no explicit `--condition` filter, `parse_args()` should select the locked condition order `unmodified_base`, `vanilla_lora`, `rslora`, and `dora`.
+  - The first condition should be recognized as `unmodified_base`, allowing second-stage execution to enter the baseline-first condition loop.
+
+- Actual behavior:
+  - The generated runner defined `LOCKED_CONDITIONS` as a list of dictionaries whose first entry had `condition_id: "unmodified_base"`.
+  - `_locked_condition_names()` returned `[str(x) for x in globals()["LOCKED_CONDITIONS"]]`, so the first selected condition became the string representation of the whole dictionary rather than `"unmodified_base"`.
+  - Second-stage execution failed during argument parsing with `run_peft_instruction_study.py: error: the locked comparison contract requires unmodified_base as the first condition`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the localhost-only Web API was restarted with rebuilt code before rerunning the same action endpoint.
+  - Existing session: reproduced on the persisted run after LV-245 repairs; native Codex streamed all staged chunks, local verification passed, and second-stage execution reached the generated parser.
+  - Divergence: no UI/session divergence observed; this is a generated-runner condition-name projection bug hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted the locked condition catalog as dictionary records, while the parser helper assumed `LOCKED_CONDITIONS` entries were already strings. The helper preserved order but lost the semantic identifier by calling `str(dict)`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonLockedConditionNameProjectionSurface(...)`, which rewrites generated `_locked_condition_names()` projections that call `str(...)` on `LOCKED_CONDITIONS` entries so dict/object records are projected by existing identifier fields such as `condition_id`, `id`, `name`, `marker`, or `required_marker`.
+      - wired the repair into the late-stage handoff repair bundle after Namespace-aware parser repair and before second-stage runner execution.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added a regression that first reproduces the generated parser rejecting dict-backed `LOCKED_CONDITIONS`, then confirms the repair preserves the baseline-first order `unmodified_base, vanilla_lora, rslora, dora`.
+
+- Regression status:
+  - Automated regression test linked: yes, passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts -t "dict-backed LOCKED_CONDITIONS name projection"`.
+  - Adjacent regression result: passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts tests/objectiveMetric.test.ts tests/plannedConditionCoverage.test.ts tests/runExperimentsExecutionProfile.test.ts -t "dict-backed LOCKED_CONDITIONS name projection|entrypoint condition resolvers|entrypoint atomic JSON writer|locked condition contract|linear scheduler|optional model_output_dir|parse_cli_args|missing parse_args helper|instruction dataset helper aliases|compact staged_llm prompt|condition object maps|planned condition coverage|fails verification when planned brief conditions are under-executed|_safe_mkdir"`.
+  - Build validation: passed on 2026-04-30 with `npm run build`.
+  - Same-flow live revalidation result: partial pass on 2026-04-30. After rebuilding and restarting the localhost-only Web API, the regenerated runner no longer failed with `the locked comparison contract requires unmodified_base as the first condition`. The run advanced through staged native-Codex generation, local `py_compile`, and second-stage command invocation, then exposed LV-247: the final entrypoint resolver did not include the generated `aggregate_recipe_metrics(...)` helper and the fatal metrics writer referenced `_build_runnable_command(...)` even though the generated command helper was named `_canonical_command_from_args(...)`.
+
+- Follow-up risks:
+  - The repair must only extract existing condition identifiers from generated condition records. It must not reorder conditions, fabricate missing rows, or bypass the baseline-first contract.
+  - After this parser boundary is cleared, LV-243/LV-221 still require same-flow confirmation that tuned conditions execute and produce baseline-relative metrics.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-247
+
+- Status: in_progress; fix implemented and same-flow boundary partially revalidated, now blocked by LV-248
+- Validation target: generated PEFT runners should connect final entrypoint aggregation and fatal metrics command metadata to the helper names generated in earlier staged chunks.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-246 dict-backed locked-condition projection repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+  4. Let native Codex regenerate the runner, pass local `py_compile`, and enter second-stage `run_experiments`.
+
+- Expected behavior:
+  - The final entrypoint should aggregate raw baseline-first condition outcomes using the generated aggregation helper.
+  - If a later runtime failure occurs, fatal metrics persistence should still write a useful metrics payload including a runnable command.
+
+- Actual behavior:
+  - The generated runner defined `aggregate_recipe_metrics(raw_condition_outcomes)`, but `main(...)` searched only `aggregate_condition_metrics`, `aggregate_experiment_metrics`, `compute_aggregated_metrics`, and `summarize_recipe_outcomes`.
+  - Second-stage execution failed with `RuntimeError: No metrics aggregation helper is defined.`
+  - The exception handler then attempted to write fatal metrics and crashed with `NameError: name '_build_runnable_command' is not defined`; the generated command helper was `_canonical_command_from_args(args, metrics_path)`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the localhost-only Web API was restarted with rebuilt code before rerunning the same action endpoint.
+  - Existing session: reproduced on the persisted run after LV-246 repairs; native Codex streamed all staged chunks, local verification passed, and second-stage execution reached the final entrypoint aggregation boundary.
+  - Divergence: no UI/session divergence observed; this is a generated-runner final-entrypoint helper-name mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created aggregation and command-construction helpers in earlier chunks, while the final main/fatal-metrics chunk used a narrower resolver vocabulary. `py_compile` cannot detect that the runtime resolver tuple omits the generated helper name or that fatal metrics references a non-existent command helper.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonEntrypointMetricsAggregationBridgeSurface(...)`, which inserts a final-entrypoint bridge from generated `aggregate_condition_metrics(...)` resolver names to the real generated `aggregate_recipe_metrics(...)` helper when present.
+      - the bridge extracts real raw condition rows from generated orchestration payloads such as `raw_condition_outcomes`, `condition_outcomes`, or `recipe_outcomes`; it does not fabricate successful metrics or bypass condition execution.
+      - added a `_build_runnable_command(...)` compatibility alias that delegates to the generated `_canonical_command_from_args(...)` helper for fatal metrics command metadata.
+      - wired the repair into the late-stage handoff repair bundle before second-stage runner execution.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added a regression that first reproduces `No metrics aggregation helper is defined` followed by `_build_runnable_command` `NameError`, then confirms the repaired runner writes metrics through the real generated aggregation helper.
+
+- Regression status:
+  - Automated regression test linked: yes, passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts -t "metrics aggregation and runnable command helper"`.
+  - Adjacent regression result: passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts tests/objectiveMetric.test.ts tests/plannedConditionCoverage.test.ts tests/runExperimentsExecutionProfile.test.ts -t "metrics aggregation and runnable command helper|dict-backed LOCKED_CONDITIONS name projection|entrypoint condition resolvers|entrypoint atomic JSON writer|locked condition contract|linear scheduler|optional model_output_dir|parse_cli_args|missing parse_args helper|instruction dataset helper aliases|compact staged_llm prompt|condition object maps|planned condition coverage|fails verification when planned brief conditions are under-executed|_safe_mkdir"`.
+  - Build validation: passed on 2026-04-30 with `npm run build`.
+  - Same-flow live revalidation result: partial pass on 2026-04-30. After rebuilding and restarting the localhost-only Web API, the regenerated runner no longer failed with `No metrics aggregation helper is defined`, and fatal metrics no longer crashed on `_build_runnable_command` `NameError`. The same-flow run advanced through staged generation, local `py_compile`, second-stage command invocation, and wrote failure metrics to `metrics.json`, then exposed LV-248: the final `_autolabos_resolve_parser()` searched `build_argument_parser(...)` style names while the generated CLI section defined `build_arg_parser(...)`/`create_arg_parser(...)`.
+
+- Follow-up risks:
+  - The repair must only bridge to real generated helpers and real raw condition outcomes. It must not fabricate aggregate metrics or mark failed condition execution as successful.
+  - After this aggregation-entrypoint boundary is cleared, LV-243/LV-221 still require same-flow confirmation that tuned conditions execute and produce baseline-relative metrics.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-248
+
+- Status: in_progress; fix implemented and same-flow boundary partially revalidated, now blocked by LV-249
+- Validation target: generated PEFT runners should resolve their generated CLI parser regardless of whether staged chunks name it `build_arg_parser(...)`, `create_arg_parser(...)`, or the final entrypoint's longer `build_argument_parser(...)` family.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-247 final-entrypoint metrics aggregation bridge.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+  4. Let native Codex regenerate the runner, pass local `py_compile`, and enter second-stage `run_experiments`.
+
+- Expected behavior:
+  - The final entrypoint should discover and use the generated parser from the CLI defaults section.
+  - Parser-builder naming differences across staged chunks should not block second-stage execution.
+
+- Actual behavior:
+  - The generated runner defined `build_arg_parser()` and `create_arg_parser()`.
+  - `_autolabos_resolve_parser()` searched only `ARGUMENT_PARSER`, `build_argument_parser`, `create_argument_parser`, `make_argument_parser`, `get_argument_parser`, and `build_parser`.
+  - Second-stage execution failed with `RuntimeError: No CLI parser was found. Expected build_argument_parser(), create_argument_parser(), make_argument_parser(), get_argument_parser(), build_parser(), or ARGUMENT_PARSER to be defined by the CLI defaults section.`
+  - Unlike LV-247, the failure path wrote metrics to the supplied `metrics.json`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the localhost-only Web API was restarted with rebuilt code before rerunning the same action endpoint.
+  - Existing session: reproduced on the persisted run after LV-247 repairs; native Codex streamed all staged chunks, local verification passed, and second-stage execution reached the final CLI parser resolver.
+  - Divergence: no UI/session divergence observed; this is a generated-runner staged helper-name mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the CLI-defaults chunk used the common generated name `build_arg_parser(...)`, while the final entrypoint chunk used a narrower resolver vocabulary based on `build_argument_parser(...)` variants. Since both functions are valid Python names and `py_compile` passes, the mismatch appears only during second-stage runtime.
+
+- Code/test changes:
+  - Code: added `repairPythonAutolabosCliParserBuilderAliasSurface(...)` in `src/core/agents/implementSessionManager.ts` and wired it into the late handoff repair chain after final-entrypoint metrics bridging.
+  - Scope: the repair only inserts compatibility aliases from the final resolver's expected names (`build_argument_parser`, `create_argument_parser`, `make_argument_parser`, `get_argument_parser`, `build_parser`) to real generated parser builders (`build_arg_parser`, `create_arg_parser`) when `_autolabos_resolve_parser()` and the `No CLI parser was found` runtime boundary are both present.
+  - Tests: added `aliases generated build_arg_parser for AutoLabOS parser resolvers` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "build_arg_parser for AutoLabOS parser resolvers"` passed on 2026-04-30.
+  - Adjacent regression validation: `npm test -- --run tests/implementSessionManager.test.ts tests/objectiveMetric.test.ts tests/plannedConditionCoverage.test.ts tests/runExperimentsExecutionProfile.test.ts -t "build_arg_parser for AutoLabOS parser resolvers|metrics aggregation and runnable command helper|dict-backed LOCKED_CONDITIONS name projection|entrypoint condition resolvers|entrypoint atomic JSON writer|locked condition contract|linear scheduler|optional model_output_dir|parse_cli_args|missing parse_args helper|instruction dataset helper aliases|compact staged_llm prompt|condition object maps|planned condition coverage|fails verification when planned brief conditions are under-executed|_safe_mkdir"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: partial pass on 2026-04-30. After rebuilding and restarting the localhost-only Web API, the regenerated runner no longer failed with `No CLI parser was found`. It parsed CLI arguments, wrote failure metrics with populated CLI/device fields, and advanced into `_autolabos_run_workflow(...)`, then exposed LV-249: `_autolabos_call_with_supported_args(...)` used a formal parameter named `args` while callers also expanded `**common_kwargs` containing `"args": args`, causing Python argument binding to fail before the helper body ran.
+
+- Follow-up risks:
+  - The repair must only alias to a real generated `argparse.ArgumentParser` builder. It must not ignore CLI arguments, bypass parser validation, or inject hidden defaults that conflict with the generated parser.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-249
+
+- Status: in_progress; fix implemented and same-flow boundary partially revalidated, now blocked by LV-250
+- Validation target: generated PEFT runners should allow shared `common_kwargs` payloads containing `args` to be forwarded through helper-call adapters without colliding with the adapter's own positional Namespace argument.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and LV-248 code in place.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-248 generated parser-builder alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+  4. Let native Codex regenerate all staged chunks, pass local `py_compile`, and enter second-stage `run_experiments`.
+
+- Expected behavior:
+  - The workflow adapter should pass the parsed CLI Namespace to generated workflow helpers.
+  - If a shared `common_kwargs` dictionary also includes an `args` key for downstream helpers, that should not collide with the adapter's own internal Namespace parameter.
+
+- Actual behavior:
+  - The generated runner defined `_autolabos_call_with_supported_args(func, args, **extra_kwargs)`.
+  - `_autolabos_run_workflow(...)` built `common_kwargs = {"args": args, "metrics_path": ..., "public_dir": ...}` and then called `_autolabos_call_with_supported_args(workflow, args, **common_kwargs)`.
+  - Python argument binding failed before the adapter body executed with `TypeError: _autolabos_call_with_supported_args() got multiple values for argument 'args'`.
+  - `metrics.json` was written with `status: failed`, `condition_count: 0`, populated CLI fields, and a traceback pointing to `_autolabos_run_workflow(...)`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the localhost-only Web API was restarted with rebuilt code before rerunning the same action endpoint.
+  - Existing session: reproduced on the persisted run after LV-248 repairs; native Codex streamed all staged chunks, local verification passed, and second-stage execution reached the workflow adapter.
+  - Divergence: no UI/session divergence observed; this is a generated-runner Python binding issue hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the final entrypoint chunk projected a generic adapter parameter as `args`, while nearby generated code also treats `args` as a downstream helper keyword in `common_kwargs`. Python rejects duplicate binding at the adapter boundary before the adapter can perform its intended signature-aware routing.
+
+- Code/test changes:
+  - Code: added `repairPythonAutolabosSupportedArgsDuplicateArgsSurface(...)` in `src/core/agents/implementSessionManager.ts` and wired it into the late handoff repair chain.
+  - Scope: the repair renames only the adapter's internal formal Namespace parameter from `args` to `_autolabos_args` and then rebinds local `args = _autolabos_args` inside the helper body. It does not strip `args` from downstream `common_kwargs`, so generated workflow helpers can still receive `args=` normally.
+  - Tests: added `renames AutoLabOS supported-args adapter parameter to avoid duplicate args binding` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "supported-args adapter parameter"` passed on 2026-04-30.
+  - Adjacent regression validation: `npm test -- --run tests/implementSessionManager.test.ts tests/objectiveMetric.test.ts tests/plannedConditionCoverage.test.ts tests/runExperimentsExecutionProfile.test.ts -t "supported-args adapter parameter|build_arg_parser for AutoLabOS parser resolvers|metrics aggregation and runnable command helper|dict-backed LOCKED_CONDITIONS name projection|entrypoint condition resolvers|entrypoint atomic JSON writer|locked condition contract|linear scheduler|optional model_output_dir|parse_cli_args|missing parse_args helper|instruction dataset helper aliases|compact staged_llm prompt|condition object maps|planned condition coverage|fails verification when planned brief conditions are under-executed|_safe_mkdir"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: partial pass on 2026-04-30. After rebuilding and restarting the localhost-only Web API, the regenerated runner no longer failed with `_autolabos_call_with_supported_args() got multiple values for argument 'args'`. The same-flow run advanced through staged Codex generation, local `py_compile`, handoff repair, and second-stage command invocation, then exposed LV-250: the final `main()` called `detect_device()` while the generated runner defined `detect_execution_device()`.
+
+- Follow-up risks:
+  - The repair must preserve downstream helpers' ability to receive an `args` keyword. It should rename only the adapter's internal formal parameter or otherwise remove only the adapter-bound duplicate, not strip semantically meaningful CLI arguments from workflow calls.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-250
+
+- Status: mitigated and same-flow live revalidated on 2026-04-30
+- Validation target: generated PEFT runners should expose device detection helpers under the names used by the final CLI orchestration entrypoint.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and LV-249 code in place.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-249 supported-args adapter repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+  4. Let native Codex regenerate the staged runner, pass local `py_compile`, and enter second-stage `run_experiments`.
+
+- Expected behavior:
+  - The generated runner should either define `detect_device()` or the handoff repair layer should alias an equivalent generated device helper before execution.
+  - If the equivalent helper returns `(device, metadata)`, the final orchestration path that assigns `device_info = detect_device()` should receive the metadata mapping rather than the raw tuple.
+
+- Actual behavior:
+  - The regenerated runner defined `detect_execution_device() -> Tuple[Any, Dict[str, Any]]`.
+  - The final `main()` called `device_info = detect_device()` before entering its condition-execution `try` block.
+  - Second-stage execution failed immediately with `NameError: name 'detect_device' is not defined`, before `metrics.json` could be written.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the localhost-only Web API was restarted with rebuilt code before rerunning the same action endpoint.
+  - Existing session: reproduced on the persisted run after LV-249 repairs; native Codex streamed all staged chunks, local verification passed, and second-stage execution reached the final orchestration entrypoint.
+  - Divergence: no UI/session divergence observed; this is a generated-runner helper alias mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted a richer device helper as `detect_execution_device()` in an early chunk, while the final CLI orchestration chunk referenced the narrower `detect_device()` name. The existing device alias repair covered helpers such as `discover_device()` and `get_device()`, but did not include `detect_execution_device()` or tuple-to-metadata normalization for `device_info` call sites.
+
+- Code/test changes:
+  - Code:
+    - Extended `repairPythonDeviceHelperAliasSurface(...)` in `src/core/agents/implementSessionManager.ts`.
+    - Added `detect_execution_device` as a candidate backing helper for `detect_device()`.
+    - Added `_autolabos_normalize_device_helper_result(...)` so tuple-returning helpers can provide metadata for `device_info = detect_device()`/`device_info.update(detect_device())` call sites while preserving raw-device behavior for `get_device()`.
+  - Tests:
+    - Added `repairs device_info detect_device calls using generated detect_execution_device metadata` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "detect_execution_device metadata"` passed on 2026-04-30.
+  - Adjacent regression validation: `npm test -- --run tests/implementSessionManager.test.ts -t "detect_execution_device metadata|undefined detect_device|undefined get_device|set_reproducible_seed alias|set_global_seed alias|supported-args adapter parameter|build_arg_parser for AutoLabOS parser resolvers"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: pass for the LV-250 boundary on 2026-04-30. After rebuilding and restarting the localhost-only Web API, the regenerated runner no longer failed with `NameError: name 'detect_device' is not defined`. The first same-flow rerun advanced to LV-251, and the subsequent LV-251 repair/revalidation completed all four locked conditions.
+
+- Follow-up risks:
+  - The repair must preserve existing `device = detect_device()` use cases while returning metadata for `device_info = detect_device()` generated entrypoints.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-251
+
+- Status: mitigated and same-flow live revalidated on 2026-04-30
+- Validation target: generated PEFT runners should bridge final condition dispatch to the selected generated condition executor signature and provide any final aggregation helpers they reference.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation and LV-250 code in place.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-250 `detect_execution_device` alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+  4. Let native Codex regenerate the staged runner, pass local `py_compile`, and enter second-stage `run_experiments`.
+
+- Expected behavior:
+  - The final condition dispatcher should inspect the selected generated condition executor and supply required contextual arguments such as `output_dir` and `device` when those parameters are present.
+  - Final aggregation should not call `_extract_numeric_metric(...)` unless the helper is defined.
+
+- Actual behavior:
+  - The regenerated runner selected `execute_single_condition(condition: Any, output_dir: Path, device: Any)` as the condition runner.
+  - `_call_condition_execution(...)` supplied condition/args/runtime/order-index variants but did not bridge `output_dir` or `device`.
+  - Each locked condition failed with `TypeError: execute_single_condition() missing 2 required positional arguments: 'output_dir' and 'device'`.
+  - After continuing through the failed condition loop, `_aggregate_entrypoint_results(...)` failed with `NameError: name '_extract_numeric_metric' is not defined`.
+  - `metrics.json` was written with `status: failed`, `condition_results: []`, CUDA device metadata, and the `_extract_numeric_metric` traceback.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the localhost-only Web API was restarted with rebuilt code before rerunning the same action endpoint.
+  - Existing session: reproduced on the persisted run after LV-250 repairs; native Codex streamed staged chunks, local verification passed, handoff repair applied, and second-stage execution reached locked condition dispatch.
+  - Divergence: no UI/session divergence observed; this is a generated-runner final entrypoint/dispatcher mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic staged generation emitted `execute_single_condition(...)` with concrete runtime dependencies (`output_dir`, `device`) in one chunk, while the final dispatcher chunk only projected generic condition/args/runtime/order-index call variants. A separate final aggregation chunk referenced `_extract_numeric_metric(...)` without defining it.
+
+- Code/test changes:
+  - Code:
+    - Added `repairPythonEntrypointConditionExecutionBridgeSurface(...)` in `src/core/agents/implementSessionManager.ts` and wired it into the late handoff repair chain after condition-runner resolver repair.
+    - The repair forwards `runtime={"device": device, "output_dir": Path(args.output_dir)}` through `_run_entrypoint_conditions(...)` when the generated helper accepts `runtime`.
+    - The repair extends `_call_condition_execution(...)` so selected runners with `output_dir` and/or `device` parameters receive those values from runtime, parsed args, or existing device helpers.
+    - The repair injects `_extract_numeric_metric(...)` only when the final aggregation fallback references it but no definition exists.
+  - Tests:
+    - Added `bridges entrypoint condition execution context for output_dir and device runners` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "condition execution context"` passed on 2026-04-30.
+  - Adjacent regression validation: `npm test -- --run tests/implementSessionManager.test.ts -t "condition execution context|detect_execution_device metadata|undefined detect_device|supported-args adapter parameter|build_arg_parser for AutoLabOS parser resolvers|entrypoint condition resolvers|metrics aggregation and runnable command helper|entrypoint atomic JSON writer"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: pass for the LV-251 boundary on 2026-04-30.
+    - Rebuilt AutoLabOS with `npm run build`.
+    - Restarted the localhost-only Web API from `dist/cli/main.js` on `127.0.0.1:4318`.
+    - Re-ran `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+    - The new run consumed the prior runner feedback, generated a focused `Patch PEFT study runner invocation mismatch` implementation, passed local `py_compile`, and ran the second-stage experiment.
+    - `metrics.json` ended with `status: completed`, `completed_condition_count: 4`, and `failed_condition_count: 0`.
+    - The prior `execute_single_condition() missing 2 required positional arguments: 'output_dir' and 'device'` failures did not recur.
+    - The prior `NameError: name '_extract_numeric_metric' is not defined` failure did not recur.
+    - The workflow advanced into `analyze_results`, which recommended `pause_for_human -> stay` for research-quality reasons rather than a runtime blocker.
+
+- Follow-up risks:
+  - The runtime blocker is mitigated, but the scientific objective was not met: `summary.best_tuned_accuracy_delta_vs_baseline=0` did not satisfy the configured `>= 0.01` improvement threshold.
+  - `analyze_results` still reports an incomplete results table and recommends manual review before progression; this is now a research-quality gate, not the LV-251 runtime failure.
+  - The repair passes through real runtime context and extracts numeric values from actual generated result payloads. It must continue to avoid fabricating condition rows or marking failed execution as successful.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-252
+
+- Status: mitigated and same-flow live revalidated on 2026-04-30
+- Validation target: `analyze_results` should build condition comparisons and a populated results table from completed generated PEFT metrics regardless of whether the runner names the row array `conditions`, `condition_summaries`, or `condition_results`.
+- Environment/session context: same-flow rerun for existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation` on 2026-04-30, after LV-251 was mitigated and `run_experiments` completed all four locked PEFT conditions.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS and rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` through the localhost Web API.
+  2. Let second-stage `run_experiments` complete.
+  3. Observe `metrics.json` contains `status: completed`, `completed_condition_count: 4`, `failed_condition_count: 0`, and four completed rows under `condition_results`.
+  4. Let `analyze_results` run and inspect `outputs/.../analysis/result_analysis.json`.
+
+- Expected behavior:
+  - `analyze_results` should recognize `condition_results` as condition-row evidence.
+  - It should identify the unmodified baseline and at least one tuned comparator.
+  - `condition_comparisons` and `results_table` should contain numeric baseline/comparator/delta values from the executed rows.
+
+- Actual behavior:
+  - `result_analysis.json` reported `transition_recommendation.reason: "incomplete_results_table"`.
+  - The evidence listed rows such as `primary_mean_zero_shot_accuracy = ...: baseline=null, comparator=null`.
+  - The same metrics file contained completed baseline/comparator rows with numeric `mean_zero_shot_accuracy`, `arc_challenge_accuracy`, and `hellaswag_accuracy` under `condition_results`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was observed through the same localhost Web API flow after a rebuild and restart.
+  - Existing session: reproduced on the persisted run immediately after LV-251 same-flow success.
+  - Divergence: no UI/session divergence observed; this is an artifact-schema projection gap between `run_experiments` output and `analyze_results`.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: result analysis row extraction supports `metrics.conditions` and `metrics.condition_summaries`, but not the generated runner's `metrics.condition_results` array. Because no condition comparison is produced, results-table validation falls back to the contract schema with null baseline/comparator fields.
+
+- Code/test changes:
+  - Code:
+    - Extended `AnalysisConditionComparison.source` in `src/core/resultAnalysis.ts` to include `metrics.condition_results`.
+    - Updated condition-row extraction to read completed rows from `metrics.condition_results` when `metrics.conditions` is absent.
+    - Updated condition-name normalization to include generated runner fields such as `condition_name`, `condition_marker`, and nested `condition_config.name`/`condition_config.marker`.
+  - Tests:
+    - Added `does not pause when generated metrics store completed rows under condition_results` in `tests/objectiveMetricPropagation.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/objectiveMetricPropagation.test.ts -t "condition_results"` passed on 2026-04-30.
+  - Adjacent regression validation: `npm test -- --run tests/objectiveMetricPropagation.test.ts -t "condition_results|metrics.results has baseline|keyed results table|metrics.conditions uses base_unmodified|condition_summaries|metrics.recipes|incomplete table"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: pass on 2026-04-30.
+    - Rebuilt AutoLabOS with `npm run build`.
+    - Restarted the localhost-only Web API from `dist/cli/main.js` on `127.0.0.1:4318`.
+    - Re-ran `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"analyze_results"}` against the completed metrics from the LV-251 run.
+    - `result_analysis.json` now contains populated `condition_comparisons` comparing `vanilla_lora_max_seq_length_1024_epochs_1_effective_batch_size_8` against `unmodified_base`.
+    - `results_table` now contains numeric baseline/comparator/delta rows, including `mean_zero_shot_accuracy` baseline `0.375`, comparator `0.375`, delta `0`.
+    - The transition reason is no longer `incomplete_results_table`; the workflow now recommends `backtrack_to_design -> design_experiments` because the objective and brief evidence gate were not satisfied.
+
+- Follow-up risks:
+  - The incomplete-results-table gate remains active. If row arrays are missing baseline/comparator values, the gate should still pause.
+  - A populated negative/null result table is valid evidence, but it does not mean the scientific objective was met.
+
+## Issue: LV-253
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: `implement_experiments -> run_experiments` should hand off a generated PEFT runner whose final workflow dispatcher can resolve the actual generated baseline-first experiment function.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation.
+
+- Reproduction steps:
+  1. Rebuild and run the localhost-only Web API from `dist/cli/main.js`.
+  2. POST `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"design_experiments"}`.
+  3. Let `design_experiments` select the next PEFT bake-off design and auto-start `implement_experiments`.
+  4. Let native Codex stream staged implementation progress, complete local `py_compile`, and hand off to `run_experiments`.
+
+- Expected behavior:
+  - Handoff repair should reconcile semantically equivalent final workflow names before execution.
+  - If the runner defines `run_baseline_first_experiment(args)`, a dispatcher that searches `run_baseline_first_experiment_workflow`, `run_baseline_first_workflow`, `run_experiment_workflow`, or related final workflow names should resolve a compatible alias.
+
+- Actual behavior:
+  - `implement_experiments` completed with observable native-Codex progress and local verification.
+  - `run_experiments` failed immediately with `RuntimeError: No experiment workflow function was found. Expected one of: run_baseline_first_experiment_workflow, run_baseline_first_workflow, run_experiment_workflow, execute_experiment_workflow, orchestrate_experiment_workflow, run_full_experiment, run_locked_experiment, run_study_workflow`.
+  - The generated runner did define `run_baseline_first_experiment(args: argparse.Namespace) -> Dict[str, Any]`, but the final workflow dispatcher did not search that name.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from a brand-new `/new`; this was observed in the same persisted PEFT validation run after rebuilding and restarting the localhost-only Web API.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is a generated-runner final workflow alias projection gap, not a stale UI/session issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged native-Codex generation emitted a runnable baseline-first workflow as `run_baseline_first_experiment(...)`, while the final dispatcher chunk projected a stricter workflow-name surface ending in `_workflow`. The late handoff repair recognized older final workflow surfaces but did not include this generated implementation name or dispatcher alias family.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `run_baseline_first_experiment` and `execute_baseline_first_experiment` as final workflow implementation candidates.
+      - added aliases for dispatcher names such as `run_baseline_first_experiment_workflow`, `run_baseline_first_workflow`, `run_experiment_workflow`, `execute_experiment_workflow`, `orchestrate_experiment_workflow`, `run_full_experiment`, `run_locked_experiment`, and `run_study_workflow`.
+      - adjusted the final workflow wrapper so a positional config object can satisfy target functions whose parameter is named `args`.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "run_baseline_first_experiment"` passed on 2026-04-30.
+  - Adjacent regression validation: `npm test -- --run tests/implementSessionManager.test.ts -t "recipe execution orchestrator aliases|chunk 5a orchestration aliases|final candidate orchestration aliases|final workflow dispatcher aliases|condition-study orchestration aliases"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: mitigated to the next boundary on 2026-04-30.
+    - Rebuilt AutoLabOS and restarted the localhost-only Web API on `127.0.0.1:4318`.
+    - Re-ran `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+    - Native Codex OAuth streamed a new staged implementation, local `py_compile` passed, and second-stage `run_experiments` started.
+    - The prior `No experiment workflow function was found` error did not recur.
+    - The run advanced to `LV-254`, a separate CLI argument alias mismatch.
+
+- Follow-up risks:
+  - Once the dispatcher alias is repaired, execution may advance into real PEFT/model/dataset runtime and expose dependency, cache, or scientific-evidence issues. Those should be logged separately rather than hidden by fallback rows.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-262
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: generated Python runners should not fail at module load because type annotation names are missing from imports.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-261 verifier repair.
+
+- Reproduction steps:
+  1. Rebuild and restart the localhost-only Web API.
+  2. Re-run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let native Codex OAuth stream the 3-chunk PEFT runner implementation and pass local `py_compile`.
+  4. Let second-stage `run_experiments` execute the generated entrypoint.
+
+- Expected behavior:
+  - Local verification should either insert `from __future__ import annotations` or require/import any typing names used in runtime-evaluated annotations.
+  - A runner that uses `MutableMapping[str, Any]` in a function signature must not reach second-stage execution without `MutableMapping` being defined or annotation evaluation being postponed.
+
+- Actual behavior:
+  - Native Codex OAuth generated a fresh 3-chunk implementation with concrete dataset/model/evaluation/SFT/condition execution helpers.
+  - The LV-261 `No real per-condition execution worker is registered` failure did not recur.
+  - Local `py_compile` passed and second-stage `run_experiments` started.
+  - Module load failed immediately with:
+    - `NameError: name 'MutableMapping' is not defined`
+  - The generated runner imported `Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union` from `typing`, but omitted `MutableMapping`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was observed in the same persisted PEFT validation run after rebuilding and restarting the localhost-only Web API.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is a generated-runner annotation/import projection gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: existing annotation detection incorrectly treated common typing aliases such as `MutableMapping` as intrinsically defined, so it did not insert postponed annotation evaluation even when the generated import list omitted the alias.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - removed typing aliases such as `MutableMapping` from the annotation detector's built-in defined-name set.
+      - extended annotation scanning to cover multi-line function signatures and return annotations before handoff.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for generated Python runners that omit a typing alias used in parameter annotations.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "typing alias|undefined parameter annotation|undefined return annotation|worker_discovery|condition-plan runner calls"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: mitigated to the next boundary on 2026-04-30.
+    - Rebuilt AutoLabOS and restarted the localhost-only Web API on `127.0.0.1:4318`.
+    - Re-ran `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+    - Native Codex OAuth streamed a repaired implementation, local `py_compile` passed, and second-stage `run_experiments` executed on CUDA.
+    - The generated runner now defines `MutableMapping` via `from collections.abc import MutableMapping`.
+    - The prior `NameError: name 'MutableMapping' is not defined` error did not recur.
+    - The run advanced through real condition execution and into `analyze_results`, exposing `LV-263`.
+
+- Follow-up risks:
+  - Once annotation repair catches this, execution should proceed into actual model/dataset loading or condition execution. Those may surface external dependency/cache/model runtime issues that should be logged separately.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-263
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: `analyze_results` should build a complete baseline/comparator `results_table` from real completed condition metrics even when `metrics.conditions` is stored as an object map keyed by condition name.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-262 annotation repair.
+
+- Reproduction steps:
+  1. Rebuild and restart the localhost-only Web API.
+  2. Re-run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let native Codex OAuth repair the runner, pass local `py_compile`, and hand off to second-stage `run_experiments`.
+  4. Let `run_experiments` complete the four real PEFT/base conditions and write `metrics.json`.
+  5. Observe the automatic `analyze_results` output and transition recommendation.
+
+- Expected behavior:
+  - The completed `metrics.conditions` entries for `unmodified_base`, `lora_baseline`, `rslora`, and `dora` should be converted into condition comparison rows.
+  - `result_analysis.results_table` should include at least one row with both `baseline` and `comparator` populated.
+  - The run should not pause solely because result-table extraction missed an object-map condition schema.
+
+- Actual behavior:
+  - `run_experiments` executed on CUDA and completed all four conditions.
+  - `metrics.json` stores `conditions` as an object map keyed by condition name.
+  - `result_analysis.condition_comparisons` was empty for that schema.
+  - `result_analysis.results_table` fell back to the experiment contract schema with `baseline=null` and `comparator=null` rows.
+  - `transition_recommendation.json` paused with:
+    - `reason: "incomplete_results_table"`
+    - `Results table is incomplete: baseline and comparator must both be populated for every reported row.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; the failing analysis artifact comes from the same persisted PEFT validation run after live runner execution.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is an artifact projection gap between real metrics schema and analysis table construction.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `readConditionRowsFromMetrics(...)` reads `metrics.conditions` only when it is an array. The real runner writes `conditions` as an object map, so `buildConditionsArrayConditionComparison(...)` sees zero rows and the results table is reconstructed from an empty contract schema instead of executed condition evidence.
+
+- Code/test changes:
+  - Code:
+    - `src/core/resultAnalysis.ts`
+      - teaches `readConditionRowsFromMetrics(...)` to expand object-map `metrics.conditions` entries into condition rows, preserving each key as `name` and `condition_id` when the row omits them.
+  - Tests:
+    - `tests/objectiveMetricPropagation.test.ts`
+      - adds same-schema regression coverage for `metrics.conditions` keyed by condition name.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/objectiveMetricPropagation.test.ts -t "metrics.conditions is keyed by condition name|metrics.conditions has completed baseline and comparator rows"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: mitigated to the next boundary on 2026-04-30.
+    - Rebuilt AutoLabOS and restarted the localhost-only Web API on `127.0.0.1:4318`.
+    - Re-ran `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"analyze_results"}` against the same real `metrics.json`.
+    - `result_analysis.condition_comparisons[0]` now reports `source: "metrics.conditions"` and comparison `unmodified_base_vs_lora_baseline`.
+    - `result_analysis.results_table` now includes populated rows such as `accuracy_delta_vs_baseline`, `baseline=-0.015625`, `comparator=0`, `delta=0.0156`.
+    - The prior `incomplete_results_table` pause did not recur.
+    - The run advanced to `LV-264`, a separate confidence-interval extraction gap.
+
+- Follow-up risks:
+  - After object-map conditions are recognized, the analysis gate may still pause for a valid scientific reason such as weak evidence scale, missing repeated trials, or a baseline/comparator naming mismatch. Those should remain governed review signals rather than be suppressed.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+
+## Issue: LV-264
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: `analyze_results` should recognize confidence intervals stored inside object-map condition metrics, including `metrics.conditions.*.evaluation.pooled_bootstrap.ci95_low/high`.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-263 results-table repair.
+
+- Reproduction steps:
+  1. Rebuild and restart the localhost-only Web API.
+  2. Re-run `analyze_results` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` against the existing real `metrics.json`.
+  3. Inspect `result_analysis.json`, `analysis/evidence_scale_assessment.json`, and `transition_recommendation.json`.
+
+- Expected behavior:
+  - `statistical_summary.confidence_intervals` should include the bootstrap intervals already present in each completed condition's `evaluation.pooled_bootstrap`.
+  - The brief evidence gate should not fail solely because CI extraction missed `ci95_low/high` key names.
+
+- Actual behavior:
+  - `metrics.json` contains per-condition intervals such as:
+    - `conditions.unmodified_base.evaluation.pooled_bootstrap.ci95_low`
+    - `conditions.unmodified_base.evaluation.pooled_bootstrap.ci95_high`
+  - `result_analysis.statistical_summary.confidence_intervals` was empty.
+  - `failure_taxonomy` included `missing_confidence_intervals`.
+  - `analysis/evidence_scale_assessment.json` failed with:
+    - `confidence_interval_count: 0`
+    - `Observed 0 confidence interval artifact(s).`
+  - The transition recommendation became `backtrack_to_design -> design_experiments`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was observed by replaying `analyze_results` on the persisted run's real metrics artifact.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is an analysis projection gap over a persisted metrics schema.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `extractConfidenceIntervals(...)` recognizes `ci_low/high` and `bootstrap_ci95_low/high`, but not the live runner's `ci95_low/high` keys under `pooled_bootstrap`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/resultAnalysis.ts`
+      - recognizes `ci95_low` and `ci95_high` as direct confidence interval bounds.
+      - maps `pooled_bootstrap` blocks to the owning condition's `mean_zero_shot_accuracy` metric key.
+  - Tests:
+    - `tests/objectiveMetricPropagation.test.ts`
+      - extends the object-map `metrics.conditions` regression fixture with `evaluation.pooled_bootstrap.ci95_low/high` and asserts confidence intervals are surfaced without `missing_confidence_intervals`.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/objectiveMetricPropagation.test.ts -t "metrics.conditions is keyed by condition name|metrics.conditions has completed baseline and comparator rows"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: mitigated to the next boundary on 2026-04-30.
+    - Rebuilt AutoLabOS and restarted the localhost-only Web API on `127.0.0.1:4318`.
+    - Re-ran `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"analyze_results"}` against the same real `metrics.json`.
+    - `analysis/evidence_scale_assessment.json` now reports `status: "pass"` and `confidence_interval_count: 4`.
+    - `result_analysis.statistical_summary.confidence_intervals` now contains four per-condition `mean_zero_shot_accuracy` intervals.
+    - The prior missing-CI brief evidence gate failure did not recur.
+    - The run advanced through `figure_audit` and into `review`, exposing `LV-265`.
+
+- Follow-up risks:
+  - Recognizing per-condition CIs may clear the structural evidence gate, but the run still has only one recorded standard execution observation and no managed quick-check/confirmatory profiles. Review/paper gates may still correctly downgrade the output.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/analysis/evidence_scale_assessment.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
+
+## Issue: LV-266
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: objective evaluation should enforce resource-regression clauses when the objective says a PEFT alternative must improve the primary metric without an unacceptable runtime or memory regression.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-265 relative-comparison repair.
+
+- Reproduction steps:
+  1. Re-run `run_experiments` against the real PEFT runner.
+  2. Inspect `metrics.json`, `objective_evaluation.json`, and `run_experiments_verify_report.json`.
+  3. Compare the objective text with the selected `rslora` versus `lora_baseline` condition metrics.
+
+- Expected behavior:
+  - If the objective states that meaningful improvement requires at least +1.0 percentage point over the named tuned baseline without an unacceptable runtime or memory regression, the objective evaluator should check both the accuracy delta and the available resource regressions.
+  - A candidate with a large runtime or memory regression should not be persisted as fully `met`; it should be downgraded to `not_met` or `missing`, depending on available evidence.
+
+- Actual behavior:
+  - Fresh `run_experiments` wrote `objective_evaluation.json` with `status="met"` and `accuracy_delta_vs_baseline=0.015625`.
+  - The accuracy delta is now based on the eligible `rslora` versus `lora_baseline` comparison, but the evaluator ignores the objective's resource clause.
+  - The same `metrics.json` shows `rslora` used materially more resources than `lora_baseline`:
+    - `lora_baseline` mean zero-shot accuracy `0.4921875`, wall clock `28.637099504470825`, peak CUDA allocation `3031420928`.
+    - `rslora` mean zero-shot accuracy `0.5078125`, wall clock `81.93073916435242`, peak CUDA allocation `9751863296`.
+  - `run_experiments_verify_report.json` mirrors the over-narrow objective summary as a pass.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately rerun from `/new`; this was observed by re-running the existing live run's real `run_experiments` node after rebuilding the app.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; the issue is a persisted objective-evaluation policy gap shared by the run verifier and downstream analysis consumers.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `evaluateObjectiveMetric(...)` applies only numeric objective threshold checks plus a small set of boolean requirements such as CPU-only and reproducibility. It does not parse or enforce runtime/memory regression clauses, so `run_experiments` persists `met` before review can conservatively downgrade the claim.
+
+- Code/test changes:
+  - Code: `src/core/objectiveMetric.ts` now detects objective text that requires runtime/memory regression checks and compares the selected treatment condition against the named tuned baseline using available wall-clock/runtime and peak-memory evidence.
+  - Code: the resource-regression requirement uses a default allowed ratio of `1.50x` for "unacceptable" or "material" regressions and a stricter `1.05x` for plain no-regression wording.
+  - Tests: `tests/objectiveMetric.test.ts` covers a live-shaped `rslora` versus `lora_baseline` object-map metrics payload where the accuracy delta is positive but runtime and memory regressions downgrade the objective to `not_met`.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/objectiveMetric.test.ts -t "resource regression|excludes unmodified reference|negative delta from top-level condition object maps|synthesizes accuracy delta from top-level condition object maps"`
+  - Build validation: `npm run build`
+  - Same-flow live re-validation: rebuilt the Web API and reran `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Re-validation result: `objective_evaluation.json` now records `status="not_met"` with `accuracy_delta_vs_baseline=0.0078125`, plus `Resource regression requirement not satisfied for rslora vs lora baseline: runtime 2.88x, memory 3.22x; allowed limit is 1.50x.`
+  - Downstream result: `result_analysis.json` now records `overview.objective_status="not_met"` and `transition_recommendation.json` recommends `backtrack_to_design -> design_experiments`.
+
+- Follow-up risks:
+  - The resource-regression tolerance is intentionally conservative and deterministic. Future work can make the threshold an explicit brief/design field if users need domain-specific cost budgets.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/objective_evaluation.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
+
+## Issue: LV-265
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: relative objective evaluation should not mark a PEFT-alternative objective as met by comparing an unmodified/pretrained baseline-like condition against the named tuned baseline.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-264 confidence-interval repair.
+
+- Reproduction steps:
+  1. Re-run `analyze_results` against the real PEFT `metrics.json`.
+  2. Let the run advance through `figure_audit` into `review`.
+  3. Inspect `result_analysis.json` and `review/decision.json`.
+
+- Expected behavior:
+  - If the brief/objective asks whether a non-baseline PEFT alternative beats the named tuned baseline, the objective decision should consider rsLoRA/DoRA-like candidates and exclude the unmodified/pretrained baseline-like reference from the winning candidate set.
+  - If no eligible PEFT alternative clears +0.01 over LoRA, `objective_status` should be `not_met` or otherwise conservatively downgraded before review.
+
+- Actual behavior:
+  - `result_analysis.overview.objective_status` remained `met` with `accuracy_delta_vs_baseline=0.015625`.
+  - The positive delta came from `unmodified_base` versus `lora_baseline`, not from rsLoRA or DoRA versus the named tuned baseline.
+  - `review/decision.json` blocked with:
+    - `Objective-met claim appears to rely on the unmodified base rather than a PEFT alternative.`
+    - required action: recompute deltas for DoRA and rsLoRA versus LoRA and only declare success if an eligible non-baseline PEFT condition meets the threshold.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was observed by replaying the persisted run's real analysis/review path.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is a claim/evidence projection bug over the executed metrics schema.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `synthesizeRelativeMetrics(...)` selects a named tuned baseline but keeps other baseline-like references, including `unmodified_base`, in the candidate set. The best delta therefore comes from a baseline-vs-baseline comparison rather than an eligible treatment-vs-baseline comparison.
+
+- Code/test changes:
+  - Code: `src/core/objectiveMetric.ts` now selects the named tuned baseline and excludes unmodified/pretrained/reference baseline-like rows from eligible treatment candidates when synthesizing relative condition deltas from object-map metrics.
+  - Code: `src/core/resultAnalysis.ts` now applies the same baseline/treatment eligibility rule when building condition comparisons for analysis artifacts.
+  - Tests: `tests/objectiveMetric.test.ts` covers excluding `unmodified_base` when evaluating PEFT alternatives over `lora_baseline`.
+  - Tests: `tests/objectiveMetricPropagation.test.ts` covers object-map result-table and condition-comparison propagation with `rslora vs lora_baseline`.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/objectiveMetric.test.ts tests/objectiveMetricPropagation.test.ts -t "excludes unmodified reference|metrics.conditions is keyed by condition name|metrics.conditions has completed baseline and comparator rows"`
+  - Build validation: `npm run build`
+  - Re-validation result: fresh `run_experiments` through the rebuilt localhost-only Web API no longer reproduced the original unmodified-reference winner. The current result evaluates `rslora` against `lora_baseline`; the next boundary is `LV-266`, where the resource-regression clause is not yet enforced.
+
+- Follow-up risks:
+  - Resource clauses such as runtime and memory regression are tracked separately as `LV-266`.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/review/decision.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/review/readiness_risks.json`
+
+## Issue: LV-261
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: implement-stage local verification should reject generated experiment runners that cannot execute any real planned condition because no concrete per-condition train/evaluate worker exists.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-260 repair.
+
+- Reproduction steps:
+  1. Rebuild and restart the localhost-only Web API.
+  2. Re-run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let native Codex OAuth stream the 3-chunk PEFT runner implementation and pass local `py_compile`.
+  4. Let second-stage `run_experiments` execute the generated entrypoint and validate the metrics contract.
+
+- Expected behavior:
+  - A generated PEFT runner must contain at least one concrete per-condition train/evaluate worker matching its own condition-worker resolver, or local verification should fail before handoff and force regeneration.
+  - The runner should not satisfy `implement_experiments` merely by recording every planned condition as a governed `worker_discovery` failure.
+
+- Actual behavior:
+  - Native Codex OAuth generated a fresh 3-chunk runner and local `py_compile` passed.
+  - The LV-260 `execute_locked_condition_plan() takes 1 positional argument but 2 were given` failure did not recur; handoff repair logged `Made condition-plan runner dispatch signature-aware`.
+  - Second-stage execution exited 0 and wrote `metrics.json`, but every condition was failed with:
+    - `No real per-condition execution worker is registered; refusing to substitute a synthetic recipe.`
+  - The downstream metrics contract rejected the result:
+    - `Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json.`
+    - `Planned condition coverage incomplete: observed 0 successful tuned condition(s) but the brief/design requires 4.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was observed in the same persisted PEFT validation run after rebuilding and restarting the localhost-only Web API.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is a generated-runner completeness gap that should be caught before second-stage metrics validation.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation repaired the condition-plan call surface but omitted the actual per-condition model/dataset/train/evaluate worker. Existing local verification checked syntax and many helper-name contracts, but did not detect the explicit “no real worker registered” path before handoff.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds local verification detection for generated runners that explicitly record all planned conditions as `worker_discovery` because no concrete per-condition worker exists.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds manager-level regression coverage for a runner that passes `py_compile` but only writes worker-discovery failures.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "worker_discovery|condition-plan runner calls"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: mitigated to the next boundary on 2026-04-30.
+    - Rebuilt AutoLabOS and restarted the localhost-only Web API on `127.0.0.1:4318`.
+    - Re-ran `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+    - Native Codex OAuth regenerated a larger 3-chunk implementation whose dynamic decomposition included dataset preparation, model loading, tuning/evaluation helpers, PEFT adapter/SFT helpers, and condition execution helpers.
+    - The prior `No real per-condition execution worker is registered` all-condition failure did not recur.
+    - The run advanced to `LV-262`, a separate missing `MutableMapping` annotation import at module load.
+
+- Follow-up risks:
+  - After verifier rejection is added, the next native-Codex attempt should regenerate a runner with real worker functions. That may then expose model/dataset/cache/PEFT runtime errors, which should be logged separately rather than hidden by synthetic/fallback metrics.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-260
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: final experiment condition-plan dispatch should call generated condition runners with a signature-compatible argument shape before model/dataset work starts.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-259 repair.
+
+- Reproduction steps:
+  1. Rebuild and restart the localhost-only Web API.
+  2. Re-run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let native Codex OAuth stream the 6-chunk PEFT runner implementation and pass local `py_compile`.
+  4. Let second-stage `run_experiments` execute the generated entrypoint.
+
+- Expected behavior:
+  - If the selected runner is `execute_locked_condition_plan(condition_plan, *, args=...)`, the entrypoint should call it with `args` as a keyword argument or route through a signature-aware adapter.
+  - The runner should proceed into per-condition execution, model/dataset loading, or a later runtime/evidence boundary.
+
+- Actual behavior:
+  - Native Codex OAuth generated a fresh 6-chunk runner and local `py_compile` passed.
+  - The LV-259 missing `set_global_seed(...)` failure did not recur; handoff repair logged `Aligned generated seed helper compatibility`.
+  - Second-stage execution failed immediately when `run_experiment(...)` selected `execute_locked_condition_plan(...)` and called it positionally:
+    - `TypeError: execute_locked_condition_plan() takes 1 positional argument but 2 were given`
+  - The generated runner defines `execute_locked_condition_plan(condition_plan, *, args, ...)`, but `_find_condition_plan_runner()` returns it and `run_experiment(...)` calls `runner(condition_plan, args)`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was observed in the same persisted PEFT validation run after rebuilding and restarting the localhost-only Web API.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is another generated-runner helper-signature projection gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted a keyword-only condition-plan executor and a later final experiment loop independently. The final loop selected the executor by name but assumed a two-positional-argument runner contract instead of using signature-aware dispatch.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds a signature-aware condition-plan runner call adapter for generated `runner(condition_plan, args)` calls.
+      - wires the repair into late handoff compatibility checks before second-stage execution.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for a selected `execute_locked_condition_plan(condition_plan, *, args=...)` runner that previously failed when called with two positional arguments.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "condition-plan runner calls|entrypoint condition resolvers|condition execution context"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: mitigated to the next boundary on 2026-04-30.
+    - Rebuilt AutoLabOS and restarted the localhost-only Web API on `127.0.0.1:4318`.
+    - Re-ran `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+    - Native Codex OAuth streamed a new 3-chunk implementation.
+    - Handoff repair logged `Made condition-plan runner dispatch signature-aware in run_peft_instruction_study.py before handoff`.
+    - Local `py_compile` passed and second-stage `run_experiments` started.
+    - The prior `TypeError: execute_locked_condition_plan() takes 1 positional argument but 2 were given` error did not recur.
+    - The run advanced to `LV-261`, a separate missing concrete per-condition worker/completeness failure.
+
+- Follow-up risks:
+  - After condition-plan runner dispatch is repaired, execution should advance into actual per-condition model/dataset work. Dependency, cache, GPU, or evidence-quality failures should be logged separately.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-259
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: final experiment entrypoint should call an existing seed/runtime initializer before model or dataset work starts.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-258 repair.
+
+- Reproduction steps:
+  1. Rebuild and restart the localhost-only Web API.
+  2. Re-run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let native Codex OAuth stream the 3-chunk PEFT runner implementation and pass local `py_compile`.
+  4. Let second-stage `run_experiments` execute the generated entrypoint.
+
+- Expected behavior:
+  - If the runner defines `setup_runtime(seed)` as the seed/runtime initializer, the final entrypoint should call it directly or receive a `set_global_seed(...)` compatibility shim before handoff.
+  - The runner should proceed to condition orchestration, model/dataset loading, or a later runtime/evidence boundary.
+
+- Actual behavior:
+  - Native Codex OAuth generated a fresh 3-chunk runner and local `py_compile` passed.
+  - The LV-258 `PEFTConditionConfig` import-time `NameError` did not recur.
+  - Second-stage execution failed immediately in `main()` with:
+    - `NameError: name 'set_global_seed' is not defined`
+  - The generated runner defines `setup_runtime(seed: int = SEED)` and imports `set_seed` from `transformers`, but no `set_global_seed(...)` alias exists.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was observed in the same persisted PEFT validation run after rebuilding and restarting the localhost-only Web API.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is another generated-runner helper-name projection gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted runtime initialization under `setup_runtime(...)`, while the final entrypoint used the common seed helper name `set_global_seed(...)`. Existing seed alias repair recognized `seed_everything`, `set_reproducibility`, `transformers_set_seed`, and assigned `set_seed`, but did not recognize `setup_runtime(...)` or a directly imported `set_seed` as sufficient fallback evidence.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extends the generated seed helper compatibility repair so `set_global_seed(...)` can delegate to `setup_runtime(...)`.
+      - treats a directly imported or defined `set_seed(...)` as fallback evidence for the compatibility shim.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for a generated runner that defines `setup_runtime(seed)` and imports `set_seed`, while `main()` calls missing `set_global_seed(...)`.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "setup_runtime is the generated seed helper|set_global_seed alias|PEFT acronym class aliases"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: mitigated to the next boundary on 2026-04-30.
+    - Rebuilt AutoLabOS and restarted the localhost-only Web API on `127.0.0.1:4318`.
+    - Re-ran `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+    - Native Codex OAuth streamed a new 6-chunk implementation, handoff repair logged seed-helper compatibility alignment, local `py_compile` passed, and second-stage `run_experiments` started.
+    - The prior `NameError: name 'set_global_seed' is not defined` error did not recur.
+    - The run advanced to `LV-260`, a separate condition-plan runner signature mismatch.
+
+- Follow-up risks:
+  - After seed alias repair, execution should advance into actual condition orchestration/model loading. Dataset/cache/network/GPU blockers or evidence-quality issues should be logged separately.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-258
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: generated PEFT condition descriptor construction should use a class name that exists at module import time.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-257 repair.
+
+- Reproduction steps:
+  1. Rebuild and restart the localhost-only Web API.
+  2. Re-run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let native Codex OAuth stream the full staged PEFT runner implementation and pass local `py_compile`.
+  4. Let second-stage `run_experiments` import and execute the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - If staged generation emits `class PeftConditionConfig`, later condition descriptor construction should reference `PeftConditionConfig` or receive a compatibility alias before handoff.
+  - The script should import cleanly, then execute the governed baseline-first condition sequence or advance to a later model/dataset/runtime blocker.
+
+- Actual behavior:
+  - Native Codex OAuth generated a fresh 5-chunk runner and local `py_compile` passed.
+  - The LV-257 `No condition execution function found` failure did not recur.
+  - Second-stage execution failed at module import with:
+    - `NameError: name 'PEFTConditionConfig' is not defined. Did you mean: 'PeftConditionConfig'?`
+  - The generated runner defined `class PeftConditionConfig` but referenced `PEFTConditionConfig` in four module-level `CONDITION_DESCRIPTORS` entries.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was observed in the same persisted PEFT validation run after rebuilding and restarting the localhost-only Web API.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is a generated-runner staged naming projection gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation split config dataclass definitions and condition descriptor materialization across different chunks. One chunk used the Pythonic acronym casing `PeftConditionConfig`, while a later chunk used the all-caps acronym form `PEFTConditionConfig`. `py_compile` cannot catch this runtime import-time `NameError`, so a late verifier repair should alias acronym-casing variants before handoff.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a late verifier repair that aliases PEFT acronym casing variants such as `PEFTConditionConfig = PeftConditionConfig` after the generated class definition and before module-level descriptors can use the missing name.
+      - wires the repair into the late handoff compatibility repair list.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage for a generated runner defining `class PeftConditionConfig` while building `CONDITION_DESCRIPTORS` with `PEFTConditionConfig(...)`.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "PEFT acronym class aliases|condition-suite aliases|condition-study supported-call"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: mitigated to the next boundary on 2026-04-30.
+    - Rebuilt AutoLabOS and restarted the localhost-only Web API on `127.0.0.1:4318`.
+    - Re-ran `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+    - Native Codex OAuth loaded prior run feedback, streamed a fresh 3-chunk runner, and local `py_compile` passed.
+    - The prior `NameError: name 'PEFTConditionConfig' is not defined` failure did not recur.
+    - The run advanced to `LV-259`, a separate missing seed helper alias at the final entrypoint.
+
+- Follow-up risks:
+  - After class-name alias repair, execution should advance into actual condition orchestration and model/dataset loading. Any dependency, cache, GPU/runtime, or evidence-quality blocker should be logged separately.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-257
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: final condition-suite dispatcher should find the baseline-first condition executor generated by earlier sections.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-256 repair.
+
+- Reproduction steps:
+  1. Rebuild and restart the localhost-only Web API.
+  2. Re-run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let native Codex OAuth stream the full 5-chunk PEFT runner implementation and pass local `py_compile`.
+  4. Let second-stage `run_experiments` execute the generated `run_command`.
+
+- Expected behavior:
+  - If earlier runner sections define `run_baseline_first_conditions(...)`, the final dispatcher should call it directly or expose a suite alias such as `run_condition_suite` or `run_all_conditions`.
+  - The runner should execute the locked baseline-first condition sequence or advance to a later model/dataset/runtime blocker with condition-level evidence.
+
+- Actual behavior:
+  - Native Codex OAuth generated and localized `run_peft_instruction_study.py`; local `py_compile` passed.
+  - Second-stage `run_experiments` invoked the script with `--metrics-path` and `--output-dir`.
+  - The runner defined `run_baseline_first_conditions(args=None, train_dataset=None, eval_bundle=None, device_info=None)`.
+  - The final `execute_selected_conditions(args, device_info)` dispatcher searched:
+    - `run_condition_suite`
+    - `execute_condition_suite`
+    - `run_experiment_conditions`
+    - `execute_all_conditions`
+    - `run_all_conditions`
+    - per-condition hooks such as `run_condition`
+  - It did not search `run_baseline_first_conditions`, so it failed before condition execution with:
+    - `RuntimeError: No condition execution function found. Expected one of run_condition_suite, execute_condition_suite, run_condition, or execute_condition from earlier sections.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was observed in the same persisted PEFT validation run after rebuilding and restarting the localhost-only Web API.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is a generated-runner final-dispatcher alias gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation split baseline-first condition execution and final CLI orchestration across different chunks. The earlier chunk emitted a valid `run_baseline_first_conditions(...)` hook, but the final chunk's dispatcher did not include that hook in its suite resolver. Existing late alias repair considered `run_baseline_first_conditions` a searched name for older dispatcher templates and therefore did not add the aliases required by this newer `execute_selected_conditions(...)` template.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a late verifier repair that recognizes `execute_selected_conditions(...)` dispatchers whose searched suite names omit an existing baseline-first condition executor.
+      - inserts a `run_condition_suite(...)` bridge and aliases `execute_condition_suite`, `run_experiment_conditions`, `execute_all_conditions`, and `run_all_conditions` to the bridge.
+      - routes through available supported-argument helper adapters when present, otherwise filters positional/keyword inputs against the target signature.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage for a runner that defines `run_baseline_first_conditions(...)` while `execute_selected_conditions(...)` searches only condition-suite aliases.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "condition-suite aliases|condition-study supported-call|baseline-first condition runner"` passed on 2026-04-30.
+  - Adjacent regression validation: `npm test -- --run tests/implementSessionManager.test.ts -t "condition-suite aliases|condition-study supported-call|condition-study orchestration aliases|baseline-first condition runner|recipe evaluation loop aliases"` passed on 2026-04-30.
+  - Build validation: `npm run build` passed on 2026-04-30.
+  - Same-flow live revalidation result: mitigated to the next boundary on 2026-04-30.
+    - Rebuilt AutoLabOS and restarted the localhost-only Web API on `127.0.0.1:4318`.
+    - Re-ran `POST /api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+    - Native Codex OAuth streamed a fresh staged implementation, local `py_compile` passed, and second-stage `run_experiments` started.
+    - The prior `RuntimeError: No condition execution function found` failure did not recur.
+    - The run advanced to `LV-258`, a separate condition-config class acronym casing mismatch at module import.
+
+- Follow-up risks:
+  - After alias repair, the same flow should advance into actual dataset/model loading and PEFT condition execution. Real dependency, cache, GPU/runtime, or scientific-evidence blockers should be logged separately.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-256
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: generated condition-study dispatch should pass the parsed CLI namespace to orchestrators that require `args`, while still allowing keyword-filtered orchestrators to ignore it.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-255 repair.
+
+- Reproduction steps:
+  1. Rebuild and restart the localhost-only Web API.
+  2. Re-run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let native Codex OAuth stream the staged runner implementation and pass local `py_compile`.
+  4. Let second-stage `run_experiments` execute the generated `run_command`.
+
+- Expected behavior:
+  - `_run_condition_study(args)` should pass `args` through its supported-call keyword payload so a resolved `run_locked_condition_study(args)` orchestrator can execute the governed baseline-first condition sequence.
+  - Metrics emission should not warn solely because a generated payload-first JSON writer names the path parameter `output_path`.
+  - The run should execute planned conditions or advance to a later dependency/runtime/scientific-evidence boundary with condition-specific evidence.
+
+- Actual behavior:
+  - Native Codex OAuth generated `run_peft_instruction_study.py`, local `py_compile` passed, and second-stage `run_experiments` started.
+  - `_orchestrator_candidates()` found `run_locked_condition_study(args: argparse.Namespace)`.
+  - `_run_condition_study(args)` built `common_kwargs` without an `args` entry, then called `_call_supported(candidate, **common_kwargs)`.
+  - `_call_supported(...)` filtered the payload to the callable signature and invoked `run_locked_condition_study()` with no arguments.
+  - All four planned conditions were recorded as failed with:
+    - `Unable to invoke any condition orchestrator with supported CLI arguments: run_locked_condition_study() missing 1 required positional argument: 'args'`
+  - `run_experiments` then failed the metrics contract because `accuracy_delta_vs_baseline` was `null` and observed tuned condition coverage was zero.
+  - The same execution also warned:
+    - `Metrics emission helper failed; using local atomic writer: write_json_atomic() missing 1 required positional argument: 'output_path'`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was observed in the same persisted PEFT validation run after rebuilding and restarting the localhost-only Web API.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is a generated-runner condition-dispatch projection gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted a signature-filtering `_call_supported(...)` dispatcher, but the condition-study adapter's shared keyword payload omitted the canonical parsed namespace key `args`. Since `_call_supported(...)` filters unsupported keywords, adding `args` is safe for keyword-oriented orchestrators and required for namespace-oriented orchestrators.
+
+- Code/test changes:
+  - Code: added `repairPythonConditionOrchestratorAdapterSurface(...)` in `src/core/agents/implementSessionManager.ts` so `_run_condition_study(args)` common kwargs include `args`, and generated payload writers receive `output_path=metrics_path` when they use payload-first JSON writer signatures.
+  - Tests: added `adds args and output_path aliases for condition-study supported-call adapters` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: passed with `npm test -- --run tests/implementSessionManager.test.ts -t "condition-study supported-call|signature-filters _call_flexible|run_command aliases"`.
+  - Adjacent condition-dispatch/helper regression set passed with `npm test -- --run tests/implementSessionManager.test.ts -t "condition-study supported-call|condition-study orchestration aliases|baseline-first condition runner|broad helper compatibility adapter|signature-filters _call_flexible"`.
+  - Build passed with `npm run build`.
+  - Same-flow live revalidation result: the original `run_locked_condition_study() missing 1 required positional argument: 'args'` failure did not recur in the 2026-04-30 rerun. Native Codex OAuth generated a fresh 5-chunk runner, local `py_compile` passed, and second-stage execution advanced to LV-257, a separate final condition-suite alias failure.
+
+- Follow-up risks:
+  - After condition-dispatch repair, the same flow should advance into actual condition execution. It may then expose real Hugging Face/model/dataset/cache, GPU/runtime, or scientific-evidence blockers that should be logged separately rather than hidden by fallback rows.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-255
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: generated runner helper dispatch should tolerate small signature differences without passing unsupported keyword arguments into resolved helpers.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-254 code repair.
+
+- Reproduction steps:
+  1. Rebuild and restart the localhost-only Web API.
+  2. Re-run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let native Codex OAuth stream the full staged runner implementation and pass local `py_compile`.
+  4. Let second-stage `run_experiments` execute the generated `run_command`.
+
+- Expected behavior:
+  - If `_call_flexible` is used to bridge generated helper signatures, it should call `collect_device_info(device)` successfully when the helper accepts `device` but not `args`.
+  - The runner should advance beyond environment/device metadata setup and enter real model/dataset dependency execution, or report a later dependency/runtime blocker with metrics context.
+
+- Actual behavior:
+  - Native Codex OAuth generated `run_peft_instruction_study.py`, local `py_compile` passed, and second-stage `run_experiments` started.
+  - The current `run_command` used active parser-compatible flags:
+    - `--max-train-examples 5000`
+    - `--max-eval-examples 128`
+    - `--num-train-epochs 1`
+  - Execution failed before training/evaluation at:
+    - `_prepare_entry_environment(args)`
+    - `_call_flexible(device_info_fn, device=device, args=args)`
+    - `collect_device_info(device)`
+  - Runtime error:
+    - `TypeError: collect_device_info() got an unexpected keyword argument 'args'`
+  - The generated `_call_flexible` retries the same unsupported keyword set and then an empty keyword set, but never tries the supported subset `{device: device}`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was observed in the same persisted PEFT validation run after rebuilding and restarting the localhost-only Web API.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is a generated-runner helper-call projection gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted a generic `_call_flexible` helper that retries broad keyword calls but does not inspect the resolved callable signature or filter unsupported keyword arguments. Local `py_compile` cannot catch this because the failure only appears when the second-stage runner resolves and calls `collect_device_info`.
+
+- Code/test changes:
+  - Code: added signature-filtering `_call_flexible(...)` repair in `src/core/agents/implementSessionManager.ts` so helper calls keep supported keyword subsets such as `device` while dropping unsupported keywords such as `args`.
+  - Tests: added `signature-filters _call_flexible helper kwargs before second-stage handoff` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: passed with `npm test -- --run tests/implementSessionManager.test.ts -t "signature-filters _call_flexible|run_command aliases|duplicate positional and keyword args"`.
+  - Adjacent helper-dispatch regression set passed with `npm test -- --run tests/implementSessionManager.test.ts -t "broad helper compatibility adapter|signature-filters _call_flexible|flexible model-loader|duplicate positional and keyword args|run_command aliases"`.
+  - Build passed with `npm run build`.
+  - Same-flow live revalidation result: the original `collect_device_info() got an unexpected keyword argument 'args'` failure did not recur in the 2026-04-30 rerun. Native Codex OAuth streamed a new staged implementation, local `py_compile` passed, and second-stage execution advanced to LV-256, a separate condition-orchestrator argument projection failure.
+
+- Follow-up risks:
+  - After helper-call filtering is repaired, the same flow should advance into real Hugging Face/model/dataset loading. Any subsequent dependency, cache, GPU/runtime, or scientific-evidence issue should be logged separately and not hidden by fallback rows.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-254
+
+- Status: mitigated and same-flow live revalidated to the next boundary on 2026-04-30
+- Validation target: second-stage `run_experiments` should pass generated runner CLI flags that the active argparse parser accepts, or handoff repair should add explicit aliases before execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-30 through the rebuilt localhost-only Web API on `127.0.0.1:4318` after the LV-253 repair.
+
+- Reproduction steps:
+  1. Rebuild and restart the localhost-only Web API.
+  2. Re-run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let native Codex OAuth stream the full staged runner implementation and pass local `py_compile`.
+  4. Let second-stage `run_experiments` execute the generated `run_command`.
+
+- Expected behavior:
+  - If the run command passes `--max-train-examples` and the active parser exposes the same concept as `--train-examples`, the handoff should add an argparse alias before execution.
+  - If the run command passes `--eval-limit` and the active parser exposes the same concept as `--eval-limit-per-benchmark`, the handoff should add an argparse alias before execution.
+
+- Actual behavior:
+  - `implement_experiments` completed and local `py_compile` passed.
+  - `run_experiments` invoked:
+    - `python3 .../run_peft_instruction_study.py --metrics-path .../metrics.json --output-dir .../experiment --max-train-examples 5000 --eval-limit 64 --model-name Qwen/Qwen2.5-1.5B`
+  - The active parser accepted `--train-examples` and `--eval-limit-per-benchmark`, not `--max-train-examples` and `--eval-limit`.
+  - Execution failed with `run_peft_instruction_study.py: error: unrecognized arguments: --max-train-examples 5000`.
+  - Static mismatch detection did not catch this before handoff because a secondary parser/helper section in the same file contained `--max-train-examples`, even though it was not the parser used by the executable entrypoint.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this was observed in the same persisted PEFT validation run after rebuilding and restarting the localhost-only Web API.
+  - Existing session: reproduced in run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  - Divergence: none established; this is a generated-runner active-parser/run-command projection gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted multiple parser/helper surfaces with semantically equivalent train/eval budget names. The static run-command mismatch detector collected flags across the whole source and therefore missed that the active entrypoint parser lacked the exact flags passed by `run_command`.
+
+- Code/test changes:
+  - Code: added `repairPythonRunCommandArgparseAliases(...)` in `src/core/agents/implementSessionManager.ts` so handoff repair can add run-command aliases to the concrete `add_argument(...)` call that exposes the canonical parser flag.
+  - Code: added explicit alias mappings for `--max-train-examples -> --train-examples`, `--eval-limit -> --eval-limit-per-benchmark`, and `--num-train-epochs -> --epochs`.
+  - Tests: added `adds run_command aliases for semantically equivalent train and eval argparse flags` in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Automated regression test linked: passed with `npm test -- --run tests/implementSessionManager.test.ts -t "run_command aliases|run_baseline_first_experiment"`.
+  - Adjacent argparse regression set passed with `npm test -- --run tests/implementSessionManager.test.ts -t "output-dir argparse alias|private-run-dir argparse alias|model-name-or-path argparse destination|run_command aliases|python run_command uses flags missing|boolean argparse flag"`.
+  - Build passed with `npm run build`.
+  - Same-flow live revalidation result: the original `unrecognized arguments: --max-train-examples 5000` failure did not recur in the 2026-04-30 rerun. The regenerated runner/run command advanced to LV-255, a separate `_call_flexible` unsupported keyword-argument failure.
+
+- Follow-up risks:
+  - After CLI alias repair, the same flow should advance into real model/dataset loading. Any subsequent missing cache, dependency, or real PEFT runtime issue should be logged separately.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments_retry_2.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-238
+
+- Status: in_progress
+- Validation target: generated IA3 PEFT recipe configuration should satisfy PEFT's `feedforward_modules` subset contract during real second-stage execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex OAuth staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-237 `--private-run-dir` repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let local verification, handoff repairs, and second-stage `run_experiments` execute LoRA and IA3 recipe training.
+
+- Expected behavior: generated IA3 configuration should pass `target_modules` containing every module listed in `feedforward_modules`, as required by the installed `peft.IA3Config`.
+- Actual behavior: execution reached real GPU-backed model loading, instruction dataset tokenization, and LoRA training, then failed when constructing the IA3 recipe with `ValueError: \`feedforward_modules\` should be a subset of \`target_modules\``.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a fully new run directory for this exact blocker.
+  - Existing session: reproduced in the active localhost-only Web API validation run after LV-237 repair; failure occurred during real IA3 PEFT model construction after LoRA training had executed.
+  - Divergence: no evidence yet of session-specific behavior; this is a generated PEFT configuration contract mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated target inference function returns attention modules as IA3 `target_modules` and MLP modules as `feedforward_modules`, but the installed PEFT IA3 validator requires the feedforward list to be included within the target list. `py_compile` cannot catch this library-level runtime contract.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a bounded IA3 handoff repair that unions generated `feedforward_modules` into IA3 `target_modules` before returning the module lists, preserving real IA3 execution while satisfying PEFT's subset validator.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added regression coverage for IA3 config construction that fails until `feedforward_modules` is a subset of `target_modules`.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`; passed on 2026-04-29 with `npm test -- --run tests/implementSessionManager.test.ts -t "IA3 feedforward module lists|PEFT virtual-token continuation scoring"` and in the adjacent subset `npm test -- --run tests/implementSessionManager.test.ts -t "IA3 feedforward module lists|private-run-dir argparse alias|ExperimentConfig metadata field|PEFT virtual-token continuation scoring|baseline-first condition runner aliases|runtime dependency helper|print_status"`.
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must preserve real IA3 execution and must not drop the IA3 condition or silently convert it into LoRA/baseline behavior.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-197
+
+- Status: resolved
+- Validation target: staged native-Codex `implement_experiments` should recover a valid bootstrap contract when the provider response contains extra tool-like JSON before the actual contract object
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-196 parent-directory helper alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let attempt 1 fail local verification on a generated `RecipeSpec` constructor keyword mismatch.
+  5. Let the system restore the attempt and begin attempt 2 bootstrap planning.
+
+- Expected behavior: if the bootstrap response contains recoverable JSON noise followed by a valid bootstrap contract object, the staged implementation parser should select the valid contract and continue, or fail with a repairable implementation-stage diagnostic tied to the actual script.
+- Actual behavior: attempt 2 received a response whose `partial_response.txt` began with a tool-like JSON object such as `{"cmd": "sed ..."}` and then contained a valid object with bootstrap keys including `version`, `strategy`, `requirements`, and `checks`. The generic parser treated the concatenated JSON objects as unparseable and aborted with `staged_llm bootstrap planning did not return a parseable bootstrap contract` before any runnable implementation was produced.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuilding and reproduced the abort during staged bootstrap planning.
+  - Existing session: the previous attempt failed later during second-stage execution; after LV-196, the live flow was blocked earlier by noisy bootstrap parsing during the retry path.
+  - Divergence: no UI/session divergence observed; this is a provider-output parsing and retry-path robustness issue in the staged implementation loop.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `parseJsonObject` only accepts one top-level JSON object or a single first-to-last brace slice. When the provider emits two adjacent JSON objects, the second of which is the actual bootstrap contract, parsing fails instead of scanning candidate objects for one that satisfies `parseImplementBootstrapContract`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added schema-gated bootstrap-contract recovery that scans provider text for balanced JSON object candidates and accepts only the first object that satisfies the bootstrap contract schema
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `recovers a staged bootstrap contract when provider output includes a leading tool-like JSON object`
+  - Re-validation result: pass for the LV-197 symptom boundary
+    - targeted noisy-bootstrap regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+    - same-flow live rerun no longer aborted on a leading tool-like JSON object and advanced through staged chunk materialization into second-stage runner execution; the later runtime failure is tracked by LV-198
+
+- Follow-up risks:
+  - The parser must remain schema-gated so it does not silently accept unrelated JSON such as command snippets as bootstrap contracts.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/partial_response.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_raw_response.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+
+## Issue: LV-198
+
+- Status: resolved
+- Validation target: generated PEFT runner entrypoints should tolerate already parsed `argparse.Namespace` values and dependency checker helpers with required dependency-list arguments during second-stage `run_experiments` verification
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-197 noisy-bootstrap-contract recovery.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let staged materialization, local `py_compile`, handoff repairs, and second-stage `run_experiments` execute the generated PEFT runner.
+
+- Expected behavior: the repaired runner entrypoint should either call the orchestration function with raw argv or accept the already parsed namespace without reparsing it; dependency checks should call required-argument helpers with the generated required dependency list.
+- Actual behavior: local verification passed and second-stage execution started, but `_call_orchestration_entrypoint()` first called `main()` and then retried `main(args)` after parsing args. The generated `parse_args(argv)` shim passed the already parsed `argparse.Namespace` to `parser.parse_args(argv)`, causing `TypeError: 'Namespace' object is not iterable`. The fallback `main()` path then reached `initialize_experiment_runtime()` and called `dependency_checker()` even though `require_dependencies(required)` requires the `REQUIRED_DEPENDENCIES` sequence, causing `TypeError: require_dependencies() missing 1 required positional argument: 'required'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuilding and reproduced the second-stage runtime failure.
+  - Existing session: the previous rerun was blocked before runnable implementation by LV-197; after LV-197, execution advanced to generated runner entrypoint/runtime helper invocation.
+  - Divergence: no session divergence observed; this is a generated-runner entrypoint compatibility issue hidden by compile-only checks.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: handoff repair added a `parse_args()` compatibility shim that assumes `argv` is iterable raw CLI args, while the generated transparent entrypoint can pass an already parsed `argparse.Namespace`. Separately, the generated dependency-checker resolver does not reconcile zero-arg call sites with helpers such as `require_dependencies(required)`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - made the generated `parse_args()` compatibility shim return an existing `argparse.Namespace` instead of reparsing it as iterable argv
+      - added a dependency-checker call repair that supplies `REQUIRED_DEPENDENCIES` to generated helpers such as `require_dependencies(required)`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs a missing parse_args helper before handing a python runner off to run_experiments`
+    - `repairs dependency checker calls that omit generated required dependency lists before handoff`
+  - Automated regression result:
+    - targeted `missing parse_args` regression passed
+    - targeted `dependency checker calls` regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Same-flow live revalidation: pass for the LV-198 symptom boundary
+    - rebuilt localhost-only Web API was restarted on `127.0.0.1:4318`
+    - same run reran `implement_experiments` through the real Web API and advanced through staged materialization, local `py_compile`, handoff repairs, and second-stage runner invocation
+    - the `argparse.Namespace` reparse failure and `require_dependencies(required)` missing-argument failure did not recur
+    - the next second-stage failure is a missing baseline-first runner resolver alias tracked by LV-199
+
+- Follow-up risks:
+  - The dependency checker repair should not suppress genuine missing dependency failures; it should only supply the generated required dependency list when a helper requires it.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-199
+
+- Status: resolved
+- Validation target: generated PEFT runner should align its final baseline-first study resolver with the helper names materialized by earlier chunks before second-stage `run_experiments` verification
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-198 `parse_args()` and dependency-checker compatibility repairs.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex generate the dynamically subdivided PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: the final entrypoint should invoke a materialized baseline-first study helper, or a handoff repair should bridge the resolver names to the generated helper names before second-stage execution.
+- Actual behavior: the regenerated runner passed local verification and reached `main()`, but `_run_locked_baseline_first_comparison(...)` could not find any of its expected top-level runners (`run_baseline_first_peft_study`, `run_baseline_first_comparison`, `execute_baseline_first_study`, `run_recipe_comparison`, `run_peft_recipe_comparison`, `run_peft_instruction_comparison`, `run_baseline_and_peft_recipes`, `execute_experiment`). The same script did define lower-level materialized helpers such as `evaluate_locked_unmodified_baseline(...)` and `run_peft_candidate_evaluations(...)`, so execution failed with `RuntimeError: No baseline-first study runner was found in the materialized script`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the failure reproduced during second-stage runner execution.
+  - Existing session: earlier rerun was blocked by LV-198; after LV-198, execution advanced to final baseline-first resolver alignment.
+  - Divergence: no UI/session divergence observed; this is another generated-runner internal resolver compatibility issue hidden by compile-only local verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic materialization split baseline, PEFT training, aggregation, and final entrypoint across chunks. Earlier chunks emitted lower-level callable helpers, while the final resolver expected higher-level orchestration names that were never materialized. Existing baseline-first repair only handles `_invoke_baseline_first_execution(...)` with a specific error string and does not repair `_run_locked_baseline_first_comparison(...)`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended missing workflow-function detection to include `No baseline-first study runner was found`
+      - added `run_baseline_first_comparison` and `run_baseline_and_peft_recipes` to the known workflow entrypoint search surface
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `rejects python runners whose final baseline-first resolver misses all materialized study runners`
+  - Automated regression result:
+    - targeted `final baseline-first resolver` regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Same-flow live revalidation: pass for the LV-199 symptom boundary
+    - rebuilt localhost-only Web API was restarted on `127.0.0.1:4318`
+    - same run reran `implement_experiments` through the real Web API and regenerated the PEFT runner with native Codex staged implementation
+    - the previous `No baseline-first study runner was found in the materialized script` failure did not recur
+    - the run advanced through local `py_compile`, handoff repairs, and second-stage `run_experiments`
+    - the next second-stage failure is a model-loader argument and metrics-writer alias mismatch tracked by LV-200
+
+- Follow-up risks:
+  - A repair must not fabricate experiment metrics or bypass node-owned execution; it should only align resolver names or expose a wrapper that invokes existing generated helper functions.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-200
+
+- Status: in_progress
+- Validation target: generated PEFT runner should preserve callable argument compatibility and metrics failure reporting when it reaches second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-199 missing baseline-first runner detector.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex regenerate the dynamically subdivided PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: the generated flexible-call wrapper should pass all required accepted arguments to model/tokenizer loaders, and the failure metrics path should resolve to a defined metrics writer.
+- Actual behavior: second-stage execution reached the generated baseline-first loop, but `_call_flex(loader, ...)` invoked `load_model_and_tokenizer(...)` without the required `device_or_info` argument. The exception handler then attempted to call `write_json_metrics(...)`, but the script only defined `write_metrics_json(...)`, so failure metrics could not be written either.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the failure reproduced during second-stage runner execution.
+  - Existing session: earlier rerun was blocked by LV-199; after LV-199, execution advanced to model-loader invocation and failure metrics serialization.
+  - Divergence: no UI/session divergence observed; this is a generated-runner internal callable compatibility issue hidden by compile-only local verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic materialization emitted a canonical `load_model_and_tokenizer(model_name_or_path, device_or_info, ...)` helper in one chunk and a later generic `_call_flex(loader, ...)` dispatch in another chunk. The dispatcher supplied `device=...`, but because `_call_flex` filters by accepted parameter names, it dropped the device value instead of mapping it to `device_or_info`. Separately, the failure path used a metrics-writer alias (`write_json_metrics`) that was not reconciled with the generated writer name (`write_metrics_json`).
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a handoff repair for generated `write_json_metrics(...)` calls when the actual generated metrics writer is named `write_metrics_json(...)`, `write_final_metrics(...)`, or a compatible alias
+      - added a handoff repair for `_call_flex(loader, ...)` model-loader invocations that pass `device=...` but omit `device_or_info=...` while `load_model_and_tokenizer(...)` requires `device_or_info`
+      - wired both repairs into the late handoff repair block before second-stage execution
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs failure metrics calls that use the write_json_metrics alias when only write_metrics_json exists`
+    - `repairs flexible model-loader calls that omit a required device_or_info argument`
+  - Automated regression result:
+    - targeted `write_json_metrics alias` regression passed
+    - targeted `device_or_info` regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Same-flow live revalidation: pass for the LV-200 symptom boundary
+    - rebuilt localhost-only Web API was restarted on `127.0.0.1:4318`
+    - same run reran `implement_experiments` through the real Web API and native Codex regenerated the PEFT runner from runner feedback
+    - second-stage execution no longer failed with `load_model_and_tokenizer() missing 1 required positional argument: 'device_or_info'`
+    - second-stage failure handling wrote diagnostic metrics to `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json` instead of failing with `write_json_metrics` undefined
+    - the next second-stage failure is a benchmark evaluator resolver mismatch tracked by LV-201
+
+- Follow-up risks:
+  - The fix should only add argument/alias compatibility and must not fabricate successful experiment metrics or bypass `run_experiments`.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-201
+
+- Status: in_progress
+- Validation target: generated PEFT runner should align benchmark evaluator resolver names with the evaluator functions materialized by earlier chunks before second-stage execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-200 model-loader and metrics-writer alias repairs.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex regenerate the PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: the benchmark evaluation dispatch should call a generated evaluator function, or local verification should block the handoff and ask Codex to align the resolver names before second-stage execution.
+- Actual behavior: the runner materialized evaluator helpers such as `evaluate_recipe_model(...)` and `evaluate_benchmark(...)`, but `_evaluate_recipe_model(...)` later searched only for `evaluate_zero_shot_benchmarks`, `evaluate_benchmarks`, `run_benchmark_evaluation`, and `evaluate_model_on_benchmarks`. Since none of those names were defined, second-stage execution failed with `required helper missing; expected one of: evaluate_zero_shot_benchmarks, evaluate_benchmarks, run_benchmark_evaluation, evaluate_model_on_benchmarks`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the failure reproduced during second-stage runner execution.
+  - Existing session: earlier rerun was blocked by LV-200; after LV-200, execution advanced to benchmark evaluator resolver alignment.
+  - Divergence: no UI/session divergence observed; this is a generated-runner internal resolver mismatch hidden by compile-only local verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic materialization produced benchmark scoring helpers under concrete recipe/evaluator names, while the final orchestration chunk emitted a generic helper resolver with a narrower candidate list. The current benchmark evaluator detector misses this variant because it does not treat `required helper missing; expected one of:` plus the benchmark candidate list as the same resolver mismatch and does not recognize `evaluate_recipe_model(...)` as an already materialized benchmark evaluator.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended benchmark evaluator dispatch detection to treat `required helper missing; expected one of:` with benchmark evaluator candidate names as a pre-handoff mismatch
+      - added `run_benchmark_evaluation` to the searched benchmark evaluator entrypoint surface
+      - added generated evaluator names including `evaluate_recipe_model` and `evaluate_benchmark` to the known materialized benchmark evaluator surface
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `rejects python runners whose required-helper benchmark resolver misses generated recipe evaluators`
+  - Automated regression result:
+    - targeted `required-helper benchmark` regression passed
+    - related `benchmark evaluator` regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Same-flow live revalidation:
+    - passed for the LV-201 symptom boundary on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `required helper missing; expected one of: evaluate_zero_shot_benchmarks...` evaluator resolver failure did not recur
+    - execution advanced to the next second-stage failure tracked by LV-202
+
+- Follow-up risks:
+  - The fix should force name alignment or LLM retry before handoff; it must not invent benchmark metrics or skip real evaluator execution.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-202
+
+- Status: in_progress
+- Validation target: generated PEFT runner should align benchmark dataset loader resolver names with the loader functions materialized by earlier chunks before second-stage execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-201 benchmark evaluator resolver detection changes.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex dynamically materialize the PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: the benchmark dataset loader dispatch should call a generated benchmark loader function, or local verification should block the handoff and ask Codex to align the resolver names before second-stage execution.
+- Actual behavior: the runner materialized benchmark loaders such as `load_bounded_benchmark_examples(...)` and `load_all_benchmark_examples(...)`, but `_load_benchmarks_for_run(...)` later searched only for `load_benchmark_datasets`, `load_evaluation_benchmarks`, `prepare_benchmark_datasets`, and `load_eval_datasets`. Since none of those searched names were defined, second-stage execution failed with `RuntimeError: No benchmark dataset loading helper is available.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the failure reproduced during second-stage runner execution.
+  - Existing session: earlier rerun was blocked by LV-201; after LV-201, execution advanced to benchmark dataset loader resolver alignment.
+  - Divergence: no UI/session divergence observed; this is a generated-runner internal resolver mismatch hidden by compile-only local verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic materialization produced benchmark loading helpers under concrete names from the benchmark loading section, while the final orchestration chunk emitted a generic run-level loader resolver with a narrower candidate list. The current benchmark loader detector misses this variant because it only recognizes the earlier `No benchmark examples were provided...` error text and does not include common generated loader names such as `load_bounded_benchmark_examples(...)` and `load_all_benchmark_examples(...)` in the loader surface.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended the benchmark loader dispatch surface to include common generated bounded/suite loader helper names
+      - taught loader mismatch detection to recognize the `No benchmark dataset loading helper is available` runtime marker
+      - scoped searched loader-name extraction to the resolver window around the failing marker so unrelated earlier resolvers do not mask a run-level dispatch mismatch
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `rejects python runners whose run-level benchmark loader resolver misses generated bounded loaders`
+  - Automated regression result:
+    - targeted `run-level benchmark loader` regression passed
+    - related `benchmark loader` regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Same-flow live revalidation:
+    - passed for the exact LV-202 marker on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `No benchmark dataset loading helper is available` failure did not recur
+    - execution advanced to a new benchmark loader resolver marker tracked by LV-203
+
+- Follow-up risks:
+  - The fix should only force name alignment or LLM retry before handoff; it must not fabricate benchmark examples, substitute metrics, or bypass `run_experiments`.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-203
+
+- Status: in_progress
+- Validation target: generated PEFT runner should align run-level ARC-Challenge/HellaSwag benchmark bundle resolver names with the benchmark loading helpers materialized by earlier chunks before second-stage execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-202 benchmark loader resolver detection changes.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex dynamically materialize the PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: the run-level benchmark bundle loader should call a generated benchmark loading function, or local verification should block the handoff and ask Codex to align the resolver names before second-stage execution.
+- Actual behavior: the runner materialized benchmark loaders such as `load_benchmark_subsets(...)` and `load_normalized_evaluation_sets(...)`, but `_load_benchmark_bundle(...)` later searched only for generic bundle names such as `load_benchmark_tasks`, `load_benchmarks`, `prepare_benchmark_tasks`, `prepare_benchmarks`, and `load_evaluation_benchmarks`, then searched separate ARC/HellaSwag helper names. Since none of those searched names were defined, second-stage execution failed with `RuntimeError: No benchmark loading helper found for ARC-Challenge and HellaSwag.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the failure reproduced during second-stage runner execution.
+  - Existing session: earlier rerun was blocked by LV-202; after LV-202, execution advanced to a more specific ARC/HellaSwag benchmark bundle resolver alignment failure.
+  - Divergence: no UI/session divergence observed; this is another generated-runner internal resolver mismatch hidden by compile-only local verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic materialization produced benchmark loading helpers under concrete subset/normalized-set names, while the final orchestration chunk emitted a run-level resolver with a different generic bundle-helper vocabulary. The benchmark loader detector did not yet include this runtime marker or the ARC/HellaSwag-specific resolver vocabulary.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended benchmark loader dispatch detection with the ARC/HellaSwag bundle runtime marker
+      - added generic bundle helper names, generated subset/normalized-set helper names, and ARC/HellaSwag-specific helper names to the benchmark loader surface
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `rejects python runners whose ARC and HellaSwag bundle resolver misses generated benchmark subset loaders`
+  - Automated regression result:
+    - targeted `ARC and HellaSwag bundle` regression passed
+    - related `benchmark loader` regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Same-flow live revalidation:
+    - passed for the exact LV-203 marker on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `No benchmark loading helper found for ARC-Challenge and HellaSwag.` failure did not recur
+    - execution loaded real ARC-Challenge/HellaSwag Hugging Face dataset splits and advanced to a new resolver/signature failure tracked by LV-204
+
+- Follow-up risks:
+  - The fix should only force name alignment or LLM retry before handoff; it must not fabricate benchmark rows, substitute metrics, or bypass `run_experiments`.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-204
+
+- Status: in_progress
+- Validation target: generated PEFT runner should align ARC-Challenge/HellaSwag benchmark resolver names and failure-metrics device helper calls before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-203 benchmark bundle resolver detection changes.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex dynamically materialize the PEFT runner, pass local verification, and enter second-stage `run_experiments`.
+
+- Expected behavior: local verification should reject a runner whose ARC/HellaSwag resolver does not search generated ARC/HellaSwag helper names, and it should reject or repair a failure metrics writer that calls a required-argument device helper with no arguments before second-stage execution.
+- Actual behavior: the runner generated `load_arc_challenge_examples(...)` and `load_hellaswag_examples(...)`, but `_load_benchmarks_for_run(...)` searched `load_arc_challenge_subset`, `load_arc_challenge`, `load_arc_dataset`, `prepare_arc_challenge_examples`, `load_hellaswag_subset`, `load_hellaswag`, `load_hellaswag_dataset`, and `prepare_hellaswag_examples`, then failed with `RuntimeError: No ARC-Challenge/HellaSwag benchmark loaders were defined in earlier sections.` The failure path then called `_collect_device_metrics()` even though the helper requires `orchestration_result`, causing `TypeError: _collect_device_metrics() missing 1 required positional argument: 'orchestration_result'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the new failure reproduced during second-stage runner execution after real dataset loading.
+  - Existing session: earlier rerun was blocked by LV-203; after LV-203, execution advanced to this narrower resolver marker and failure-metrics helper arity mismatch.
+  - Divergence: no UI/session divergence observed; this is another generated-runner internal handoff mismatch hidden by compile-only local verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic materialization emitted concrete generated helper names that were close but not identical to the final resolver vocabulary, and the local verification detector allowed the handoff because one suite loader name existed elsewhere. Separately, the failure metrics writer treated a required-argument `_collect_device_metrics(orchestration_result)` helper as if it were a zero-argument helper.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended benchmark loader dispatch detection with the `No ARC-Challenge/HellaSwag benchmark loaders were defined in earlier sections` runtime marker
+      - added ARC/HellaSwag resolver helper names including `load_arc_challenge_subset`, `load_arc_dataset`, `prepare_arc_challenge_examples`, `load_hellaswag_subset`, `load_hellaswag_dataset`, and `prepare_hellaswag_examples`
+      - added a targeted device metrics helper arity detector for no-argument calls to required-argument `_collect_device_metrics(...)`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `rejects python runners whose run-level ARC and HellaSwag resolver misses generated example loaders despite a suite loader`
+    - `rejects python runners whose failure metrics path calls required-argument device metrics helper with no arguments`
+  - Automated regression result:
+    - targeted LV-204 regressions passed
+    - related benchmark-loader and device-metrics regressions passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - passed for the LV-204 symptom boundary on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `No ARC-Challenge/HellaSwag benchmark loaders were defined in earlier sections` failure did not recur
+    - the previous `_collect_device_metrics() missing 1 required positional argument: 'orchestration_result'` failure did not recur
+    - execution advanced to a new instruction dataset loader resolver mismatch tracked by LV-205
+
+- Follow-up risks:
+  - The fix should preserve node-owned execution and only force Codex to align helper names or signatures before handoff; it must not fabricate benchmark examples, substitute metrics, or bypass `run_experiments`.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-205
+
+- Status: resolved
+- Validation target: generated PEFT runner should expose instruction-tuning dataset loaders under names searched by final orchestration before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-204 benchmark resolver and device-metrics arity guards.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex dynamically materialize the PEFT runner, pass local verification, and enter second-stage `run_experiments`.
+
+- Expected behavior: if earlier chunks generate instruction-tuning loaders such as `load_instruction_tuning_records(...)` or `load_instruction_tuning_dataset(...)`, the final orchestration resolver should call one of those helpers or local handoff repair should add a compatible alias before second-stage execution.
+- Actual behavior: the runner generated `load_instruction_tuning_records(args)` and `load_instruction_tuning_dataset(args)`, but `maybe_load_instruction_dataset_for_orchestration(...)` searched only `load_instruction_tuning_subset`, `load_instruction_dataset_subset`, `load_instruction_dataset`, and `prepare_instruction_dataset`, then failed with `RuntimeError: No instruction dataset loader was defined before orchestration.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the new failure reproduced during second-stage runner execution.
+  - Existing session: earlier rerun was blocked by LV-204; after LV-204, execution advanced to this instruction dataset resolver alignment failure.
+  - Divergence: no UI/session divergence observed; this is another generated-runner internal resolver mismatch hidden by compile-only local verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic materialization used instruction-tuning-specific helper names, while the final orchestration chunk searched a generic instruction-dataset alias family. The existing alias repair only handles `Required experiment helper not found` and generated train-dataset names, so it misses the newer `No instruction dataset loader was defined before orchestration` marker and `load_instruction_tuning_*` helper names.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended instruction dataset helper alias repair to recognize the `No instruction dataset loader was defined before orchestration` marker
+      - added `load_instruction_tuning_dataset(...)` and `load_instruction_tuning_records(...)` as generated loader surfaces
+      - made the alias pass `args`, `config`, `tokenizer`, and `seed` through signature-aware dispatch without fabricating rows
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs instruction dataset helper aliases when generated loaders use instruction-tuning names`
+  - Automated regression result:
+    - targeted `instruction dataset helper aliases` regressions passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - passed for the LV-205 symptom boundary on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `No instruction dataset loader was defined before orchestration.` failure did not recur
+    - execution advanced to a new frozen argument mutation failure tracked by LV-206
+
+- Follow-up risks:
+  - The fix should only align loader aliases or force Codex retry before handoff; it must not fabricate instruction examples, substitute training data, or bypass `run_experiments`.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-206
+
+- Status: resolved
+- Validation target: generated PEFT runner should not mutate frozen dataclass argument/config objects while preparing filesystem paths before second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-205 instruction dataset helper alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex dynamically materialize the PEFT runner, pass local verification and handoff repairs, then enter second-stage `run_experiments`.
+
+- Expected behavior: entrypoint filesystem preparation should create the output and metrics directories and return normalized paths without requiring mutation of immutable generated config objects.
+- Actual behavior: `_entrypoint_parse_args(...)` returned a frozen `ExperimentConfig`, but `_entrypoint_prepare_filesystem(args)` attempted `setattr(args, "output_dir", str(output_dir))` and `setattr(args, "metrics_path", str(metrics_path))`, causing `dataclasses.FrozenInstanceError: cannot assign to field 'output_dir'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the failure reproduced during second-stage runner execution after local verification passed.
+  - Existing session: earlier rerun was blocked by LV-205; after LV-205, execution advanced to this frozen dataclass mutation failure.
+  - Divergence: no UI/session divergence observed; this is another generated-runner internal compatibility issue hidden by compile-only local verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic materialization returned an immutable dataclass config from `parse_args`, while the generic entrypoint shim assumed an `argparse.Namespace` and normalized paths by mutating `args`. The runtime path works for mutable namespaces but fails for frozen configs even though the required path values already exist.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended entrypoint runtime compatibility repair so `_entrypoint_prepare_filesystem(args)` path normalization does not fail when `args` is a frozen dataclass config
+      - preserved the existing mutable `argparse.Namespace` behavior while allowing immutable configs to rely on the returned normalized paths
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs entrypoint filesystem path normalization for frozen dataclass configs`
+  - Automated regression result:
+    - targeted `frozen dataclass configs` regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - passed for the LV-206 symptom boundary on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `dataclasses.FrozenInstanceError: cannot assign to field 'output_dir'` failure did not recur
+    - execution advanced to later helper-alias handoff boundaries tracked by LV-207 and LV-208
+
+- Follow-up risks:
+  - The fix should only make entrypoint path normalization compatible with immutable config objects; it must not bypass `run_experiments`, fabricate metrics, or replace node-owned execution.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-207
+
+- Status: resolved
+- Validation target: generated PEFT runner repair helpers should insert JSON-safe compatibility functions at a syntactically valid top-level position before local verification
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-206 frozen argument path-normalization repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex materialize the PEFT runner until local verification applies JSON-safe helper alias repair.
+
+- Expected behavior: `repairPythonJsonSafeHelperAlias(...)` should insert missing helper definitions after the complete top-level import block, including parenthesized multi-line imports, so `py_compile` remains valid.
+- Actual behavior: the repair reported `Added JSON-safe compatibility alias(es) make_json_safe...`, then local verification failed with `SyntaxError: invalid syntax` at `def make_json_safe(value):` because the helper was inserted inside a parenthesized import block near line 24.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the failure reproduced during local verification on attempt 1.
+  - Existing session: the session recovered by restoring the edited paths and starting attempt 2, but the underlying repair insertion bug remains in the running build.
+  - Divergence: no UI/session divergence observed; this is a generated-runner repair-placement bug hidden until a runner with parenthesized multi-line imports needs a JSON-safe alias.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: JSON-safe alias repair finds the last import using a single-line import regex. For `from transformers import (` or similar parenthesized imports, it treats the opening line as a complete import and inserts `def make_json_safe(...)` before the closing parenthesis.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added import-block-aware Python helper insertion via `insertPythonTopLevelHelperAfterImports(...)`
+      - changed JSON-safe and `normalize_for_json` repairs to insert after complete top-level import blocks instead of after the first line of a parenthesized import
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `inserts JSON-safe helper aliases after complete multi-line import blocks`
+  - Automated regression result:
+    - targeted `JSON-safe helper aliases` regressions passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - passed for the LV-207 symptom boundary on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `SyntaxError: invalid syntax` at inserted `def make_json_safe(value):` did not recur
+    - local verification passed and execution advanced into second-stage `run_experiments`, where a later helper-alias mismatch is tracked by LV-208
+
+- Follow-up risks:
+  - The fix should only make helper insertion syntax-safe; it must not change generated experiment semantics or manually substitute node-owned artifacts.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_attempts.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+
+## Issue: LV-208
+
+- Status: resolved
+- Validation target: generated PEFT runner should expose JSON writer and log-message helper aliases consistently in the entrypoint and failure-metrics path during second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-207 import-block-aware JSON-safe alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex materialize the PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: generated entrypoint logging and failure-metrics writing should resolve through existing generated helpers or handoff aliases, so a real runtime error can still be recorded as metrics without masking the original failure.
+- Actual behavior: local verification passed and second-stage execution began, but `main(...)` called `log_message(...)` while only `log(...)` / `_metric_log(...)` existed, and the failure-metrics writer called `safe_write_json(...)` while only `write_metrics_json(...)`, `atomic_write_json(...)`, and `_atomic_write_metrics_json(...)` existed. The verifier reported `Failed to write failure metrics ... name 'safe_write_json' is not defined` followed by `ERROR: NameError: name 'log_message' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the prior LV-207 `SyntaxError` did not recur and execution advanced into second-stage runtime.
+  - Existing session: earlier same-run attempts failed on frozen config mutation or invalid helper insertion; this regenerated runner moved the boundary to helper-name reconciliation inside the entrypoint/error path.
+  - Divergence: no UI/session divergence observed; this is another generated-runner helper alias mismatch hidden by compile-only checks.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced equivalent logging and JSON-writing helpers under different names across chunks. Existing handoff repairs bridge `write_json_metrics(...)` and `setup_logging(...)`, but do not bridge the observed `safe_write_json(...)` or `log_message(...)` aliases before accepting the runner.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended logging handoff repair to add `log_message(...)` when generated entrypoints reference it but only expose `log(...)` / `_metric_log(...)`
+      - extended JSON metrics writer alias repair to add `safe_write_json(...)` when generated failure writers reference it but only expose generated metrics writers such as `write_metrics_json(...)`, `atomic_write_json(...)`, or `_atomic_write_metrics_json(...)`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs missing log_message aliases from generated entrypoint loggers`
+    - `repairs failure metrics calls that use safe_write_json when only generated metrics writers exist`
+  - Automated regression result:
+    - targeted `log_message|safe_write_json` regressions passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - passed for the LV-208 symptom boundary on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `safe_write_json` / `log_message` failure did not recur
+    - execution advanced to module-level baseline-first recipe validation, now tracked by LV-209
+
+- Follow-up risks:
+  - The fix should only reconcile generated helper aliases for logging and JSON writing; it must not fabricate experiment metrics, hide dependency/model failures, or bypass node-owned `run_experiments` execution.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-209
+
+- Status: in_progress
+- Validation target: generated PEFT runner should normalize CandidateSpec-style baseline recipes into the later PeftRecipe schema before module-level locked recipe validation
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-208 logging/JSON-writer alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex materialize the PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: if the generated runner defines early `CandidateSpec` objects with `candidate_id`, `recipe_type="unmodified_base"`, `train=False`, `lora_r`, and `lora_alpha`, the later `PeftRecipe` normalization layer should preserve the locked baseline-first contract before any module-level validation executes.
+- Actual behavior: the runner failed during module import at `LOCKED_PEFT_RECIPES = get_locked_peft_recipes()`. `normalize_peft_recipe(...)` did not map `candidate_id` to `recipe_id`, `unmodified_base` to `base`, or `train=False` to `trainable=False`, so `validate_locked_recipe_order(...)` raised `Baseline-first contract violation: candidate 0 must be the unmodified non-trainable base checkpoint.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the LV-208 `safe_write_json` / `log_message` failure did not recur and execution advanced to module-level recipe contract validation.
+  - Existing session: earlier attempts failed in the entrypoint/failure metrics path; this regenerated runner moved the boundary to CandidateSpec-to-PeftRecipe schema reconciliation.
+  - Divergence: no UI/session divergence observed; this is a generated-runner schema projection mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted two recipe schemas in different chunks. The early schema uses `CandidateSpec(candidate_id, recipe_type="unmodified_base", train=False, lora_r, lora_alpha)`, while the later `PeftRecipe` normalizer expects `recipe_id`, `recipe_type="base"`, `trainable`, `rank`, and `alpha`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added CandidateSpec-to-PeftRecipe normalization repair before handoff
+      - maps `candidate_id` to `recipe_id`, `unmodified_base` to `base`, `train` to `trainable`, and `lora_r` / `lora_alpha` to the later PEFT recipe schema
+      - preserves the locked first unmodified baseline and locked second vanilla LoRA baseline target modules required by the comparison contract
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs CandidateSpec-backed PEFT recipe normalization before locked baseline validation`
+  - Automated regression result:
+    - targeted `CandidateSpec-backed PEFT recipe normalization` regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - passed for the LV-209 symptom boundary on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous module-level `Baseline-first contract violation: candidate 0 must be the unmodified non-trainable base checkpoint` failure did not recur
+    - execution advanced through native Codex staged materialization, local `py_compile`, handoff repairs, and into second-stage runtime entrypoint logging, now tracked by LV-210
+
+- Follow-up risks:
+  - The fix must preserve the locked baseline-first contract rather than deleting validation or reordering candidates cosmetically; it must not fabricate experiment results or bypass `run_experiments`.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-210
+
+- Status: resolved
+- Validation target: generated PEFT runner should expose a module-level `logger` before entrypoint logging during second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-209 CandidateSpec-to-PeftRecipe normalization repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex materialize the PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: if generated entrypoint code calls `logger.info(...)`, `logger.debug(...)`, or `logger.exception(...)`, the runner should define or import a compatible module-level logger before `main(...)` executes.
+- Actual behavior: local verification passed and second-stage execution began, but `main(...)` configured root logging with `logging.basicConfig(...)` and then called `logger.info(...)` while no `logger` name existed. The verifier failed with `NameError: name 'logger' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the LV-209 baseline-first contract violation did not recur and execution advanced to entrypoint logging.
+  - Existing session: earlier attempts failed on helper aliases or recipe schema projection; this regenerated runner moved the boundary to a module-level logger alias mismatch.
+  - Divergence: no UI/session divergence observed; this is a generated-runner helper/global-name mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted `logger.info(...)` / `logger.exception(...)` calls in the final entrypoint chunk but only configured the `logging` module, without assigning `logger = logging.getLogger(__name__)` before runtime execution.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended logging handoff repair to add a module-level `logger = logging.getLogger(__name__)` compatibility alias when generated entrypoints call `logger.info(...)`, `logger.exception(...)`, or similar logger methods without defining `logger`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs missing module-level logger aliases from generated entrypoint logging`
+  - Automated regression result:
+    - targeted `module-level logger` regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - passed for the LV-210 symptom boundary on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `NameError: name 'logger' is not defined` failure did not recur
+    - execution advanced through local verification and into second-stage instruction dataset loading, now tracked by LV-211
+
+- Follow-up risks:
+  - The repair should only expose a standard Python logger alias; it must not mask real experiment failures or substitute node-owned metrics/results.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-211
+
+- Status: resolved
+- Validation target: generated PEFT runner should call deterministic subset helpers with a signature compatible with their generated keyword-only parameters during second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-210 module-level logger alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex materialize the PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: generated instruction dataset loading should either call `select_deterministic_subset(...)` using keyword-only `subset_size=...` or the handoff layer should reconcile a positional `requested_examples` call before accepting the runner.
+- Actual behavior: second-stage execution reached `_workflow_load_datasets(...)`, but `load_instruction_tuning_records(...)` called `_select_instruction_subset(...)`, which discovered `select_deterministic_subset(...)` from `globals()` and attempted incompatible positional invocations. The generated `select_deterministic_subset(dataset_obj, *, subset_size, seed, max_allowed, dataset_role)` rejected the fallback `helper(dataset_obj, requested_examples)` call with `TypeError: select_deterministic_subset() takes 1 positional argument but 2 were given`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; LV-210 did not recur and execution advanced to instruction dataset loading.
+  - Existing session: earlier attempts failed at logger setup and recipe schema projection; this regenerated runner moved the boundary to generated helper signature drift inside the dataset-loading section.
+  - Divergence: no UI/session divergence observed; this is a generated-runner helper-call mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted a keyword-only deterministic subset helper in one chunk, then a later instruction-subset bridge treated all subset helpers as accepting `(dataset_obj, requested_examples, ...)` positional arity.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a handoff compatibility wrapper for generated `select_deterministic_subset(...)` helpers that require keyword-only `subset_size` while later generated bridges call them with positional requested-example counts
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs deterministic subset helpers generated with keyword-only subset sizes`
+  - Automated regression result:
+    - targeted deterministic-subset regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - passed for the LV-211 symptom boundary on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `TypeError: select_deterministic_subset() takes 1 positional argument but 2 were given` failure did not recur
+    - execution advanced through instruction dataset loading into `RecipeSpec` construction, now tracked by LV-212
+
+- Follow-up risks:
+  - The repair should only reconcile deterministic subset helper call arity; it must not replace the public dataset loading or fabricate instruction records.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-212
+
+- Status: resolved
+- Validation target: generated PEFT runner should preserve required `RecipeSpec` fields when coercing alias-heavy recipe definitions during second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-211 deterministic subset helper arity repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex materialize the PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: `make_recipe_spec(...)` should fill all required `RecipeSpec` constructor fields, including `recipe_type`, from explicit fields or compatible aliases such as `peft_type` / `adapter_type` before module-level locked recipe specs are instantiated.
+- Actual behavior: local verification passed and LV-211 did not recur, but second-stage execution failed while importing the runner because `make_recipe_spec(name="unmodified_base", peft_type="none", adapter_type="none", ...)` called `RecipeSpec(**_coerce_recipe_spec_kwargs(kwargs))` without a `recipe_type` value. Python raised `TypeError: RecipeSpec.__init__() missing 1 required positional argument: 'recipe_type'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the LV-211 deterministic subset arity failure did not recur and execution advanced to `RecipeSpec` construction.
+  - Existing session: earlier attempts failed at logger setup and dataset subset helper arity; this regenerated runner moved the boundary to recipe schema coercion.
+  - Divergence: no UI/session divergence observed; this is a generated-runner schema projection mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted `_recipe_spec_required_field_names()` that depends on `dataclasses.MISSING`, but the script only imported `dataclass` / `field` from `dataclasses` and did not import the `dataclasses` module. As a result, required fields such as `recipe_type` were not detected and the alias coercion loop never filled them before constructing `RecipeSpec`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a handoff repair that imports the `dataclasses` module when generated `RecipeSpec` required-field coercion references `dataclasses.MISSING` but only imported `dataclass` / `field`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs missing dataclasses module imports for RecipeSpec required-field coercion`
+  - Automated regression result:
+    - targeted dataclasses-import regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - passed for the LV-212 symptom boundary on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `TypeError: RecipeSpec.__init__() missing 1 required positional argument: 'recipe_type'` failure did not recur
+    - execution advanced through recipe construction, dataset tokenization, model loading, and into actual `Trainer.train()`, now tracked by LV-213
+
+- Follow-up risks:
+  - The repair should restore required-field detection or fill `recipe_type` from semantically compatible aliases; it must not hide unrelated missing required recipe fields or fabricate experiment results.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-213
+
+- Status: in_progress
+- Validation target: generated PEFT runner should pad causal-LM training labels consistently with tokenizer inputs before `Trainer.train()`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-212 `RecipeSpec` dataclasses import repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex materialize the PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: if generated tokenization precomputes causal-LM `labels`, the tokenized inputs and labels should be padded/truncated to the same length before `DataCollatorForLanguageModeling` batches them for `Trainer.train()`.
+- Actual behavior: execution reached real model loading and training, but failed inside `transformers` collation with `ValueError: expected sequence of length 128 at dim 1 (got 109)` and `Unable to create tensor... activate truncation and/or padding`. The generated runner tokenized with `padding=False)` in an inline call, while the existing handoff repair only changed comma-terminated `padding=False,` lines.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; LV-212 did not recur and execution advanced to real `Trainer.train()`.
+  - Existing session: earlier attempts failed before training at recipe/schema/helper boundaries; this regenerated runner moved the boundary to runtime batch collation.
+  - Divergence: no UI/session divergence observed; this is a generated-runner input/label projection mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the causal-LM label padding repair replaced the ragged `encoded["labels"] = [ids.copy() ...]` assignment but only rewrote `padding=False,` syntax. Inline generated tokenizer calls using `padding=False)` still leave `input_ids` ragged, so labels remain variable-length despite the repair log.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - expanded causal-LM label padding repair to rewrite inline `padding=False)` tokenizer calls paired with precomputed labels, not only comma-terminated `padding=False,` calls
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs inline causal-LM tokenizer padding before precomputed labels`
+  - Automated regression result:
+    - targeted inline causal-LM padding regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - pending; same-flow Web API rerun regenerated the runner after receiving the collation failure feedback and advanced to a new parser-shape failure before reaching training again, now tracked by LV-214
+
+- Follow-up risks:
+  - The repair should target the tokenizer call paired with the generated labels assignment, not unrelated function signatures or evaluation tokenization calls.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-214
+
+- Status: resolved
+- Validation target: generated PEFT runner should normalize tuple-returning CLI parsers before main orchestration mutates parsed args
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-213 inline causal-LM label padding repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex regenerate the PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: if an earlier parser helper such as `parse_cli_args(...)` returns `(args, runtime_paths)`, the final main parser bridge should unwrap the namespace before passing it to `_coerce_main_paths(...)` and `setattr(...)`.
+- Actual behavior: the regenerated runner defined `parse_cli_args(...) -> Tuple[argparse.Namespace, RuntimePaths]`, then `_parse_main_args(...)` called `return parser_fn(argv)` directly. `main(...)` received a tuple and failed at `setattr(args, "metrics_path", str(metrics_path))` with `AttributeError: 'tuple' object has no attribute 'metrics_path' and no __dict__ for setting new attributes`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; the prior label-collation failure feedback caused a full runner regeneration.
+  - Existing session: earlier attempts failed inside training collation; this regenerated runner moved the boundary earlier to CLI parser shape reconciliation.
+  - Divergence: no UI/session divergence observed; this is a generated-runner parser contract mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted a rich parser helper returning both parsed args and runtime paths in one chunk, while the final entrypoint chunk assumed all parser helpers return only an argparse namespace.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a handoff repair that unwraps tuple-returning parser helpers in `_parse_main_args(...)` before main orchestration mutates the parsed namespace
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs tuple-returning main argument parser bridges before handoff`
+  - Automated regression result:
+    - targeted tuple parser regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - passed for the LV-214 symptom boundary on 2026-04-29 through the rebuilt localhost-only Web API
+    - the previous `AttributeError: 'tuple' object has no attribute 'metrics_path'` failure did not recur
+    - execution advanced through native Codex staged materialization, local verification, and into second-stage locked recipe execution, now tracked by LV-215
+
+- Follow-up risks:
+  - The repair should unwrap parser tuples only at the main-args bridge and should not discard runtime path preparation when the namespace already contains normalized `metrics_path` and `output_dir`.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-215
+
+- Status: in_progress
+- Validation target: generated PEFT runner should preserve baseline-first recipe order when recipe registries use run-specific candidate IDs, and should not mask execution failures with aggregate-metrics arity errors
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-214 tuple-returning parser repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex regenerate the PEFT runner, pass local verification, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: locked baseline-first execution should recognize generated registry IDs such as `00_unmodified_base_checkpoint` and `01_locked_vanilla_lora_baseline` as the required base-first and tuned-LoRA-second candidates, and failure metrics finalization should preserve the root failure instead of raising a secondary arity error.
+- Actual behavior: second-stage execution failed in `locked_recipe_execution_order(...)` with `RuntimeError: Baseline-first comparison contract cannot be satisfied; missing/invalid order: unmodified base checkpoint first, vanilla LoRA baseline second`. During failure finalization, `_main_finalize_metrics(...)` resolved the singular-row helper `aggregate_candidate_metrics(candidate_result)` before the plural helper and `_main_call_flex(...)` raised `TypeError: Cannot call 'aggregate_candidate_metrics'; missing required parameters: ['candidate_result']`, masking the original baseline-order failure at the final node boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; LV-214 did not recur and execution advanced into locked recipe ordering.
+  - Existing session: earlier attempts failed at parser shape reconciliation before the locked recipe study could run.
+  - Divergence: no UI/session divergence observed; this is a generated-runner recipe-registry projection mismatch plus a failure-path metrics arity mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a `CANDIDATE_RECIPES` registry keyed by run-specific ordered IDs and dataclass values, while the final locked-order bridge expected canonical IDs (`base_unmodified`, `vanilla_lora`) or mapping values with explicit flags. The final metrics bridge also selected a per-candidate aggregator for a whole result set because callable resolution preferred `aggregate_candidate_metrics` over the plural `aggregate_and_rank_experiment_results` helper.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Automated regression result: pending
+  - Re-validation result:
+    - pending; same-flow Web API rerun regenerated the runner and advanced through native Codex staged materialization, local verification, and into second-stage module-level recipe projection
+    - the previous `locked_recipe_execution_order(...)` / singular `aggregate_candidate_metrics(...)` finalization failure did not recur before the new projection blocker appeared
+    - revalidation is now blocked earlier by LV-216
+
+- Follow-up risks:
+  - The repair must preserve the baseline-first contract and should normalize generated recipe registry metadata, not delete validation or fabricate successful metrics.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-216
+
+- Status: in_progress
+- Validation target: generated PEFT runner should coerce locked recipe metadata into the active `PEFTRecipeConfig` schema before module-level recipe tuples are constructed
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-215 locked recipe catalog / aggregate finalizer repairs.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex materialize all 6 staged chunks, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: when an earlier generated `PEFTRecipeConfig` dataclass requires `candidate_id`, later locked recipe metadata that uses `recipe_id` should be aliased into `candidate_id` before `PEFTRecipeConfig(**kwargs)` is called.
+- Actual behavior: the regenerated runner defined an active `PEFTRecipeConfig` with required field `candidate_id`, then a later guarded fallback schema used `recipe_id`. `_coerce_recipe_metadata_to_config(...)` filtered metadata to dataclass fields but did not map `recipe_id` to `candidate_id`, causing module import to fail with `TypeError: PEFTRecipeConfig.__init__() missing 1 required positional argument: 'candidate_id'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; native Codex output streamed through all dynamic chunks and local `py_compile` passed.
+  - Existing session: the prior same-flow attempt failed later in locked recipe order/failure-metrics finalization; this regenerated runner exposed an earlier schema alias mismatch during module-level recipe tuple construction.
+  - Divergence: no UI/session divergence observed; this is a generated-runner schema projection mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted two compatible-looking `PEFTRecipeConfig` schema fragments. The active earlier dataclass uses `candidate_id` / `adapter_method` / train-dataset field names, while the later locked metadata and fallback schema use `recipe_id` / `peft_method` / dataset field names. The handoff layer did not yet reconcile those aliases before module-level construction.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a handoff repair that augments `_coerce_recipe_metadata_to_config(...)` field aliases so active `PEFTRecipeConfig(candidate_id=...)` schemas receive values from locked recipe metadata keyed by `recipe_id`
+      - also maps active-schema names such as `adapter_method`, `train_dataset_name`, `train_subset_size`, and `lora_target_modules` from the later locked metadata/fallback schema vocabulary
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs PEFTRecipeConfig metadata aliases before module-level locked recipe projection`
+  - Automated regression result:
+    - targeted `PEFTRecipeConfig metadata aliases` regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - same-flow Web API rerun regenerated the runner, streamed through all dynamic implementation chunks, passed local `py_compile`, and advanced into second-stage `run_experiments`
+    - the previous `PEFTRecipeConfig.__init__() missing 1 required positional argument: 'candidate_id'` failure did not recur before the next blocker appeared
+    - revalidation is now blocked by LV-217
+
+- Follow-up risks:
+  - The repair should translate metadata into the active dataclass schema without changing the locked baseline-first order or fabricating metrics.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-217
+
+- Status: in_progress
+- Validation target: generated PEFT runner should define or alias canonical string normalization before locked recipe identity helpers execute at module import time
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-216 `PEFTRecipeConfig` metadata alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex generate all staged implementation chunks, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: locked recipe identity and PEFT-type helpers should be able to normalize recipe identifiers before module-level `LOCKED_BASELINE_FIRST_RECIPES = build_locked_baseline_first_recipes()` executes.
+- Actual behavior: second-stage execution failed at module import with `NameError: name '_canonical_string' is not defined`. The generated runner defined `_recipe_identity(...)` and `_recipe_peft_type(...)` using `_canonical_string(...)`, but no matching helper was generated or repaired before `build_locked_baseline_first_recipes()` ran.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; native Codex streamed through all staged chunks and local `py_compile` passed.
+  - Existing session: the prior same-flow attempt failed earlier in metadata alias projection; this regenerated runner advanced beyond that point and exposed a missing helper used by module-level locked recipe construction.
+  - Divergence: no UI/session divergence observed; this is a generated-runner helper surface mismatch hidden by compile-only verification because the missing name is only resolved when the module-level recipe builder executes.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation split locked recipe normalization across chunks. A later chunk emitted `_recipe_identity(...)` / `_recipe_peft_type(...)` that depend on `_canonical_string(...)`, but the helper itself was not present in the final merged script and the handoff repair suite did not yet synthesize it.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a handoff repair that synthesizes `_canonical_string(value, default=...)` when generated locked recipe identity helpers reference it without defining or importing it
+      - wired the repair into the local-verification repair chain before second-stage handoff
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `adds _canonical_string when locked recipe identity helpers reference it without defining it`
+  - Automated regression result:
+    - targeted `_canonical_string` regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - same-flow Web API rerun regenerated the runner through native Codex dynamic chunk/subchunk materialization and passed local `py_compile`
+    - the previous `_canonical_string` `NameError` did not recur before the next blocker appeared
+    - revalidation is now blocked by LV-218
+
+- Follow-up risks:
+  - The repair should provide only a small normalization helper and should not relax the locked baseline-first contract or fabricate recipe/metric outputs.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-218
+
+- Status: in_progress
+- Validation target: generated PEFT runner should call candidate executor helpers with semantically correct runtime/index arguments so planned condition coverage can produce successful tuned rows and the configured objective metric
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-217 `_canonical_string` helper repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex dynamically decompose and materialize all 6 chunks, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: `_call_candidate_executor(...)` should map generated executor parameters such as `runtime`, `candidate_index`, and `total_candidates` to the runtime context and integer order values before invoking `execute_candidate_recipe(...)`.
+- Actual behavior: the runner exited with code 0 and wrote `metrics.json`, but all four planned candidates failed with `TypeError: unsupported format string passed to PosixPath.__format__`. The traceback showed `execute_candidate_recipe(...)` formatting `candidate_index` in `f"{candidate_index:02d}_{recipe_id}"`, but the caller had passed `candidate_dir` into the `candidate_index` position. As a result, no tuned condition succeeded and `accuracy_delta_vs_baseline` was absent from metrics.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; native Codex streamed through dynamic chunk/subchunk generation, local verification passed, and second-stage execution reached candidate execution.
+  - Existing session: prior same-flow attempts failed earlier in helper/schema projection; this attempt advanced into planned candidate execution and exposed a semantic argument mapping bug.
+  - Divergence: no UI/session divergence observed; this is a generated-runner callable projection mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted a generic `_call_candidate_executor(...)` bridge that maps known parameter names but does not recognize `runtime`, `candidate_index`, or `total_candidates`. For required positional parameters it falls back to an older conventional order `[config, recipe_id, recipe, candidate_dir, order_index, runtime_context]`, which misaligns the active executor signature `execute_candidate_recipe(recipe, config, runtime, candidate_index, total_candidates)`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a handoff repair that augments generated `_call_candidate_executor(...)` bridges with aliases for `runtime`, `runtime_info`, `candidate_index`, `index`, `idx`, `total_candidates`, `num_candidates`, and `n_candidates`
+      - wired the repair into the late handoff repair batch so generated runners are locally reverified before second-stage execution
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs candidate executor argument bridges for runtime and candidate index parameters`
+  - Automated regression result:
+    - targeted candidate executor argument bridge regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - same-flow Web API rerun regenerated a repair-oriented 5-chunk runner, passed local `py_compile`, and entered second-stage execution
+    - the previous `candidate_index`/`PosixPath.__format__` failure did not recur before the next blocker appeared
+    - revalidation is now blocked by LV-219
+
+- Follow-up risks:
+  - The repair should preserve candidate execution and planned coverage checks; it must not convert failed candidate rows into successful rows or fabricate objective metrics.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-219
+
+- Status: in_progress
+- Validation target: generated PEFT runner entrypoint should resolve the concrete study workflow and call the final metrics schema helper with both `args` and `study_result`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-218 candidate executor argument bridge repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex regenerate the repair-oriented PEFT runner, pass local `py_compile`, apply handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: `_entrypoint_run_study(...)` should invoke the concrete generated workflow function, and failure/success metrics writing should call `build_final_metrics_schema(args, study_result)` or its alias without dropping `study_result`.
+- Actual behavior: second-stage execution failed before a valid metrics artifact could be written. The generated runner defined `run_baseline_and_tuned_recipe_sequence(args)` and `build_final_metrics_schema(args, study_result)`, but `_entrypoint_run_study(...)` searched only other workflow names, then `_entrypoint_assemble_metrics(...)` called the schema alias through a generic signature bridge that retried with only `args`, raising `build_final_metrics_schema() missing 1 required positional argument: 'study_result'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; native Codex streamed through repair-oriented materialization, local verification passed, and second-stage execution reached entrypoint workflow resolution.
+  - Existing session: prior same-flow attempts failed earlier in candidate argument dispatch; this attempt advanced beyond that point and exposed entrypoint resolver/schema-call drift.
+  - Divergence: no UI/session divergence observed; this is a generated-runner callable projection mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created a concrete workflow under a domain-specific name (`run_baseline_and_tuned_recipe_sequence`) but the final entrypoint resolver used a narrower fixed candidate list. The metrics schema alias existed, but the generic call bridge recovered from duplicate `args` by retrying with only `args`, which dropped the required `study_result` argument.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a late handoff repair that widens generated `_entrypoint_run_study(...)` workflow candidates to include `run_baseline_and_tuned_recipe_sequence`
+      - added duplicate positional/keyword pruning inside `_entrypoint_call_with_supported_signature(...)` so helpers such as `build_final_metrics_schema(args, study_result)` do not receive duplicate `args` and then retry without `study_result`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs entrypoint workflow resolver and metrics schema signature bridges`
+  - Automated regression result:
+    - targeted entrypoint workflow/signature bridge regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - same-flow Web API rerun regenerated the runner, passed local `py_compile`, applied the LV-219 entrypoint resolver/signature bridge repair, and entered second-stage `run_experiments`
+    - the previous `No PEFT study workflow function was found` / missing `study_result` failure did not recur before the next blocker appeared
+    - revalidation is now blocked by LV-220
+
+- Follow-up risks:
+  - The repair should only widen resolver/call compatibility; it must not synthesize study results or bypass metrics contract validation.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-220
+
+- Status: in_progress
+- Validation target: generated PEFT runner final metrics assembly should pass only supported keyword arguments to the generated schema helper and should not jump to undefined helper calls
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-219 entrypoint workflow/signature bridge repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Let native Codex regenerate the PEFT runner, pass local `py_compile`, apply late handoff repairs, and enter second-stage `run_experiments`.
+
+- Expected behavior: `assemble_final_metrics_payload(...)` should call `build_final_metrics_schema(...)` through a signature-aware bridge or otherwise align generated kwargs with the schema helper's supported signature, preserving the completed `study_result` evidence without fabricating metrics.
+- Actual behavior: second-stage execution failed during final metrics assembly with `TypeError: build_final_metrics_schema() got an unexpected keyword argument 'objective_metrics'`. The generated caller passed `objective_metrics=` and `benchmark_results=`, but the generated schema helper accepted `study_result`, `args`, `run_metadata`, `comparison_contract`, `adapter_metadata`, `timing`, `device_metadata`, `started_at`, and `finished_at`. The schema helper also contained an earlier return through undefined `_assemble_final_metrics_payload(...)`, which would become the next failure once unsupported kwargs are filtered.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; native Codex streamed through materialization, local verification passed, and second-stage execution reached final metrics assembly.
+  - Existing session: prior same-flow attempts failed earlier in entrypoint workflow resolution/schema argument retention; this attempt advanced beyond that point and exposed final metrics schema/caller drift.
+  - Divergence: no UI/session divergence observed; this is a generated-runner callable/schema projection mismatch hidden by compile-only verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation mixed two final-metrics assembly templates. The outer caller retained richer metadata kwargs (`objective_metrics`, `benchmark_results`), while the active schema helper's signature omitted those names and its top return targeted an undefined helper instead of the inline schema body that was still present below it.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added a late handoff repair that extends generated `build_final_metrics_schema(...)` helpers with a `**_autolabos_extra_metadata` compatibility surface when the caller passes richer final-metrics kwargs
+      - merges supported extra metadata such as `objective_metrics`, `benchmark_results`, `run_metadata`, `adapter_metadata`, `timing`, and `device_metadata` back into the completed `study_result` before inline schema assembly
+      - removes the generated early return through missing `_assemble_final_metrics_payload(...)` so the runner continues into its own inline final-metrics body
+      - wired the repair into the late handoff repair batch before second-stage `run_experiments`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs final metrics schema kwargs and missing inline assembly helper drift`
+  - Automated regression result:
+    - targeted final metrics schema kwargs regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+  - Re-validation result:
+    - same-flow Web API rerun on 2026-04-29 regenerated a narrowly targeted metrics-schema patch through the native Codex OAuth backend, passed local `py_compile`, and entered second-stage `run_experiments`
+    - the previous `build_final_metrics_schema() got an unexpected keyword argument 'objective_metrics'` failure did not recur
+    - the runner executed real GPU-backed work on the available RTX 4090 setup, completed baseline, LoRA, and IA3 recipe rows, and wrote `metrics.json`
+    - revalidation is now blocked by LV-221 because the metrics contract still reports incomplete planned condition coverage
+
+- Follow-up risks:
+  - The repair should be a signature/compatibility bridge only; it must not invent objective metrics or mark failed candidate rows as successful.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-221
+
+- Status: in_progress
+- Validation target: `run_experiments` metrics contract should accurately count executed nested study recipe rows and `implement_experiments` should produce all planned PEFT conditions required by the governed design
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation and second-stage execution on local GPU
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-220 final metrics schema compatibility repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` through `/api/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/actions/run-node` with `{"node":"implement_experiments"}`.
+  4. Let native Codex patch the runner, pass local `py_compile`, and hand off to `run_experiments`.
+
+- Expected behavior: second-stage metrics validation should either pass after all governed conditions execute or fail with an accurate count of successful tuned conditions. The primary design requires C0 unmodified base, C1 vanilla LoRA, C2 rsLoRA, and C3 DoRA with the tuned comparison rows reported in an inspectable metrics structure.
+- Actual behavior: the runner exited with code 0 and wrote metrics after completing real baseline plus tuned rows. Earlier metrics placed completed rows under `study.recipes`; the latest same-flow rerun after LV-241 wrote a top-level `conditions` object map with `base`, `lora_r16`, and `lora_r8`. `run_experiments` still failed the metrics contract with `Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json` and `Planned condition coverage incomplete: observed 0 successful tuned condition(s) but the brief/design requires 4.` The observed `0` is misleading for the latest artifact because two tuned LoRA rows are present under `metrics.conditions`; however, the generated runner still under-executed the governed design because it produced only two tuned rows instead of the required four-condition comparison and did not synthesize the primary delta metric.
+
+- Fresh vs existing session comparison:
+  - Fresh session: rebuilt runtime and restarted the localhost-only Web API before rerunning; native Codex streamed intermediate output, local verification passed, and second-stage execution ran real GPU work.
+  - Existing session: prior same-flow attempts failed before final metrics assembly; this attempt advanced into completed real recipe execution and exposed planned-condition coverage/accounting drift.
+  - Divergence: no UI/session divergence observed; this is a metrics projection and design-coverage mismatch surfaced only after real execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+- Hypothesis: the generated runner emits completed recipe evidence in schemas the planned-condition counter did not fully recognize (`study.recipes` previously, top-level `conditions` object maps in the latest rerun), so successful tuned rows can be counted as zero. The staged implementation prompt/feedback also does not yet force the generated recipe catalog to preserve all conditions from the experiment portfolio, allowing partial LoRA-only comparisons instead of the required vanilla LoRA, rsLoRA, and DoRA rows, and the generated metrics builder does not synthesize the required baseline-relative primary metric.
+
+- Code/test changes:
+  - Code:
+    - `src/core/analysis/plannedConditionCoverage.ts`
+      - extended planned-condition counting to inspect nested `metrics.study.recipes`, `study.conditions`, `study.condition_results`, `study.candidate_results`, `study.results`, and nested object maps in addition to the existing top-level metrics fields
+      - extended tuned-only baseline exclusion to read nested adapter metadata such as `adapter.peft_type`, `adapter.trainable_parameters`, and `training.skipped`
+      - added counting for top-level `metrics.conditions` object maps and excluded `locked_untuned_baseline` rows when `tunedOnly` is required, so latest artifacts report two successful tuned LoRA rows instead of zero.
+    - `src/core/objectiveMetric.ts`
+      - synthesizes baseline-relative objective keys such as `accuracy_delta_vs_baseline` and `accuracy_improvement_over_baseline` from condition object maps that report nested `evaluation.primary_mean_accuracy`, while refusing to treat a negative delta as satisfying an improvement objective.
+    - `src/core/agents/implementSessionManager.ts`
+      - adds a planned-condition contract to the staged native-Codex implementation prompt so generated PEFT runners preserve the governed comparison rows `unmodified_base`, `vanilla_lora`, `rslora`, and `dora` instead of silently narrowing to a two-LoRA subset.
+  - Tests:
+    - `tests/plannedConditionCoverage.test.ts`
+    - `tests/runExperimentsExecutionProfile.test.ts`
+    - `tests/briefEvidenceValidator.test.ts`
+    - `tests/objectiveMetric.test.ts`
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/plannedConditionCoverage.test.ts`
+    - `counts successful tuned rows from nested study recipes while excluding no-tune baselines`
+    - `counts successful tuned rows from top-level conditions object maps`
+  - Automated regression result:
+    - targeted planned-condition coverage regression passed on 2026-04-29 with `npm test -- --run tests/plannedConditionCoverage.test.ts tests/runExperimentsExecutionProfile.test.ts -t "planned condition coverage|fails verification when planned brief conditions are under-executed"`
+    - `tests/runExperimentsExecutionProfile.test.ts`, `tests/briefEvidenceValidator.test.ts`, and `tests/plannedConditionCoverage.test.ts` passed
+    - `npm run build` passed on 2026-04-29
+    - targeted objective/condition/prompt regressions passed on 2026-04-30 with `npm test -- --run tests/implementSessionManager.test.ts tests/objectiveMetric.test.ts tests/plannedConditionCoverage.test.ts tests/runExperimentsExecutionProfile.test.ts -t "optional model_output_dir|parse_cli_args|missing parse_args helper|instruction dataset helper aliases|compact staged_llm prompt|condition object maps|planned condition coverage|fails verification when planned brief conditions are under-executed|_safe_mkdir"`
+    - `npm run build` passed on 2026-04-30
+  - Re-validation result: blocked by a downstream scheduler boundary on 2026-04-30. Same-flow Web API rerun after the LV-242 optional path repair regenerated the runner with native Codex OAuth, recovered from an unsupported `--timeout-seconds` argparse surface, passed `py_compile`, and executed real model/dataset work. The baseline condition completed, but tuned rows `vanilla_lora`, `rslora`, and `dora` all failed at LV-243 with `get_linear_schedule_with_warmup() got multiple values for argument 'optimizer'`, leaving `accuracy_delta_vs_baseline` absent and planned condition coverage incomplete. LV-221 still needs another same-flow rerun after LV-243 is loaded into the Web API.
+
+- Follow-up risks:
+  - Counting nested rows will improve diagnostic honesty but will not by itself satisfy the governed experiment design; a subsequent live rerun must still confirm that the node executes all required planned conditions rather than merely reshaping metrics.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/experiment_portfolio.json`
+
+## Issue: LV-105
+
+- Status: in_progress
+- Validation target: generated PEFT runner should expose directory helper aliases consistently during second-stage `run_experiments` verification
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-104 causal-LM label padding repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Allow staged materialization, local py_compile, handoff repairs, and second-stage `run_experiments` verification to execute the generated PEFT runner.
+
+- Expected behavior: directory creation calls should resolve through a generated or repaired helper so the workflow can create output and adapter directories before model/training execution.
+- Actual behavior: the runner defined `ensure_parent_dir(...)` and `ensure_dir(...)`, but later workflow code called `ensure_directory(output_dir)` and `ensure_directory(adapter_dir)`, causing `NameError: name 'ensure_directory' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuilding and reproduced the missing alias during second-stage verification.
+  - Existing session: earlier attempts failed at label collation; after LV-104, execution advanced to directory setup in `run_baseline_first_peft_workflow`.
+  - Divergence: no session divergence observed; this is a generated-runner helper alias mismatch hidden by compile-only checks.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted one directory helper name (`ensure_dir`) but a later chunk referenced the semantically equivalent alias (`ensure_directory`). Existing handoff repair only creates `ensure_dir` when that exact name is missing, so it did not bridge `ensure_directory -> ensure_dir`.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The alias repair should only bridge helper naming and should not create or substitute node-owned experiment artifacts.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-101
+
+- Status: in_progress
+- Validation target: generated PEFT runner CLI defaults should include every field referenced by the generated argument parser before second-stage execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-100 candidate orchestration alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow second-stage `run_experiments` verification to execute the generated script.
+  4. Observe CLI argument parser construction before experiment execution begins.
+
+- Expected behavior: generated defaults objects should include all fields read by `build_arg_parser(...)`, or the handoff repair layer should add safe default attributes before execution.
+- Actual behavior: `build_arg_parser(...)` read `defaults.trust_remote_code`, but the generated `ExperimentDefaults` object did not define `trust_remote_code`, causing `AttributeError: 'ExperimentDefaults' object has no attribute 'trust_remote_code'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API and reproduced the defaults/parser mismatch during second-stage verification.
+  - Existing session: earlier attempts failed at final candidate orchestration; after LV-100, execution advanced to CLI parser default construction.
+  - Divergence: no session divergence observed; the failure is a generated-runner defaults projection mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation added a CLI flag for `trust_remote_code` in a later chunk without reconciling the earlier `ExperimentDefaults` dataclass/instance fields.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must not mask arbitrary missing fields; it should target known Hugging Face runtime flags and use explicit safe defaults.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-102
+
+- Status: in_progress
+- Validation target: generated PEFT runner should pass the resolved model, tokenizer, and benchmark datasets into the generated baseline zero-shot evaluator during second-stage execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-101 `ExperimentDefaults.trust_remote_code` repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow second-stage `run_experiments` verification to execute the generated script.
+  4. Observe the baseline-first PEFT study orchestration after CLI parsing succeeds.
+
+- Expected behavior: the generated orchestrator should call `evaluate_baseline_zero_shot(...)` with the resolved base model, tokenizer, and benchmark datasets, or use a compatible baseline evaluator wrapper.
+- Actual behavior: `run_peft_instruction_study(...)` called `evaluate_baseline_zero_shot` via `_call_with_supported_kwargs(...)` with only `dataset_bundle` plus `common_kwargs`, and `_call_with_supported_kwargs` raised `RuntimeError: Cannot call evaluate_baseline_zero_shot; missing required supported arguments: model, tokenizer, benchmark_datasets`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API and reproduced the baseline evaluator argument mismatch during second-stage verification.
+  - Existing session: earlier attempts failed at parser default construction; after LV-101, execution advanced into baseline evaluation.
+  - Divergence: no session divergence observed; the failure is a generated orchestration argument-surface mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation split model/tokenizer/dataset preparation and baseline evaluation across chunks, then assembled `common_kwargs` without the concrete names required by the generated baseline evaluator.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must route existing node-owned runtime objects into the evaluator and must not fabricate baseline metrics externally.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-095
+
+- Status: in_progress
+- Validation target: generated PEFT runner should allow an untuned no-training baseline recipe to use inert training hyperparameters without failing at module import time
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-094 recipe-loop alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow the second-stage `run_experiments` verifier to execute the generated script.
+  4. Observe the generated runner during module import before the experiment entrypoint begins.
+
+- Expected behavior: an unmodified baseline recipe with `method=none` and `requires_training=False` may set inert training fields such as `learning_rate=0.0`, `train_epochs=0.0`, and `max_train_steps=0` without failing validation, while tuned recipes still require positive training hyperparameters.
+- Actual behavior: `RecipeSpec.__post_init__` validated `learning_rate`, `train_epochs`, and `max_train_steps` unconditionally, so `LOCKED_BASELINE_RECIPE = RecipeSpec(... method=none, requires_training=False, learning_rate=0.0, train_epochs=0.0, max_train_steps=0 ...)` failed at import with `ValueError: Recipe 'baseline_unmodified_base' learning_rate must be positive`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API on `127.0.0.1:4318`, regenerated the implementation, and reproduced the import-time RecipeSpec validation failure during second-stage `run_experiments`.
+  - Existing session: previous generated runners failed later at dispatcher/metrics boundaries; this regenerated runner moved the failure earlier to module-level recipe construction.
+  - Divergence: no session divergence observed; the failure is a generated-code validation mismatch for a no-training baseline.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated schema correctly distinguished untuned baseline recipes from tuned recipes, but its hyperparameter validation did not condition positive training fields on `requires_training`, so inert no-training fields became fatal.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair should not weaken tuned-condition validation; positive learning rate/epoch/step checks must remain enforced for recipes that actually train.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-100
+
+- Status: in_progress
+- Validation target: regenerated PEFT runner should expose its candidate orchestration implementation under one of the names required by the final candidate execution bridge
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-099 tokenizer helper alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow second-stage `run_experiments` verification to execute the generated script.
+  4. Observe final candidate orchestration after tokenizer/model/dataset helper generation succeeds.
+
+- Expected behavior: if the generated runner implements the baseline-first PEFT candidate execution under a descriptive function name, the handoff repair layer should expose a compatible alias such as `execute_peft_instruction_study` or `run_peft_instruction_study` before second-stage verification.
+- Actual behavior: `_invoke_candidate_orchestration(...)` searched `execute_peft_instruction_study`, `run_peft_instruction_study`, `execute_experiment`, `run_experiment`, `execute_study`, `run_study`, `orchestrate_experiment`, `orchestrate_candidate_execution`, `execute_candidates`, `run_candidates`, and `run_all_candidates`, then failed with `RuntimeError: None of the required helper functions are defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API and reproduced the final candidate-orchestration mismatch during second-stage verification.
+  - Existing session: earlier attempts failed at tokenizer helper loading; after LV-099, execution advanced to final orchestration resolution.
+  - Divergence: no session divergence observed; the failure is a generated-runner callable inventory mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic staged materialization generated the candidate execution logic under a task-specific name, but the final bridge's required helper list was not reconciled with that generated function inventory before handoff.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must pass through the generated function's supported arguments without manually fabricating node-owned experiment outputs.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-098
+
+- Status: in_progress
+- Validation target: generated PEFT runner should resolve its instruction-tuning dataset loader helper during second-stage execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-097 baseline recipe-ID repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow second-stage `run_experiments` verification.
+  4. Observe `_load_main_datasets(config)` before candidate execution begins.
+
+- Expected behavior: if earlier chunks generate instruction dataset helpers under names such as `load_instruction_train_dataset` or `build_instruction_training_dataset`, the final dataset-loading resolver should call one of those helpers.
+- Actual behavior: `_load_main_datasets` searched `load_instruction_dataset_subset`, `load_instruction_subset`, `load_training_dataset`, `prepare_instruction_dataset`, and `build_instruction_dataset`, but the generated helpers were named `load_instruction_train_dataset`, `build_instruction_training_dataset`, `load_instruction_training_records`, and `prepare_shared_training_dataset`; execution failed with `NameError: Required experiment helper not found`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API and reproduced the missing instruction dataset helper during second-stage verification.
+  - Existing session: prior attempts failed before reaching dataset loading; after LV-097, execution advanced into `_load_main_datasets`.
+  - Divergence: no session divergence observed; the failure is a generated helper-name reconciliation issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic materialization generated a valid bounded public instruction dataset loader, but the final orchestration chunk searched a different helper-name family and did not reconcile the callable inventory before handoff.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must unwrap `(dataset, metadata)` return values for loader helpers without hiding failures from missing benchmark/evaluation dataset helpers.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-096
+
+- Status: in_progress
+- Validation target: `implement_experiments` bootstrap planning should not hard-block code generation for network/cache uncertainty when the run is allowed to use public Hugging Face model and dataset downloads
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-095 RecipeSpec no-training baseline repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Observe the staged bootstrap contract before code generation.
+
+- Expected behavior:
+  - Remote Hugging Face model/tokenizer/dataset requirements should be recorded as requirements and warnings.
+  - Code generation should continue unless there is a concrete non-network blocker such as a missing local-only path, unavailable binary, permission failure, or missing required local Python package.
+
+- Actual behavior:
+  - The run stopped before producing a runnable implementation.
+  - The blocking reason was only `No known non-network blocker at bootstrap. If network access is unavailable, the Hugging Face model, tokenizer, ARC-Challenge, HellaSwag, and instruction-tuning dataset must already be present in the local cache; otherwise execution will fail despite valid code.`
+  - This is uncertainty about network/cache availability, not an actionable non-network blocker.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API and reproduced the bootstrap hard-block.
+  - Existing session: earlier same run attempts reached generated-runner execution and surfaced runtime handoff failures, so this is an earlier regression boundary.
+  - Divergence: no session divergence observed; the bootstrap evaluator treated vague conditional risk as a hard block.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: bootstrap blocking normalization already downgraded `None known except ... If ...` uncertainty, but did not recognize the semantically equivalent phrase `No known non-network blocker ... If network access is unavailable ...`; the word `unavailable` triggered the concrete-block heuristic even though it appeared inside a conditional network warning.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - Concrete missing local binaries, permission failures, or local-only path checks must remain hard blockers.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_raw_response.txt`
+
+## Issue: LV-097
+
+- Status: in_progress
+- Validation target: generated PEFT runner should keep the baseline-first recipe ID used by CLI defaults, validation, and the recipe registry consistent
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-096 bootstrap blocker normalization.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow the second-stage `run_experiments` verifier to execute the generated script.
+  4. Observe CLI config parsing before model loading begins.
+
+- Expected behavior: if the generated runner declares `BASELINE_CANDIDATE_ID = "base_zero_shot"` and its registry contains `base_zero_shot`, default recipe selection and baseline-first validation should use that same ID.
+- Actual behavior: the generated registry contained `base_zero_shot`, but `_default_recipe_ids_for_cli`, `_normalize_recipe_ids`, `_validate_baseline_first`, and baseline summary checks still hard-coded `base_model`, causing `ValueError: Unknown recipe ID(s): ['base_model']`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API and reproduced the recipe-ID mismatch during second-stage verification.
+  - Existing session: the previous attempt failed earlier at bootstrap planning; after LV-096, execution advanced to generated runner config parsing.
+  - Divergence: no session divergence observed; the failure is an internal generated-runner ID mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation renamed the concrete untuned baseline recipe to `base_zero_shot`, but later CLI/config chunks retained a generic `base_model` recipe placeholder and were not reconciled with the generated registry before handoff.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must only alias baseline recipe identifiers and must not hide unknown tuned recipe IDs.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `npm test -- --run tests/implementSessionManager.test.ts -t "repairs chunk 5a orchestration aliases"`
+
+## Issue: LV-092
+
+- Status: in_progress
+- Validation target: `implement_experiments` second-stage verification should reject or repair a generated metrics builder that turns an executed study payload into placeholder `unknown` candidate rows
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the chunk-5a dispatcher repair.
+  2. Let the Web API continue into second-stage `run_experiments` verification.
+  3. Inspect the new private `metrics.json` and `run_experiments_verify_report.json`.
+
+- Expected behavior: completed metrics should expose concrete candidate identifiers, baseline/tuned labels, PEFT recipe names, and non-placeholder candidate rows that can be checked against the four-condition brief/design contract.
+- Actual behavior: the runner exited with status `completed`, but private `metrics.json` contained ten `candidate_results`/`ranked_recipes` rows with `candidate_id: unknown`, `peft_recipe: none`, `is_baseline: true`, empty raw results, and zero metrics; `run_experiments` correctly failed the metrics contract with `observed 0 successful tuned condition(s)`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API on `127.0.0.1:4318`, reran `implement_experiments`, and reproduced the placeholder-row metrics failure during second-stage `run_experiments`.
+  - Existing session: the same run previously failed with chunk-5a dispatcher mismatch; after LV-091, the failure boundary moved to metrics payload assembly.
+  - Divergence: no session divergence observed; the real runner executed and wrote metrics, but the generated aggregation logic projected placeholder rows.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated `run_study_and_build_metrics` passed the full mapping returned by `run_baseline_first_experiment` into `build_metrics_payload(config, execution_results)`, and `build_metrics_payload` iterated the mapping keys as if they were candidate result rows instead of unwrapping `candidate_results`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts` covers metrics payload builder repair for mapping payloads containing `candidate_results`.
+  - Re-validation result: pending; the system repair has targeted test coverage but the same Web API flow still needs to be rerun with the rebuilt dist.
+
+- Follow-up risks:
+  - Even after mapping unwrap repair, the generated runner still must execute the planned tuned conditions with real candidate identifiers and non-placeholder metrics before analysis can proceed.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `npm test -- --run tests/implementSessionManager.test.ts -t "metrics payload builders|chunk 5a"`
+
+## Issue: LV-093
+
+- Status: in_progress
+- Validation target: regenerated PEFT runner should dispatch to the generated baseline-first condition execution function during second-stage `run_experiments`
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-092 mapping/evaluation repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow the second-stage `run_experiments` verifier to execute the generated script.
+  4. Inspect `run_experiments_verify_report.json` and the generated runner dispatcher.
+
+- Expected behavior: the generated entrypoint should call the actual condition orchestration function, or `implement_experiments` should add a safe alias before handoff.
+- Actual behavior: the generated runner defined `run_baseline_first_condition_execution(args)` but `_dispatch_experiment` searched only `run_locked_experiment`, `run_experiment`, `execute_experiment`, `run_condition_study`, `run_all_conditions`, `execute_all_conditions`, `run_conditions`, and `execute_conditions`, then failed with `RuntimeError: No experiment orchestration function is available`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API on `127.0.0.1:4318`, regenerated the implementation, and reproduced the dispatcher mismatch during second-stage `run_experiments`.
+  - Existing session: earlier generated runners failed at chunk-5a dispatch or placeholder metrics aggregation; this regenerated runner moved the failure to a different orchestration alias family.
+  - Divergence: no session divergence observed; the failure is a generated code handoff mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic staged materialization produced a valid baseline-first execution function with a specific name, but the final entrypoint's dispatcher list was not reconciled with the generated function inventory before handoff.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts` covers condition-study dispatcher alias repair for `run_baseline_first_condition_execution`.
+  - Re-validation result: pending; the system repair has targeted test coverage but the same Web API flow still needs to be rerun with the rebuilt dist.
+
+- Follow-up risks:
+  - The implement repair layer now covers three orchestration alias families, but repeated regenerated-runner failures suggest a broader future improvement: a final generated-function inventory check before accepting any Python runner handoff.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `npm test -- --run tests/implementSessionManager.test.ts -t "condition-study orchestration aliases"`
+
+## Issue: LV-099
+
+- Status: in_progress
+- Validation target: regenerated PEFT runner should expose its generated tokenizer loader under one of the names searched by the workflow tokenizer-loading bridge
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-098 instruction dataset helper alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow the second-stage `run_experiments` verifier to execute the generated script.
+  4. Observe tokenizer setup before dataset loading and model execution.
+
+- Expected behavior: if the generated runner defines a concrete tokenizer-loading helper such as `load_and_configure_tokenizer`, the handoff repair layer should expose it through a workflow-compatible alias before second-stage verification.
+- Actual behavior: the generated runner defined `load_and_configure_tokenizer(...)`, but `_workflow_load_tokenizer(...)` searched only `load_tokenizer`, `prepare_tokenizer`, and `get_tokenizer`, then failed with `RuntimeError: No tokenizer loading helper was found.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API and reproduced the tokenizer helper mismatch during second-stage verification.
+  - Existing session: earlier attempts failed at bootstrap, recipe ID, and dataset helper boundaries; after LV-098, execution advanced to tokenizer loading.
+  - Divergence: no session divergence observed; the failure is an internal generated-runner helper-name mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic staged materialization generated a valid tokenizer-loading helper with a descriptive name, but the final workflow bridge did not reconcile the generated helper inventory with the narrower alias family it invokes.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must preserve generated tokenizer configuration arguments such as `model_name`, `cache_dir`, and trust-remote-code flags without hiding genuine missing tokenizer dependency failures.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-094
+
+- Status: in_progress
+- Validation target: regenerated PEFT runner should expose the generated recipe execution loop under one of the names searched by the final recipe-runner dispatcher
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-093 condition-dispatcher alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow the second-stage `run_experiments` verifier to execute the generated script.
+  4. Inspect the generated runner around `_invoke_recipe_runner`.
+
+- Expected behavior: the generated runner should either define one of `run_recipe_evaluation_loop`, `run_recipe_study`, `run_all_recipes`, `evaluate_recipe_conditions`, `run_peft_recipe_comparison`, or `run_recipes`, or `implement_experiments` should add a safe alias before handoff.
+- Actual behavior: the generated runner defined `run_recipe_execution_and_evaluation_loop(args, device_info=None)` and compatibility aliases `run_peft_recipe_study` / `run_baseline_first_recipe_comparison`, but `_invoke_recipe_runner` searched a different recipe-loop alias family and failed with `RuntimeError: No recipe evaluation loop was found.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API on `127.0.0.1:4318`, regenerated the implementation, and reproduced the recipe-loop dispatcher mismatch during second-stage `run_experiments`.
+  - Existing session: earlier regenerated runners failed at chunk-5a, condition-dispatcher, or metrics-projection boundaries; this regenerated runner moved the failure to a final recipe-loop alias mismatch.
+  - Divergence: no session divergence observed; the failure is a generated code handoff mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation materialized the correct recipe execution function, but the final recipe dispatcher was not reconciled with the generated function inventory before handoff.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repeated alias-family failures indicate the final generated-runner handoff should eventually perform a broader callable-inventory reconciliation instead of relying only on individually observed dispatcher families.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+## Issue: LV-196
+
+- Status: resolved
+- Validation target: generated PEFT runner should expose parent-directory helper aliases consistently during second-stage `run_experiments` verification
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-04-29 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-105 directory helper alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Allow staged materialization, local `py_compile`, handoff repairs, and second-stage `run_experiments` verification to execute the generated PEFT runner.
+
+- Expected behavior: parent-directory creation calls such as `ensure_parent_dir(metrics_path)` should resolve through a generated or repaired helper before metric-file setup begins.
+- Actual behavior: the regenerated runner reached second-stage execution and no longer failed on `ensure_directory`, but `main()` called `ensure_parent_dir(metrics_path)` while the script exposed the semantically equivalent `ensure_parent_directory` helper, causing `NameError: name 'ensure_parent_dir' is not defined. Did you mean: 'ensure_parent_directory'?`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuilding and reproduced the missing parent-dir alias during second-stage verification.
+  - Existing session: the previous same-flow attempt failed earlier on `ensure_directory`; after LV-105, execution advanced to metric-path parent directory setup.
+  - Divergence: no session divergence observed; this is a generated-runner helper alias mismatch hidden by compile-only checks.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted one parent-directory helper name (`ensure_parent_directory`) but a later entrypoint chunk referenced the shorter alias (`ensure_parent_dir`). Existing handoff repair bridges `ensure_dir` / `ensure_directory` only, so it did not reconcile parent-directory helper aliases before handoff.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended directory-helper alias repair to bridge `ensure_parent_dir(...)` and `ensure_parent_directory(...)` in both directions before handoff
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+    - `repairs a python runner that calls ensure_parent_dir when ensure_parent_directory is defined`
+  - Re-validation result: pass for the LV-196 symptom boundary
+    - targeted parent-dir alias regression passed
+    - full `tests/implementSessionManager.test.ts` passed
+    - `npm run build` passed
+    - same-flow live rerun no longer failed on `ensure_parent_dir` / `ensure_parent_directory` mismatch and advanced to later staged/bootstrap/runtime blockers tracked by LV-197 and LV-198
+
+- Follow-up risks:
+  - The alias repair should only bridge helper naming and should not create or substitute node-owned metrics or experiment artifacts.
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-272
+
+- Status: in_progress
+- Validation target: regenerated PEFT runner should materialize baseline-first study-loop inputs before second-stage `run_experiments` execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-271 workflow-input materialization repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-271 workflow-input materialization repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Allow staged Codex OAuth generation, local `py_compile`, handoff repairs, and second-stage `run_experiments` verification to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines `run_baseline_first_study(args, runtime, train_examples, eval_bundle)` or equivalent, the final invoker should load the instruction/evaluation subsets with generated loader helpers and pass those concrete inputs into the study loop.
+- Actual behavior: the generated runner defined `run_baseline_first_study(args, runtime, train_examples, eval_bundle)`, but `_invoke_baseline_first_study(args, config, device_info)` attempted only `args/config/device_info` signatures and then failed with `RuntimeError: Could not call baseline-first study loop with supported signatures: run_baseline_first_study() missing 4 required positional arguments: 'args', 'runtime', 'train_examples', and 'eval_bundle'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuilding and reran the same `implement_experiments` flow from the existing validation run.
+  - Existing session: the previous same-flow attempt failed earlier because generated top-level workflow execution lacked materialized dataset inputs. After LV-271, execution advanced to a generated baseline-first study-loop invoker mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner handoff mismatch surfaced by the same live Web API flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation materialized concrete instruction and evaluation loaders plus a valid baseline-first study loop, but the final invoker projected only high-level `config`/`device_info` arguments and did not reconcile the loop's required `runtime`, `train_examples`, and `eval_bundle` parameters before handoff.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must call generated data loaders instead of fabricating train/eval rows; dependency, network, or dataset failures should remain visible as real experiment failures.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-273
+
+- Status: in_progress
+- Validation target: regenerated PEFT runner should materialize entrypoint context arguments before calling the baseline-first condition loop
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-272 study-loop input repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-272 study-loop runtime/dataset-input repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Allow staged Codex OAuth generation, local `py_compile`, handoff repairs, and second-stage `run_experiments` verification to execute the generated PEFT runner.
+
+- Expected behavior: if `_run_orchestration_from_cli` selects `run_baseline_first_condition_loop(args, device, instruction_dataset, benchmark_datasets, ...)`, it should populate the context with the detected device and generated dataset-loader outputs before calling `_call_entrypoint_helper`.
+- Actual behavior: `_run_orchestration_from_cli` built a context containing CLI/config values but not `device` or `benchmark_datasets`, then `_call_entrypoint_helper(loop_helper, context)` invoked `run_baseline_first_condition_loop` without required `device` and `benchmark_datasets`, failing with `TypeError: run_baseline_first_condition_loop() missing 2 required positional arguments: 'device' and 'benchmark_datasets'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuilding and reran the same `implement_experiments` flow from the existing validation run.
+  - Existing session: the previous same-flow attempt failed at a generated `_invoke_baseline_first_study` signature mismatch. After LV-272, regenerated code advanced to a different final entrypoint/context mismatch.
+  - Divergence: no session divergence observed; the failure is a regenerated-runner handoff mismatch visible only when second-stage execution reaches the real entrypoint.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation materialized valid helpers for device detection, instruction loading, benchmark loading, and the baseline-first condition loop, but the final CLI orchestration context projected only scalar CLI fields rather than the concrete objects required by the selected loop helper.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair should load data through generated loader helpers and surface real dependency/dataset failures, not inject synthetic datasets or successful metrics.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-274
+
+- Status: in_progress
+- Validation target: `run_experiments` planned-condition coverage verification should count successful tuned rows emitted in the generated runner's top-level `condition_results` schema
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-273 entrypoint-context materialization repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-273 entrypoint context-input repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments`.
+  4. Allow staged Codex OAuth generation, local `py_compile`, handoff repairs, and second-stage `run_experiments` verification to execute the generated PEFT runner.
+  5. Inspect `metrics.json` and `run_experiments_verify_report.json` after the Python runner exits successfully.
+
+- Expected behavior: the planned-condition coverage verifier should count successful tuned condition rows from top-level `metrics.condition_results[]` when those rows identify their condition with `marker`.
+- Actual behavior: the generated runner executed real training/evaluation and wrote `metrics.json` with completed `condition_results` rows for `locked_lora_baseline`, `dora`, and `rslora`, but the verifier reported `observed 0 successful tuned condition(s)` because it did not read top-level `condition_results` and did not recognize `marker` as a condition identifier.
+
+- Fresh vs existing session comparison:
+  - Fresh session: restarted the localhost-only Web API after rebuilding and reran the same `implement_experiments` flow from the existing validation run.
+  - Existing session: the previous same-flow attempt failed before real condition execution at the entrypoint context boundary tracked by LV-273. After LV-273, the Python runner reached real model training/evaluation and exposed a verifier projection miss over the emitted metrics schema.
+  - Divergence: no session divergence observed; the failure is a verifier-side projection bug over persisted metrics produced by the same live Web API flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: planned-condition coverage aggregation recognizes several condition/result containers and identifier keys, but omits the generated runner's top-level `condition_results[]` container and its `marker` field. This causes a false zero-count even though real completed tuned rows are present.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - After the projection fix, the verifier may correctly report partial condition coverage rather than full pass because one planned condition (`lora_plus_neftune_style_embedding_noise_while_pr`) failed during real CUDA execution with a multi-device tensor mismatch. That should remain visible as an experiment/runtime issue, not be hidden by the coverage repair.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-275
+
+- Status: in_progress
+- Validation target: generated NEFTune-style embedding-noise conditions should remain replica-safe during real multi-GPU PEFT training
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, observed on 2026-05-01 through rebuilt localhost-only Web API on `127.0.0.1:4318` after LV-273 allowed the generated PEFT runner to reach real condition execution
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-273 entrypoint context-input repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` and allow second-stage `run_experiments` to execute the generated PEFT runner on the 2x RTX 4090 workstation.
+  4. Inspect `metrics.json` after the runner completes.
+
+- Expected behavior: all planned tuned conditions should either train/evaluate successfully or fail for a genuine model/data reason that is not introduced by AutoLabOS-generated wrapper code. NEFTune-style embedding noise should work under the trainer's multi-GPU execution mode.
+- Actual behavior: `metrics.json` recorded `lora_plus_neftune_style_embedding_noise_while_pr` as failed with a CUDA multi-device tensor mismatch while other tuned conditions completed. The failure occurred inside the generated embedding-noise path: `Expected all tensors to be on the same device, but got index is on cuda:1, different from other tensors on cuda:0`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; the failure is recorded in persisted real-execution metrics for the same validation run.
+  - Existing session: after LV-273, the generated runner reached real training/evaluation; the NEFTune condition failed while sibling PEFT conditions completed.
+  - Divergence: no session divergence observed; this is a generated runner wrapper incompatibility with multi-GPU execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated runner monkeypatches `embedding.forward` with a closure over the original embedding module on `cuda:0`. When the trainer wraps the model for multi-GPU execution, replica 1 receives `input_ids` on `cuda:1` but the closure still calls the original bound `forward` on the `cuda:0` module. A replica-safe `register_forward_hook` should add noise to each replica's output on its own device instead.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - This repair must not fabricate successful NEFTune metrics. It should only make the generated NEFTune hook device-safe so the actual condition can train/evaluate or surface a real downstream failure.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-276
+
+- Status: in_progress
+- Validation target: regenerated PEFT runner should connect its generated condition-evaluation loop to final metrics assembly before second-stage `run_experiments` execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  2. Allow Codex OAuth staged generation to complete all chunks.
+  3. Allow local handoff verification to run `python3 -m py_compile`.
+  4. Allow second-stage execution to call the generated `run_peft_instruction_study.py` with `--metrics-path`.
+
+- Expected behavior: if the generated runner defines a real condition evaluation loop and a final metrics document builder, the final entrypoint should call them to execute the planned conditions and write AutoLabOS-compatible metrics.
+- Actual behavior: the generated runner passed `py_compile`, but second-stage execution failed before running conditions with `RuntimeError: No metrics assembly function is available. Expected one of: assemble_final_metrics, build_final_metrics, assemble_study_metrics, run_ordered_condition_evaluation_and_assemble_metrics, evaluate_conditions_and_assemble_metrics`. The failure-metrics path also failed because `persist_metrics_json` used `MutableMapping` without importing it.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after restarting the localhost-only Web API earlier in the loop.
+  - Existing session: the same existing run advanced past staged generation and compile verification, then failed at the generated entrypoint-to-metrics handoff.
+  - Divergence: no session divergence observed; this is a generated-runner callable projection mismatch that compile-only verification cannot catch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced `run_ordered_condition_evaluation(...)` and `build_final_metrics_document(...)`, but did not expose any of the callable names searched by `_call_metrics_assembly_with_supported_signature(...)`. The handoff repair layer should bridge those generated functions without fabricating metrics, and should also ensure typing names used by metrics persistence are imported.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The bridge must call the generated dataset loaders and condition evaluation loop; it must not create successful condition rows or substitute deterministic fallback metrics.
+  - After this handoff is repaired, execution may expose the previously observed NEFTune multi-GPU issue or another real model/data/runtime issue.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-277
+
+- Status: in_progress
+- Validation target: regenerated PEFT runner should bridge generated chunk-5 orchestration helper names into the final entrypoint dispatcher before second-stage `run_experiments` execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-276 metrics-assembly bridge repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-276 metrics-assembly bridge and runtime `MutableMapping` import repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete all chunks, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines underscored or domain-specific orchestration helpers such as `_prepare_final_metrics_payload(...)`, `run_ordered_peft_instruction_study(args)`, `run_study(args)`, or `orchestrate_study(args)`, the final entrypoint dispatcher should bridge those helpers into one of the supported final orchestration names without fabricating metrics.
+- Actual behavior: the generated runner passed local `py_compile` and wrote failure metrics, but second-stage execution failed before running conditions with `RuntimeError: No chunk-5b orchestration helper was found. Expected one of: prepare_final_metrics_payload, run_main_orchestration, run_experiment_orchestration, orchestrate_from_args, run_from_parsed_args, run_experiment_from_args, build_final_metrics_payload, or run_ordered_study.` The generated source did contain `_prepare_final_metrics_payload(...)`, `run_ordered_peft_instruction_study(args)`, `run_study(args)`, `orchestrate_study(args)`, and `run_experiment(args)`, but those names were not accepted by the dispatcher.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past Codex staged generation and local compile verification, and LV-276's prior `No metrics assembly function is available` / `MutableMapping` failure did not recur. Execution then exposed a later chunk-5 orchestration name mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection mismatch visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced valid final orchestration/build helpers but used underscored or domain-specific helper names. The final entrypoint dispatcher projected only a narrow set of public names and failed to normalize `_prepare_final_metrics_payload` or `run_ordered_peft_instruction_study` into a supported callable.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must only bridge generated helper names and pass through real generated payloads. It must not fabricate successful condition rows, suppress dependency/model failures, or replace node-owned outputs.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-278
+
+- Status: in_progress
+- Validation target: regenerated PEFT runner should bridge generated condition-comparison helper names into the final condition dispatcher before second-stage `run_experiments` execution
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-277 chunk-5 orchestration bridge repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-277 chunk-5 orchestration bridge.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete all chunks, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines real condition execution helpers such as `run_baseline_first_condition_comparison(args)` or `run_condition_comparison(args)`, the final `_run_conditions_from_config(...)` dispatcher should call those helpers and pass through their generated condition records without fabricating successful rows.
+- Actual behavior: the generated runner passed local `py_compile` and wrote failure metrics, but second-stage execution failed before running conditions with `RuntimeError: No condition runner function was found. Expected one of: run_baseline_first_condition_execution, run_baseline_first_conditions, run_condition_study, run_experiment_conditions, execute_baseline_first_condition_study.` The generated source did contain `run_baseline_first_condition_comparison(args)` and `run_condition_comparison(args)`, but those names were not accepted by `_run_conditions_from_config(...)`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past Codex staged generation, local compile verification, and LV-277's prior chunk-5 orchestration mismatch. Execution then exposed a later condition-runner name mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection mismatch visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced executable baseline-first condition comparison helpers, but the final condition dispatcher projected only a narrow set of runner names. The handoff repair layer should expose those generated helpers under an accepted dispatcher name without creating or altering condition metrics.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must only bridge generated helper names and pass through real generated condition records. It must not fabricate successful condition rows, suppress dependency/model failures, or replace node-owned outputs.
+  - After this dispatch surface is repaired, execution may reach real model/dataset/training work and expose a genuine dependency, data, or CUDA issue.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-279
+
+- Status: in_progress
+- Validation target: regenerated PEFT runners should bridge generated baseline-first condition-loop helpers into `_entrypoint_run_conditions(...)` and keep failure metrics writing compatible with payload-first entrypoint calls
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-278 condition-comparison dispatcher bridge repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-278 condition-comparison bridge.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, handoff repairs to apply, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines a real locked baseline-first loop such as `run_conditions_baseline_first(...)`, `_entrypoint_run_conditions(...)` should call that helper and pass through its real condition records. If condition execution fails before metrics assembly, the failure metrics path should still write an AutoLabOS-readable failure payload.
+- Actual behavior: the generated runner passed local verification and defined `run_conditions_baseline_first(...)`, but `_entrypoint_run_conditions(...)` resolved only `run_baseline_first_conditions`, `execute_baseline_first_conditions`, `run_locked_baseline_first_conditions`, `execute_locked_condition_order`, `run_condition_execution_orchestration`, or `run_experiment_conditions`. Runtime failed with `RuntimeError: None of the expected helper functions is available: run_baseline_first_conditions, execute_baseline_first_conditions, run_locked_baseline_first_conditions, execute_locked_condition_order, run_condition_execution_orchestration, run_experiment_conditions`. The exception path then failed to write metrics because `_entrypoint_write_metrics(payload, metrics_path)` selected `write_metrics_payload(...)`, whose signature requires `aggregated_metrics`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past Codex staged generation, local compile verification, and LV-278's prior `_run_conditions_from_config(...)` mismatch. Execution then exposed an entrypoint condition-loop resolver mismatch plus a metrics-writer adapter signature mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection mismatch visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a valid baseline-first condition loop under `run_conditions_baseline_first(...)`, but the entrypoint dispatcher projected only alternate helper names. The metrics writer adapter also uses a generic payload-first call that omits the `aggregated_metrics` parameter required by generated `write_metrics_payload(...)`.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must only expose generated helper names and adapt writer calls to generated signatures. It must not fabricate successful condition rows, suppress dependency/model failures, or replace node-owned outputs.
+  - After this dispatch surface is repaired, execution may reach real model/dataset/training work and expose a genuine dependency, data, CUDA, or objective-quality issue.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-280
+
+- Status: in_progress
+- Validation target: implement-stage local verification should run generated verification commands even when they redirect stdout/stderr to temporary or workspace files
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-279 entrypoint condition-loop and metrics-writer adapter repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-279 condition-loop and `aggregated_metrics` writer adapter repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete all chunks and enter implement-stage local verification.
+
+- Expected behavior: local verification should treat source scripts and referenced input artifacts as required materialized artifacts, but it should not require shell output redirection targets such as `>/tmp/peft_study_help.txt` to exist before the command runs.
+- Actual behavior: staged generation completed all chunks, but local verification failed before execution with `Local verification could not start because required artifact(s) were not materialized for python3 -m py_compile ... && python3 ... --help >/tmp/peft_study_help.txt: >/tmp/peft_study_help.txt`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run reached the final staged generation chunk and then failed at implement-stage verification preflight before `py_compile` or `--help` could execute.
+  - Divergence: no session divergence observed; this is a verification-command projection bug visible in the real Web API flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the verification artifact scanner tokenizes shell commands and treats any token containing `/` as a required pre-existing path. Attached output redirection tokens such as `>/tmp/peft_study_help.txt` are therefore misclassified as missing input artifacts.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must ignore output redirection targets without weakening checks for actual source scripts or input/reference artifacts.
+  - After this verifier preflight issue is repaired, execution may again reach LV-279's target surface or expose a genuine dependency, data, CUDA, or objective-quality issue.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-281
+
+- Status: in_progress
+- Validation target: regenerated PEFT runners should bridge generated cleanup helper aliases before second-stage execution so cleanup paths do not become the primary experiment failure
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-280 shell-redirection precheck repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-280 redirection-token repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow local verification to pass and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if a generated runner defines cleanup helpers such as `cleanup_model_resources(...)` or `cleanup_torch_memory(...)`, any semantically equivalent call such as `cleanup_model_artifacts()` should be bridged before handoff, and cleanup should remain best-effort rather than becoming the primary failure.
+- Actual behavior: local verification passed and second-stage execution started on CUDA, but the generated runner failed with `NameError: name 'cleanup_model_artifacts' is not defined`. The generated source defines `cleanup_model_resources(...)` and calls `cleanup_torch_memory()`, but no `cleanup_model_artifacts(...)` alias exists.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-280's local verification precheck blocker and reached second-stage `run_experiments`.
+  - Divergence: no session divergence observed; this is another generated-runner helper-name projection mismatch visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation split cleanup utilities and condition execution across chunks. One chunk defined `cleanup_model_resources(...)`, while a later condition loop called `cleanup_model_artifacts()`. The handoff repair layer does not currently bridge cleanup helper aliases because cleanup names are not in the critical-runtime helper set.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must keep cleanup best-effort and must not hide model, dataset, CUDA, or metric-contract failures.
+  - After cleanup aliasing is repaired, the run may reach genuine Hugging Face/model/data execution failures or objective-quality gates.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-282
+
+- Status: in_progress
+- Validation target: regenerated PEFT runners should bridge semantically equivalent model and instruction-dataset loader helper names before second-stage execution so real planned conditions can run instead of all failing at helper discovery
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-281 cleanup-helper alias repair
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-281 cleanup-helper alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow local verification to pass and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if a generated runner defines real helpers such as `load_compact_model_and_tokenizer(...)` and `load_instruction_dataset(...)`, the handoff layer should expose the canonical names searched by the final condition dispatcher, without inventing synthetic data, model outputs, or successful condition rows.
+- Actual behavior: local verification passed and second-stage execution ran all six planned conditions, but every condition failed before real model/training/evaluation work. The unmodified base condition failed with `No model loading helper is defined for unmodified_base. Expected load_model_and_tokenizer, load_base_model_and_tokenizer, or load_causal_lm_and_tokenizer.` Tuned conditions failed with `Instruction dataset unavailable: No instruction dataset loader is defined. Expected load_instruction_dataset_subset, load_instruction_subset, prepare_instruction_dataset, or load_training_dataset.` The same generated source contains `load_compact_model_and_tokenizer(...)` and `load_instruction_dataset(...)`, so this is a helper-name projection mismatch rather than absence of generated implementation work.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-281's cleanup NameError and reached second-stage condition execution, then failed the metrics contract because zero planned tuned conditions succeeded.
+  - Divergence: no session divergence observed; this is another generated-runner helper-name projection mismatch visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation materialized model/data helpers under purpose-specific names, but the final condition dispatcher projects only canonical names. Existing handoff repairs cover several instruction-loader naming variants but incorrectly treat `load_instruction_dataset(...)` as already satisfying the dispatcher even when the dispatcher does not search that name, and there is no equivalent alias bridge from `load_compact_model_and_tokenizer(...)` to `load_model_and_tokenizer(...)`.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must only bridge real generated helper functions. It must not fabricate datasets, model handles, metrics, or successful condition rows.
+  - After loader aliasing is repaired, the run may reach genuine Hugging Face download/dependency/model/CUDA/runtime failures or the objective-quality gate.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-283
+
+- Status: in_progress
+- Validation target: regenerated PEFT runners should prefer high-level metrics contract builders over raw JSON file writers and should pass semantically equivalent payload aliases to the selected metrics writer before second-stage execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-282 model/instruction loader alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-282 loader alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines a high-level metrics writer such as `build_and_write_metrics(study_output, metrics_path, args=None)` or aliases it as `write_study_metrics`, the final dispatcher should call that contract builder with the real study results and metrics path. Raw `write_metrics_json(metrics, metrics_path)` should be a persistence fallback, not the first selected contract assembler.
+- Actual behavior: local verification passed and second-stage execution reached metrics writing, but `_invoke_metrics_writer(...)` selected `write_metrics_json(...)` before `write_study_metrics` or `build_and_write_metrics`. The dispatcher called `_call_with_supported_kwargs(...)` with `study_results`, `results`, `config`, and `metrics_path`, but no `metrics` or `study_output` alias. Signature filtering therefore called `write_metrics_json(metrics_path=...)` and failed with `TypeError: write_metrics_json() missing 1 required positional argument: 'metrics'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-282's loader-discovery boundary and reached a later metrics-dispatch mismatch during second-stage execution.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection mismatch visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation materialized metrics contract construction and raw metrics persistence independently. The final dispatcher projected `write_metrics_json` as a primary metrics writer and omitted payload aliases such as `study_output`, so the raw persistence helper won resolution before the contract builder and then lacked its required `metrics` argument.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must only select generated contract builders or pass through real generated study results. It must not fabricate objective metrics, condition rows, or successful evidence.
+  - After metrics-dispatch repair, execution may reach genuine Hugging Face download/dependency/model/CUDA/runtime failures or the objective-quality gate.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-284
+
+- Status: in_progress
+- Validation target: regenerated PEFT runners should materialize real evaluation examples, instruction examples, and device metadata before calling generated locked condition execution loops whose signatures require those inputs.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-283 metrics-writer dispatcher repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-283 metrics-writer dispatcher repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines loaders such as `load_all_benchmark_examples(...)`, `load_instruction_tuning_examples(...)`, and device helpers such as `get_default_device_info(...)`, the final locked-recipe workflow invoker should build those real inputs and call `run_condition_execution_loop(...)` with the signature it actually requires.
+- Actual behavior: local verification passed and second-stage execution started, but no conditions executed. The metrics file recorded `failure_evidence.message: "No compatible locked recipe workflow could be invoked"`. The traceback showed the first attempt failed with `run_condition_execution_loop() missing 3 required positional arguments: 'eval_examples_by_benchmark', 'train_examples', and 'device_info'`; the retry then called `workflow(**vars(args))` and failed with `run_condition_execution_loop() got an unexpected keyword argument 'metrics_path'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-283's raw metrics-writer `TypeError` and reached a later locked workflow input-materialization mismatch.
+  - Divergence: no session divergence observed; this is a generated-runner callable projection/input materialization gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced dataset/device helper sections and a condition loop that requires materialized inputs, but the final `_invoke_locked_recipe_workflow(...)` bridge only projects CLI args. It does not inspect the selected workflow signature, materialize required helper inputs, or filter unsupported CLI kwargs before invocation.
+
+- Code/test changes:
+  - Code:
+    - pending
+  - Tests:
+    - pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The repair must call real generated loaders and pass their outputs forward. It must not synthesize successful condition rows or substitute fake datasets.
+  - After workflow-input repair, execution may reach genuine Hugging Face download/dependency/model/CUDA/runtime failures or objective-quality failures inside the condition loop.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-285
+
+- Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
+- Validation target: regenerated PEFT runners should bridge singular/plural bounded evaluation dataset helper names before second-stage execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-284 locked-workflow input materialization repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-284 locked-workflow input materialization repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines `assemble_bounded_eval_datasets(...)` and aliases such as `build_bounded_eval_datasets`, `prepare_bounded_eval_datasets`, or `load_bounded_eval_datasets`, a later singular call to `assemble_bounded_eval_dataset(...)` should resolve to the generated bounded evaluation dataset helper rather than fail by name.
+- Actual behavior: local verification passed and second-stage execution advanced beyond the LV-284 locked-workflow boundary, but `run_experiments` failed inside `run_experiment(args)` with `NameError: name 'assemble_bounded_eval_dataset' is not defined. Did you mean: 'assemble_bounded_eval_datasets'?`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-284's `No compatible locked recipe workflow could be invoked` boundary and reached a later singular/plural helper-name mismatch during second-stage execution.
+  - Divergence: no session divergence observed; this is a generated-runner callable projection mismatch visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation materialized the bounded evaluation dataset loader under plural helper names, while the final executable path projected a singular helper name and did not insert a signature-aware alias before handoff.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`: extended `repairPythonEvaluationDatasetHelperAliasSurface(...)` to add a signature-aware `assemble_bounded_eval_dataset(...)` bridge when only plural bounded-eval helpers are generated.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`: added a regression for singular bounded eval helper calls resolving to generated plural helpers while dropping unsupported kwargs such as `output_dir`.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+  - Re-validation result: same Web API `implement_experiments` run no longer reproduced the `assemble_bounded_eval_dataset` `NameError`; it advanced to LV-286 with `No locked experiment runner function is available.`
+
+- Follow-up risks:
+  - The repair must only bridge real generated evaluation dataset helpers. It must not fabricate evaluation examples, condition rows, metrics, or successful tuned evidence.
+  - The observed runner still includes deterministic fallback examples inside the generated helper; this issue is about the missing helper alias before condition execution, not about accepting fallback evidence as sufficient research quality.
+  - After the singular/plural alias repair, execution may reach the next genuine generated-runner boundary, model/data download/runtime failure, or objective-quality failure.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-286
+
+- Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
+- Validation target: regenerated PEFT runners should expose generated locked condition study functions under the canonical runner names searched by the final `_run_locked_study(...)` entrypoint.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-285 bounded-eval helper alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-285 bounded-eval helper alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines a compatible locked condition study function such as `execute_locked_condition_study(config)`, the final `_run_locked_study(config)` resolver should either search that function name or expose it through `run_locked_experiment`/`run_locked_condition_study` aliases before handoff.
+- Actual behavior: local verification passed and second-stage execution started, but `main(...)` called `_run_locked_study(config)`, whose resolver did not include the generated `execute_locked_condition_study(config)`. The runner wrote failed metrics and printed `No locked experiment runner function is available.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-285's singular bounded-eval helper mismatch and reached a later locked-study runner alias mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the actual executable locked condition study under `execute_locked_condition_study(config)`, but the final entrypoint resolver projected only nearby canonical names and the existing handoff repair did not treat `No locked experiment runner function is available.` as a repairable orchestrator-alias surface.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`: extended `repairPythonRecipeExecutionOrchestratorAlias(...)` to treat `No locked experiment runner function is available.` / `_run_locked_study(...)` as a repairable locked-runner alias surface and expose real generated locked-study helpers through canonical runner names.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`: added a regression for generated `execute_locked_condition_study(config)` being bridged through `run_locked_experiment(...)` and related aliases.
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+  - Re-validation result: same Web API `implement_experiments` run no longer reproduced `No locked experiment runner function is available.`; it advanced to LV-287 with `No condition execution helper was found from earlier chunks; expected one of run_locked_peft_instruction_study/run_all_conditions/run_experiment_conditions.`
+
+- Follow-up risks:
+  - The repair must only alias to real generated locked-study functions. It must not synthesize completed condition rows or metrics.
+  - After locked-runner aliasing is repaired, execution may reach genuine model/dataset download/runtime failures, PEFT training failures, or objective-quality failures.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-287
+
+- Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
+- Validation target: regenerated PEFT runners should expose real baseline-first condition execution helpers under the exact names searched by final `_chunk5c_run_condition_study(...)` dispatchers before second-stage execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-286 locked-runner alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-286 locked-runner alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines a real condition executor such as `execute_baseline_first_conditions(args, device, ...)`, final dispatchers should either search that name or expose it through the names they do search, such as `run_locked_peft_instruction_study`, `run_all_conditions`, or `run_experiment_conditions`.
+- Actual behavior: local verification passed and second-stage execution started, but `main(...)` called `_chunk5c_run_condition_study(config)`, whose resolver did not include generated `execute_baseline_first_conditions(...)` or its generated aliases `run_baseline_first_conditions`, `run_condition_study`, and `execute_condition_study`. The runner wrote failed metrics and printed `No condition execution helper was found from earlier chunks; expected one of run_locked_peft_instruction_study/run_all_conditions/run_experiment_conditions.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-286's locked-runner alias mismatch and reached a later chunk-5c condition-dispatch alias mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the real baseline-first condition executor under `execute_baseline_first_conditions(...)`, then the final chunk-5c entrypoint projected a narrower set of names and the existing condition-study alias repair skipped the runner because nearby aliases existed even though none matched the final resolver's searched names.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`: extended generated Python runner handoff repair to detect `_chunk5c_run_condition_study(...)`/`No condition execution helper was found from earlier chunks`, then bridge real generated baseline-first condition helpers such as `execute_baseline_first_conditions(...)` into the final resolver names `run_locked_peft_instruction_study`, `run_all_conditions`, `run_experiment_conditions`, and related aliases.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`: added a regression for chunk-5c condition dispatchers whose generated runners define `execute_baseline_first_conditions(args, device, ...)` and nearby aliases but none of the final resolver's searched names.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "chunk-5c condition dispatch|locked experiment runner|condition-study orchestration aliases|final workflow dispatcher aliases"` passed on 2026-05-01; `npm test -- --run tests/implementSessionManager.test.ts tests/plannedConditionCoverage.test.ts` passed after the adjacent LV-288 repair with 275 tests.
+  - Re-validation result: same Web API `implement_experiments` run no longer reproduced `No condition execution helper was found from earlier chunks`; it advanced to LV-288 with `No condition runner was found in the completed script sections`.
+
+- Follow-up risks:
+  - The repair must only alias to real generated condition execution helpers. It must not synthesize completed condition rows, fake evaluation examples, or success metrics.
+  - After chunk-5c condition-dispatch aliasing is repaired, execution may reach genuine Hugging Face model/dataset download, PEFT runtime, dependency, CUDA/CPU performance, or objective-quality failures.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-288
+
+- Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
+- Validation target: regenerated PEFT runners should expose real completed-script condition suite helpers under the exact names searched by `_invoke_condition_runner(...)` before second-stage execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-287 chunk-5c condition-dispatch alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-287 chunk-5c condition-dispatch alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines a real condition suite such as `run_locked_condition_suite(args, runtime=None)`, final dispatchers should either search that name or expose it through searched names such as `run_locked_baseline_first_study`, `run_peft_instruction_study`, `run_condition_study`, or `run_all_conditions`.
+- Actual behavior: local verification passed and second-stage execution started, but `run_cli(...)` called `_invoke_condition_runner(config)`, whose resolver did not include generated `run_locked_condition_suite(...)`. The runner raised `No condition runner was found in the completed script sections...` before any condition suite was invoked; the failure metrics path then hit an additional nested-list normalization error while handling the missing-runner exception.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-287's chunk-5c condition-dispatch alias mismatch and reached a later completed-script condition-suite alias mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the real condition executor under `run_locked_condition_suite(...)`, then the completed-script entrypoint projected a narrower set of names and the existing alias repair did not recognize `_invoke_condition_runner(...)` as a distinct final-dispatcher pattern.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`: extended generated Python runner handoff repair to detect `_invoke_condition_runner(...)`/`No condition runner was found in the completed script sections`, then bridge real generated condition suites such as `run_locked_condition_suite(...)` into searched final resolver aliases including `run_locked_baseline_first_study`, `run_condition_study`, `run_all_conditions`, `run_study`, and per-condition fallback names.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`: added a regression for completed-script condition runner dispatchers whose generated runners define `run_locked_condition_suite(args, runtime=None)` but none of `_invoke_condition_runner(...)`'s searched names.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "completed-script condition runner|chunk-5c condition dispatch|locked experiment runner"` passed on 2026-05-01; `npm test -- --run tests/implementSessionManager.test.ts tests/plannedConditionCoverage.test.ts` passed with 275 tests; `npm run build` passed.
+  - Re-validation result: same Web API `implement_experiments` run no longer reproduced `No condition runner was found in the completed script sections`; it advanced to LV-289 with `No condition workflow callable was found`.
+
+- Follow-up risks:
+  - The repair must only alias to real generated condition suite helpers. It must not synthesize completed condition rows, fake evaluation examples, or success metrics.
+  - The failure metrics path also exposed a nested-list normalization bug while handling the missing-runner exception. If the real condition suite raises a genuine dependency, model, dataset, or runtime error after this alias repair, that error-path normalization may need a separate issue and fix.
+  - After completed-script condition-suite aliasing is repaired, execution may reach genuine Hugging Face model/dataset download, PEFT runtime, dependency, CUDA/CPU performance, or objective-quality failures.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-289
+
+- Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
+- Validation target: regenerated PEFT runners should expose real final condition workflow helpers under the exact names searched by `_run_conditions_via_available_api(...)` before second-stage execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-288 completed-script condition-suite alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-288 completed-script condition-suite alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines a real condition workflow such as `run_condition_execution_workflow(args, condition_registry, budget, train_records, eval_sets, device)`, the final entrypoint should either search that name or expose it through searched names such as `run_condition_workflow`, `run_all_conditions`, or `run_study_conditions`.
+- Actual behavior: local verification passed and second-stage execution started, but `main(...)` called `_run_conditions_via_available_api(args, device, output_dir, cache_dir)`, whose resolver did not include generated `run_condition_execution_workflow(...)`. The runner wrote failed metrics and printed `No condition workflow callable was found. Expected one of ('run_condition_workflow', 'run_all_conditions', 'execute_condition_workflow', 'execute_all_conditions', 'run_peft_condition_study', 'run_study_conditions', 'run_recipe_comparison', 'execute_recipe_comparison') or ('run_condition', 'execute_condition', 'train_and_evaluate_condition', 'run_single_condition', 'execute_single_condition').`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-288's completed-script condition-suite alias mismatch and reached a later final condition-workflow alias mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the real condition executor under `run_condition_execution_workflow(...)`, then the final entrypoint projected a narrower set of workflow names and the existing alias repair did not recognize this generated workflow helper or materialize its required inputs before handoff.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`: extended generated Python runner handoff repair to detect `_run_conditions_via_available_api(...)`/`No condition workflow callable was found`, then bridge real generated condition workflow helpers such as `run_condition_execution_workflow(...)` into searched final resolver aliases including `run_condition_workflow`, `run_all_conditions`, `execute_condition_workflow`, `run_study_conditions`, `run_recipe_comparison`, and `execute_recipe_comparison`. The bridge materializes required inputs through generated helpers such as `build_condition_registry(...)`, `build_shared_training_budget(...)`, and `load_study_data(...)` rather than fabricating condition rows.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`: added a regression for final condition-workflow dispatchers whose generated runners define `run_condition_execution_workflow(args, condition_registry, budget, train_records, eval_sets, device)` but none of `_run_conditions_via_available_api(...)`'s searched names.
+
+- Regression status:
+  - Automated regression test linked: `npm test -- --run tests/implementSessionManager.test.ts -t "condition workflow aliases|completed-script condition runner|chunk-5c condition dispatch|locked experiment runner"` passed on 2026-05-01; `npm test -- --run tests/implementSessionManager.test.ts tests/plannedConditionCoverage.test.ts` passed with 276 tests; `npm run build` passed.
+  - Re-validation result: same Web API `implement_experiments` run no longer reproduced `No condition workflow callable was found`; it advanced to LV-290 with all conditions failing because `run_single_condition(...)` was called without `dataset_bundle` and `device_info`.
+
+- Follow-up risks:
+  - The repair must only alias to real generated condition workflow helpers and materialize their real generated inputs. It must not synthesize completed condition rows, fake evaluation examples, or success metrics.
+  - After final condition-workflow aliasing is repaired, execution may reach genuine Hugging Face model/dataset download, PEFT runtime, dependency, CUDA/CPU performance, or objective-quality failures.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-290
+
+- Status: in_progress
+- Validation target: regenerated PEFT runners should pass the generated dataset bundle and device metadata into concrete per-condition runners before metrics contract validation.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-289 final condition-workflow alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-289 final condition-workflow alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines a concrete per-condition runner requiring `dataset_bundle` and `device_info`, the generated study context should materialize those values through generated helpers such as `load_public_datasets(...)` and device detection, then pass them into the per-condition runner.
+- Actual behavior: `run_experiments` reached condition execution, but every condition failed immediately with `TypeError: run_single_condition() missing 2 required keyword-only arguments: 'dataset_bundle' and 'device_info'`. The metrics file preserved failed rows, but no tuned condition succeeded and the contract failed with `Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json. Planned condition coverage incomplete: observed 0 successful tuned condition(s) but the brief/design requires 4.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-289's final condition-workflow alias mismatch and reached a later per-condition context materialization mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner callable/context projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced `load_public_datasets(...)`, device metadata, and `run_single_condition(..., dataset_bundle, device_info, ...)`, but the final `_autolabos_execute_condition(...)` bridge projected only loose fields such as `train_examples`, `eval_examples_per_dataset`, and `device`, omitting the exact required `dataset_bundle` and `device_info` keywords.
+
+- Code/test changes:
+  - Code: added a late generated-runner repair that materializes `study_context["dataset_bundle"]` through generated public dataset loaders when available, defaults `study_context["device_info"]`, and passes `dataset_bundle`, `device_info`, `base_model`, `output_root`, and `max_eval_examples` through `_autolabos_execute_condition(...)` into concrete per-condition runners.
+  - Tests: added a regression fixture where `_autolabos_execute_condition(...)` calls `run_single_condition(..., dataset_bundle, device_info, ...)`; the fixture fails before repair and succeeds after the new context materialization bridge.
+
+- Regression status:
+  - Automated regression test: passed `npm test -- --run tests/implementSessionManager.test.ts -t "condition context|condition workflow aliases|completed-script condition runner|chunk-5c condition dispatch"`.
+  - Adjacent regression suite: passed `npm test -- --run tests/implementSessionManager.test.ts tests/plannedConditionCoverage.test.ts`.
+  - Build: passed `npm run build`.
+  - Re-validation result: same-flow Web API rerun after repairing generated condition-context materialization no longer reached the prior `dataset_bundle`/`device_info` missing-keyword symptom during that iteration; it instead regenerated a different composable runner shape and stopped earlier at LV-291 (`No experiment workflow function was found in the runner`). LV-290 remains pending direct re-exercise after LV-291 is cleared.
+
+- Follow-up risks:
+  - The repair must materialize real generated dataset/device inputs. It must not synthesize completed condition rows, fake scores, or success metrics.
+  - After condition-context materialization is repaired, execution may reach real Hugging Face model/dataset downloads, PEFT runtime incompatibilities, CUDA memory/runtime limits, or objective-quality failures.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-291
+
+- Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
+- Validation target: regenerated composable PEFT runners should expose a top-level workflow facade under the names searched by `_entrypoint_run_workflow(...)` before second-stage execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-290 condition-context materialization repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-290 condition-context materialization repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete five implementation chunks, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner materializes real loader/model/eval/collector/aggregator helpers, the final entrypoint should compose them through a top-level facade such as `run_peft_instruction_study(...)`, `run_experiment_workflow(...)`, `run_condition_workflow(...)`, `execute_condition_workflow(...)`, `run_all_conditions(...)`, or `execute_study(...)`.
+- Actual behavior: local verification passed and second-stage execution started, but `main(...)` called `_entrypoint_run_workflow(...)`, whose resolver found none of the expected top-level workflow functions even though the runner defined composable helpers such as `load_instruction_dataset_subset(...)`, `load_compact_base_model(...)`, `build_workflow_controls(...)`, `load_zero_shot_benchmark_examples(...)`, `build_ordered_condition_specs(...)`, `collect_condition_results(...)`, and `aggregate_condition_results_into_metrics(...)`. The runner wrote failed metrics and printed `PEFT instruction study failed: No experiment workflow function was found in the runner. Expected one of: run_peft_instruction_study, run_experiment_workflow, run_condition_workflow, execute_condition_workflow, run_all_conditions, execute_study.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past the previous LV-290 context-materialization repair attempt and reached a different generated-runner callable projection gap.
+  - Divergence: no session divergence observed; this is a regenerated-runner facade projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a set of real composable workflow helpers but did not project them through any top-level workflow function searched by the final `_entrypoint_run_workflow(...)` resolver, so second-stage execution failed before the generated collector/aggregator path could run.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` adds a late `repairPythonEntrypointComposableWorkflowAliasSurface(...)` handoff repair that detects `_entrypoint_run_workflow(...)`/`No experiment workflow function was found in the runner`, then injects a top-level facade that calls real generated args/device/data/model/eval/collector/aggregator helpers without synthesizing condition rows.
+  - Tests: `tests/implementSessionManager.test.ts` adds a regression fixture for composable generated PEFT runners that define the real helper chain but no searched top-level workflow facade.
+
+- Regression status:
+  - Automated regression test linked: passed `npm test -- --run tests/implementSessionManager.test.ts -t "top-level entrypoint workflow"`.
+  - Adjacent regression suite: passed `npm test -- --run tests/implementSessionManager.test.ts -t "top-level entrypoint workflow|condition context|condition workflow aliases"` and `npm test -- --run tests/implementSessionManager.test.ts tests/plannedConditionCoverage.test.ts`.
+  - Build: passed `npm run build`.
+  - Re-validation result: same Web API `implement_experiments` run no longer reproduced `No experiment workflow function was found in the runner`; it generated a discoverable workflow orchestration function, passed local `py_compile`, reached second-stage `run_experiments`, and advanced to LV-292 with `NameError: name 'detect_device_info' is not defined`.
+
+- Follow-up risks:
+  - The repair must call real generated helpers and must not synthesize successful condition rows, fake scores, or success metrics.
+  - After the top-level facade is exposed, execution may return to LV-290's dataset/device materialization boundary or progress into genuine Hugging Face dataset/model downloads, PEFT runtime incompatibilities, CUDA/CPU limits, objective-metric contract failures, or insufficient paper-scale evidence.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-292
+
+- Status: mitigated and same-flow live revalidated to next boundary on 2026-05-01
+- Validation target: regenerated PEFT runners should provide a `detect_device_info(...)` compatibility surface when later chunks call that name but earlier chunks generated equivalent torch/CUDA device helpers under different names.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-291 top-level workflow facade repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-291 composable top-level workflow facade repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to invoke the generated baseline-first pipeline.
+
+- Expected behavior: if a generated runner calls `detect_device_info()`, handoff repair should expose it through real generated helpers such as `detect_torch_device(...)`, `probe_torch_device_capabilities(...)`, `get_environment_metadata(...)`, or `_safe_device_snapshot(...)`, or through a conservative torch-based default when no generated helper is available.
+- Actual behavior: local verification passed and second-stage execution invoked the generated workflow, but `run_baseline_first_pipeline(...)` called missing `detect_device_info()`. The runner wrote failed metrics with every governed condition marked failed before execution and `error: name 'detect_device_info' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-291's missing top-level workflow facade and reached a later device-helper alias mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced real device capability helpers, but later baseline-first orchestration projected the metadata call under `detect_device_info()` and the current device helper alias repair only covers `detect_device()`/`get_device()`.
+
+- Code/test changes:
+  - Code: extended `repairPythonDeviceHelperAliasSurface(...)` in `src/core/agents/implementSessionManager.ts` to materialize `detect_device_info(...)` from existing generated device helpers such as `detect_torch_device(...)`, `probe_torch_device_capabilities(...)`, `get_environment_metadata(...)`, or `_safe_device_snapshot(...)`, with a conservative torch-aware default only when no generated helper is available.
+  - Tests: added a regression fixture in `tests/implementSessionManager.test.ts` where `detect_torch_device()` exists but `run_baseline_first_pipeline()` calls `detect_device_info()`.
+
+- Regression status:
+  - Automated regression test linked: passed `npm test -- --run tests/implementSessionManager.test.ts -t "detect_device_info|undefined detect_device|undefined get_device"`.
+  - Adjacent regression suite: passed `npm test -- --run tests/implementSessionManager.test.ts -t "detect_device_info|top-level entrypoint workflow|condition context|condition workflow aliases"` and `npm test -- --run tests/implementSessionManager.test.ts tests/plannedConditionCoverage.test.ts`.
+  - Build: passed `npm run build`.
+  - Re-validation result: same-flow Web API rerun no longer reproduced `NameError: name 'detect_device_info' is not defined`; implement progress recorded `Added device helper alias(es) for generated orchestration calls in run_peft_instruction_study.py before handoff`, local `py_compile` passed, and second-stage execution advanced to LV-293 with per-condition `TypeError: execute_condition() missing 3 required positional arguments: 'condition', 'args', and 'eval_examples'`.
+
+- Follow-up risks:
+  - The repair should return real runtime metadata where available and not mask genuine torch/CUDA/model execution failures as successful conditions.
+  - After device metadata aliasing is repaired, execution may reach real Hugging Face dataset/model downloads, PEFT runtime incompatibilities, CUDA/CPU limits, objective-metric contract failures, or insufficient paper-scale evidence.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-293
+
+- Status: repair implemented; same-flow live revalidation reached a different earlier generated-runner boundary before directly re-exercising this symptom
+- Validation target: regenerated PEFT runners should select the available baseline-first condition-sequence helper before falling back to raw per-condition helpers, or should materialize the required `eval_examples` context before calling a raw per-condition helper.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-292 device-info alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-292 `detect_device_info(...)` repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to invoke the generated baseline-first study runner.
+
+- Expected behavior: if the generated runner defines `run_conditions_baseline_first(...)`, the final top-level `run_experiment(...)` resolver should select it or alias it under a searched sequence-runner name before handoff. That runner already builds a rich context and can pass evaluation inputs into `execute_condition(...)`.
+- Actual behavior: local verification passed and the LV-292 device-info alias repair applied, but `run_experiment(...)` searched only `run_locked_condition_sequence`, `execute_locked_condition_sequence`, `run_condition_sequence`, `execute_condition_sequence`, `run_all_conditions`, and `execute_conditions_baseline_first`. It did not select the existing `run_conditions_baseline_first(...)`, so it fell back to `_fallback_execute_condition_sequence(...)`, selected `execute_condition(...)` as a single-condition runner, and called it without `eval_examples`. Every governed condition failed with `TypeError: execute_condition() missing 3 required positional arguments: 'condition', 'args', and 'eval_examples'`, leaving zero successful tuned conditions and no objective metric.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-292's missing `detect_device_info(...)` alias and reached a later sequence-runner resolver projection gap.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a valid baseline-first sequence runner under the plural name `run_conditions_baseline_first(...)`, but the final top-level resolver projected only narrower singular or locked-condition names. The fallback path is intentionally generic and lacks the data-loading context needed by this generated `execute_condition(...)` signature.
+
+- Code/test changes:
+  - Code: added a late handoff repair in `src/core/agents/implementSessionManager.ts` that materializes evaluation and instruction inputs through real generated loaders before `_fallback_execute_condition_sequence(...)` calls a raw per-condition runner.
+  - Tests: added a regression fixture where `execute_condition(condition, args, eval_examples, ...)` exists and the top-level fallback path calls it without `eval_examples`; the fixture fails before repair and succeeds after real generated-style loaders provide the required inputs.
+
+- Regression status:
+  - Automated regression test linked: passed `npm test -- --run tests/implementSessionManager.test.ts -t "fallback condition-sequence"`.
+  - Adjacent regression suite: passed `npm test -- --run tests/implementSessionManager.test.ts -t "fallback condition-sequence|detect_device_info|top-level entrypoint workflow|condition context|condition workflow aliases"`.
+  - Build: passed `npm run build`.
+  - Re-validation result: same-flow Web API rerun on 2026-05-01 no longer reproduced the previous `execute_condition() missing ... eval_examples` symptom in that generated artifact shape; it regenerated a different runner and stopped earlier at LV-294 during module import with `TypeError: make_condition_spec() got an unexpected keyword argument 'peft_config'`.
+
+- Follow-up risks:
+  - The repair must route execution through real generated sequence/context helpers. It must not synthesize successful condition rows, fake scores, or success metrics.
+  - After sequence-runner aliasing is repaired, execution may reach real Hugging Face dataset/model downloads, PEFT runtime incompatibilities, CUDA/CPU limits, objective-metric contract failures, or insufficient paper-scale evidence.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-294
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-295 on 2026-05-01
+- Validation target: generated condition-spec registry construction should be signature-compatible with the generated `make_condition_spec(...)` factory before second-stage execution imports the runner.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-293 fallback input repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-293 fallback condition-sequence input repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to import the generated runner.
+
+- Expected behavior: if the generated registry constructor passes high-level fields such as `peft_config`, `training_overrides`, and `feature_flags`, the generated factory call should adapt those into the actual `make_condition_spec(...)` signature or fall back to `ConditionSpec` field filtering.
+- Actual behavior: local verification passed because `py_compile` does not execute module-level registry construction. Second-stage execution failed during import when `_construct_condition_spec(...)` called `make_condition_spec(...)` with `peft_config=...`, but the generated `make_condition_spec(...)` accepts concrete fields such as `trainable`, `peft_kwargs`, `trainer_kwargs`, LoRA parameters, and does not accept `peft_config`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past the prior fallback-input boundary shape and reached a generated condition-spec factory signature mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage module import.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the condition factory and later registry population in separate chunks. The registry chunk used a richer abstract condition payload, while the factory chunk exposed only concrete dataclass fields and did not include a compatible `**kwargs` adapter.
+
+- Code/test changes:
+  - Code: added `repairPythonConditionSpecFactoryKwargBridgeSurface(...)` in `src/core/agents/implementSessionManager.ts`, which wraps generated `make_condition_spec(...)` with a signature-aware adapter, maps `peft_config` into `peft_kwargs` and concrete LoRA fields, maps `training_overrides` into `trainer_kwargs`/`trainable`, and filters unsupported abstract keys.
+  - Tests: added a regression fixture where `_construct_condition_spec(...)` calls `make_condition_spec(...)` with `peft_config`, `training_overrides`, and `feature_flags`, while the actual factory requires `trainable` and concrete fields.
+
+- Regression status:
+  - Automated regression test linked: passed `npm test -- --run tests/implementSessionManager.test.ts -t "abstract condition-spec"`.
+  - Adjacent regression suite: passed `npm test -- --run tests/implementSessionManager.test.ts -t "abstract condition-spec|fallback condition-sequence|detect_device_info|top-level entrypoint workflow|condition context|condition workflow aliases"`.
+  - Build: passed `npm run build`.
+  - Re-validation result: same-flow Web API rerun on 2026-05-01 no longer reproduced `make_condition_spec() got an unexpected keyword argument 'peft_config'`; implement progress recorded condition-spec bridge repair, local `py_compile` passed, and second-stage execution advanced to LV-295 with a missing baseline-first workflow alias plus metrics-writer payload alias mismatch.
+
+- Follow-up risks:
+  - The repair must not invent condition success metrics. It only makes declarative condition metadata construction compatible so the runner can proceed to real execution.
+  - After this module-load repair, execution may return to LV-293's condition-input boundary or advance into real Hugging Face dataset/model downloads, PEFT runtime incompatibilities, CUDA/CPU limits, objective-metric contract failures, or insufficient paper-scale evidence.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-295
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-296 on 2026-05-01
+- Validation target: final PEFT runner entrypoint should resolve the generated baseline-first locked workflow helper and should choose a payload-building metrics writer rather than calling the low-level JSON writer without a payload.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-294 condition-spec factory kwarg bridge repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-294 condition-spec factory kwarg bridge repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines a real workflow helper such as `run_baseline_first_locked_workflow(...)`, the final entrypoint resolver should alias or include it before falling back to failure handling. If failure handling is needed, the metrics writer resolver should call a payload-building writer such as `build_and_write_metrics_payload(...)` rather than low-level `write_metrics_json(payload, metrics_path)` without a payload.
+- Actual behavior: local verification passed and second-stage execution started, but `invoke_baseline_first_workflow(...)` searched names such as `run_baseline_first_condition_workflow`, `run_baseline_first_study`, `run_condition_study`, and `run_all_conditions` while the generated script exposed `run_baseline_first_locked_workflow(...)`, `run_locked_baseline_first_workflow`, and `execute_baseline_first_locked_workflow`. The entrypoint raised `RuntimeError: No baseline-first workflow function was found. Expected an orchestration helper from chunk_3d.` During failure metrics handling, `write_final_metrics_from_cli(...)` selected `write_metrics_json(...)` before `build_and_write_metrics_payload(...)`, then `_call_with_supported_keywords(...)` omitted the required `payload` argument and raised `TypeError: write_metrics_json() missing 1 required positional argument: 'payload'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-294's module-load condition-spec mismatch and reached a final entrypoint resolver/writer projection gap.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a valid baseline-first locked workflow under a more specific generated name, while the final entrypoint chunk searched only generic condition/study workflow names. The final metrics writer resolver also treated low-level `write_metrics_json(payload, metrics_path)` as if it were a high-level payload builder, so failure preservation itself failed.
+
+- Code/test changes:
+  - Code: added late handoff aliases in `src/core/agents/implementSessionManager.ts` from real generated locked baseline-first workflow helpers to the final entrypoint's searched workflow names, and aliased the real payload builder (`build_and_write_metrics_payload`) before low-level `write_metrics_json`.
+  - Tests: added a regression fixture in `tests/implementSessionManager.test.ts` with `run_baseline_first_locked_workflow(...)`, `write_metrics_json(payload, metrics_path)`, and `build_and_write_metrics_payload(...)`, where `run_cli(...)` fails before repair and succeeds after aliases route to real generated helpers.
+
+- Regression status:
+  - Automated regression test linked: passed `npm test -- --run tests/implementSessionManager.test.ts -t "locked baseline-first workflows"`.
+  - Adjacent regression suite: passed `npm test -- --run tests/implementSessionManager.test.ts -t "locked baseline-first workflows|abstract condition-spec|fallback condition-sequence|detect_device_info|top-level entrypoint workflow|condition context|condition workflow aliases"`.
+  - Build: passed `npm run build`.
+  - Re-validation result: same-flow Web API rerun on 2026-05-01 no longer reproduced `No baseline-first workflow function was found` or `write_metrics_json() missing 1 required positional argument: 'payload'`. The run regenerated a different baseline-first runner shape, local `py_compile` passed, and second-stage execution advanced to LV-296 with `RuntimeError: No compatible baseline-first orchestration function was available`.
+
+- Follow-up risks:
+  - The repair must only expose real generated workflow and metrics-builder helpers. It must not fabricate condition rows, fake success metrics, or bypass the generated runner's own execution.
+  - Once the entrypoint aliases are repaired, execution may finally reach real Hugging Face dataset/model downloads, PEFT runtime incompatibilities, CUDA/CPU limits, objective-metric contract failures, or insufficient paper-scale evidence.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-296
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-297 on 2026-05-01
+- Validation target: final PEFT runner entrypoint should discover or expose the generated baseline-first condition-sequence helper and materialize its required runtime inputs before `run_experiments` executes the generated study.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-295 final entrypoint alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-295 locked workflow and payload-writer alias repairs.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines a real baseline-first sequence helper such as `run_baseline_first_condition_sequence(args, device, device_info, train_dataset, eval_bundle)`, the final `_invoke_orchestration(...)` dispatcher should expose it under a searched orchestration name and provide real generated dataset/device inputs.
+- Actual behavior: local verification passed and second-stage execution started, but `_invoke_orchestration(...)` searched `run_baseline_first_experiment`, `run_baseline_first_study`, `run_peft_instruction_study`, `run_experiment`, `orchestrate_experiment`, `orchestrate_baseline_first_experiment`, and `execute_experiment`. The generated script exposed `run_baseline_first_condition_sequence(...)` plus real loaders such as `load_instruction_dataset(...)`, `load_benchmark_records(...)`, `select_device(...)`, and `get_device_info(...)`, but none of the searched orchestration names existed. The runner wrote failed metrics with `RuntimeError: No compatible baseline-first orchestration function was available`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-295's locked workflow/payload-writer mismatch and reached a new condition-sequence entrypoint projection gap.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the condition sequence and the final CLI entrypoint in separate chunks. The sequence chunk exposed a valid baseline-first helper with concrete runtime inputs, while the final entrypoint projected only generic study/orchestration names and did not bridge the generated helper into that resolver.
+
+- Code/test changes:
+  - Code: added a late handoff facade in `src/core/agents/implementSessionManager.ts` that exposes `run_baseline_first_condition_sequence(...)` as searched baseline-first study/experiment orchestration functions and materializes inputs using real generated loaders/device helpers.
+  - Tests: added a regression fixture in `tests/implementSessionManager.test.ts` where `_invoke_orchestration(...)` fails before repair and succeeds after the facade calls the generated sequence with real train/eval/device inputs.
+
+- Regression status:
+  - Automated regression test linked: passed `npm test -- --run tests/implementSessionManager.test.ts -t "baseline-first condition sequences"`.
+  - Adjacent regression suite: passed `npm test -- --run tests/implementSessionManager.test.ts -t "baseline-first condition sequences|locked baseline-first workflows|abstract condition-spec|fallback condition-sequence|detect_device_info|top-level entrypoint workflow|condition context|condition workflow aliases"`.
+  - Build: passed `npm run build`.
+  - Re-validation result: same-flow Web API rerun on 2026-05-01 no longer reproduced `No compatible baseline-first orchestration function was available`. The run regenerated a condition-runner script, local `py_compile` passed, and second-stage execution advanced to LV-297 with failed metrics caused by a missing alias from generated `load_benchmark_eval_datasets(...)` to the condition runner's searched evaluation dataset helper names.
+
+- Follow-up risks:
+  - The repair must call the generated sequence and loaders rather than synthesizing condition rows, fake scores, or success metrics.
+  - Once this entrypoint projection is repaired, execution may advance into genuine Hugging Face dataset/model downloads, PEFT runtime incompatibilities, CUDA/CPU limits, condition-training signature mismatches, objective-metric contract failures, or insufficient paper-scale evidence.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments_retry_2.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-297
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-298 on 2026-05-01
+- Validation target: generated condition-runner orchestration should connect the real generated ARC-Challenge/HellaSwag evaluation dataset loader to the condition execution facade before `run_experiments` evaluates planned conditions.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-296 condition-sequence facade repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-296 baseline-first condition-sequence facade repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local `py_compile` to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines a real combined evaluation loader such as `load_benchmark_eval_datasets(...)`, the condition-runner dataset facade should expose it through searched names such as `load_evaluation_datasets`, `load_benchmark_datasets`, `prepare_eval_datasets`, `load_zero_shot_eval_datasets`, or `load_eval_datasets`, and pass the real loaded evaluation records to the benchmark evaluator.
+- Actual behavior: local verification passed and second-stage execution started, but `_load_eval_datasets_for_conditions(...)` searched the generic evaluation dataset helper names while the generated script exposed `load_benchmark_eval_datasets(...)`, plus individual `load_arc_challenge_eval_dataset(...)` and `load_hellaswag_eval_dataset(...)`. The runner recorded all seven planned conditions as failed and wrote `orchestration_error.error_message = "no ARC-Challenge/HellaSwag evaluation dataset helper is available"`. The objective contract then failed because `accuracy_delta_vs_baseline` was absent and successful tuned condition count was 0.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-296's final orchestration projection gap and reached an evaluation dataset loader alias gap inside the generated condition runner.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a valid combined evaluation loader under the more specific name `load_benchmark_eval_datasets(...)`, while the later condition execution facade searched only generic loader names and did not normalize the loader's `(datasets, metadata)` tuple payload for evaluator consumption.
+
+- Code/test changes:
+  - Code: extended the existing evaluation dataset alias repair in `src/core/agents/implementSessionManager.ts` to recognize `load_benchmark_eval_datasets(...)`, `load_benchmark_eval_dataset(...)`, `load_arc_challenge_eval_dataset(...)`, and `load_hellaswag_eval_dataset(...)`, normalize `(datasets, metadata)` tuples to dataset payloads, and preserve seed/eval-limit kwargs through generated compatible-call helpers.
+  - Tests: added a regression fixture in `tests/implementSessionManager.test.ts` where `_load_eval_datasets_for_conditions(...)` fails before repair and succeeds after the alias calls the real generated benchmark eval loader.
+
+- Regression status:
+  - Automated regression test linked: passed `npm test -- --run tests/implementSessionManager.test.ts -t "benchmark eval dataset names"`.
+  - Adjacent regression suite: passed `npm test -- --run tests/implementSessionManager.test.ts -t "evaluation dataset helper aliases|singular bounded eval dataset aliases|benchmark eval dataset names|evaluation dataset loader sample-limit"`.
+  - Build: passed `npm run build`.
+  - Re-validation result: same-flow Web API rerun on 2026-05-01 no longer reproduced `no ARC-Challenge/HellaSwag evaluation dataset helper is available`. The regenerated runner reached condition-level benchmark dispatch and failed at LV-298 with `AttributeError: 'Namespace' object has no attribute 'get'` from `evaluate_condition_on_benchmarks(...)`.
+
+- Follow-up risks:
+  - The repair must only route to real generated dataset loaders and must not synthesize benchmark rows or fake successful condition metrics.
+  - Once evaluation loader aliases are repaired, execution may advance into real Hugging Face downloads/model loading, PEFT runtime incompatibilities, CUDA memory/runtime limits, individual condition failures with preserved evidence, or insufficient paper-scale evidence.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-298
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-299 on 2026-05-01
+- Validation target: generated benchmark evaluator dispatch should call generated zero-shot evaluation helpers with signature-compatible arguments before recording condition failures.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-297 evaluation dataset alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-297 evaluation dataset helper alias repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation to complete, local verification to pass, and second-stage `run_experiments` to execute the generated PEFT runner.
+
+- Expected behavior: if the generated runner defines `evaluate_condition_on_benchmarks(condition_marker, benchmark_samples, model_bundle=None, ...)`, the benchmark dispatcher should call it with `condition_marker=spec.marker` and `benchmark_samples=benchmark_examples`, or otherwise use a signature-aware adapter that supplies equivalent arguments.
+- Actual behavior: local verification passed and second-stage execution started. `_call_benchmark_evaluator(...)` tried several generated call patterns, including `fn(spec, args, runtime, benchmark_examples, training_result)`, while catching only `TypeError` as a mismatch. For `evaluate_condition_on_benchmarks(...)`, that positional call bound `args` to `benchmark_samples`; the evaluator then called `benchmark_samples.get(...)` on an `argparse.Namespace`, raising `AttributeError: 'Namespace' object has no attribute 'get'`. Every governed condition was recorded as failed, `successful_condition_count` was 0, and the metrics contract failed with `Planned condition coverage incomplete`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-297's evaluation dataset loader alias gap and reached a new benchmark evaluator argument dispatch mismatch.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the evaluator and the dispatcher in separate chunks. The dispatcher relied on broad positional probes rather than inspecting the evaluator signature, so an incompatible call could fail with a non-`TypeError` runtime error before safer keyword patterns were attempted.
+
+- Code/test changes:
+  - Code: added a benchmark evaluator dispatch repair in `src/core/agents/implementSessionManager.ts` that replaces unsafe positional evaluator probing with signature-aware keyword dispatch when a generated runner defines `evaluate_condition_on_benchmarks(..., benchmark_samples, ...)`.
+  - Tests: added a regression fixture in `tests/implementSessionManager.test.ts` where the unsafe dispatcher binds `argparse.Namespace` as `benchmark_samples` before repair and succeeds after repair.
+
+- Regression status:
+  - Automated regression test linked: passed `npm test -- --run tests/implementSessionManager.test.ts -t "benchmark evaluator dispatch that binds Namespace"`.
+  - Adjacent regression suite: passed `npm test -- --run tests/implementSessionManager.test.ts -t "benchmark evaluator dispatch|benchmark evaluator dispatch mismatch|benchmark eval dataset names|evaluation dataset helper aliases|singular bounded eval dataset aliases|evaluation dataset loader sample-limit"`.
+  - Build: passed `npm run build`.
+  - Re-validation result: same-flow Web API rerun on 2026-05-01 no longer reproduced `AttributeError: 'Namespace' object has no attribute 'get'`. The run regenerated a different evaluator/entrypoint shape, local verification passed, and second-stage execution advanced to LV-299 with `TypeError: 'PosixPath' object is not iterable` from a metrics writer call-order mismatch.
+
+- Follow-up risks:
+  - The repair must route real benchmark examples into the generated evaluator. It must not mark deterministic fallback or failed conditions as successful primary evidence.
+  - Once evaluator argument dispatch is repaired, execution may advance into real Hugging Face downloads/model loading, PEFT runtime incompatibilities, CUDA memory/runtime limits, condition-training failures, or paper-scale evidence insufficiency.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-299
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-300 on 2026-05-01
+- Validation target: generated CLI entrypoints should call generated metrics writers using the writer's actual path/payload argument order before handing off to `run_experiments`.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-298 benchmark evaluator dispatch repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-298 benchmark evaluator dispatch repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation, local verification, second-stage verification, and the generated `run_peft_instruction_study.py` command to execute.
+
+- Expected behavior: if `write_metrics_json` is defined as `write_metrics_json(metrics_path, metrics)`, the entrypoint should call it with `metrics_path` first and the metrics payload second, or use a signature-aware adapter.
+- Actual behavior: local verification passed and second-stage execution started. The generated writer was path-first:
+  - `def write_metrics_json(metrics_path: Union[str, Path], metrics: Mapping[str, Any]) -> Path`
+  - `payload = dict(metrics)`
+  The final entrypoint called `globals()["write_metrics_json"](payload, metrics_path)`, so `metrics` became a `PosixPath`. The writer raised `TypeError: 'PosixPath' object is not iterable`, fail-safe metrics did not provide the normal condition metrics, and `run_experiments` failed at command stage.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-298's benchmark evaluator argument mismatch and reached a metrics writer call-order mismatch in the regenerated entrypoint.
+  - Divergence: no session divergence observed; this is another generated-runner callable projection gap visible only during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the metrics writer and final CLI entrypoint in separate chunks. The entrypoint assumed a payload-first writer API even though the generated writer's signature is path-first, and the existing repair did not match this exact `globals()["write_metrics_json"](payload, metrics_path)` call form.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+    - adds `repairPythonEntrypointMetricsWriterCallOrderSurface(...)`
+    - detects path-first `write_metrics_json(metrics_path, metrics)` definitions
+    - rewrites generated entrypoint calls such as `globals()["write_metrics_json"](payload, metrics_path)` to call the writer with `metrics_path` first and the metrics payload second
+    - runs this repair in the late Python handoff repair sequence after the broader AutoLabOS metrics writer compatible-call repair
+  - Tests: `tests/implementSessionManager.test.ts`
+    - adds deterministic regression coverage for the exact `TypeError: 'PosixPath' object is not iterable` failure shape before repair and successful JSON metrics persistence after repair
+
+- Regression status:
+  - Targeted regression: pass on 2026-05-01 with `npm test -- --run tests/implementSessionManager.test.ts -t "generated writer is path-first"`.
+  - Adjacent metrics writer regression: pass on 2026-05-01 with `npm test -- --run tests/implementSessionManager.test.ts -t "metrics writer|generated writer is path-first|write_metrics_payload|metrics writer dispatchers|AutoLabOS metrics writer compatible-call"`.
+  - Build: pass on 2026-05-01 with `npm run build`.
+  - Re-validation result: same-flow Web API rerun on 2026-05-01 no longer reproduced `TypeError: 'PosixPath' object is not iterable`. The regenerated runner wrote `metrics.json` and advanced to LV-300, where final condition dispatch ignored the generated high-level baseline-first runner and recorded all conditions as failed.
+
+- Follow-up risks:
+  - The repair must only fix writer argument order. It must not fabricate metrics payloads, fake condition success, or bypass condition execution.
+  - Once metrics writer call order is repaired, execution may advance into real Hugging Face downloads/model loading, PEFT runtime incompatibilities, CUDA memory/runtime limits, condition-training failures, deterministic fallback misuse, or paper-scale evidence insufficiency.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-300
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-301 on 2026-05-01
+- Validation target: final generated CLI entrypoints should dispatch to the real generated baseline-first condition runner, and metrics aggregation should normalize condition-result maps before invoking sequence-oriented aggregators.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-299 metrics writer call-order repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-299 metrics writer call-order repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation, local verification, second-stage verification, and the generated `run_peft_instruction_study.py` command to execute.
+
+- Expected behavior:
+  - The final entrypoint should either call the generated high-level `run_baseline_first_conditions(...)` loop once, or expose a compatible bridge so `_run_locked_conditions(...)` can execute real condition work rather than recording helper-discovery failures.
+  - If condition results are represented as an `OrderedDict` keyed by marker, metrics aggregation should normalize the map values before calling row-oriented helpers such as `build_metrics_contract(...)`.
+
+- Actual behavior:
+  - Local verification passed and second-stage execution started.
+  - The generated script printed all governed conditions and wrote `metrics.json`.
+  - Every condition row failed immediately with `No condition execution helper was defined in earlier script sections.`
+  - `metrics.json` also recorded an aggregation traceback:
+    - `AttributeError: 'str' object has no attribute 'get'`
+    - `aggregate_condition_results(...)` iterated an `OrderedDict`, so `normalize_condition_result(...)` received string keys instead of condition result mappings.
+  - `run_experiments_verify_report.json` reported `status: fail`, `stage: command`, and `summary: Experiment command failed`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-299's metrics writer call-order mismatch and reached the generated condition dispatcher/aggregation mismatch described above.
+  - Divergence: no session divergence observed; this is a final-entrypoint projection gap visible during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a real high-level condition workflow in one chunk (`run_baseline_first_conditions(...)`) and a separate final CLI orchestration chunk that only searched single-condition helper names. The final metrics assembler then passed the `OrderedDict` condition map directly into a sequence-oriented metrics builder, causing a secondary aggregation exception.
+
+- Code/test changes:
+  - Code: added `repairPythonEntrypointHighLevelConditionRunnerSurface(...)` so final `_run_locked_conditions(...)` entrypoints prefer generated high-level baseline-first condition runners such as `run_baseline_first_conditions(...)` before falling back to per-condition `_execute_condition(...)` dispatch. The same repair also normalizes mapping-backed `condition_results` before calling sequence-oriented metrics aggregators.
+  - Tests: added deterministic regression coverage in `tests/implementSessionManager.test.ts` for the exact failure shape: pre-repair helper-discovery rows plus `AttributeError: 'str' object has no attribute 'get'`; post-repair high-level runner dispatch and successful metrics aggregation.
+  - Validation: `npm test -- --run tests/implementSessionManager.test.ts -t high-level baseline-first runners` passed; `npm test -- --run tests/implementSessionManager.test.ts` passed with 284/284 tests; `npm run build` passed.
+
+- Regression status:
+  - Automated regression test linked: `repairs final condition loops to use generated high-level baseline-first runners`.
+  - Re-validation result: same-flow Web API rerun on 2026-05-01 no longer reproduced the helper-discovery failures or `AttributeError: 'str' object has no attribute 'get'` metrics aggregation failure. The run advanced to LV-301, where the generated high-level baseline-first runner enforced a first-condition contract that conflicted with the generated condition list order.
+
+- Follow-up risks:
+  - The repair must not fake successful condition rows. It should only bridge the final entrypoint to generated condition execution helpers or normalize generated result containers.
+  - After this bridge, execution may advance into real dependency/model loading, Hugging Face access, PEFT runtime incompatibilities, CUDA memory/runtime limits, benchmark evaluation failures, deterministic fallback misuse, or paper-scale evidence insufficiency.
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-301
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-302 on 2026-05-01
+- Validation target: generated baseline-first PEFT runners should preserve all governed conditions while aligning the executable order with the declared locked baseline condition.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-300 high-level runner bridge repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-300 high-level condition runner bridge repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation, local verification, second-stage verification, and the generated `run_peft_instruction_study.py` command to execute.
+
+- Expected behavior:
+  - The generated runner should keep both the locked tuned LoRA baseline and the unmodified base reference in the comparison.
+  - If `BASELINE_CONDITION_ID` is `locked_lora_baseline`, the executable baseline-first order should place that condition first without dropping `unmodified_base`.
+
+- Actual behavior:
+  - Local verification passed and second-stage execution started.
+  - The generated runner entered `run_conditions_baseline_first(...)`.
+  - `_ordered_conditions_for_locked_contract(...)` observed `CONDITIONS` in this order: `['unmodified_base', 'locked_lora_baseline', 'dora', 'lora_plus_neftune_style_embedding_noise_while_pr', 'the_strongest_alternative_lightweight_recipe_amo', 'vanilla_lora', 'rslora']`.
+  - Because `BASELINE_CONDITION_ID` was `locked_lora_baseline`, it raised `RuntimeError: Baseline-first contract violation: first configured condition must be 'locked_lora_baseline'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-300's high-level runner/aggregation mismatch and reached the generated condition-order contract mismatch described above.
+  - Divergence: no session divergence observed; this is a generated final-runner contract normalization gap visible during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: dynamic staged generation preserved the broader governed condition order with `unmodified_base` first, while a later baseline-first contract helper interpreted `locked_lora_baseline` as the first executable condition. The runner did not normalize the executable order around `BASELINE_CONDITION_ID` before enforcing the contract.
+
+- Code/test changes:
+  - Code: added `repairPythonBaselineFirstConditionOrderSurface(...)` so generated `_ordered_conditions_for_locked_contract(...)` helpers normalize the executable condition order around `BASELINE_CONDITION_ID` instead of failing when a broader governed condition list begins with `unmodified_base`.
+  - Tests: added deterministic regression coverage in `tests/implementSessionManager.test.ts` that verifies the pre-repair `first configured condition must be 'locked_lora_baseline'` failure and post-repair order `locked_lora_baseline,unmodified_base,dora` while preserving the original order for audit metadata.
+  - Validation: `npm test -- --run tests/implementSessionManager.test.ts -t normalizes generated baseline-first condition order` passed; `npm test -- --run tests/implementSessionManager.test.ts` passed with 285/285 tests; `npm run build` passed.
+
+- Regression status:
+  - Automated regression test linked: `normalizes generated baseline-first condition order around the declared locked baseline`.
+  - Re-validation result: same-flow Web API rerun on 2026-05-01 no longer reproduced `RuntimeError: Baseline-first contract violation: first configured condition must be 'locked_lora_baseline'`. The run advanced to LV-302, where duplicate generated condition-registry metadata truncated one required marker and module-load validation failed before condition execution.
+
+- Follow-up risks:
+  - The repair must not remove `unmodified_base`; it should only normalize executable order so the declared locked baseline runs first and all governed comparison conditions remain inspectable.
+  - After this bridge, execution may advance into real dependency/model loading, Hugging Face access, PEFT runtime incompatibilities, CUDA memory/runtime limits, benchmark evaluation failures, deterministic fallback misuse, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-302
+
+- Status: broader repair implemented; same-flow live revalidation advanced to LV-303 on 2026-05-01
+- Validation target: generated PEFT condition registries should preserve the governed required condition markers, or resolve harmless unique prefix/alias drift to the concrete generated condition marker without fabricating condition rows.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after LV-301 baseline-first order repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-301 baseline-first condition order repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow staged Codex OAuth generation, local verification, second-stage verification, and the generated `run_peft_instruction_study.py` command to execute.
+
+- Expected behavior:
+  - The registry validator should validate the concrete generated condition specs.
+  - If a generated duplicate `REQUIRED_CONDITION_MARKERS` block contains a uniquely resolvable truncated prefix of an actual condition marker, the validator should keep the alias inspectable and proceed with the concrete condition spec.
+  - If no unique concrete condition marker exists, validation should still fail rather than inventing a condition.
+
+- Actual behavior:
+  - Local verification passed and second-stage execution started.
+  - The generated `ORDERED_CONDITION_SPECS` included `the_strongest_alternative_lightweight_recipe_among_vanilla_lora_and_rslora`.
+  - A later duplicate `REQUIRED_CONDITION_MARKERS` block required the truncated marker `the_strongest_alternative_lightweight_recipe_amo`.
+  - Module-level `CONDITION_SPECS = validate_condition_registry()` failed before any condition execution with:
+    - `ValueError: Condition registry is missing required marker(s) from the governed plan: the_strongest_alternative_lightweight_recipe_amo`
+  - After the first repair, the same-flow rerun generated a semantically related variant:
+    - `STRONGEST_ALT_MARKER = "the_strongest_alternative_lightweight_recipe_amo"` was declared as a plan-level summary marker.
+    - `PLAN_MARKER_COVERAGE[STRONGEST_ALT_MARKER] = CANDIDATE_RECIPE_MARKERS` mapped that plan marker to concrete executable candidates.
+    - `_validate_required_marker_coverage(...)` still required every plan marker to appear as an executable `ConditionSpec.marker`, so module-level `VALIDATED_CONDITION_REGISTRY = validate_condition_registry()` failed with `ConditionRegistryError: Missing required governed condition markers: ['the_strongest_alternative_lightweight_recipe_amo']`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
+  - Existing session: the same existing run advanced past LV-301's baseline-first order mismatch and reached the generated condition-registry marker drift described above.
+  - Divergence: no session divergence observed; this is a generated registry projection gap visible during real second-stage execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the concrete condition registry and a later duplicate required-marker/contract block independently. The later block preserved only a truncated prefix of the long strongest-alternative marker, so strict exact-match validation rejected a registry that otherwise contained the intended concrete condition.
+
+- Code/test changes:
+  - Code: added `repairPythonRequiredConditionMarkerAliasSurface(...)` so generated registry validators keep exact required markers strict, but accept a required marker only when it is a uniquely resolvable prefix/alias of an actual generated condition spec marker. The repair records `_autolabos_required_condition_marker_aliases` and exposes alias metadata in `condition_contract_summary(...)` when that summary exists.
+  - Code: broadened the repair for the second reproduced shape by supporting both `REQUIRED_CONDITION_MARKERS` and `REQUIRED_PLAN_CONDITION_MARKERS`, recognizing both missing-marker error strings, resolving declared `PLAN_MARKER_COVERAGE` maps against concrete executable condition specs, and replacing generated `_validate_required_marker_coverage(...)` with a coverage-aware validator when needed.
+  - Tests: added deterministic regression coverage in `tests/implementSessionManager.test.ts` for the exact failure shape: pre-repair module-load `ValueError` on `the_strongest_alternative_lightweight_recipe_amo`, post-repair validation against the concrete `the_strongest_alternative_lightweight_recipe_among_vanilla_lora_and_rslora` spec, no missing required markers, and an inspectable alias map.
+  - Tests: added deterministic regression coverage for the plan-level marker variant where `REQUIRED_PLAN_CONDITION_MARKERS` requires the truncated strongest-alternative marker but `PLAN_MARKER_COVERAGE` maps it to concrete candidate recipe markers.
+  - Validation: `npm test -- --run tests/implementSessionManager.test.ts -t "required condition markers|plan-level required markers"` passed; `npm test -- --run tests/implementSessionManager.test.ts` passed with 287/287 tests; `npm run build` passed.
+
+- Regression status:
+  - Automated regression tests linked: `resolves uniquely aliased required condition markers against concrete registry specs`; `resolves plan-level required markers through declared concrete coverage maps`.
+  - Re-validation result: same-flow Web API rerun on 2026-05-01 after the broader repair no longer reproduced either the earlier exact `ValueError` shape or the related plan-marker coverage `ConditionRegistryError`. The run completed staged Codex OAuth materialization, applied late handoff repairs, passed `python3 -m py_compile`, published the experiment output directory, and advanced to LV-303 during second-stage runner execution.
+
+- Follow-up risks:
+  - The repair must not hide genuinely missing governed conditions or synthesize fake results. It should only accept exact markers or uniquely resolvable aliases/prefixes that correspond to an actual generated condition spec.
+  - After this repair, execution may advance into real dependency/model loading, Hugging Face access, PEFT runtime incompatibilities, CUDA memory/runtime limits, benchmark evaluation failures, deterministic fallback misuse, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-303
+
+- Status: repair implemented; same-flow live revalidation blocked at LV-304 before fully confirming the runtime payload-dispatch boundary
+- Validation target: generated PEFT runners should expose a runnable top-level study workflow that drives the generated dataset loading, condition training/preparation, benchmark evaluation, metrics aggregation, and metrics persistence path without relying on deterministic fallback rows or calling payload builders without required condition evidence.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-01 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after the LV-302 required-marker alias/coverage repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-302 alias/coverage repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let staged Codex OAuth materialization complete through all five chunks and allow local plus second-stage verification to execute the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - The final generated runner entrypoint should find or materialize a real runnable study workflow.
+  - That workflow should call generated helpers such as `load_study_datasets(...)`, `run_bounded_condition_training(...)`, `evaluate_all_conditions_on_benchmarks(...)`, and `build_metrics_payload(condition_results, ...)` with real generated condition rows.
+  - A metrics payload builder requiring `condition_results` should not be called as a no-argument fallback.
+
+- Actual behavior:
+  - Staged Codex OAuth materialization completed and local verification passed:
+    - `Local verification passed via python3 -m py_compile .../run_peft_instruction_study.py`
+  - Second-stage execution started the generated script and printed the AutoLabOS summary, but no condition rows were present in the metrics payload.
+  - `_run_study_workflow(...)` did not dispatch to the available generated dataset/training/evaluation helpers. It fell through to:
+    - `builder = globals().get("build_metrics_payload")`
+    - `_call_with_supported_arguments(builder, options=options, runtime_options=options, **option_map)`
+  - Because `build_metrics_payload(...)` requires `condition_results`, the generated runner failed with:
+    - `RuntimeError: No runnable study workflow was available or all workflow candidates failed. attempted=['build_metrics_payload']; errors={'build_metrics_payload': "TypeError: build_metrics_payload() missing 1 required positional argument: 'condition_results'"}`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was observed in the active validation workspace after the rebuilt Web API was restarted.
+  - Existing session: the existing run advanced past LV-302 and then failed in the generated final entrypoint workflow dispatch described above.
+  - Divergence: no session divergence observed; this is a generated runner projection/dispatch gap visible in the same Web API live flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunk generation produced usable lower-level dataset, training, benchmark evaluation, and metrics payload helpers, but the final top-level workflow candidate list omitted a bridge that composes those helpers. The fallback payload-builder probe is signature-filtered and therefore calls `build_metrics_payload(...)` without the required `condition_results`, producing a runtime TypeError instead of driving real condition execution.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonBuildMetricsPayloadFromOptionsBridgeSurface(...)`.
+      - calls that repair during late handoff verification when a generated runner searches for `build_metrics_payload_from_options(...)` but only exposes lower-level generated helpers such as `load_study_datasets(...)`, `run_bounded_condition_training(...)`, `evaluate_all_conditions_on_benchmarks(...)`, and `build_metrics_payload(condition_results, ...)`.
+      - repairs the observed no-argument `validate_recipe_registry(ordered)` mismatch when the generated registry validator is no-argument.
+      - does not synthesize deterministic fallback rows; it only composes generated runner-owned helpers.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added `bridges build_metrics_payload_from_options to generated study helpers without fallback rows`.
+
+- Regression status:
+  - Reproduced in same-flow Web API live validation on 2026-05-01.
+  - Automated targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "bridges build_metrics_payload_from_options"`.
+  - Adjacent full file regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Same-flow revalidation: partial. The rebuilt localhost-only Web API rerun completed staged Codex OAuth materialization and local `py_compile`, then reached LV-304 during second-stage module execution before the runner could confirm or deny the LV-303 payload-dispatch path.
+
+- Follow-up risks:
+  - The repair must not fabricate deterministic fallback rows or manually create metrics outside the generated runner. It should only bridge already generated runner-owned helpers into a top-level workflow.
+  - After this repair, execution may advance into real dependency/model loading, Hugging Face access, PEFT runtime incompatibilities, CUDA memory/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-304
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-305 on 2026-05-02
+- Validation target: generated PEFT runners should not fail during import-time/runtime initialization because a generated logging fallback calls a timestamp helper under a different name than the timestamp helper emitted by earlier chunks.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4318` with native Codex staged implementation after the LV-303 no-fallback payload bridge repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-303 bridge repair.
+  2. Restart the localhost-only Web API on `127.0.0.1:4318`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let staged Codex OAuth materialization complete, local `py_compile` pass, and second-stage execution invoke the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - The generated runner should either define `current_utc_timestamp(...)`, use its existing `utc_timestamp(...)` helper, or receive a handoff compatibility alias before execution.
+  - Import-time device detection/logging should not fail before the generated study workflow can run.
+
+- Actual behavior:
+  - Staged Codex OAuth materialization completed and local verification passed.
+  - Second-stage execution invoked the generated script, but module-level `EXPERIMENT_DEVICE, DEVICE_INFO = detect_device(DEFAULT_SEED, log=True)` called `_call_available_logger("device_selected", info)`.
+  - `_call_available_logger(...)` fell back to:
+    - `print(f"[{current_utc_timestamp()}] {message}: ...")`
+  - The same runner defines `utc_timestamp()` but not `current_utc_timestamp()`, causing:
+    - `NameError: name 'current_utc_timestamp' is not defined`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was observed in the active validation workspace after the rebuilt Web API was restarted.
+  - Existing session: the existing run completed generation/local verification and failed in import-time/runtime initialization before entering the study workflow.
+  - Divergence: no session divergence observed; the failure is a generated helper-name projection gap in the same Web API live flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunks emitted a general timestamp helper as `utc_timestamp()`, while a later device/logging compatibility block referenced the semantically equivalent `current_utc_timestamp()` name. The current logging helper repair covers missing `setup_logging`, `log_message`, `print_status`, and module-level `logger`, but not timestamp helper alias drift inside logging fallback code.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended `repairPythonLoggingHelperAlias(...)` so a generated runner that calls `current_utc_timestamp(...)` receives a compatibility alias to generated timestamp helpers such as `utc_timestamp(...)`, `iso_utc_timestamp(...)`, or `now_utc_timestamp(...)`.
+      - uses a minimal UTC fallback only when no generated timestamp helper exists.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage for `current_utc_timestamp(...)` logging fallback repair when `utc_timestamp(...)` exists.
+
+- Regression status:
+  - Reproduced in same-flow Web API live validation on 2026-05-02.
+  - Automated targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "current_utc_timestamp"`.
+  - Adjacent full file regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Same-flow revalidation: partial. The rebuilt localhost-only Web API rerun no longer reproduced the `current_utc_timestamp` failure; it completed staged Codex OAuth materialization, passed local `py_compile`, and advanced to LV-305 during second-stage runner execution.
+
+- Follow-up risks:
+  - The repair should alias real generated timestamp helpers where present and only use a minimal UTC fallback if no generated timestamp helper exists.
+  - After this repair, execution may return to the LV-303 payload-dispatch path, advance into real dependency/model loading, expose Hugging Face/network/cache issues, or surface PEFT/runtime evaluation failures.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-305
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-306 on 2026-05-02
+- Validation target: generated PEFT runners should expose a final entrypoint resolver that dispatches to the real generated orchestration function before `run_experiments` starts, instead of failing because the resolver's searched names omit the generated orchestration helper.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4319` with native Codex staged implementation after the LV-304 timestamp-alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-304 timestamp helper alias repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4319`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let staged Codex OAuth materialization complete, local handoff repairs run, local `py_compile` pass, and second-stage execution invoke the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - `_run_entrypoint_workflow(...)` should find a real generated orchestration function or receive a compatibility alias before handoff.
+  - If the runner defines `run_baseline_first_orchestration(...)`, the final entrypoint should invoke that function and pass its output into the generated metrics aggregation path.
+  - The repair must not synthesize deterministic fallback rows or manually create metrics outside the node-owned runner.
+
+- Actual behavior:
+  - Staged Codex OAuth materialization completed and local verification passed after late handoff repairs.
+  - The generated runner defines a real `run_baseline_first_orchestration(parsed_args=None)` function and metrics aggregation helpers such as `build_metrics_schema(...)` and `aggregate_metrics(...)`.
+  - The final `_run_entrypoint_workflow(...)` resolver searched only:
+    - `run_locked_peft_study`
+    - `run_peft_instruction_study`
+    - `run_experiment`
+    - `orchestrate_experiment`
+    - `run_orchestration_loop`
+    - `execute_experiment`
+  - Because `run_baseline_first_orchestration(...)` was not among the searched names and no alias was inserted, second-stage execution failed with:
+    - `RuntimeError: No experiment orchestration function was defined before the entrypoint section.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was observed in the active validation workspace after the rebuilt Web API was restarted.
+  - Existing session: the existing run advanced past LV-304 and failed at the generated final entrypoint resolver boundary.
+  - Divergence: no session divergence observed; this is a generated runner projection/dispatch gap visible in the same Web API live flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunk generation materialized a valid orchestration function under a precise baseline-first name, while the final entrypoint resolver used a narrower generic candidate list. Existing handoff repairs cover several related dispatcher strings but do not recognize this exact `_run_entrypoint_workflow(...)` failure shape or the `run_baseline_first_orchestration(...)` implementation name.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended `repairPythonRecipeExecutionOrchestratorAlias(...)` to recognize `_run_entrypoint_workflow(...)` resolvers that fail with `No experiment orchestration function was defined before the entrypoint section.`
+      - added baseline-first orchestration implementation names including `run_baseline_first_orchestration(...)`.
+      - bridges the existing generated orchestration helper into searched entrypoint names such as `run_peft_instruction_study(...)`/`run_experiment(...)`.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage for a generated runner that defines `run_baseline_first_orchestration(...)` while its final entrypoint resolver searches only generic orchestration names.
+
+- Regression status:
+  - Reproduced in same-flow Web API live validation on 2026-05-02.
+  - Automated targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "run_baseline_first_orchestration"`.
+  - Adjacent full file regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Same-flow revalidation: partial. The rebuilt localhost-only Web API rerun no longer reproduced `No experiment orchestration function was defined before the entrypoint section`; it advanced to LV-306 during seed initialization in second-stage runner execution.
+
+- Follow-up risks:
+  - The repair should only connect existing generated orchestration helpers to the final entrypoint resolver.
+  - After this repair, execution may advance into real dependency/model loading, Hugging Face access, PEFT runtime incompatibilities, CUDA memory/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-306
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-307 on 2026-05-02
+- Validation target: seed compatibility repairs should never create a self-recursive seed shim that prevents the generated runner from reaching condition execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4320` with native Codex staged implementation after the LV-305 entrypoint-orchestration alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-305 entrypoint-orchestration alias repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4320`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let staged Codex OAuth materialization complete, local handoff repairs run, local `py_compile` pass, and second-stage execution invoke the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - If a `set_global_seed(...)` compatibility shim is inserted, it should call a distinct generated seed helper such as `seed_everything(...)`, `setup_runtime(...)`, `set_reproducibility(...)`, `transformers_set_seed(...)`, or `set_seed(...)`.
+  - The shim should not include `globals().get("set_global_seed")` while defining `set_global_seed(...)` itself.
+
+- Actual behavior:
+  - Staged Codex OAuth materialization completed and local verification passed.
+  - Late handoff repairs reported:
+    - `Aligned generated seed helper compatibility in run_peft_instruction_study.py before handoff.`
+  - The inserted/generated `set_global_seed(seed)` shim contained:
+    - `... or globals().get("set_global_seed")`
+  - During second-stage execution `_entrypoint_set_seed(args)` selected `set_global_seed`, which then selected itself as `seed_helper`, causing:
+    - `RecursionError: maximum recursion depth exceeded`
+  - The runner wrote failure metrics with every governed condition marked `not_completed_due_to_top_level_failure`; no real condition execution occurred.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was observed in the active validation workspace after the rebuilt Web API was restarted.
+  - Existing session: the existing run advanced past LV-305 and failed during generated seed initialization.
+  - Divergence: no session divergence observed; this is a generated compatibility-shim bug visible in the same Web API live flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the seed alias repair builds a generic helper candidate chain for all seed alias names and appends `globals().get("set_global_seed")` unconditionally. When the alias being defined is itself `set_global_seed`, this creates a self-call path that local `py_compile` cannot catch.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - changed `repairPythonTransformersSetSeedAliasSurface(...)` so generated seed-helper lookup chains filter out the alias currently being defined.
+      - prevents `def set_global_seed(...)` from selecting `globals().get("set_global_seed")` while preserving valid calls to distinct generated helpers such as `seed_everything(...)`, `setup_runtime(...)`, `set_reproducibility(...)`, `set_seed(...)`, or `transformers_set_seed(...)`.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage for a missing `set_global_seed(...)` alias repair that must not include `globals().get("set_global_seed")` inside the inserted shim.
+
+- Regression status:
+  - Reproduced in same-flow Web API live validation on 2026-05-02.
+  - Automated targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "set_global_seed alias"`.
+  - Adjacent full file regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Same-flow revalidation: partial. The rebuilt localhost-only Web API rerun on `127.0.0.1:4321` no longer reproduced the `RecursionError`; it completed staged Codex OAuth materialization, passed local `py_compile`, entered second-stage execution, and advanced to LV-307 during device metadata normalization.
+
+- Follow-up risks:
+  - The repair should preserve existing valid aliases for `set_all_seeds(...)` and `set_reproducible_seed(...)`.
+  - After this repair, execution may advance into real dependency/model loading, Hugging Face access, PEFT runtime incompatibilities, CUDA memory/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-307
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-308 on 2026-05-02
+- Validation target: entrypoint device detection should normalize generated device metadata objects before converting them to plain dictionaries, so second-stage execution can proceed into real condition execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4321` with native Codex staged implementation after the LV-306 seed-shim repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-306 seed-shim self-recursion repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4321`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let staged Codex OAuth materialization complete, local handoff repairs run, local `py_compile` pass, and second-stage execution invoke the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - If `detect_device()` returns `(device, RuntimeDeviceInfo)` or another object-backed metadata payload, `_entrypoint_detect_device(...)` should normalize the second tuple value with a JSON-safe/dataclass-aware helper before calling `dict(...)`.
+  - The device metadata bridge should not fabricate experiment rows or bypass node-owned execution; it should only make runtime metadata serializable.
+
+- Actual behavior:
+  - Staged Codex OAuth materialization completed and local verification passed.
+  - The generated runner defines `RuntimeDeviceInfo` and `detect_device() -> Tuple[Any, RuntimeDeviceInfo]`.
+  - The final `_entrypoint_detect_device(...)` path handled two-item tuples with:
+    - `return detected[0], dict(detected[1] or {})`
+  - Because `detected[1]` is a `RuntimeDeviceInfo` object rather than a mapping or iterable key/value sequence, second-stage execution failed with:
+    - `TypeError: 'RuntimeDeviceInfo' object is not iterable`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was observed in the active validation workspace after the rebuilt Web API was restarted.
+  - Existing session: the existing run advanced past LV-306 and failed during generated device metadata normalization before condition execution.
+  - Divergence: no session divergence observed; this is a generated runtime metadata projection gap visible in the same Web API live flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunks independently generated a rich `RuntimeDeviceInfo` dataclass-like metadata object and a final entrypoint that assumes any two-item device tuple has a mapping-compatible second value. Local `py_compile` cannot catch the object-to-dict mismatch, so a handoff compatibility repair should normalize tuple metadata before the final entrypoint executes.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extended `repairPythonEntrypointRuntimeCompatibilitySurface(...)` to normalize the second item of a generated `(device, info)` tuple before converting it to a plain dict.
+      - uses existing JSON-safe/dataclass-aware helpers such as `_contract_json_safe(...)`, `_autolabos_json_safe(...)`, `json_safe(...)`, or `make_json_safe(...)` where available, and falls back to `vars(...)` for object-backed metadata.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage for `_entrypoint_detect_device(...)` receiving `(device, RuntimeDeviceInfo)` and failing before repair with `TypeError: 'RuntimeDeviceInfo' object is not iterable`.
+
+- Regression status:
+  - Reproduced in same-flow Web API live validation on 2026-05-02.
+  - Automated targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "device tuple metadata"`.
+  - Adjacent full file regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Same-flow revalidation: partial. The rebuilt localhost-only Web API rerun on `127.0.0.1:4322` no longer reproduced the `RuntimeDeviceInfo` iterable failure; it completed staged Codex OAuth materialization, passed local `py_compile`, entered second-stage execution, reported the CUDA device summary, and advanced to LV-308 in the baseline-first condition-suite dispatcher.
+
+- Follow-up risks:
+  - The repair should normalize only runtime metadata and must not fabricate deterministic fallback condition rows.
+  - After this repair, execution may advance into real dependency/model loading, Hugging Face access, PEFT runtime incompatibilities, CUDA memory/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-308
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-309 on 2026-05-02
+- Validation target: final entrypoint condition-suite dispatchers should materialize generated training and benchmark datasets before calling a baseline-first runner that requires those inputs.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4322` with native Codex staged implementation after the LV-307 device metadata normalization repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-307 device metadata normalization repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4322`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let staged Codex OAuth materialization complete, local handoff repairs run, local `py_compile` pass, and second-stage execution invoke the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - `_main_execute_conditions(...)` should call available generated data loaders such as `load_instruction_dataset(...)` and `load_benchmark_datasets(...)` before invoking `execute_all_conditions(...)`.
+  - It should pass required aliases including `train_dataset`, `instruction_dataset`, `benchmark_data`, `benchmark_datasets`, `benchmarks`, and `eval_datasets` as appropriate for the selected runner signature.
+  - The repair must not synthesize deterministic fallback rows or manually create metrics outside the node-owned runner.
+
+- Actual behavior:
+  - Staged Codex OAuth materialization completed, local verification passed, and second-stage execution started.
+  - The runner logged the CUDA device summary and entered:
+    - `[autolabos] executing baseline-first condition suite`
+  - The generated `execute_all_conditions(args, train_dataset, benchmark_data, device)` function requires `train_dataset` and `benchmark_data`.
+  - The final `_main_execute_conditions(...)` dispatcher selected `execute_all_conditions(...)` but passed only generic context fields such as `args`, `run_context`, `device`, `device_info`, `output_dir`, `cache_dir`, `adapter_dir`, `metrics_path`, and `seed`.
+  - Signature filtering then failed with:
+    - `TypeError: Cannot call 'execute_all_conditions'; missing required arguments: ['train_dataset', 'benchmark_data']`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was observed in the active validation workspace after the rebuilt Web API was restarted.
+  - Existing session: the existing run advanced past LV-307 and failed during generated condition-suite input dispatch.
+  - Divergence: no session divergence observed; this is a generated final-entrypoint input-materialization gap visible in the same Web API live flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunks generated the dataset loaders and the condition-suite runner in earlier sections, but the final entrypoint dispatcher was generated independently and did not compose those loaders into the runner call. Local `py_compile` cannot catch the missing required runtime inputs.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonMainExecuteConditionsInputMaterializationSurface(...)` and wired it into late handoff repairs.
+      - materializes real generated train and benchmark loader outputs before `_main_execute_conditions(...)` calls a selected condition-suite runner.
+      - passes aliases such as `train_dataset`, `instruction_dataset`, `benchmark_data`, `benchmark_datasets`, `benchmarks`, and `eval_datasets` without fabricating fallback rows or metrics.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage for a final `_main_execute_conditions(...)` dispatcher that selects `execute_all_conditions(...)` but initially omits required `train_dataset` and `benchmark_data` inputs.
+
+- Regression status:
+  - Reproduced in same-flow Web API live validation on 2026-05-02.
+  - Automated targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "final _main_execute_conditions"`.
+  - Adjacent targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "device tuple metadata|baseline-first entrypoint context inputs|final _main_execute_conditions"`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Full automated regression: pass on 2026-05-02 with `npm test`.
+  - Same-flow revalidation: partial. The rebuilt localhost-only Web API rerun on `127.0.0.1:4323` no longer reproduced the missing `train_dataset`/`benchmark_data` failure; it completed staged Codex OAuth materialization, passed local `py_compile`, entered second-stage execution, materialized datasets from cached Hugging Face data where available, and advanced to LV-309 during deterministic benchmark sampling.
+
+- Follow-up risks:
+  - The repair should materialize real generated loader outputs, not fallback condition rows.
+  - After this repair, execution may advance into Hugging Face dataset/model download, installed PEFT/Transformers incompatibilities, CUDA memory/runtime limits, actual benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-309
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-310 on 2026-05-02
+- Validation target: generated deterministic sampling helpers should tolerate the common `salt`/`namespace` naming mismatch when benchmark preparation calls an existing helper with equivalent deterministic-domain metadata.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4323` with native Codex staged implementation after the LV-308 condition-suite input materialization repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-308 `_main_execute_conditions(...)` train/benchmark input-materialization repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4323`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let staged Codex OAuth materialization complete, local handoff repairs run, local `py_compile` pass, and second-stage execution invoke the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - Dataset preparation should use existing generated sampling helpers consistently.
+  - If generated call sites use `salt=...` to indicate a deterministic sampling domain while the helper accepts `namespace=...`, the handoff repair should bridge that alias without changing the sampled records or fabricating data.
+
+- Actual behavior:
+  - Staged Codex OAuth materialization completed and local verification passed.
+  - Second-stage execution advanced past the previous missing `train_dataset`/`benchmark_data` dispatcher boundary.
+  - Hugging Face dataset access had network-address warnings but used cached datasets for `tatsu-lab/alpaca` and `ai2_arc`.
+  - Benchmark preparation then failed with:
+    - `TypeError: deterministic_sample_records() got an unexpected keyword argument 'salt'`
+  - The generated helper signature is `deterministic_sample_records(records, limit, *, seed=SEED, namespace="records")`, while generated call sites use `salt=ARC_CHALLENGE_BENCHMARK_KEY` and `salt=benchmark_key`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was observed in the active validation workspace after the rebuilt Web API was restarted.
+  - Existing session: the existing run advanced past LV-308 and failed during generated benchmark data preparation.
+  - Divergence: no session divergence observed; this is a generated helper/call-site alias mismatch visible in the same Web API live flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunks independently generated deterministic sampling helpers and benchmark preparation call sites, using `namespace` in the helper signature and `salt` in later call sites for the same deterministic sampling-domain concept. Local `py_compile` cannot catch the keyword mismatch.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonDeterministicSampleRecordsSaltAliasSurface(...)` and wired it into late handoff repairs.
+      - adds a `salt` keyword-only alias to generated `deterministic_sample_records(...)` helpers when call sites use `salt=...` but the helper exposes only `namespace=...`.
+      - maps `salt` into `namespace` only for the helper's default namespace, preserving explicit namespace values and not changing sample limits, seeds, records, or metrics.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage for generated `deterministic_sample_records(..., namespace=...)` helpers called with `salt=...`.
+
+- Regression status:
+  - Reproduced in same-flow Web API live validation on 2026-05-02.
+  - Automated targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "salt aliases|final _main_execute_conditions"`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Same-flow revalidation: partial. The rebuilt localhost-only Web API rerun on `127.0.0.1:4324` no longer reproduced the `deterministic_sample_records(..., salt=...)` TypeError; it completed staged Codex OAuth materialization, passed local `py_compile`, entered second-stage execution, loaded benchmark samples, and advanced to LV-310 in the final baseline-first condition execution resolver.
+
+- Follow-up risks:
+  - The repair should only bridge deterministic-domain keyword aliases and must not alter sampling limits, seed values, benchmark records, or metrics payloads.
+  - After this repair, execution may advance into model loading/training, installed PEFT/Transformers incompatibilities, CUDA memory/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-310
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-311 on 2026-05-02
+- Validation target: final main orchestration should resolve an existing generated baseline-first condition runner instead of stopping before condition execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4324`, `127.0.0.1:4325`, and `127.0.0.1:4326` with native Codex staged implementation after the LV-309 deterministic sampling alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-309 `deterministic_sample_records(..., salt=...)` alias repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4324`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let staged Codex OAuth materialization complete, local handoff repairs run, local `py_compile` pass, and second-stage execution invoke the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - The final main orchestration should find the generated baseline-first condition runner and invoke it with the prepared instruction examples, benchmark samples, device info, output directory, and locked condition order.
+  - Resolver alias repairs should bridge existing generated helpers only; they must not fabricate condition rows or mark conditions successful without running the node-owned helper.
+
+- Actual behavior:
+  - Staged Codex OAuth materialization completed and local verification passed.
+  - Second-stage execution selected CUDA, prepared benchmark samples, and wrote failure metrics.
+  - The final main orchestration searched only:
+    - `run_condition_suite`
+    - `run_peft_conditions`
+    - `execute_condition_suite`
+    - `execute_conditions`
+    - `run_all_conditions`
+  - The generated runner defines `execute_baseline_first_conditions(...)` plus aliases `run_condition_execution` and `run_conditions_baseline_first`, but none of those names were searched.
+  - Execution failed with:
+    - `RuntimeError("No condition execution helper is available; cannot run the baseline-first PEFT study.")`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was observed in the active validation workspace after the rebuilt Web API was restarted.
+  - Existing session: the existing run advanced past LV-309 and failed during final condition-runner resolution before any condition could execute.
+  - Divergence: no session divergence observed; this is a generated final resolver alias gap visible in the same Web API live flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunks generated the real baseline-first condition execution helper under `execute_baseline_first_conditions(...)`, while the final orchestration chunk searched a narrower generic suite-runner list. Existing alias repair coverage was keyed to an older `execute_selected_conditions(...)`/`No condition execution function found` shape and missed this main-orchestration resolver variant.
+
+- Code/test changes:
+  - Extended condition-suite alias repair so main orchestration resolver variants that report `No condition execution helper is available` are covered.
+  - Added alias repair support for generated locked-condition helper names including `run_baseline_first_locked_conditions(...)` and `execute_locked_peft_study_conditions(...)`.
+  - Added targeted regression coverage for both the main orchestration resolver variant and the locked-condition helper variant.
+
+- Regression status:
+  - Reproduced in same-flow Web API live validation on 2026-05-02.
+  - Automated targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "condition-suite aliases|locked-condition helpers|salt aliases|final _main_execute_conditions"`.
+  - Full automated regression: pass on 2026-05-02 with `npm test`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Same-flow revalidation: partial. The rebuilt localhost-only Web API rerun no longer reproduced the condition-suite alias failure; it advanced to LV-311 during module-level condition configuration construction.
+
+- Follow-up risks:
+  - The repair should only expose the already-generated baseline-first helper under searched resolver names.
+  - After this repair, execution may advance into model loading/training, PEFT/Transformers runtime incompatibilities, CUDA memory/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-311
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-312 on 2026-05-02
+- Validation target: generated condition configuration construction should provide all required `ConditionConfig` fields or define safe defaults before module import/execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4326` with native Codex staged implementation after the LV-310 condition-suite alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-310 condition-suite alias repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4326`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let staged Codex OAuth materialization complete, local handoff repairs run, local `py_compile` pass, and second-stage execution import the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - The generated runner should construct condition configuration objects with all constructor-required fields present.
+  - Any repair should preserve the locked condition semantics and should not silently invent successful results, alter condition order, or weaken objective metric requirements.
+
+- Actual behavior:
+  - Same-flow revalidation advanced past the LV-310 condition-suite resolver failure.
+  - The generated runner failed during module-level condition configuration construction.
+  - Execution failed with:
+    - `TypeError: ConditionConfig.__init__() missing 2 required positional arguments: 'adapter_recipe_type' and 'train_enabled'`
+  - Observed location:
+    - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+    - `_make_condition_config(...)` calls `return cls(**kwargs)` without providing required `ConditionConfig` fields `adapter_recipe_type` and `train_enabled`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was observed in the active validation workspace after the rebuilt Web API was restarted.
+  - Existing session: the existing run advanced past LV-310 and failed before condition execution because generated condition config construction was incomplete.
+  - Divergence: no session divergence observed; this is a generated runner constructor-surface mismatch visible in the same Web API live flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation introduced a stricter `ConditionConfig` constructor requiring `adapter_recipe_type` and `train_enabled`, while later `_make_condition_config(...)` call sites still emit older condition dictionaries that omit those fields.
+
+- Code/test changes:
+  - Added `repairPythonConditionConfigRequiredFieldAliasSurface(...)` to fill required `ConditionConfig` constructor aliases from existing generated fields such as `recipe_type`, `should_train`, baseline marker state, and condition metadata.
+  - Wired the repair into late handoff repairs after deterministic sample-record alias repair.
+  - Added a deterministic regression test that reproduces the missing `adapter_recipe_type`/`train_enabled` constructor failure and verifies baseline/tuned condition semantics after repair.
+
+- Regression status:
+  - Reproduced in same-flow Web API live validation on 2026-05-02.
+  - Automated targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "ConditionConfig aliases|salt aliases|condition-suite aliases|locked-condition helpers"`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Same-flow revalidation: partial. The rebuilt localhost-only Web API rerun on `127.0.0.1:4327` no longer reproduced the `ConditionConfig.__init__()` missing required fields failure; it advanced through implementation materialization, local `py_compile`, and second-stage execution to LV-312.
+
+- Follow-up risks:
+  - The repair should add constructor/default compatibility only for required configuration fields and must not skip baseline-first execution, condition coverage checks, metric extraction, or paper-scale evidence gates.
+  - After this repair, execution may advance into model loading/training, PEFT/Transformers runtime incompatibilities, CUDA memory/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-312
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-313 on 2026-05-02
+- Validation target: final experiment orchestration should invoke the generated locked condition study helper instead of failing before condition execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun on 2026-05-02 through localhost-only Web API on `127.0.0.1:4327` with native Codex staged implementation after the LV-311 condition-config alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-311 `ConditionConfig` required-field alias repair.
+  2. Start the localhost-only Web API on `127.0.0.1:4327`.
+  3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let staged Codex OAuth materialization complete, local handoff repairs run, local `py_compile` pass, and second-stage execution invoke the generated runner.
+
+- Expected behavior:
+  - `_invoke_experiment_orchestration(...)` should find an existing generated locked condition runner and call it with compatible `config` and device inputs.
+  - Any bridge should expose the generated runner under searched names only; it must not fabricate condition results, skip helper execution, or weaken metrics and coverage checks.
+
+- Actual behavior:
+  - Same-flow revalidation advanced past LV-311.
+  - Local verification passed with `python3 -m py_compile`.
+  - Second-stage execution failed before condition execution with:
+    - `RuntimeError: None of the required helper callables are available: run_locked_condition_experiment, execute_locked_condition_experiment, run_condition_experiment, execute_conditions, run_conditions`
+  - The generated runner defines `run_locked_condition_study(config, device)` but `_invoke_experiment_orchestration(...)` does not search that name.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this was observed in the active validation workspace after the rebuilt Web API was restarted.
+  - Existing session: the existing run advanced past LV-311 and failed in final orchestration helper resolution before any condition could execute.
+  - Divergence: no session divergence observed; this is a generated helper-name projection gap visible in the same Web API live flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced the locked study runner as `run_locked_condition_study(config, device)`, while the final orchestration chunk searched only experiment/conditions names and omitted the actual study helper. The existing condition-suite alias repairs do not cover this exact final `_invoke_experiment_orchestration(...)` resolver shape or the required `device` argument.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonLockedConditionStudyOrchestrationAliasSurface(...)` and wired it into late handoff repairs.
+      - exposes generated `run_locked_condition_study(config, device)` under searched final orchestration names such as `run_locked_condition_experiment(...)`, `execute_locked_condition_experiment(...)`, `run_condition_experiment(...)`, `execute_conditions(...)`, and `run_conditions(...)`.
+      - derives a device through generated device helpers or a conservative torch/cpu fallback, then delegates to the already-generated study helper without fabricating condition rows.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage for `_invoke_experiment_orchestration(...)` resolver variants that miss `run_locked_condition_study(config, device)`.
+
+- Regression status:
+  - Reproduced in same-flow Web API live validation on 2026-05-02.
+  - Automated targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "locked condition studies|ConditionConfig aliases|condition-suite aliases|salt aliases"`.
+  - Full automated regression: pass on 2026-05-02 with `npm test`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Web tests: pass on 2026-05-02 with `npm run test:web`.
+  - Same-flow revalidation: partial. Web Doctor and run-state inspection through rebuilt localhost-only Web API on `127.0.0.1:4328` showed the run no longer stops at the `None of the required helper callables are available` LV-312 boundary; the latest second-stage execution reached `execute_baseline_first_conditions` and advanced to LV-313.
+
+- Follow-up risks:
+  - The repair should preserve node-owned condition execution and should only bridge to the existing generated `run_locked_condition_study(...)`.
+  - After this repair, execution may advance into model loading/training, installed dependency/runtime limits, remote asset availability, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-319
+
+- Status: active; reproduced by same-flow Web API live revalidation on 2026-05-02 after the LV-318 repair
+- Validation target: generated PEFT runners should either execute the governed model/data conditions or surface environment/dependency blockers without presenting failed rows as completed evidence.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-318 repair.
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-318 metrics-payload builder wrapper repair.
+  2. Restart the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let the node reuse/regenerate the PEFT runner and run second-stage verification.
+
+- Expected behavior:
+  - The run should execute the governed baseline-first PEFT condition set against available model/data assets, or stop with a clear environment/dependency blocker before metrics-contract validation treats the run as experimental evidence.
+  - The metrics payload should include `accuracy_delta_vs_baseline` only when backed by executed baseline and tuned-condition results.
+
+- Actual behavior:
+  - LV-318's `build_metrics_payload(...)` arity failure no longer reproduced.
+  - The runner wrote `metrics.json` containing seven condition rows, all with `status: "failed"` and `accuracy_delta_vs_baseline: null`.
+  - Every row failed while loading `EleutherAI/pythia-410m` configuration.
+  - Second-stage verification stopped with:
+    - `Experiment metrics contract failed: Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json. Planned condition coverage incomplete: observed 0 successful tuned condition(s) but the brief/design requires 4.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: fresh localhost Web API process on `127.0.0.1:4330` reran the existing persisted validation run through the same API action.
+  - Existing session: the persisted run advanced past LV-318 and stopped at the model-asset/condition-coverage metrics contract boundary.
+  - Divergence: no UI/API state divergence observed; the failure is an execution-environment/evidence-coverage boundary surfaced by the live workflow.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the generated runner now reaches condition execution and final payload writing, but the validation environment cannot load the requested Hugging Face model configuration. The metrics contract correctly refuses to treat zero successful tuned conditions and null primary metrics as sufficient evidence.
+
+- Code/test changes:
+  - None yet for LV-319. This entry records the new same-flow boundary after LV-318.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-02.
+  - Automated regression: pending.
+  - Same-flow revalidation: pending.
+
+- Follow-up risks:
+  - Need distinguish an environment/asset availability blocker from a generated-runner bug before adding another code repair.
+  - Do not downgrade this to success or paper-scale evidence; all condition rows failed and no objective metric is backed by execution.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-318
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-319 on 2026-05-02
+- Validation target: final metrics payload construction should call generated `build_metrics_payload(...)` helpers with compatible argument binding instead of duplicating `condition_results`.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-317 repair.
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-317 main execution-loop and exception-serializer alias repair.
+  2. Restart the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let second-stage verification execute the generated PEFT runner.
+
+- Expected behavior:
+  - `_finalize_main_metrics_payload(...)` should adapt its generic `(aggregated_results, args, runtime_context, status)` call shape to the generated metrics builder signature.
+  - The repair must preserve measured condition results and must not fabricate successful rows.
+
+- Actual behavior:
+  - The generated runner defines `build_metrics_payload(args, condition_results, aggregated_metrics, run_started_at, ...)`.
+  - `_finalize_main_metrics_payload(...)` calls it through `_autolabos_call_flexibly(...)` with positional `aggregated_results` and keyword `condition_results=aggregated_results`.
+  - Second-stage verification stopped with:
+    - `TypeError: build_metrics_payload() got multiple values for argument 'condition_results'`
+    - fallback then raised `TypeError: build_metrics_payload() missing 4 required positional arguments: 'args', 'condition_results', 'aggregated_metrics', and 'run_started_at'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: fresh localhost Web API process on `127.0.0.1:4330` reran the existing persisted validation run through the same API action.
+  - Existing session: the persisted run advanced past LV-317 and stopped at final metrics payload builder arity.
+  - Divergence: no session divergence observed; the failure is a generated final-entrypoint signature mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted a concrete metrics builder with an args-first signature, while the final entrypoint used a generic helper-call adapter that supplied the condition results both positionally and by keyword.
+
+- Code/test changes:
+  - Added `repairPythonMainMetricsPayloadBuilderCallSurface(...)`, which preserves the generated `build_metrics_payload(...)` helper and wraps it with a signature-aware facade that normalizes `args`, `condition_results`, `aggregated_metrics`, and `run_started_at`.
+  - Added deterministic regression coverage for the duplicated `condition_results` call shape.
+
+- Regression status:
+  - Targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "main metrics payload builders|main execution loops|accuracy delta|build_experiment_config|locked-order condition study"`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Full tests: pass on 2026-05-02 with `npm test` (`147` test files, `1704` tests; web `14` tests).
+  - Harness: blocked by pre-existing duplicate issue IDs `LV-094` through `LV-105` family entries; no new harness category was observed.
+  - Same-flow revalidation: rerun on 2026-05-02 through localhost Web API on `127.0.0.1:4330`; the previous `build_metrics_payload()` arity failure did not recur, and the run advanced to LV-319.
+
+- Follow-up risks:
+  - The next boundary is condition execution/model asset availability, not the metrics builder arity mismatch.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-317
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-318 on 2026-05-02
+- Validation target: generated main entrypoints should resolve the real baseline-first condition execution helper and should be able to serialize top-level exceptions.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-316 repair.
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-316 accuracy-delta helper alias repair.
+  2. Restart the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let second-stage verification execute the generated PEFT runner.
+
+- Expected behavior:
+  - `main(...)` should locate the generated baseline-first condition execution loop.
+  - If top-level execution fails, failure metrics should still serialize the exception using an available generated serializer.
+
+- Actual behavior:
+  - The generated runner defines `execute_baseline_first_conditions(args)`.
+  - `main(...)` searches only `run_locked_baseline_first_experiment`, `run_experiment_conditions`, `execute_locked_condition_loop`, and `run_condition_execution_loop`.
+  - The top-level error writer then calls missing `serialize_exception(...)` even though the script defines `exception_to_evidence(...)`.
+  - Second-stage verification stopped with:
+    - `RuntimeError: No orchestration execution-loop helper is available in the generated script.`
+    - followed by `NameError: name 'serialize_exception' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: fresh localhost Web API process on `127.0.0.1:4330` reran the existing persisted validation run through the same API action.
+  - Existing session: the persisted run advanced past LV-316 and stopped at main entrypoint helper/serializer aliases.
+  - Divergence: no session divergence observed; the failure is a generated main-entrypoint naming mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted the executable loop and exception serializer under concrete names, while the final main-entrypoint chunk searched canonical names that did not include those concrete helpers.
+
+- Code/test changes:
+  - Added `repairPythonMainExecutionLoopAliasSurface(...)` to alias generated execution helpers into the main entrypoint resolver names and to alias generated exception serializers into `serialize_exception(...)`.
+  - Added deterministic regression coverage for the paired missing execution-loop and exception-serializer failure.
+
+- Regression status:
+  - Targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "main execution loops|accuracy delta|build_experiment_config|locked-order condition study"`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Same-flow revalidation: rerun on 2026-05-02 through localhost Web API on `127.0.0.1:4330`; the previous main execution-loop/serializer failure did not recur, and the run advanced to LV-318.
+
+- Follow-up risks:
+  - Subsequent failures may still occur in metrics payload construction, model loading, benchmark evaluation, or paper-scale evidence gates.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-316
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-317 on 2026-05-02
+- Validation target: final metrics-document builders should reuse generated accuracy-delta derivation helpers instead of failing after node-owned condition execution returns rows.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-315 repair.
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-315 config-builder alias repair.
+  2. Start the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let the node regenerate `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py` and run its second-stage verification command.
+
+- Expected behavior:
+  - Metrics assembly should derive `accuracy_delta_vs_baseline`, best condition, and baseline references from the real generated condition results.
+  - The repair must alias existing helper outputs only; it must not invent successful condition rows or alter measured metrics.
+
+- Actual behavior:
+  - The regenerated script defines `derive_accuracy_deltas(condition_results)` and `select_best_condition(...)`.
+  - `build_metrics_document(...)` calls missing `compute_accuracy_deltas_and_best(condition_results)`.
+  - The fallback path also references missing `compute_accuracy_deltas_and_best_condition(...)`.
+  - Second-stage verification stops with:
+    - `NameError: name 'compute_accuracy_deltas_and_best' is not defined`
+
+- Fresh vs existing session comparison:
+  - Fresh session: fresh localhost Web API process on `127.0.0.1:4330` reran the existing persisted validation run through the same API action.
+  - Existing session: the persisted run advanced past LV-315 and stopped at the metrics-helper alias boundary.
+  - Divergence: no session divergence observed; the failure is a generated metrics-helper naming mismatch in the live workflow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created the concrete metrics helper under `derive_accuracy_deltas(...)`, while the final metrics-document chunk expected canonical names `compute_accuracy_deltas_and_best(...)` and `compute_accuracy_deltas_and_best_condition(...)`. Existing metrics payload repairs cover writer and document facades but not this accuracy-delta helper-name permutation.
+
+- Code/test changes:
+  - Added `repairPythonAccuracyDeltaBuilderAliasSurface(...)` to bridge `derive_accuracy_deltas(...)` into the dict-returning and tuple-returning helper names expected by final metrics assembly.
+  - Added a deterministic regression test covering `build_metrics_document(...)` calling the missing canonical accuracy-delta helper while a compatible generated `derive_accuracy_deltas(...)` exists.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-02.
+  - Targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "accuracy delta|build_experiment_config|locked-order condition study|entrypoint condition datasets|locked condition studies"`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Full tests: pass on 2026-05-02 with `npm test` after the later LV-318 repair (`147` test files, `1704` tests; web `14` tests).
+  - Harness: blocked by pre-existing duplicate issue IDs `LV-094` through `LV-105` family entries; no new harness category was observed.
+  - Same-flow revalidation: rerun on 2026-05-02 through localhost Web API on `127.0.0.1:4330`; the previous `compute_accuracy_deltas_and_best` NameError did not recur, and the run advanced to LV-317.
+
+- Follow-up risks:
+  - After this repair, execution may advance into dependency/runtime limits, benchmark evaluation failures, metrics schema gaps, objective non-attainment, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-315
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-316 on 2026-05-02
+- Validation target: generated process entrypoints that call `build_experiment_config(args)` should use the real generated configuration builder instead of failing before condition execution.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4330` after rebuilding AutoLabOS with the LV-314 repair.
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-314 CLI condition-runner alias repair.
+  2. Start the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let the node regenerate `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py` and run its second-stage verification command.
+
+- Expected behavior:
+  - The process entrypoint should normalize CLI args into the script's generated runtime config and continue to node-owned condition execution.
+  - The repair must bridge existing generated config builders only; it must not fabricate experiment metrics or bypass execution.
+
+- Actual behavior:
+  - The regenerated script defines `RuntimeConfig` and `config_from_args(...)`.
+  - `main(...)` calls `build_experiment_config(args)`, but no such function is defined.
+  - Second-stage verification writes structured failure metrics and stops with:
+    - `NameError: name 'build_experiment_config' is not defined`
+
+- Fresh vs existing session comparison:
+  - Fresh session: fresh localhost Web API process on `127.0.0.1:4330` reran the existing persisted validation run through the same API action.
+  - Existing session: the persisted run advanced past LV-314 and stopped at the new process-entrypoint config-builder boundary.
+  - Divergence: no session divergence observed; the failure is a generated config-builder naming mismatch in the live workflow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation named the real config builder `config_from_args(...)` but the final process-entrypoint chunk expected a canonical `build_experiment_config(...)` facade. Existing parse-args repairs add CLI shims but do not expose this missing config-builder alias.
+
+- Code/test changes:
+  - Added `repairPythonMissingBuildExperimentConfigSurface(...)` to insert a narrow `build_experiment_config(args=None)` compatibility shim that delegates to `config_from_args(...)` or, when needed, constructs `RuntimeConfig` from matching argparse fields.
+  - Added a deterministic regression test covering a generated `RuntimeConfig`/`config_from_args(...)` script whose `main(...)` otherwise fails with `NameError`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-02.
+  - Automated regression: targeted `tests/implementSessionManager.test.ts` filter passed on 2026-05-02.
+  - Same-flow revalidation: rerun on 2026-05-02 through localhost Web API on `127.0.0.1:4330`; the previous `build_experiment_config` NameError did not recur, and the run advanced to LV-316.
+
+- Follow-up risks:
+  - After this repair, execution may advance into model loading/training, dependency/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-314
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-315 on 2026-05-02
+- Validation target: regenerated PEFT runners with a real locked-order condition study helper should expose that helper under the names searched by the final CLI orchestration runner.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, rerun through the localhost-only Web API on `127.0.0.1:4329` after rebuilding AutoLabOS with the LV-313 repair.
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-313 entrypoint condition dataset-input repair.
+  2. Start the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  3. POST `run-node` for `implement_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Let the node regenerate `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py` and run its second-stage verification command.
+
+- Expected behavior:
+  - The final CLI orchestration path should discover the real generated condition study helper and execute node-owned condition work.
+  - The repair must alias or bridge existing generated callables only; it must not synthesize condition rows or metrics.
+
+- Actual behavior:
+  - The regenerated script defines `run_locked_order_condition_study(args: argparse.Namespace)`.
+  - `_cli_run_study(...)` searches only `run_locked_condition_order`, `run_experiment_conditions`, `run_condition_study`, `execute_condition_study`, and `_run_locked_condition_order`.
+  - No searched alias is present, so implement-stage second-stage verification fails with:
+    - `RuntimeError: No condition runner was defined by the orchestration_condition_runner section.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: fresh localhost Web API process on `127.0.0.1:4329` reran the existing persisted validation run through the same API action.
+  - Existing session: the persisted run advanced past LV-313 and stopped at the new CLI condition-runner resolver boundary.
+  - Divergence: no session divergence observed; the failure is a generated helper-name projection mismatch in the live workflow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation named the concrete locked-order study helper `run_locked_order_condition_study(...)`, while the final CLI orchestration chunk used a narrower resolver vocabulary. Existing alias repairs cover several baseline-first and condition-suite shapes but not this exact `orchestration_condition_runner` resolver and helper-name permutation.
+
+- Code/test changes:
+  - Added detection for the generated CLI orchestration condition-runner resolver in `repairPythonRecipeExecutionOrchestratorAlias(...)`.
+  - Added a compatibility alias from `run_locked_order_condition_study(...)` and related locked-order helper names into `run_locked_condition_order`, `run_experiment_conditions`, `run_condition_study`, `execute_condition_study`, and `_run_locked_condition_order`.
+  - Added a deterministic regression test covering the exact final CLI resolver vocabulary and generated locked-order helper-name permutation.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-02.
+  - Automated regression: targeted `tests/implementSessionManager.test.ts` filter passed on 2026-05-02.
+  - Same-flow revalidation: rerun on 2026-05-02 through localhost Web API on `127.0.0.1:4330`; the previous `No condition runner was defined by the orchestration_condition_runner section` boundary did not recur, and the run advanced to LV-315.
+
+- Follow-up risks:
+  - After this repair, execution may advance into model loading/training, dependency/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-313
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-314 on 2026-05-02
+- Validation target: final entrypoint condition invocation should call the generated baseline-first condition orchestrator with materialized train/evaluation datasets instead of masking the missing-input boundary with an unfiltered keyword retry.
+- Environment/session context: existing run `73050f85-6b56-4385-8c31-2ec69a5b7dec` in `/home/hanyong/.autolabos-validation`, inspected on 2026-05-02 through rebuilt localhost-only Web API on `127.0.0.1:4328` after the LV-312 locked-condition study alias repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-312 locked-condition study orchestration alias repair.
+  2. Start the localhost-only Web API in `/home/hanyong/.autolabos-validation`.
+  3. Inspect or rerun the existing validation run and allow second-stage `run_experiments` to invoke the generated PEFT runner.
+  4. Observe the generated `_entrypoint_run_conditions(...)` dispatcher selecting `execute_baseline_first_conditions`.
+
+- Expected behavior:
+  - `_entrypoint_call_with_supported_signature(...)` should materialize the generated public dataset bundle and pass compatible `args`, `train_dataset`, and `eval_datasets` inputs to `run_baseline_first_condition_orchestrator(...)`.
+  - The repair must preserve node-owned condition execution and must not synthesize successful condition rows.
+
+- Actual behavior:
+  - The run advanced past the LV-312 missing-helper resolver failure.
+  - The generated runner selected `execute_baseline_first_conditions`, an alias of `run_baseline_first_condition_orchestrator(args, train_dataset, eval_datasets, ...)`.
+  - `_entrypoint_call_with_supported_signature(...)` only prepared generic fields such as `args`, `config`, `metrics_path`, `output_dir`, and `seed`.
+  - Its final unfiltered retry called the orchestrator with unsupported `config`, producing:
+    - `TypeError: run_baseline_first_condition_orchestrator() got an unexpected keyword argument 'config'`
+
+- Fresh vs existing session comparison:
+  - Fresh session: fresh Web API process on `127.0.0.1:4328` could inspect the latest persisted run state and Doctor surface; a separate `/new` run was not started.
+  - Existing session: the existing run's latest `run_experiments` log shows execution advanced past LV-312 and failed at the condition orchestrator invocation boundary.
+  - Divergence: no session divergence observed; this is a generated entrypoint input-materialization and signature-filtering mismatch visible in the persisted live flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a real baseline-first condition orchestrator requiring `train_dataset` and `eval_datasets`, but the final entrypoint signature adapter only projected generic CLI/runtime kwargs and retained an unfiltered fallback retry. Compile-only verification cannot catch this runtime invocation mismatch.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonEntrypointConditionDatasetInputMaterializationSurface(...)` and wired it into late handoff repairs.
+      - when `_entrypoint_call_with_supported_signature(...)` is about to call a condition helper requiring dataset inputs, materializes real generated loader outputs from `load_public_dataset_bundle(...)` or equivalent train/eval loaders and adds compatible `train_dataset` / `eval_datasets` aliases before signature filtering.
+      - only materializes inputs for helpers whose signatures require condition dataset surfaces; it does not synthesize condition results.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added deterministic regression coverage for a generated entrypoint selecting `execute_baseline_first_conditions = run_baseline_first_condition_orchestrator` while only generic kwargs are initially available.
+
+- Regression status:
+  - Reproduced in same-flow live validation artifacts on 2026-05-02.
+  - Automated targeted regression: pass on 2026-05-02 with `npm test -- --run tests/implementSessionManager.test.ts -t "entrypoint condition datasets|locked condition studies|ConditionConfig aliases"`.
+  - Full automated regression: pass on 2026-05-02 with `npm test`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Harness validation: blocked by pre-existing duplicate issue identifiers (`LV-094` through `LV-105` family), not by the LV-313 entry.
+  - Same-flow revalidation: rerun on 2026-05-02 through localhost Web API on `127.0.0.1:4329`; the previous `run_baseline_first_condition_orchestrator() got an unexpected keyword argument 'config'` boundary did not recur, and the run advanced to LV-314.
+
+- Follow-up risks:
+  - The repair should materialize real generated loader outputs only when the selected helper requires dataset inputs.
+  - After this repair, execution may advance into model loading/training, dependency/runtime limits, benchmark evaluation failures, metrics schema gaps, or paper-scale evidence insufficiency.
+
+- Evidence/artifacts:
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `/home/hanyong/.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
