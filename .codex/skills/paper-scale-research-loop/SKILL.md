@@ -1,6 +1,11 @@
 ---
 name: paper-scale-research-loop
 description: Use this skill when the goal is to move AutoLabOS outputs from workflow completion toward evidence-backed, baseline-bearing, paper-scale research quality.
+contract_version: 1
+contract_kind: codex_skill
+runtime_contract: true
+gate: paper_scale_evidence_ceiling
+validation: paper_quality_bar_review
 ---
 
 # Paper-Scale Research Loop

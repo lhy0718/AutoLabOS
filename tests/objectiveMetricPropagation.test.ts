@@ -1409,6 +1409,25 @@ describe("objective metric propagation", () => {
       analysis.warnings.some((item) => item.includes("No supplemental quick_check or confirmatory metrics"))
     ).toBe(false);
     expect(analysis.failure_taxonomy.some((item) => item.id === "supplemental_coverage_gap")).toBe(false);
+    const baselineComparison = JSON.parse(await readFile(path.join(runDir, "baseline_comparison.json"), "utf8")) as {
+      status: string;
+      enforcement: { baseline_lock_present: boolean; single_change_dimension_limit: number };
+      primary_comparison: { metrics: Array<{ metric: string; baseline_value: number; comparator_value: number }> } | null;
+    };
+    expect(baselineComparison.status).toBe("available");
+    expect(baselineComparison.enforcement).toMatchObject({
+      baseline_lock_present: false,
+      single_change_dimension_limit: 1
+    });
+    expect(
+      baselineComparison.primary_comparison?.metrics.some((item) =>
+        item.metric.includes("macro_f1_delta_vs_logreg") ||
+        (typeof item.baseline_value === "number" && typeof item.comparator_value === "number")
+      )
+    ).toBe(true);
+    await expect(
+      readFile(path.join(buildPublicAnalysisDir(root, run), "baseline_comparison.json"), "utf8")
+    ).resolves.toContain('"status": "available"');
 
     const reviewNode = createReviewNode({
       config: {} as any,

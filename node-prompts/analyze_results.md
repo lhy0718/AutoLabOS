@@ -1,3 +1,12 @@
+---
+contract_version: 1
+contract_kind: node_prompt
+runtime_contract: true
+node_id: analyze_results
+gate: evidence_grounded_result_synthesis
+validation: result_analysis_presentation_and_harness
+---
+
 # analyze_results system prompt – 동작 튜닝을 위해 편집 가능, 런타임에 로드됨
 
 ## system

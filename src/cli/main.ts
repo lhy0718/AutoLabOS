@@ -5,7 +5,12 @@ import { runAutoLabOSWebServer } from "../web/server.js";
 import { runCompareAnalysisCli } from "./compareAnalysis.js";
 import { runEvalHarnessCli } from "./evalHarness.js";
 import { runEvolveCli } from "./evolveRun.js";
-import { runGovernanceBenchmarkDryRunCli, runGovernanceBenchmarkSeedCli } from "./governanceBenchmark.js";
+import {
+  runGovernanceBenchmarkBatchCli,
+  runGovernanceBenchmarkDryRunCli,
+  runGovernanceBenchmarkExportBundlesCli,
+  runGovernanceBenchmarkSeedCli
+} from "./governanceBenchmark.js";
 import { runMetaHarnessCli } from "./metaHarness.js";
 
 function printHelp(): void {
@@ -24,6 +29,8 @@ function printHelp(): void {
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
     "  autolabos governance-benchmark seed --source <path> [--task AGB-001] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]",
     "  autolabos governance-benchmark dry-run --seed <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/AGB-001]",
+    "  autolabos governance-benchmark batch --seeds <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
+    "  autolabos governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]",
     "  autolabos meta-harness [--runs 5] [--node analyze_results|review] [--no-apply] [--dry-run]",
     "  autolabos --help",
     "  autolabos --version"
@@ -108,6 +115,27 @@ async function main(): Promise<void> {
       taskId: action.taskId,
       outDir: action.outDir,
       conditions: action.conditions
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-batch") {
+    await runGovernanceBenchmarkBatchCli({
+      cwd: process.cwd(),
+      seedsRoot: action.seedsRoot,
+      taskIds: action.taskIds,
+      outDir: action.outDir,
+      conditions: action.conditions
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-export-bundles") {
+    await runGovernanceBenchmarkExportBundlesCli({
+      cwd: process.cwd(),
+      publicOutputRoots: action.publicOutputRoots,
+      outDir: action.outDir,
+      maxBundles: action.maxBundles
     });
     return;
   }

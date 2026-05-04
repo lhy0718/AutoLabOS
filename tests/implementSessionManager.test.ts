@@ -81,6 +81,7 @@ import {
   repairPythonEntrypointDatasetLoaderAliasSurface,
   repairPythonBaselineFirstConditionEvaluationRecordsSurface,
   repairPythonBaselineRetrievalConditionResolverAliasSurface,
+  repairPythonSupportSplitTrainingRecordsSurface,
   repairPythonInstructionDatasetHelperAliasSurface,
   repairPythonModelLoaderAliasSurface,
   repairPythonEvaluationDatasetHelperAliasSurface,
@@ -13749,6 +13750,69 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("repairs runtime wrapper aliases when the final entrypoint misses expected wrapper names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runtime-wrapper-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def execute_experiment(args):",
+        "    return {'status': 'completed', 'primary_metric': 0.25, 'macro_f1_delta': 0.25}",
+        "",
+        "def _invoke_runtime_wrapper(args):",
+        "    wrapper_names = (",
+        "        'execute_and_persist_metrics',",
+        "        'run_experiment_and_write_metrics',",
+        "        'execute_experiment_and_write_metrics',",
+        "        'execute_from_args',",
+        "        'run_from_args',",
+        "        'run_cli',",
+        "    )",
+        "    for name in wrapper_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            result = candidate(args)",
+        "            if isinstance(result, dict):",
+        "                return result",
+        "    raise RuntimeError('No execution wrapper was found. Expected one of: ' + ', '.join(wrapper_names))",
+        "",
+        "def main():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', type=Path, required=True)",
+        "    args = parser.parse_args()",
+        "    payload = _invoke_runtime_wrapper(args)",
+        "    assert args.metrics_path.exists()",
+        "    assert json.loads(args.metrics_path.read_text(encoding='utf-8'))['status'] == payload['status']",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })
+    ).toThrow(/No execution wrapper/);
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def execute_from_args(args):");
+    expect(repairedSource).toContain("target = execute_experiment");
+    expect(repairedSource).toContain("execute_and_persist_metrics = execute_from_args");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({ status: "completed" });
+  });
+
   it("repairs chunk 5a orchestration aliases when the generated runner defines execute_candidate_study", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-chunk5a-orchestrator-alias-"));
     tempDirs.push(workspace);
@@ -23355,6 +23419,89 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_baseline_retrieval_condition_resolver_alias_marker");
     expect(repairedSource).toContain("def resolve_baseline_condition");
     expect(repairedSource).toContain("def resolve_retrieval_condition");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("accepts support-split records as training evidence for retrieval-feature replay", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-support-split-training-records-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_retrieval_feature_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Dict, List, Mapping, Sequence",
+        "",
+        "SUPPORT_SPLIT = 'support'",
+        "EVALUATION_SPLIT = 'held_out'",
+        "LOCKED_ABSTRACT_RECORDS: List[Dict[str, Any]] = [",
+        "    {'record_id': 's1', 'split': SUPPORT_SPLIT, 'label': 'bio', 'abstract': 'cell response'},",
+        "    {'record_id': 'e1', 'split': EVALUATION_SPLIT, 'label': 'bio', 'abstract': 'held out cell'},",
+        "]",
+        "SUPPORT_RECORDS = [record for record in LOCKED_ABSTRACT_RECORDS if record['split'] == SUPPORT_SPLIT]",
+        "HELD_OUT_RECORDS = [record for record in LOCKED_ABSTRACT_RECORDS if record['split'] == EVALUATION_SPLIT]",
+        "",
+        "def _as_plain_dict(record: Mapping[str, Any]) -> Dict[str, Any]:",
+        "    return dict(record)",
+        "",
+        "def _resolve_records(candidate_names: Sequence[str]) -> List[Dict[str, Any]]:",
+        "    for name in candidate_names:",
+        "        value = globals().get(name)",
+        "        if value:",
+        "            return [_as_plain_dict(item) for item in value]",
+        "    return []",
+        "",
+        "def _training_records() -> List[Dict[str, Any]]:",
+        "    records = _resolve_records(",
+        "        (",
+        "            'TRAIN_RECORDS',",
+        "            'TRAINING_RECORDS',",
+        "            'SEED_TRAIN_RECORDS',",
+        "            'TRAIN_SPLIT',",
+        "            'TRAIN_ABSTRACTS',",
+        "        )",
+        "    )",
+        "    if records:",
+        "        return records",
+        "    all_records = _resolve_records(('SEED_ABSTRACTS', 'ABSTRACT_RECORDS', 'LOCKED_ABSTRACT_RECORDS'))",
+        "    return [record for record in all_records if str(record.get('split', 'train')) == 'train']",
+        "",
+        "def _heldout_records() -> List[Dict[str, Any]]:",
+        "    records = _resolve_records(('HELDOUT_RECORDS', 'HELD_OUT_RECORDS', 'EVALUATION_RECORDS'))",
+        "    if records:",
+        "        return records",
+        "    all_records = _resolve_records(('SEED_ABSTRACTS', 'ABSTRACT_RECORDS', 'LOCKED_ABSTRACT_RECORDS'))",
+        "    return [record for record in all_records if str(record.get('split', 'train')) != 'train']",
+        "",
+        "def run_baseline_first_condition_records() -> List[Dict[str, Any]]:",
+        "    train_records = _training_records()",
+        "    eval_records = _heldout_records()",
+        "    if not train_records:",
+        "        raise RuntimeError('No locked training records were found for the experiment replay.')",
+        "    if not eval_records:",
+        "        raise RuntimeError('No locked held-out records were found for the experiment replay.')",
+        "    return [{'condition_id': 'baseline', 'n_train': len(train_records), 'n_eval': len(eval_records)}]",
+        "",
+        "def main() -> int:",
+        "    records = run_baseline_first_condition_records()",
+        "    return 0 if records[0]['n_train'] == 1 and records[0]['n_eval'] == 1 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No locked training records/
+    );
+
+    const repair = await repairPythonSupportSplitTrainingRecordsSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_support_split_training_records_marker");
+    expect(repairedSource).toContain('"SUPPORT_RECORDS"');
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 

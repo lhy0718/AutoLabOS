@@ -104,6 +104,14 @@ function buildEvalReport(
       avg_implement_attempts: 1,
       avg_branch_count: 1,
       avg_overall_score: scores.reduce((sum, value) => sum + value, 0) / Math.max(scores.length, 1),
+      autonomy: {
+        avg_fitness_signal: scores.reduce((sum, value) => sum + value, 0) / Math.max(scores.length, 1),
+        auto_handoff_rate: 1,
+        policy_blocked_rate: 0,
+        avg_retry_attempts_total: 0,
+        avg_backward_jump_count: 0,
+        dominant_failure_categories: [{ category: "none", count: scores.length }]
+      },
       policy_rule_counts: []
     },
     runs: scores.map((score, index) => ({
@@ -135,6 +143,24 @@ function buildEvalReport(
         objective: 1,
         artifacts: 1,
         overall: score
+      },
+      autonomy: {
+        version: 1,
+        run_id: `run-${index + 1}`,
+        current_node: "write_paper",
+        run_status: "completed",
+        fitness_signal: score,
+        fitness_signal_source: "eval_harness_overall_score",
+        evidence_gates_preserved: true,
+        retry_attempts_total: 0,
+        rollback_count_total: 0,
+        backward_jump_count: 0,
+        checkpoint_seq: 0,
+        auto_handoff_to_run_experiments: true,
+        policy_blocked: false,
+        artifact_completeness_ratio: 1,
+        dominant_failure_category: "none",
+        failure_category_priority: ["none"]
       },
       missing_artifacts: [],
       findings: [],

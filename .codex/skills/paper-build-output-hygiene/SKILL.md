@@ -1,6 +1,11 @@
 ---
 name: paper-build-output-hygiene
 description: Use this skill when validating AutoLabOS-generated TeX/PDF/paper bundles and keeping test/output coherent without manually substituting artifacts.
+contract_version: 1
+contract_kind: codex_skill
+runtime_contract: true
+gate: paper_build_artifact_integrity
+validation: paper_build_output_hygiene_review
 ---
 
 # Paper Build Output Hygiene

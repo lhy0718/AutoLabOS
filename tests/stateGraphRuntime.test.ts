@@ -136,6 +136,84 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.graph.checkpointSeq).toBe(2);
   });
 
+  it("records a stage routing artifact when resume keeps newer current state over a stale checkpoint", async () => {
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => ({
+          status: "success",
+          summary: "collect complete",
+          needsApproval: false,
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { paths, store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Stale Resume",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    const advanced = await runtime.step(run.id);
+    advanced.graph.checkpointSeq = (advanced.graph.checkpointSeq ?? 0) + 1;
+    advanced.updatedAt = "2026-04-07T00:00:00.000Z";
+    await store.updateRun(advanced);
+
+    const resumed = await runtime.resume(run.id);
+
+    expect(resumed.graph.checkpointSeq).toBe(3);
+    expect(resumed.currentNode).toBe("analyze_papers");
+    await expect(
+      readJsonFile(path.join(paths.runsDir, run.id, "stage_routing", "latest.json"))
+    ).resolves.toMatchObject({
+      event: "stale_resume_state",
+      disposition: "resume_current_state",
+      retry_safe: true,
+      checkpoint_seq: 3
+    });
+  });
+
+  it("pauses safely and writes a routing artifact when the pre-node checkpoint cannot be saved", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      status: "success",
+      summary: "should not run",
+      needsApproval: false,
+      toolCallsUsed: 1
+    });
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute
+      }
+    });
+    const { paths, store, checkpointStore, runtime } = await setup(registry);
+    vi.spyOn(checkpointStore, "save").mockRejectedValueOnce(new Error("disk full"));
+
+    const run = await store.createRun({
+      title: "Checkpoint failure",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.collect_papers.status).toBe("pending");
+    expect(updated.graph.nodeStates.collect_papers.note).toContain("Paused after checkpoint write failure");
+    await expect(
+      readJsonFile(path.join(paths.runsDir, run.id, "stage_routing", "latest.json"))
+    ).resolves.toMatchObject({
+      event: "checkpoint_write_failure",
+      disposition: "safe_pause",
+      retry_safe: true,
+      checkpoint_seq: 0
+    });
+  });
+
   it("records the active benchmark governance condition in run artifacts and events", async () => {
     const registry = new Registry({
       collect_papers: {
@@ -826,6 +904,52 @@ describe("StateGraphRuntime", () => {
     );
   });
 
+  it("fails design_experiments without retry or rollback when the brief contract blocks progression", async () => {
+    const registry = new Registry({
+      design_experiments: {
+        id: "design_experiments",
+        execute: async () => ({
+          status: "failure",
+          error:
+            "Brief contract blocked design progression: MISSING_BASELINE_CONTRACT_VIOLATED, MISSING_BASELINE_CLAIM_CEILING_VIOLATED.",
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Brief contract blocked",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.status).toBe("failed");
+    expect(updated.currentNode).toBe("design_experiments");
+    expect(updated.graph.currentNode).toBe("design_experiments");
+    expect(updated.graph.retryCounters.design_experiments).toBe(3);
+    expect(updated.graph.rollbackCounters.design_experiments).toBeUndefined();
+    expect(updated.graph.nodeStates.generate_hypotheses.status).toBe("completed");
+    expect(updated.graph.nodeStates.design_experiments.status).toBe("failed");
+    expect(updated.graph.nodeStates.design_experiments.lastError).toContain(
+      "MISSING_BASELINE_CONTRACT_VIOLATED"
+    );
+    expect(updated.latestSummary).toContain("Brief contract blocked design progression");
+  });
+
   it("rolls back implement_experiments immediately when staged LLM execution never produces a runnable artifact", async () => {
     const registry = new Registry({
       implement_experiments: {
@@ -838,7 +962,7 @@ describe("StateGraphRuntime", () => {
         })
       }
     });
-    const { store, runtime } = await setup(registry);
+    const { paths, store, runtime } = await setup(registry);
 
     const run = await store.createRun({
       title: "Implement timeout rollback",
@@ -868,6 +992,14 @@ describe("StateGraphRuntime", () => {
     expect(updated.graph.nodeStates.design_experiments.note).toContain(
       "Auto rollback from implement_experiments after 3/3 failed attempts"
     );
+    await expect(
+      readJsonFile(path.join(paths.runsDir, run.id, "stage_routing", "latest.json"))
+    ).resolves.toMatchObject({
+      event: "timeout_partial",
+      disposition: "safe_pause",
+      retry_safe: false,
+      node_id: "implement_experiments"
+    });
   });
 
 

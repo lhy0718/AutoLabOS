@@ -7991,6 +7991,51 @@ export class ImplementSessionManager {
       }
     }
 
+    const supportSplitTrainingRecordsRepair =
+      await repairPythonSupportSplitTrainingRecordsSurface(executionScriptPath);
+    if (supportSplitTrainingRecordsRepair.repaired) {
+      onProgress?.(
+        supportSplitTrainingRecordsRepair.message ||
+          "Aligned support-split training records before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            supportSplitTrainingRecordsRepair.message ||
+            "Aligned support-split training records before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const instructionDatasetHelperAliasRepair =
       await repairPythonInstructionDatasetHelperAliasSurface(executionScriptPath);
     if (instructionDatasetHelperAliasRepair.repaired) {
@@ -17568,6 +17613,84 @@ export async function repairPythonBaselineRetrievalConditionResolverAliasSurface
   };
 }
 
+export async function repairPythonSupportSplitTrainingRecordsSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_support_split_training_records_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("No locked training records were found for the experiment replay") ||
+    !source.includes("def _training_records(") ||
+    !source.includes("LOCKED_ABSTRACT_RECORDS") ||
+    !source.includes("SUPPORT_SPLIT")
+  ) {
+    return { repaired: false };
+  }
+
+  const fallbackPattern =
+    /^(\s*)return\s+\[\s*record\s+for\s+record\s+in\s+all_records\s+if\s+str\(\s*record\.get\(\s*["']split["']\s*,\s*["']train["']\s*\)\s*\)\s*==\s*["']train["']\s*\]\s*$/mu;
+  const fallbackMatch = source.match(fallbackPattern);
+  if (!fallbackMatch) {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  if (!/["']SUPPORT_RECORDS["']/u.test(nextSource)) {
+    const preferredCandidatePattern = /((["'])SEED_TRAIN_RECORDS\2,\n)/u;
+    const fallbackCandidatePattern = /((["'])TRAIN_ABSTRACTS\2,\n)(\s*\))/u;
+    if (preferredCandidatePattern.test(nextSource)) {
+      nextSource = nextSource.replace(
+        preferredCandidatePattern,
+        `$1            "SUPPORT_RECORDS",\n            "SUPPORT_ABSTRACTS",\n`
+      );
+    } else {
+      nextSource = nextSource.replace(
+        fallbackCandidatePattern,
+        `$1            "SUPPORT_RECORDS",\n            "SUPPORT_ABSTRACTS",\n$3`
+      );
+    }
+  }
+
+  nextSource = nextSource.replace(fallbackPattern, (_match, indent: string) =>
+    [
+      `${indent}${marker} = True`,
+      `${indent}_autolabos_training_split_names = {`,
+      `${indent}    "train",`,
+      `${indent}    "training",`,
+      `${indent}    "support",`,
+      `${indent}    str(globals().get("SUPPORT_SPLIT", "support")),`,
+      `${indent}    str(globals().get("TRAINING_SPLIT", "train")),`,
+      `${indent}}`,
+      `${indent}return [`,
+      `${indent}    record`,
+      `${indent}    for record in all_records`,
+      `${indent}    if str(record.get("split", "train")) in _autolabos_training_split_names`,
+      `${indent}]`
+    ].join("\n")
+  );
+
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Accepted support-split records as training evidence in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonEvaluationDatasetHelperAliasSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
@@ -23954,6 +24077,9 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
       source.includes("def _run_entrypoint_workflow(") &&
       source.includes("_first_existing_callable")
     );
+  const hasRuntimeWrapperDispatcher =
+    source.includes("def _invoke_runtime_wrapper(") &&
+    source.includes("No execution wrapper was found. Expected one of:");
   if (
     !hasRecipeSequenceDispatcher &&
     !hasChunkOrchestrationDispatcher &&
@@ -23966,7 +24092,8 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
     !hasChunk5cConditionExecutionDispatcher &&
     !hasLockedExperimentRunnerDispatcher &&
     !hasFinalWorkflowDispatcher &&
-    !hasFailureSafeTopLevelOrchestrationResolver
+    !hasFailureSafeTopLevelOrchestrationResolver &&
+    !hasRuntimeWrapperDispatcher
   ) {
     return { repaired: false };
   }
@@ -23978,7 +24105,16 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
       source.includes("run_baseline_first_experiment_workflow") ||
       source.includes("run_baseline_first_workflow")
     );
-  const searchedNames = hasCliConditionRunnerDispatcher
+  const searchedNames = hasRuntimeWrapperDispatcher
+    ? [
+        "execute_and_persist_metrics",
+        "run_experiment_and_write_metrics",
+        "execute_experiment_and_write_metrics",
+        "execute_from_args",
+        "run_from_args",
+        "run_cli"
+      ]
+    : hasCliConditionRunnerDispatcher
     ? [
         "run_locked_condition_order",
         "run_experiment_conditions",
@@ -24130,7 +24266,19 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
   }
 
   const implementationName = (
-    hasCliConditionRunnerDispatcher
+    hasRuntimeWrapperDispatcher
+      ? [
+          "execute_experiment",
+          "_invoke_comparison_workflow",
+          "run_experiment",
+          "run_retrieval_augmentation_experiment",
+          "run_compact_fallback_evaluation",
+          "run_baseline_first_conditions",
+          "execute_baseline_first_conditions",
+          "run_locked_condition_study",
+          "run_peft_instruction_study"
+        ]
+      : hasCliConditionRunnerDispatcher
       ? [
           "run_locked_order_condition_study",
           "execute_locked_order_condition_study",
@@ -24281,7 +24429,85 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
     return { repaired: false };
   }
 
-  const alias = hasCliConditionRunnerDispatcher
+  const alias = hasRuntimeWrapperDispatcher
+    ? [
+        "",
+        "def _autolabos_runtime_wrapper_alias_marker():",
+        "    return True",
+        "",
+        "def execute_from_args(args):",
+        "    \"\"\"Compatibility wrapper for generated entrypoints that forgot the final wrapper alias.\"\"\"",
+        `    target = ${implementationName}`,
+        "    _autolabos_public_dir = getattr(args, \"public_dir\", None)",
+        "    _autolabos_metrics_path = getattr(args, \"metrics_path\", None)",
+        "    _autolabos_kwargs = {",
+        "        \"args\": args,",
+        "        \"public_dir\": _autolabos_public_dir,",
+        "        \"output_dir\": _autolabos_public_dir,",
+        "        \"metrics_path\": _autolabos_metrics_path,",
+        "        \"seed\": getattr(args, \"seed\", None),",
+        "    }",
+        "    try:",
+        "        import inspect as _autolabos_inspect",
+        "        _autolabos_parameters = _autolabos_inspect.signature(target).parameters",
+        "    except (TypeError, ValueError):",
+        "        _autolabos_parameters = {}",
+        "    if not _autolabos_parameters:",
+        "        _autolabos_result = target()",
+        "    else:",
+        "        if any(param.kind == _autolabos_inspect.Parameter.VAR_KEYWORD for param in _autolabos_parameters.values()):",
+        "            _autolabos_result = target(**{key: value for key, value in _autolabos_kwargs.items() if value is not None})",
+        "        else:",
+        "            _autolabos_supported = {key: value for key, value in _autolabos_kwargs.items() if key in _autolabos_parameters and value is not None}",
+        "            if _autolabos_supported:",
+        "                _autolabos_result = target(**_autolabos_supported)",
+        "            elif _autolabos_public_dir is not None and target.__name__ in (\"run_experiment\", \"run_retrieval_augmentation_experiment\"):",
+        "                _autolabos_result = target(_autolabos_public_dir)",
+        "            else:",
+        "                _autolabos_result = target(args)",
+        "    if _autolabos_result is None and _autolabos_metrics_path is not None:",
+        "        from pathlib import Path as _AutoLabOSPath",
+        "        _autolabos_metrics_path_obj = _AutoLabOSPath(_autolabos_metrics_path)",
+        "        if _autolabos_metrics_path_obj.exists():",
+        "            _autolabos_loader = globals().get(\"load_json_file\")",
+        "            if callable(_autolabos_loader):",
+        "                _autolabos_loaded = _autolabos_loader(_autolabos_metrics_path_obj)",
+        "            else:",
+        "                import json as _autolabos_json",
+        "                with _autolabos_metrics_path_obj.open(\"r\", encoding=\"utf-8\") as _autolabos_handle:",
+        "                    _autolabos_loaded = _autolabos_json.load(_autolabos_handle)",
+        "            if hasattr(_autolabos_loaded, \"items\"):",
+        "                return dict(_autolabos_loaded)",
+        "    if not hasattr(_autolabos_result, \"items\"):",
+        "        raise RuntimeError(",
+        "            f\"Execution wrapper {target.__name__} returned {type(_autolabos_result).__name__}; \"",
+        "            \"expected a metrics mapping or a written metrics JSON file.\"",
+        "        )",
+        "    _autolabos_payload = dict(_autolabos_result)",
+        "    if _autolabos_metrics_path is not None:",
+        "        from pathlib import Path as _AutoLabOSPath",
+        "        _autolabos_metrics_path_obj = _AutoLabOSPath(_autolabos_metrics_path)",
+        "        if not _autolabos_metrics_path_obj.exists():",
+        "            import json as _autolabos_json",
+        "            _autolabos_metrics_path_obj.parent.mkdir(parents=True, exist_ok=True)",
+        "            with _autolabos_metrics_path_obj.open(\"w\", encoding=\"utf-8\") as _autolabos_handle:",
+        "                _autolabos_json.dump(_autolabos_payload, _autolabos_handle, indent=2, sort_keys=True, default=str)",
+        "                _autolabos_handle.write(\"\\n\")",
+        "    return _autolabos_payload",
+        "",
+        "if \"execute_and_persist_metrics\" not in globals():",
+        "    execute_and_persist_metrics = execute_from_args",
+        "if \"run_experiment_and_write_metrics\" not in globals():",
+        "    run_experiment_and_write_metrics = execute_from_args",
+        "if \"execute_experiment_and_write_metrics\" not in globals():",
+        "    execute_experiment_and_write_metrics = execute_from_args",
+        "if \"run_from_args\" not in globals():",
+        "    run_from_args = execute_from_args",
+        "if \"run_cli\" not in globals():",
+        "    run_cli = execute_from_args",
+        ""
+      ].join("\n")
+    : hasCliConditionRunnerDispatcher
     ? [
         "",
         "def run_locked_condition_order(*positional, **keyword):",
@@ -24912,6 +25138,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
     source.match(/\ndef\s+_dispatch_experiment\s*\(/u) ||
     source.match(/\ndef\s+_invoke_recipe_runner\s*\(/u) ||
     source.match(/\ndef\s+_run_experiment_and_build_metrics\s*\(/u) ||
+    source.match(/\ndef\s+_invoke_runtime_wrapper\s*\(/u) ||
     source.match(/\ndef\s+main\s*\(/u);
   const insertionIndex = insertionMatch?.index ?? source.length;
   await fs.writeFile(scriptPath, `${source.slice(0, insertionIndex)}${alias}${source.slice(insertionIndex)}`, "utf8");

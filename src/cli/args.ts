@@ -9,6 +9,8 @@ export type CliAction =
   | { kind: "evolve"; maxCycles: number; target: "skills" | "prompts" | "all"; dryRun: boolean }
   | { kind: "governance-benchmark-seed"; sourcePath: string; taskId?: string; outDir?: string; referenceOnly: boolean }
   | { kind: "governance-benchmark-dry-run"; seedPath: string; taskId?: string; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
+  | { kind: "governance-benchmark-batch"; seedsRoot: string; taskIds: string[]; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
+  | { kind: "governance-benchmark-export-bundles"; publicOutputRoots: string[]; outDir?: string; maxBundles?: number }
   | { kind: "meta-harness"; runs: number; nodes: ("analyze_results" | "review")[]; noApply: boolean; dryRun: boolean }
   | { kind: "help" }
   | { kind: "version" }
@@ -227,12 +229,119 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "governance-benchmark") {
     const subcommand = args[1];
-    if (subcommand !== "seed" && subcommand !== "dry-run") {
+    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles") {
       return {
         kind: "error",
         message:
-          "Usage: governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only] | governance-benchmark dry-run --seed <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/<task>]."
+          "Usage: governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only] | governance-benchmark dry-run --seed <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/<task>] | governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch] | governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]."
       };
+    }
+    if (subcommand === "export-bundles") {
+      const publicOutputRoots: string[] = [];
+      let outDir: string | undefined;
+      let maxBundles: number | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--source" || token === "--public-output") {
+          const value = args[index + 1];
+          if (!value) {
+            return { kind: "error", message: `Missing value for ${token}.` };
+          }
+          publicOutputRoots.push(value);
+          index += 1;
+          continue;
+        }
+        if (token === "--max") {
+          const value = args[index + 1];
+          if (!value) {
+            return { kind: "error", message: "Missing value for --max." };
+          }
+          const parsed = Number(value);
+          if (!Number.isFinite(parsed) || parsed <= 0) {
+            return { kind: "error", message: `Invalid max: ${value}` };
+          }
+          maxBundles = Math.floor(parsed);
+          index += 1;
+          continue;
+        }
+        if (token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value) {
+            return { kind: "error", message: "Missing value for --out-dir." };
+          }
+          outDir = value;
+          index += 1;
+          continue;
+        }
+        return {
+          kind: "error",
+          message: `Unsupported governance-benchmark export-bundles argument: ${token}`
+        };
+      }
+      if (publicOutputRoots.length === 0) {
+        return { kind: "error", message: "Missing required argument: --source <outputs/run>." };
+      }
+      return { kind: "governance-benchmark-export-bundles", publicOutputRoots, outDir, maxBundles };
+    }
+    if (subcommand === "batch") {
+      let seedsRoot: string | undefined;
+      let outDir: string | undefined;
+      const taskIds: string[] = [];
+      const conditions: GovernanceBenchmarkConditionName[] = [];
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--seeds" || token === "--source") {
+          const value = args[index + 1];
+          if (!value) {
+            return { kind: "error", message: `Missing value for ${token}.` };
+          }
+          seedsRoot = value;
+          index += 1;
+          continue;
+        }
+        if (token === "--task") {
+          const value = args[index + 1];
+          if (!value) {
+            return { kind: "error", message: "Missing value for --task." };
+          }
+          taskIds.push(value);
+          index += 1;
+          continue;
+        }
+        if (token === "--condition") {
+          const value = args[index + 1];
+          if (!value) {
+            return { kind: "error", message: "Missing value for --condition." };
+          }
+          const condition = parseGovernanceBenchmarkCondition(value);
+          if (!condition) {
+            return {
+              kind: "error",
+              message: `Unsupported governance benchmark condition: ${value}.`
+            };
+          }
+          conditions.push(condition);
+          index += 1;
+          continue;
+        }
+        if (token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value) {
+            return { kind: "error", message: "Missing value for --out-dir." };
+          }
+          outDir = value;
+          index += 1;
+          continue;
+        }
+        return {
+          kind: "error",
+          message: `Unsupported governance-benchmark batch argument: ${token}`
+        };
+      }
+      if (!seedsRoot) {
+        return { kind: "error", message: "Missing required argument: --seeds <path>." };
+      }
+      return { kind: "governance-benchmark-batch", seedsRoot, taskIds, outDir, conditions };
     }
     if (subcommand === "dry-run") {
       let seedPath: string | undefined;

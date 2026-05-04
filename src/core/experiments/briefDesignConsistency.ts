@@ -45,8 +45,10 @@ export function checkBriefDesignConsistency(input: {
   designMetrics?: string[];
 }): BriefDesignConsistencyResult {
   const warnings: BriefDesignWarning[] = [];
-  const { briefSections, briefCompleteness, experimentContract, designBaselines, designMetrics } = input;
+  const { briefSections, briefCompleteness, experimentContract, designBaselines, designMetrics, designTitle } = input;
   const hasExplicitBrief = Boolean(briefSections || briefCompleteness);
+  const briefMissingBaseline = detectExplicitMissingBaselineContract(briefSections);
+  const designBaselineCount = designBaselines?.length ?? experimentContract?.baselines?.length ?? 0;
 
   // 1. Missing target comparison
   if (!briefSections?.targetComparison) {
@@ -71,6 +73,36 @@ export function checkBriefDesignConsistency(input: {
         message: "Neither the brief nor the design specifies an explicit comparison target. Paper-scale claims require at least one baseline comparison."
       });
     }
+  }
+
+  // 1b. Explicit missing-baseline artifact-audit contracts
+  if (briefMissingBaseline && designBaselineCount > 0) {
+    warnings.push({
+      code: "MISSING_BASELINE_CONTRACT_VIOLATED",
+      severity: "error",
+      message:
+        "The brief explicitly records the baseline/comparator as missing or intentionally absent, but the design declares baseline execution. Preserve the missing-baseline contract and route to blocked/downgraded evidence handling instead of fabricating a baseline-first experiment.",
+      evidence: `Design title: ${designTitle ?? "(not specified)"}; design baselines: ${(designBaselines ?? experimentContract?.baselines ?? []).join(", ") || "none"}`
+    });
+  }
+  if (
+    briefMissingBaseline &&
+    experimentContract &&
+    /\b(?:improv|delta|relative\s+to|versus|vs\.?|baseline-first|comparator)\b/iu.test(
+      [
+        experimentContract.expected_metric_effect,
+        experimentContract.keep_or_discard_rule,
+        experimentContract.single_change,
+        experimentContract.causal_mechanism
+      ].join("\n")
+    )
+  ) {
+    warnings.push({
+      code: "MISSING_BASELINE_CLAIM_CEILING_VIOLATED",
+      severity: "error",
+      message:
+        "The design contract still frames the run as a baseline comparison even though the brief says baseline evidence is missing. Comparative improvement claims must be blocked or downgraded until a real baseline exists."
+    });
   }
 
   // 2. Insufficient evidence plan
@@ -199,4 +231,35 @@ export function checkBriefDesignConsistency(input: {
     warnings,
     paper_scale_blocked: paperScaleBlocked
   };
+}
+
+function detectExplicitMissingBaselineContract(briefSections?: MarkdownRunBriefSections): boolean {
+  if (!briefSections) {
+    return false;
+  }
+  const text = [
+    briefSections.baselineComparator,
+    briefSections.targetComparison,
+    briefSections.minimumAcceptableEvidence,
+    briefSections.disallowedShortcuts,
+    briefSections.minimumExperimentPlan,
+    briefSections.paperWorthinessGate,
+    briefSections.failureConditions,
+    briefSections.constraints
+  ]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join("\n")
+    .toLowerCase();
+
+  if (!text.trim()) {
+    return false;
+  }
+
+  const missingBaselinePatterns = [
+    /\bbaseline(?:\s+(?:row|run|result|comparison|evidence))?\s*[:=-]\s*(?:intentionally\s+)?(?:absent|missing|unavailable|not\s+provided)\b/iu,
+    /\bbaseline(?:\s+(?:row|run|result|comparison|evidence))?\s+(?:is\s+|was\s+|must\s+be\s+)?(?:intentionally\s+)?(?:absent|missing|unavailable|not\s+provided)\b/iu,
+    /\b(?:no|missing|absent)\s+(?:explicit\s+)?baseline(?:\s+(?:row|run|result|comparison|evidence))?\b/iu,
+    /\bwithout\s+(?:a\s+|an\s+)?(?:explicit\s+)?baseline(?:\s+(?:row|result|comparison))?\b/iu
+  ];
+  return missingBaselinePatterns.some((pattern) => pattern.test(text));
 }

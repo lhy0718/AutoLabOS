@@ -82,6 +82,16 @@ describe("eval harness", () => {
           selected_design_title: "Accuracy benchmark"
         }
       },
+      baseline_comparison: {
+        status: "available",
+        primary_comparison: {
+          metrics: [{ metric: "accuracy", baseline_value: 0.9, comparator_value: 0.93, delta: 0.03 }]
+        },
+        enforcement: {
+          baseline_lock_present: true,
+          single_change_dimension_limit: 1
+        }
+      },
       paper_main: "\\section{Results}\n"
     });
 
@@ -144,6 +154,8 @@ describe("eval harness", () => {
     expect(report.aggregate.auto_handoff_rate).toBe(0.6667);
     expect(report.aggregate.avg_implement_attempts).toBe(1.3333);
     expect(report.aggregate.avg_branch_count).toBe(1.3333);
+    expect(report.aggregate.autonomy.avg_fitness_signal).toBeGreaterThan(0);
+    expect(report.aggregate.autonomy.policy_blocked_rate).toBe(0.6667);
     expect(report.aggregate.policy_rule_counts).toEqual([
       { rule_id: "network_fetch_disabled", count: 1 },
       { rule_id: "remote_script_pipe", count: 1 }
@@ -155,12 +167,16 @@ describe("eval harness", () => {
     expect(first?.statuses.implement).toBe("pass");
     expect(first?.statuses.run_verifier).toBe("pass");
     expect(first?.statuses.objective).toBe("met");
+    expect(first?.statuses.baseline_comparison).toBe("available");
     expect(first?.metrics.changed_file_count).toBe(2);
     expect(first?.scores.overall).toBeGreaterThan(0.9);
+    expect(first?.autonomy.evidence_gates_preserved).toBe(true);
+    expect(first?.autonomy.fitness_signal).toBe(first?.scores.overall);
 
     expect(second?.statuses.implement).toBe("deferred");
     expect(second?.statuses.run_verifier).toBe("fail");
     expect(second?.statuses.objective).toBe("missing");
+    expect(second?.statuses.baseline_comparison).toBe("missing");
     expect(second?.metrics.run_verifier_stage).toBe("policy");
     expect(second?.metrics.run_verifier_policy_rule_id).toBe("remote_script_pipe");
     expect(second?.metrics.policy_blocked).toBe(true);
@@ -177,6 +193,7 @@ describe("eval harness", () => {
     expect(summary).toContain("Eval harness completed for 3 run(s).");
     expect(summary).toContain("Implementation pass rate: 33.3%");
     expect(summary).toContain("Policy-blocked run rate: 66.7%");
+    expect(summary).toContain("Autonomy fitness signal:");
     expect(summary).toContain("Top policy rules: network_fetch_disabled (1), remote_script_pipe (1)");
 
     const written = await writeEvalHarnessReport(report, path.join(workspace, "outputs", "eval-harness", "latest.json"));
@@ -287,6 +304,7 @@ async function writeRunArtifacts(
     run_verifier?: unknown;
     objective_evaluation?: unknown;
     result_analysis?: unknown;
+    baseline_comparison?: unknown;
     paper_main?: string;
   }
 ): Promise<void> {
@@ -313,6 +331,9 @@ async function writeRunArtifacts(
   }
   if (data.result_analysis) {
     await writeFile(path.join(runDir, "result_analysis.json"), `${JSON.stringify(data.result_analysis, null, 2)}\n`, "utf8");
+  }
+  if (data.baseline_comparison) {
+    await writeFile(path.join(runDir, "baseline_comparison.json"), `${JSON.stringify(data.baseline_comparison, null, 2)}\n`, "utf8");
   }
   if (data.paper_main) {
     await writeFile(path.join(runDir, "paper", "main.tex"), data.paper_main, "utf8");

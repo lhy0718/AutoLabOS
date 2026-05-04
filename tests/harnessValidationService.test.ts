@@ -71,6 +71,26 @@ describe("harnessValidationService", () => {
     expect(classifyHarnessIssueCode("paper_claim_source_path_placeholder")).toBe("broken_evidence_link");
   });
 
+  it("classifies runtime contract metadata failures as contract metadata", () => {
+    expect(classifyHarnessIssueCode("runtime_contract_gate_missing")).toBe("contract_metadata");
+  });
+
+  it("reports missing prompt contract metadata through harness validation", async () => {
+    const workspace = createTempWorkspace("autolabos-harness-contract-metadata-");
+    await writeFile(path.join(workspace, "ISSUES.md"), "## Issue: ok\n- Status: open\n", "utf8");
+    await mkdir(path.join(workspace, "node-prompts"), { recursive: true });
+    await writeFile(path.join(workspace, "node-prompts", "analyze_results.md"), "# analyze_results\n", "utf8");
+
+    const report = await runHarnessValidation({
+      workspaceRoot: workspace,
+      includeWorkspaceRuns: false,
+      includeTestRunStores: false
+    });
+
+    expect(report.findings.some((finding) => finding.code === "runtime_contract_gate_missing")).toBe(true);
+    expect(report.countsByKind.contract_metadata).toBeGreaterThan(0);
+  });
+
   it("falls back to parent directory ISSUES.md when not present in workspace root (LV-028)", async () => {
     const parent = createTempWorkspace("autolabos-harness-parent-");
     const child = path.join(parent, "child");

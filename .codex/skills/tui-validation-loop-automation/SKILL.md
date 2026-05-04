@@ -1,6 +1,11 @@
 ---
 name: tui-validation-loop-automation
 description: Use this skill when the task is to repeatedly run a real TUI validation loop from test/ itself as the execution environment, reproduce issues, record them in ISSUES.md, apply the smallest plausible fix, revalidate the same flow, and keep validation grounded in node-owned execution rather than external substitution.
+contract_version: 1
+contract_kind: codex_skill
+runtime_contract: true
+gate: same_flow_live_revalidation
+validation: tui_validation_loop_artifacts
 ---
 
 # TUI Validation Loop Automation

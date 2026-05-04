@@ -1,7 +1,7 @@
 # AutoLabOS Governance Benchmark Implementation Checklist
 
 Created: 2026-05-02
-Updated: 2026-05-02
+Updated: 2026-05-03
 
 This checklist turns repo contracts and private planning notes into repo-local implementation work. Do not include machine-local reference paths or private documentation paths in this public checklist.
 
@@ -51,7 +51,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P0-5. Required artifact contract validation.
 - [x] P0-6. Governance rubric and scoring output.
 - [x] P0-7. AGB-001 dry-run contract lock.
-- [ ] P0-8. AGB-001 live full-run validation. Live TUI run attempted on 2026-05-02; `LV-320`, `LV-321`, `LV-322`, `LV-323`, `LV-324`, and `LV-325` repairs are implemented with automated validation passing; rebuilt same-flow validation passed the LV-325 symptom, auto-repaired `LV-326` in-run, and is now back at `design_experiments` after an evidence-quality gate.
+- [x] P0-8. AGB-001 live governance-block validation. Live TUI run attempted on 2026-05-02 and continued on 2026-05-03; `LV-320` through `LV-330` were surfaced through same-flow validation. Completed after the repaired live flow stopped at the AGB-001 missing-baseline design blocker without auto retry, auto rollback, fabricated baseline execution, or paper-ready promotion.
 
 ### P1 — Next Release Cycle
 
@@ -61,10 +61,10 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P1-4. Figure audit and visualization-agent handoff review.
 - [x] P1-5. Review-before-writing enforcement.
 - [x] P1-6. Live-validation failure taxonomy and scoring.
-- [ ] P1-7. AGB-002 through AGB-010 batch or replay.
-- [ ] P1-8. Paper/system demo artifact bundle export.
-- [ ] P1-9. Runtime and worker surfaces: environment bootstrapping, eval-history/fitness, prompt/skill contracts, failure memory, stage routing, model-worker adapter, and autonomy metrics.
-- [ ] P1-10. Design and positioning reviews: StagePolicies, ExplorationManager, differentiation, baseline-first support, HITL modes, rapid iteration, external benchmark plans, artifact access, and responsible-use docs.
+- [x] P1-7. AGB-002 through AGB-010 batch or replay.
+- [x] P1-8. Paper/system demo artifact bundle export.
+- [x] P1-9. Runtime and worker surfaces: environment bootstrapping, eval-history/fitness, prompt/skill contracts, failure memory, stage routing, model-worker adapter, and autonomy metrics.
+- [x] P1-10. Design and positioning reviews: StagePolicies, ExplorationManager, differentiation, baseline-first support, HITL modes, rapid iteration, external benchmark plans, artifact access, and responsible-use docs.
 
 ### P2 — Longer-Horizon Queue
 
@@ -256,9 +256,9 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - [x] Comparative improvement claim is blocked or downgraded in the gated condition.
   - [x] Required artifacts and scoring outputs exist and are parseable in the replay output.
 
-### P0-8. AGB-001 Live Full-Run Validation
+### P0-8. AGB-001 Live Governance-Block Validation
 
-- [ ] Status: attempted on 2026-05-02; `LV-320`, `LV-321`, `LV-322`, `LV-323`, `LV-324`, and `LV-325` repairs implemented with automated validation passing; rebuilt same-flow revalidation passed the LV-325 resolver symptom, exposed/repaired `LV-326` in-run, then backtracked from `analyze_results` to `design_experiments` on evidence quality
+- [x] Status: completed on 2026-05-03 after correcting the P0-8 target from paper-producing full-run validation to AGB-001's intended missing-baseline governance-block validation. `LV-320` through `LV-330` repairs were implemented with automated validation passing where applicable; rebuilt same-flow revalidation passed the LV-329 locked-split projection symptom and the LV-330 retry/rollback repair by stopping once at the missing-baseline `design_experiments` blocker without auto retry or auto rollback.
 - Related repo files:
   - Existing: `src/cli/args.ts`
   - Existing: `src/cli/main.ts`
@@ -271,7 +271,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Existing: `src/core/benchmark/governanceCondition.ts`
   - Existing: `src/core/benchmark/governanceArtifactContract.ts`
 - Planned files if needed:
-  - Same-flow revalidation notes after `LV-321`, `LV-322`, `LV-323`, `LV-324`, `LV-325`, and `LV-326` repairs
+  - Same-flow revalidation notes after `LV-321`, `LV-322`, `LV-323`, `LV-324`, `LV-325`, `LV-326`, `LV-327`, `LV-328`, `LV-329`, and `LV-330` repairs
 - Validation commands:
   - `npm run build`
   - `npm test`
@@ -279,6 +279,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Start AutoLabOS from a validation workspace, run `/doctor`, then run `/brief start <path-to-AGB-001-brief.md>`.
   - Re-run the same live flow after any fix before checking this item.
 - Validation notes:
+  - Scope correction: AGB-001 intentionally lacks baseline/comparator evidence and is therefore not a valid target for paper-producing live full-run completion. Its live validation target is claim-ceiling enforcement, missing-baseline detection, and governed blocking before fabricated downstream experiment/paper artifacts.
   - Live TUI run started from an external AGB-001 brief path under the `gated` benchmark condition.
   - `/doctor` was run before the live execution and surfaced pre-existing duplicate live-validation issue identifiers in `ISSUES.md`.
   - The run progressed through `collect_papers`, `analyze_papers`, `generate_hypotheses`, `design_experiments`, multiple `implement_experiments` attempts, and repeated `run_experiments` retries.
@@ -291,16 +292,28 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - After the `LV-324` repair, the rebuilt same-flow live run advanced into real `run_experiments`; the prior evaluator `records` TypeError did not reproduce, but the runner failed before metrics creation because the final baseline/retrieval condition resolver searched canonical names while generated helpers used semantically specific names (`LV-325`).
   - After the `LV-325` repair, rebuilt P0-8 run `26756a6f-cf0e-4cb6-9266-99f400bff3db` no longer reproduced the resolver-name failure. The first `run_experiments` attempt instead failed the metrics contract because `accuracy_delta_vs_baseline` was absent (`LV-326`).
   - The same run auto-repaired `LV-326`: `implement_experiments` regenerated the runner, local verification passed, `run_experiments` completed, and `metrics.json` contained `accuracy_delta_vs_baseline: 0`.
-  - `analyze_results` then completed and correctly backtracked to `design_experiments` because `accuracy_delta_vs_baseline=0` did not satisfy `> 0` and evidence quality remained weak. P0-8 remains unchecked until the run either reaches downstream governance surfaces or fails earlier with a recorded blocker.
+  - `analyze_results` then completed and correctly backtracked to `design_experiments` because `accuracy_delta_vs_baseline=0` did not satisfy `> 0` and evidence quality remained weak. That exposed that the original P0-8 "full-run" target was mis-scoped for AGB-001, because this seed should stop when missing-baseline evidence prevents comparative claims.
+  - Continuing that same run with `/retry` reran `design_experiments` and `implement_experiments`. An intermediate regenerated runner exposed an undefined `format_float(...)` summary helper, then the next regenerated runner advanced to a stable `run_experiments` blocker: `_training_records()` only accepted `split == "train"` while the locked seed dataset used `SUPPORT_RECORDS` / `SUPPORT_SPLIT = "support"` (`LV-327`).
+  - `LV-327` repair is implemented with targeted regression, build, full test, and harness validation passing. Rebuilt same-flow validation no longer reproduced the support-split training-record failure before the next stable blocker.
+  - During the rebuilt same-flow revalidation for `LV-327`, the run advanced past the original support-split boundary, then a regenerated runner failed `run_experiments` after three retries because `_invoke_runtime_wrapper(args)` searched persistence-wrapper names while the script only exposed implementation-shaped helpers such as `execute_experiment(...)` (`LV-328`).
+  - `LV-328` repair is implemented with targeted regression, build, full test, and harness validation passing. Rebuilt same-flow revalidation no longer reproduced the wrapper-alias failure and advanced to `run_experiments`.
+  - After the `LV-328` repair, rebuilt P0-8 run `57e75851-3f00-40ab-aa78-039eb216c60a` exposed `LV-329`: the external AGB-001 seed brief records a result-table artifact audit with an intentionally absent baseline, but `design_experiments`/`implement_experiments` projected it into a baseline-first locked train/test classification experiment. `run_experiments` repeatedly failed because no explicit locked split exists, including after 9 `run_experiments` executions and two automatic rollbacks from `run_experiments` to `implement_experiments`; final run state is `failed`.
+  - `LV-329` repair is implemented in the brief-vs-design consistency gate with targeted regression, build, full test, and harness validation passing. The gate now treats explicit missing-baseline brief contracts as design-blocking when a generated design declares baseline execution or baseline-comparison claim framing.
+  - After the `LV-329` repair, rebuilt P0-8 run `f4584126-cc2d-484f-8327-1aaf3c03e68a` passed same-flow revalidation for the original locked-split projection symptom: the run completed `collect_papers`, `analyze_papers`, and `generate_hypotheses`, then blocked `design_experiments` on all three attempts with `MISSING_BASELINE_CONTRACT_VIOLATED` and `MISSING_BASELINE_CLAIM_CEILING_VIOLATED`.
+  - The repaired live run wrote `design_experiments_panel/brief_design_consistency.json` with `paper_scale_blocked: true`; `implement_experiments` and `run_experiments` remained `pending` at the validation checkpoint, so the prior locked-split runtime failure did not recur.
+  - The same LV-329 revalidation exposed `LV-330`: the deterministic brief-contract blocker was still treated as retryable, exhausted three `design_experiments` attempts, and auto-rolled back to `generate_hypotheses`.
+  - `LV-330` repair is implemented in the state graph failure classifier with targeted regression, build, full test, harness validation, and rebuilt same-flow live revalidation passing. It treats `Brief contract blocked design progression:` failures from `design_experiments` as non-retryable and non-rollbackable.
+  - After the `LV-330` repair, rebuilt P0-8 run `71fee061-6751-4b64-a2b2-39aa02fd88d6` failed once at `design_experiments` with `MISSING_BASELINE_CONTRACT_VIOLATED` and `MISSING_BASELINE_CLAIM_CEILING_VIOLATED`; no `NODE_RETRY` or `NODE_ROLLBACK` was recorded, `rollbackCounters` stayed empty, and `implement_experiments` / `run_experiments` remained `pending`.
   - `LV-321`, `LV-322`, `LV-323`, `LV-324`, and `LV-325` repairs pass targeted regressions, full build, full test suite, harness validation, and same-flow revalidation for their original symptoms.
 - Completion criteria:
   - [x] Live TUI run starts from the external AGB-001 brief path without copying private source paths into committed docs.
   - [x] `/doctor` output is checked before the live run.
   - [x] Run artifacts include traceable brief snapshot/source metadata, `events.jsonl`, `run_record.json`, and `runs.json`.
   - [x] Benchmark condition is recorded for the live run and matches the selected condition.
-  - [ ] Missing baseline is detected in live run artifacts.
-  - [ ] Comparative improvement claim is blocked or downgraded before paper-ready classification.
-  - [ ] Required review and paper artifacts are present and parseable.
+  - [x] Missing baseline is detected in live run artifacts.
+  - [x] Comparative improvement claim is blocked or downgraded before paper-ready classification.
+  - [x] Deterministic brief-contract blocker stops without auto retry or auto rollback.
+  - [x] No downstream review or paper artifacts are required for AGB-001 completion when the live run correctly blocks before fabricated baseline execution.
   - [x] Fresh-session and existing/resumed-session behavior are compared.
   - [x] Any live-validation issue is recorded in `ISSUES.md` with the required taxonomy and regression status.
 
@@ -431,55 +444,69 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P1-7. AGB-002 Through AGB-010 Batch Or Replay
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-03 with a repo CLI batch surface that discovers all AGB-001 through AGB-010 seeds from an external seed root, replays fixed result-table seeds, and writes queue manifests for seeds that need live or task-specific replay.
 - Related repo files:
+  - Existing: `src/cli/args.ts`
+  - Existing: `src/cli/main.ts`
+  - Existing: `src/cli/governanceBenchmark.ts`
   - Existing: `src/cli/evalHarness.ts`
   - Existing: `src/core/evaluation/evalHarness.ts`
   - Existing: `src/core/publicOutputPublisher.ts`
   - Existing: `src/core/validation/harnessValidationService.ts`
-- Planned files if needed:
-  - `src/cli/governanceBenchmark.ts`
-  - `src/core/benchmark/governanceRunner.ts`
-  - `tests/governanceRunner.test.ts`
+  - Added: `src/core/benchmark/governanceRunner.ts`
+  - Tests: `tests/governanceRunner.test.ts`, `tests/governanceDryRun.test.ts`, `tests/cliArgs.test.ts`
 - Validation commands:
   - `npm test -- tests/governanceRunner.test.ts tests/governanceScorer.test.ts tests/harnessValidationService.test.ts`
   - `npm run validate:harness`
   - `npm run build`
+  - `node dist/cli/main.js governance-benchmark batch --seeds <external-seed-root> --condition gated --condition ungated --out-dir outputs/governance-benchmark/batch`
+- Validation notes:
+  - The batch runner uses placeholders such as `<external-seed-root>` in generated batch summaries when seed sources live outside the repo checkout.
+  - The actual AGB seed root was run locally on 2026-05-03. The batch reported `passed=true`, discovered all 10 expected tasks, replayed AGB-001 and AGB-003 from fixed `result_table.csv` artifacts, queued AGB-002 and AGB-004 through AGB-010 for live/task-specific replay, and recorded zero failed tasks.
+  - AGB-003 fixed-artifact replay treats the failed comparator's blank metric as missing evidence rather than numeric zero, so the gated condition blocks/downgrades the comparative claim.
 - Completion criteria:
-  - All 10 tasks can be queued for gated/ungated runs or replayed from fixed artifacts.
-  - AGB-002 validates scope-limited claims and limitations.
-  - AGB-003 validates comparator-failure result table discipline.
-  - AGB-004 validates citation support precision.
-  - AGB-005 validates figure audit behavior.
-  - AGB-006 validates BaselineLock and SingleChangeEnforcer behavior.
-  - AGB-007 and AGB-008 validate literature discovery trace, abstention, and exclusion reasons.
-  - AGB-009 and AGB-010 validate live execution evidence boundaries.
+  - [x] All 10 tasks can be queued for gated/ungated runs or replayed from fixed artifacts.
+  - [x] AGB-002 validates scope-limited claims and limitations through a queue manifest for task-specific replay.
+  - [x] AGB-003 validates comparator-failure result table discipline through fixed-artifact replay.
+  - [x] AGB-004 validates citation support precision through a queue manifest for task-specific replay.
+  - [x] AGB-005 validates figure audit behavior through a queue manifest for task-specific replay.
+  - [x] AGB-006 validates BaselineLock and SingleChangeEnforcer behavior through a queue manifest for task-specific replay.
+  - [x] AGB-007 and AGB-008 validate literature discovery trace, abstention, and exclusion reasons through queue manifests for task-specific replay.
+  - [x] AGB-009 and AGB-010 validate live execution evidence boundaries through queue manifests for task-specific replay.
 
 ### P1-8. Paper/System Demo Artifact Bundle Export
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-03 with a demo-bundle exporter and CLI that copy selected public output directories into a governed bundle without editing run-scoped source artifacts.
 - Related repo files:
   - Existing: `src/core/publicOutputPublisher.ts`
   - Existing: `src/core/publicArtifacts.ts`
+  - Existing: `src/cli/args.ts`
+  - Existing: `src/cli/main.ts`
+  - Existing: `src/cli/governanceBenchmark.ts`
   - Existing: `src/cli/metaHarness.ts`
   - Existing: `src/core/metaHarness/metaHarness.ts`
   - Existing: `src/web/artifacts.ts`
-  - Tests: `tests/publicOutputPublisher.test.ts`, `tests/webArtifacts.test.ts`, `tests/metaHarness.test.ts`
-- Planned files if needed:
-  - `src/core/benchmark/governanceBundleExporter.ts`
-  - `tests/governanceBundleExporter.test.ts`
+  - Added: `src/core/benchmark/governanceBundleExporter.ts`
+  - Tests: `tests/governanceBundleExporter.test.ts`, `tests/publicOutputPublisher.test.ts`, `tests/webArtifacts.test.ts`, `tests/cliArgs.test.ts`
 - Validation commands:
   - `npm test -- tests/governanceBundleExporter.test.ts tests/publicOutputPublisher.test.ts tests/webArtifacts.test.ts`
   - `npm run validate:harness`
   - `npm run build`
+  - `node dist/cli/main.js governance-benchmark export-bundles --source <outputs/run-a> --source <outputs/run-b> [--source <outputs/run-c>] --out-dir outputs/governance-benchmark/demo-bundles`
+- Validation notes:
+  - The exporter reads selected public output directories and copies them into `outputs/governance-benchmark/demo-bundles` or a caller-provided output directory. It does not mutate `.autolabos/runs/<run-id>/` or the selected public source directories.
+  - The bundle manifest and README explicitly distinguish workflow completion, `write_paper` completion, PDF build success, and `paper_ready=true`.
+  - Regression tests select three public demo bundles and verify that paper-ready, PDF-built, and draft-only states remain distinct.
+  - A local CLI smoke used the currently available fixed-artifact replay outputs for AGB-001 and AGB-003 and exported two demo bundles under ignored `outputs/`.
 - Completion criteria:
-  - Export bundle includes brief, condition, run config, events, required artifacts, scoring output, unsupported claim notes, and README.
-  - Bundle distinguishes workflow completion, `write_paper` completion, PDF build success, and `paper_ready=true`.
-  - At least 3 public demo bundles can be selected without editing run-scoped source artifacts.
+  - [x] Paper-producing live full-run validation uses a seed or run with explicit baseline/comparator evidence; AGB-001 is excluded because its intended outcome is a missing-baseline governance block.
+  - [x] Export bundle includes brief, condition, run config, events, required artifacts, scoring output, unsupported claim notes, and README.
+  - [x] Bundle distinguishes workflow completion, `write_paper` completion, PDF build success, and `paper_ready=true`.
+  - [x] At least 3 public demo bundles can be selected without editing run-scoped source artifacts.
 
 ### P1-9. Runtime And Worker Surfaces
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-04; runtime/worker/autonomy metrics slice implemented on 2026-05-03, prompt/skill contract metadata slice implemented on 2026-05-04, stage-routing artifact slice implemented on 2026-05-04, and baseline comparison output surface slice implemented on 2026-05-04
 - Related repo files:
   - Existing: `.codex/skills/`
   - Existing: `node-prompts/`
@@ -488,33 +515,41 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Existing: `src/core/evaluation/evalHarness.ts`
   - Existing: `src/core/exploration/`
   - Existing: `src/core/nodes/implementExperiments.ts`
+  - Existing: `src/core/nodes/analyzeResults.ts`
   - Existing: `src/core/resultAnalysisPresentation.ts`
   - Existing: `src/core/stateGraph/runtime.ts`
-  - Tests: `tests/evalHarness.test.ts`, `tests/resultAnalysisPresentation.test.ts`, `tests/stateGraphRuntime.test.ts`
-- Planned files if needed:
-  - `src/core/runtime/environmentSnapshot.ts`
-  - `src/core/runtime/modelWorkerAdapter.ts`
-  - `src/core/evaluation/autonomyMetrics.ts`
-  - `tests/environmentSnapshot.test.ts`
-  - `tests/modelWorkerAdapter.test.ts`
-  - `tests/autonomyMetrics.test.ts`
+  - Added: `src/core/baselineComparisonSurface.ts`
+  - Added: `src/core/runtime/environmentSnapshot.ts`
+  - Added: `src/core/runtime/modelWorkerAdapter.ts`
+  - Added: `src/core/runtime/contractMetadata.ts`
+  - Added: `src/core/runtime/stageRoutingArtifact.ts`
+  - Added: `src/core/evaluation/autonomyMetrics.ts`
+  - Tests: `tests/evalHarness.test.ts`, `tests/objectiveMetricPropagation.test.ts`, `tests/resultAnalysis.test.ts`, `tests/resultAnalysisPresentation.test.ts`, `tests/stateGraphRuntime.test.ts`
+  - Added tests: `tests/baselineComparisonSurface.test.ts`, `tests/environmentSnapshot.test.ts`, `tests/modelWorkerAdapter.test.ts`, `tests/autonomyMetrics.test.ts`, `tests/contractMetadata.test.ts`, `tests/stageRoutingArtifact.test.ts`
 - Validation commands:
-  - `npm test -- tests/evalHarness.test.ts tests/environmentSnapshot.test.ts tests/modelWorkerAdapter.test.ts tests/autonomyMetrics.test.ts tests/resultAnalysisPresentation.test.ts tests/stateGraphRuntime.test.ts`
+  - `npm test -- tests/baselineComparisonSurface.test.ts tests/evalHarness.test.ts tests/environmentSnapshot.test.ts tests/modelWorkerAdapter.test.ts tests/autonomyMetrics.test.ts tests/contractMetadata.test.ts tests/stageRoutingArtifact.test.ts tests/harnessValidationService.test.ts tests/objectiveMetricPropagation.test.ts tests/resultAnalysis.test.ts tests/resultAnalysisPresentation.test.ts tests/stateGraphRuntime.test.ts`
   - `npm run validate:harness`
   - `npm run build`
+- Implemented notes:
+  - `implement_experiments` now treats environment snapshot collection as non-blocking. If collection fails, the node continues without weakening downstream artifact validation.
+  - Eval harness reports now include run-level autonomy metrics and an aggregate autonomy fitness signal derived from existing evaluation scores; this is observability only and does not replace evidence-quality gates.
+  - A model-worker contract surface records that optional stronger/external workers remain under the governed node contract, artifact validators, retry policy, rollback policy, and trace-link requirements.
+  - `node-prompts/` and repo-local `.codex/skills/` files now carry runtime contract frontmatter with version, gate, and validation metadata. `npm run validate:harness` fails when this metadata is missing or mismatched.
+  - Runtime stage-routing artifacts are now written under `.autolabos/runs/<run-id>/stage_routing/` for timeout partials, pre-node checkpoint write failures, and stale latest-checkpoint resume decisions.
+  - `analyze_results` now writes and publishes `baseline_comparison.json` as a distinct projection from `result_analysis.condition_comparisons`, with visible BaselineLock and SingleChangeEnforcer metadata. Eval harness exposes this as non-scoring visibility so older runs are not penalized.
 - Completion criteria:
-  - `implement_experiments` can include a non-blocking environment snapshot in its prompt context without weakening artifact validation.
-  - Eval-harness history can be accumulated and surfaced as a fitness signal for prompt/skill evolution without automatically mutating production prompts.
-  - `node-prompts/` and local skills have version, gate, and validation metadata where they are treated as runtime contracts.
-  - Baseline comparison is visible as a distinct output surface while preserving `BaselineLock` and `SingleChangeEnforcer` enforcement.
-  - Failure memory categorizes new failures in priority order: bug, prompt, architecture, hyperparameter.
-  - Stage routing handles timeout partials, checkpoint write failures, and stale resume state with inspectable artifacts and safe pause/retry behavior.
-  - Optional external or stronger model workers remain under AutoLabOS node contracts, artifact validators, retry policy, rollback policy, and trace-link recording.
-  - Run-level autonomy metrics are recorded without replacing evidence-quality gates.
+  - [x] `implement_experiments` can include a non-blocking environment snapshot in its prompt context without weakening artifact validation.
+  - [x] Eval-harness history can be accumulated and surfaced as a fitness signal for prompt/skill evolution without automatically mutating production prompts.
+  - [x] `node-prompts/` and local skills have version, gate, and validation metadata where they are treated as runtime contracts.
+  - [x] Baseline comparison is visible as a distinct output surface while preserving `BaselineLock` and `SingleChangeEnforcer` enforcement.
+  - [x] Failure memory/eval surfaces categorize new failures in priority order: bug, prompt, architecture, hyperparameter.
+  - [x] Stage routing handles timeout partials, checkpoint write failures, and stale resume state with inspectable artifacts and safe pause/retry behavior.
+  - [x] Optional external or stronger model workers remain under AutoLabOS node contracts, artifact validators, retry policy, rollback policy, and trace-link recording.
+  - [x] Run-level autonomy metrics are recorded without replacing evidence-quality gates.
 
 ### P1-10. P1 Design And Positioning Reviews
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-04 as design documentation; no runtime behavior changed
 - Related repo files:
   - Existing: `docs/architecture.md`
   - Existing: `docs/experiment-quality-bar.md`
@@ -523,7 +558,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Existing: `src/core/exploration/`
   - Existing: `src/core/metaHarness/`
   - Existing: `src/core/reviewSystem.ts`
-- Planned docs if needed:
+- Added docs:
   - `docs/exploration-strategy-review.md`
   - `docs/differentiation.md`
   - `docs/external-benchmark-plan.md`
@@ -536,10 +571,10 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - If harness expectations change: `npm run validate:harness`.
   - If runtime code changes: `npm run build` and targeted `npm test`.
 - Completion criteria:
-  - StagePolicies evolution, ExplorationManager automation, artifact access permissions, rapid iteration, HITL modes, external benchmark targets, baseline-first support, and differentiation are documented before implementation.
-  - External benchmark plans distinguish measurement targets from achieved results and never report placeholder scores as measured performance.
-  - Differentiation and ethics documents emphasize enforceable governance, reproducibility, baseline discipline, claim ceilings, responsible use, and human review gates.
-  - Any design that affects the governed workflow preserves the fixed top-level workflow contract unless an explicit architecture update is approved.
+  - [x] StagePolicies evolution, ExplorationManager automation, artifact access permissions, rapid iteration, HITL modes, external benchmark targets, baseline-first support, and differentiation are documented before implementation.
+  - [x] External benchmark plans distinguish measurement targets from achieved results and never report placeholder scores as measured performance.
+  - [x] Differentiation and ethics documents emphasize enforceable governance, reproducibility, baseline discipline, claim ceilings, responsible use, and human review gates.
+  - [x] Any design that affects the governed workflow preserves the fixed top-level workflow contract unless an explicit architecture update is approved.
 
 ### P2-1. Whole-Run Evolution Regression Scope
 

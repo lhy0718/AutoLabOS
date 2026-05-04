@@ -68,6 +68,24 @@ describe("compare analysis", () => {
         artifacts: 0.5,
         overall: 0.05
       },
+      autonomy: {
+        version: 1,
+        run_id: run.id,
+        current_node: run.currentNode,
+        run_status: run.status,
+        fitness_signal: 0.05,
+        fitness_signal_source: "eval_harness_overall_score",
+        evidence_gates_preserved: true,
+        retry_attempts_total: 0,
+        rollback_count_total: 0,
+        backward_jump_count: 0,
+        checkpoint_seq: 0,
+        auto_handoff_to_run_experiments: false,
+        policy_blocked: true,
+        artifact_completeness_ratio: 0.5,
+        dominant_failure_category: "architecture",
+        failure_category_priority: ["architecture"]
+      },
       missing_artifacts: ["objective_evaluation.json"],
       findings: [
         "Implement verifier blocked by policy (network_fetch_disabled).",

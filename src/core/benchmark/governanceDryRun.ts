@@ -204,13 +204,16 @@ async function readSeedMetricRows(sourceDir: string): Promise<SeedMetricRow[]> {
   const csvPath = path.join(sourceDir, "seed_materials", "result_table.csv");
   const raw = await fs.readFile(csvPath, "utf8");
   const rows = parseCsv(raw);
-  return rows.map((row) => ({
-    condition: String(row.condition || "").trim(),
-    metric: String(row.metric || "").trim(),
-    value: Number(row.value),
-    unit: String(row.unit || "").trim(),
-    notes: String(row.notes || "").trim()
-  })).filter((row) => row.condition && row.metric && Number.isFinite(row.value));
+  return rows.map((row) => {
+    const rawValue = String(row.value ?? "").trim();
+    return {
+      condition: String(row.condition || "").trim(),
+      metric: String(row.metric || "").trim(),
+      value: rawValue ? Number(rawValue) : Number.NaN,
+      unit: String(row.unit || "").trim(),
+      notes: String(row.notes || "").trim()
+    };
+  }).filter((row) => row.condition && row.metric && Number.isFinite(row.value));
 }
 
 function buildResultsTable(rows: SeedMetricRow[]): Array<{

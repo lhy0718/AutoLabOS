@@ -1,6 +1,11 @@
 ---
 name: repo-portability-hygiene
 description: Use when creating or editing files that may be committed or uploaded to GitHub, especially docs, checklists, skills, tests, scripts, configs, or examples that might reference local files, private reference docs, private mirrors, workspaces, run outputs, or machine-specific resources.
+contract_version: 1
+contract_kind: codex_skill
+runtime_contract: true
+gate: public_repo_portability
+validation: changed_file_path_scan
 ---
 
 # Repo Portability Hygiene

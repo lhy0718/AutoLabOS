@@ -1,3 +1,12 @@
+---
+contract_version: 1
+contract_kind: node_prompt
+runtime_contract: true
+node_id: generate_hypotheses
+gate: evidence_grounded_testable_hypotheses
+validation: hypothesis_generation_and_harness
+---
+
 # generate_hypotheses
 
 ## system
@@ -23,4 +32,3 @@ Penalize hypotheses that rely mostly on abstract-only or heavily caveated eviden
 Revise weak wording instead of praising it.
 Return one JSON object only.
 No markdown, no prose outside JSON.
-

@@ -1,3 +1,12 @@
+---
+contract_version: 1
+contract_kind: node_prompt
+runtime_contract: true
+node_id: review
+gate: paper_readiness_and_backtrack_review
+validation: review_gate_and_harness
+---
+
 # review system prompt – 동작 튜닝을 위해 편집 가능, 런타임에 로드됨
 
 ## reviewer_system_template

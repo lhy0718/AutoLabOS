@@ -17,7 +17,7 @@ import {
 } from "../../types.js";
 import { CheckpointStore } from "./checkpointStore.js";
 import { applyRunUsageDelta, RunUsageDelta } from "../runs/runUsage.js";
-import { CheckpointPhase, GraphNodeRegistry, GraphNodeResult, JumpMode } from "./types.js";
+import { CheckpointPhase, CheckpointRecord, GraphNodeRegistry, GraphNodeResult, JumpMode } from "./types.js";
 import { defaultRunStatusForGraph } from "./defaults.js";
 import { loadGovernancePolicy } from "../../governance/policyLoader.js";
 import { GovernancePolicy } from "../../governance/policyTypes.js";
@@ -30,6 +30,13 @@ import {
 } from "../benchmark/governanceCondition.js";
 import { buildWorkspaceRunRoot } from "../runs/runPaths.js";
 import { writeJsonFile } from "../../utils/fs.js";
+import {
+  buildStageRoutingArtifact,
+  classifyStageRoutingFailure,
+  StageRoutingDisposition,
+  StageRoutingEvent,
+  writeStageRoutingArtifactBestEffort
+} from "../runtime/stageRoutingArtifact.js";
 
 export class StateGraphRuntime {
   private governancePolicy?: GovernancePolicy;
@@ -80,6 +87,18 @@ export class StateGraphRuntime {
     if (checkpoint) {
       const restored = structuredClone(checkpoint.runSnapshot);
       if (checkpointSeq == null && this.isCheckpointSnapshotStale(current, restored)) {
+        await this.recordStageRoutingArtifact(current, {
+          event: "stale_resume_state",
+          reason: `Latest checkpoint snapshot seq ${restored.graph.checkpointSeq ?? 0} is older than current run seq ${current.graph.checkpointSeq ?? 0}.`,
+          disposition: "resume_current_state",
+          retrySafe: true,
+          evidence: [
+            `current_updated_at=${current.updatedAt}`,
+            `checkpoint_updated_at=${restored.updatedAt}`,
+            `checkpoint_seq=${checkpoint.seq}`
+          ],
+          suggestedCommands: [`/agent run ${current.id}`]
+        });
         current.status = current.status === "completed" ? "completed" : defaultRunStatusForGraph(current.graph);
         this.syncLatestSummary(current);
         await this.runStore.updateRun(current);
@@ -142,6 +161,15 @@ export class StateGraphRuntime {
     });
 
     const before = await this.saveCheckpointAndPersist(run, "before");
+    if (this.isCheckpointWritePause(run, node)) {
+      this.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node,
+        payload: { text: run.graph.nodeStates[node]?.note || "Paused after checkpoint write failure." }
+      });
+      return this.getRunOrThrow(run.id);
+    }
     this.eventStream.emit({
       type: "CHECKPOINT_SAVED",
       runId: run.id,
@@ -746,6 +774,7 @@ export class StateGraphRuntime {
     }
 
     this.syncLatestSummary(run, node);
+    await this.recordFailureStageRoutingArtifactIfNeeded(run, node, errorMessage, nextRetry, maxAttempts);
     const failCheckpoint = await this.saveCheckpointAndPersist(run, "fail", errorMessage);
     this.eventStream.emit({
       type: "CHECKPOINT_SAVED",
@@ -1050,15 +1079,122 @@ export class StateGraphRuntime {
     phase: CheckpointPhase,
     reason?: string,
     checkpointNode?: GraphNodeId
-  ) {
+  ): Promise<CheckpointRecord> {
     const records = await this.checkpointStore.list(run.id);
     const highestSeq = records.reduce((max, record) => Math.max(max, record.seq), 0);
     run.graph.checkpointSeq = Math.max(run.graph.checkpointSeq ?? 0, highestSeq);
     run.updatedAt = new Date().toISOString();
     this.syncLatestSummary(run);
-    const checkpoint = await this.checkpointStore.save(run, phase, reason, checkpointNode);
+    let checkpoint: CheckpointRecord;
+    try {
+      checkpoint = await this.checkpointStore.save(run, phase, reason, checkpointNode);
+    } catch (error) {
+      const node = checkpointNode || run.currentNode;
+      const message = error instanceof Error ? error.message : String(error);
+      const state = run.graph.nodeStates[node];
+      run.status = "paused";
+      run.graph.nodeStates[node] = {
+        ...state,
+        status: state.status === "running" ? "pending" : state.status,
+        updatedAt: new Date().toISOString(),
+        note: appendPauseSuffix(
+          state.note,
+          `Paused after checkpoint write failure during ${phase}: ${message}`
+        )
+      };
+      this.syncLatestSummary(run, node);
+      await this.recordStageRoutingArtifact(run, {
+        node,
+        event: "checkpoint_write_failure",
+        phase,
+        reason: message,
+        disposition: "safe_pause",
+        retrySafe: true,
+        evidence: [
+          `checkpoint_phase=${phase}`,
+          `checkpoint_reason=${reason ?? ""}`,
+          `checkpoint_seq=${run.graph.checkpointSeq ?? 0}`
+        ],
+        suggestedCommands: [`/agent run ${run.id}`]
+      });
+      await this.runStore.updateRun(run);
+      return {
+        seq: run.graph.checkpointSeq ?? highestSeq,
+        runId: run.id,
+        node,
+        phase,
+        reason: `checkpoint write failed: ${message}`,
+        createdAt: new Date().toISOString(),
+        runSnapshot: structuredClone(run)
+      };
+    }
     await this.runStore.updateRun(run);
     return checkpoint;
+  }
+
+  private async recordFailureStageRoutingArtifactIfNeeded(
+    run: RunRecord,
+    node: GraphNodeId,
+    errorMessage: string,
+    nextRetry: number,
+    maxAttempts: number
+  ): Promise<void> {
+    const event = classifyStageRoutingFailure(errorMessage);
+    if (!event) {
+      return;
+    }
+    const retrySafe = nextRetry < maxAttempts;
+    await this.recordStageRoutingArtifact(run, {
+      node,
+      event,
+      phase: "fail",
+      reason: errorMessage,
+      disposition: retrySafe ? "safe_retry" : "safe_pause",
+      retrySafe,
+      evidence: [
+        `retry_attempt=${nextRetry}/${maxAttempts}`,
+        `node_status=${run.graph.nodeStates[node]?.status ?? "unknown"}`
+      ],
+      suggestedCommands: retrySafe ? [`/agent run ${run.id}`] : [`/retry ${run.id} ${node}`]
+    });
+  }
+
+  private isCheckpointWritePause(run: RunRecord, node: GraphNodeId): boolean {
+    return (
+      run.status === "paused" &&
+      Boolean(run.graph.nodeStates[node]?.note?.includes("Paused after checkpoint write failure"))
+    );
+  }
+
+  private async recordStageRoutingArtifact(
+    run: RunRecord,
+    input: {
+      node?: GraphNodeId;
+      event: StageRoutingEvent;
+      phase?: CheckpointPhase;
+      reason: string;
+      disposition: StageRoutingDisposition;
+      retrySafe: boolean;
+      evidence?: string[];
+      suggestedCommands?: string[];
+    }
+  ): Promise<void> {
+    const node = input.node ?? run.currentNode;
+    await writeStageRoutingArtifactBestEffort(
+      process.cwd(),
+      buildStageRoutingArtifact({
+        runId: run.id,
+        nodeId: node,
+        event: input.event,
+        phase: input.phase,
+        reason: input.reason,
+        disposition: input.disposition,
+        retrySafe: input.retrySafe,
+        checkpointSeq: run.graph.checkpointSeq ?? 0,
+        evidence: input.evidence,
+        suggestedCommands: input.suggestedCommands
+      })
+    );
   }
 
   private syncLatestSummary(run: RunRecord, preferredNode?: GraphNodeId): void {
@@ -1256,6 +1392,10 @@ export class StateGraphRuntime {
 
 function shouldSkipAutoRetryForFailure(node: GraphNodeId, errorMessage: string): boolean {
   const normalized = normalizeFailureMessage(errorMessage);
+  if (node === "design_experiments") {
+    return normalized.includes("brief contract blocked design progression:");
+  }
+
   if (node === "generate_hypotheses") {
     return (
       normalized.includes("hypothesis generation blocked:") &&
@@ -1289,6 +1429,10 @@ function getAutoRetrySkipObservation(node: GraphNodeId, errorMessage: string): s
 
 function shouldFailWithoutAutoRollback(node: GraphNodeId, errorMessage: string): boolean {
   const normalized = normalizeFailureMessage(errorMessage);
+  if (node === "design_experiments") {
+    return normalized.includes("brief contract blocked design progression:");
+  }
+
   if (node === "analyze_papers") {
     return isAnalyzePapersResponsesApiPdfConfigFailure(normalized);
   }

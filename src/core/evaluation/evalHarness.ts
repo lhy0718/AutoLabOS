@@ -6,6 +6,12 @@ import { RunStore } from "../runs/runStore.js";
 import { RunRecord } from "../../types.js";
 import { fileExists, readJsonFile, writeJsonFile } from "../../utils/fs.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
+import {
+  AutonomyAggregateMetrics,
+  buildAutonomyAggregateMetrics,
+  buildRunAutonomyMetrics,
+  RunAutonomyMetrics
+} from "./autonomyMetrics.js";
 
 export interface EvalHarnessOptions {
   cwd: string;
@@ -36,6 +42,7 @@ export interface EvalHarnessReport {
     avg_implement_attempts: number;
     avg_branch_count: number;
     avg_overall_score: number;
+    autonomy: AutonomyAggregateMetrics;
     policy_rule_counts: Array<{
       rule_id: string;
       count: number;
@@ -57,6 +64,7 @@ export interface EvalHarnessRunReport {
     run_verifier: "pass" | "fail" | "missing";
     objective: string;
     analysis: "present" | "missing";
+    baseline_comparison: "available" | "missing" | "legacy_missing";
     paper: "present" | "missing";
   };
   metrics: {
@@ -80,6 +88,7 @@ export interface EvalHarnessRunReport {
     artifacts: number;
     overall: number;
   };
+  autonomy: RunAutonomyMetrics;
   missing_artifacts: string[];
   findings: string[];
 }
@@ -209,7 +218,8 @@ export function renderEvalHarnessSummary(report: EvalHarnessReport): string {
     `Run verifier pass rate: ${formatPercent(report.aggregate.run_verifier_pass_rate)}`,
     `Objective met rate: ${formatPercent(report.aggregate.objective_met_rate)}`,
     `Policy-blocked run rate: ${formatPercent(report.aggregate.policy_blocked_run_rate)}`,
-    `Average overall score: ${report.aggregate.avg_overall_score.toFixed(3)}`
+    `Average overall score: ${report.aggregate.avg_overall_score.toFixed(3)}`,
+    `Autonomy fitness signal: ${report.aggregate.autonomy.avg_fitness_signal.toFixed(3)}`
   ];
   if (report.aggregate.policy_rule_counts.length > 0) {
     lines.push(
@@ -254,6 +264,8 @@ export function renderEvalHarnessMarkdown(report: EvalHarnessReport): string {
     `- Average implement attempts: ${report.aggregate.avg_implement_attempts.toFixed(2)}`,
     `- Average branch count: ${report.aggregate.avg_branch_count.toFixed(2)}`,
     `- Average overall score: ${report.aggregate.avg_overall_score.toFixed(3)}`,
+    `- Autonomy fitness signal: ${report.aggregate.autonomy.avg_fitness_signal.toFixed(3)}`,
+    `- Autonomy policy-blocked rate: ${formatPercent(report.aggregate.autonomy.policy_blocked_rate)}`,
     "",
     "## Policy",
     "",
@@ -263,13 +275,13 @@ export function renderEvalHarnessMarkdown(report: EvalHarnessReport): string {
     "",
     "## Runs",
     "",
-    "| Run | Implement | Run Verifier | Objective | Score | Notes |",
-    "| --- | --- | --- | --- | ---: | --- |"
+    "| Run | Implement | Run Verifier | Objective | Baseline Comparison | Score | Notes |",
+    "| --- | --- | --- | --- | --- | ---: | --- |"
   ];
 
   for (const run of report.runs) {
     lines.push(
-      `| ${run.run_id} | ${run.statuses.implement} | ${run.statuses.run_verifier} | ${run.statuses.objective} | ${run.scores.overall.toFixed(3)} | ${escapeMarkdownCell(run.findings[0] || "")} |`
+      `| ${run.run_id} | ${run.statuses.implement} | ${run.statuses.run_verifier} | ${run.statuses.objective} | ${run.statuses.baseline_comparison} | ${run.scores.overall.toFixed(3)} | ${escapeMarkdownCell(run.findings[0] || "")} |`
     );
   }
 
@@ -307,6 +319,7 @@ async function evaluateRun(runsDir: string, run: RunRecord): Promise<EvalHarness
     normalizeString(runVerifier?.policy_rule_id) ||
     extractPolicyRuleId(runVerifier?.summary, runVerifier?.stderr_excerpt, runVerifier?.stdout_excerpt);
   const analysisStatus = artifactPresence["result_analysis.json"] ? "present" : "missing";
+  const baselineComparisonStatus = await resolveBaselineComparisonStatus(runDir, analysisStatus);
   const paperStatus = artifactPresence[path.join("paper", "main.tex")] ? "present" : "missing";
   const implementAttemptCount = Math.max(
     asNumber(implementResult?.attempt_count),
@@ -350,6 +363,14 @@ async function evaluateRun(runsDir: string, run: RunRecord): Promise<EvalHarness
     runVerifierStage,
     runVerifierPolicyRuleId
   });
+  const autonomy = buildRunAutonomyMetrics({
+    run,
+    overallScore: scores.overall,
+    artifactCompletenessRatio,
+    autoHandoffToRunExperiments: autoHandoff,
+    policyBlocked,
+    findings
+  });
 
   return {
     run_id: run.id,
@@ -364,6 +385,7 @@ async function evaluateRun(runsDir: string, run: RunRecord): Promise<EvalHarness
       run_verifier: runVerifierStatus,
       objective: objectiveStatus,
       analysis: analysisStatus,
+      baseline_comparison: baselineComparisonStatus,
       paper: paperStatus
     },
     metrics: {
@@ -381,9 +403,20 @@ async function evaluateRun(runsDir: string, run: RunRecord): Promise<EvalHarness
       policy_blocked: policyBlocked
     },
     scores,
+    autonomy,
     missing_artifacts: missingArtifacts,
     findings
   };
+}
+
+async function resolveBaselineComparisonStatus(
+  runDir: string,
+  analysisStatus: EvalHarnessRunReport["statuses"]["analysis"]
+): Promise<EvalHarnessRunReport["statuses"]["baseline_comparison"]> {
+  if (await fileExists(path.join(runDir, "baseline_comparison.json"))) {
+    return "available";
+  }
+  return analysisStatus === "present" ? "legacy_missing" : "missing";
 }
 
 async function collectArtifactPresence(runDir: string): Promise<Record<(typeof EXPECTED_ARTIFACTS)[number], boolean>> {
@@ -407,6 +440,7 @@ function buildAggregate(runReports: EvalHarnessRunReport[]): EvalHarnessReport["
     avg_implement_attempts: round(average(runReports.map((run) => run.metrics.implement_attempt_count))),
     avg_branch_count: round(average(runReports.map((run) => run.metrics.branch_count))),
     avg_overall_score: round(average(runReports.map((run) => run.scores.overall))),
+    autonomy: buildAutonomyAggregateMetrics(runReports.map((run) => run.autonomy)),
     policy_rule_counts: countPolicyRules(runReports)
   };
 }

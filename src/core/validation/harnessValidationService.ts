@@ -4,6 +4,7 @@ import { Dirent, promises as fs } from "node:fs";
 import { resolveAppPaths } from "../../config.js";
 import { GraphNodeId, RunRecord } from "../../types.js";
 import { getProjectRoot } from "../../workspaceGuard.js";
+import { validateRuntimeContractMetadata } from "../runtime/contractMetadata.js";
 import {
   VALIDATION_WORKSPACE_ROOT_ENV,
   isPathInsideOrEqual,
@@ -21,7 +22,8 @@ export type HarnessIssueKind =
   | "malformed_issue"
   | "broken_evidence_link"
   | "status_artifact_mismatch"
-  | "paper_result_mismatch";
+  | "paper_result_mismatch"
+  | "contract_metadata";
 
 export type HarnessValidationScope = "issue_log" | "workspace" | "test_records";
 
@@ -77,6 +79,10 @@ export async function runHarnessValidation(options: HarnessValidationOptions): P
   const maxFindings = Math.max(1, options.maxFindings || 200);
   const findings: HarnessValidationFinding[] = [];
   const observedValidationScopes = new Set<RunValidationScope>();
+  const contractReport = await validateRuntimeContractMetadata(workspaceRoot);
+  for (const issue of contractReport.issues) {
+    findings.push(classifyFinding(issue, "workspace"));
+  }
 
   let issueEntryCount = 0;
   let resolvedIssuesPath = issuesPath;
@@ -209,7 +215,8 @@ export async function runHarnessValidation(options: HarnessValidationOptions): P
     malformed_issue: 0,
     broken_evidence_link: 0,
     status_artifact_mismatch: 0,
-    paper_result_mismatch: 0
+    paper_result_mismatch: 0,
+    contract_metadata: 0
   };
   for (const finding of findings) {
     countsByKind[finding.kind] += 1;
@@ -243,6 +250,9 @@ export async function runHarnessValidation(options: HarnessValidationOptions): P
 }
 
 export function classifyHarnessIssueCode(code: string): HarnessIssueKind {
+  if (code.startsWith("runtime_contract_")) {
+    return "contract_metadata";
+  }
   if (code.startsWith("issue_") || code.includes("issues_file")) {
     return "malformed_issue";
   }
@@ -267,6 +277,9 @@ export function classifyHarnessIssueCode(code: string): HarnessIssueKind {
 }
 
 export function defaultRemediationForIssueCode(code: string): string {
+  if (code.startsWith("runtime_contract_")) {
+    return "Add contract_version, contract_kind, runtime_contract, gate, and validation metadata to the prompt or skill frontmatter.";
+  }
   if (code.startsWith("issue_") || code === "issues_file_missing") {
     return "Fill the required ISSUES.md fields using docs/live-validation-issue-template.md and keep entries up to date.";
   }

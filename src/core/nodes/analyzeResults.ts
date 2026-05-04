@@ -61,6 +61,7 @@ import { evaluateBriefEvidenceAgainstResults } from "../analysis/briefEvidenceVa
 import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
 import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
+import { buildBaselineComparisonSurface } from "../baselineComparisonSurface.js";
 import {
   hasAnyIncompleteResultsTableRow,
   type ResultsTableDirection,
@@ -79,6 +80,7 @@ import {
   type FigureAuditInput
 } from "../analysis/figureAuditor.js";
 import { resolveExplorationConfig } from "../exploration/explorationConfig.js";
+import { loadBaselineLock } from "../exploration/baselineLock.js";
 import { loadResearchTree } from "../exploration/researchTree.js";
 import { buildWriteupInputManifest } from "../exploration/evidenceSerializer.js";
 
@@ -451,10 +453,21 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
 
       // --- Standalone result table artifact (for review gate) ---
       const resultTable = buildResultTable(summary);
-      await writeRunArtifact(
+      const resultTablePath = await writeRunArtifact(
         run,
         "result_table.json",
         `${JSON.stringify(resultTable, null, 2)}\n`
+      );
+      const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
+      const baselineComparisonSurface = buildBaselineComparisonSurface({
+        runId: run.id,
+        report: summary,
+        baselineLock: loadBaselineLock(runDir)
+      });
+      const baselineComparisonPath = await writeRunArtifact(
+        run,
+        "baseline_comparison.json",
+        `${JSON.stringify(baselineComparisonSurface, null, 2)}\n`
       );
 
       // --- Attempt decision artifact (Target 4) ---
@@ -519,6 +532,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
             : [transitionRecommendation.reason, "Run figure_audit and inspect the figure audit summary before treating the run as paper-ready."],
         references: [
           { label: "Analysis report", path: "result_analysis.json" },
+          { label: "Baseline comparison", path: "baseline_comparison.json" },
           { label: "Transition recommendation", path: "transition_recommendation.json" },
           { label: "Latest results", path: "latest_results.json" },
           { label: "Risk signals", path: "analysis/risk_signals.json" }
@@ -586,9 +600,13 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
               ]
             : []),
           {
-            sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "result_table.json"),
+            sourcePath: resultTablePath,
             targetRelativePath: "result_table.json",
             optional: true
+          },
+          {
+            sourcePath: baselineComparisonPath,
+            targetRelativePath: "baseline_comparison.json"
           },
           {
             sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "baseline_summary.json"),
@@ -683,6 +701,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContextMemory.put("analyze_results.last_error", metricsLoadError || null);
       await runContextMemory.put("analyze_results.last_synthesis", summary.synthesis || null);
       await runContextMemory.put("analyze_results.last_transition", transitionRecommendation);
+      await runContextMemory.put("analyze_results.baseline_comparison", baselineComparisonSurface);
       await runContextMemory.put("analyze_results.risk_signals", riskSignals);
       await runContextMemory.put("analyze_results.experiment_portfolio", summary.experiment_portfolio || null);
       await runContextMemory.put("analyze_results.panel_decision", panelResult.decision);

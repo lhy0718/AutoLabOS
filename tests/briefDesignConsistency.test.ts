@@ -125,6 +125,31 @@ describe("checkBriefDesignConsistency", () => {
     expect(result.paper_scale_blocked).toBe(true);
   });
 
+  it("blocks baseline-first designs when the brief says the baseline is intentionally absent", () => {
+    const result = checkBriefDesignConsistency({
+      briefSections: makeBriefSections({
+        baselineComparator: "One baseline run: intentionally absent and must be reported as missing.",
+        targetComparison: "No baseline row is provided; do not claim improvement.",
+        minimumExperimentPlan:
+          "Audit the seed result table and report the missing baseline; do not run a locked train/test experiment.",
+        disallowedShortcuts: "Do not fabricate or interpolate a baseline."
+      }),
+      experimentContract: makeContract({
+        single_change: "Locked baseline-first retrieval feature ablation",
+        expected_metric_effect: "Improve macro-F1 relative to the locked baseline.",
+        keep_or_discard_rule: "Keep if the retrieval condition improves versus baseline.",
+        baselines: ["compact_text_classifier"]
+      }),
+      designTitle: "Locked baseline vs frozen retrieval feature ablation",
+      designBaselines: ["compact_text_classifier"],
+      designMetrics: ["macro-F1"]
+    });
+
+    expect(result.warnings.some((w) => w.code === "MISSING_BASELINE_CONTRACT_VIOLATED")).toBe(true);
+    expect(result.warnings.some((w) => w.code === "MISSING_BASELINE_CLAIM_CEILING_VIOLATED")).toBe(true);
+    expect(result.paper_scale_blocked).toBe(true);
+  });
+
   it("handles gracefully when brief sections are undefined", () => {
     const result = checkBriefDesignConsistency({
       experimentContract: makeContract()

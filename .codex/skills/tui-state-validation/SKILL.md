@@ -1,6 +1,11 @@
 ---
 name: tui-state-validation
 description: Use this skill when the task is to reproduce or analyze a concrete AutoLabOS TUI/web symptom, especially when stale state, fresh-vs-existing divergence, resume mismatch, or persisted-artifact-vs-UI disagreement may be involved.
+contract_version: 1
+contract_kind: codex_skill
+runtime_contract: true
+gate: live_state_reproduction_before_fix
+validation: tui_state_validation_record
 ---
 
 # TUI State Validation

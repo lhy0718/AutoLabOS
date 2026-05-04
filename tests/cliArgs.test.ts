@@ -137,6 +137,55 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports governance benchmark batch mode", () => {
+    expect(
+      resolveCliAction([
+        "governance-benchmark",
+        "batch",
+        "--seeds",
+        "outputs/governance-benchmark/seeds",
+        "--task",
+        "AGB-001",
+        "--task",
+        "AGB-002",
+        "--condition",
+        "gated",
+        "--condition",
+        "ungated",
+        "--out-dir",
+        "outputs/governance-benchmark/batch"
+      ])
+    ).toEqual({
+      kind: "governance-benchmark-batch",
+      seedsRoot: "outputs/governance-benchmark/seeds",
+      taskIds: ["AGB-001", "AGB-002"],
+      conditions: ["gated", "ungated"],
+      outDir: "outputs/governance-benchmark/batch"
+    });
+  });
+
+  it("supports governance benchmark demo bundle export mode", () => {
+    expect(
+      resolveCliAction([
+        "governance-benchmark",
+        "export-bundles",
+        "--source",
+        "outputs/run-a",
+        "--source",
+        "outputs/run-b",
+        "--max",
+        "3",
+        "--out-dir",
+        "outputs/governance-benchmark/demo-bundles"
+      ])
+    ).toEqual({
+      kind: "governance-benchmark-export-bundles",
+      publicOutputRoots: ["outputs/run-a", "outputs/run-b"],
+      maxBundles: 3,
+      outDir: "outputs/governance-benchmark/demo-bundles"
+    });
+  });
+
   it("requires a run id for compare-analysis", () => {
     const action = resolveCliAction(["compare-analysis"]);
     expect(action.kind).toBe("error");
@@ -149,6 +198,16 @@ describe("resolveCliAction", () => {
 
   it("requires a seed for governance benchmark dry-run mode", () => {
     const action = resolveCliAction(["governance-benchmark", "dry-run"]);
+    expect(action.kind).toBe("error");
+  });
+
+  it("requires seeds for governance benchmark batch mode", () => {
+    const action = resolveCliAction(["governance-benchmark", "batch"]);
+    expect(action.kind).toBe("error");
+  });
+
+  it("requires a source for governance benchmark demo bundle export mode", () => {
+    const action = resolveCliAction(["governance-benchmark", "export-bundles"]);
     expect(action.kind).toBe("error");
   });
 
