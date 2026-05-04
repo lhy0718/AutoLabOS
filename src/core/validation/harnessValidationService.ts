@@ -16,6 +16,7 @@ import {
   validateRunArtifactStructure
 } from "./harnessValidators.js";
 import { RunValidationScope } from "../../types.js";
+import { auditLongRunResumeSurfaces } from "./longRunResumeAudit.js";
 
 export type HarnessIssueKind =
   | "missing_artifact"
@@ -185,6 +186,15 @@ export async function runHarnessValidation(options: HarnessValidationOptions): P
         finding.runStorePath = source.runStorePath;
         findings.push(finding);
       }
+      const longRunIssues = await auditLongRunResumeSurfaces({
+        run,
+        runDir
+      });
+      for (const issue of longRunIssues) {
+        const finding = classifyFinding(issue, source.scope);
+        finding.runStorePath = source.runStorePath;
+        findings.push(finding);
+      }
     }
   }
 
@@ -267,7 +277,14 @@ export function classifyHarnessIssueCode(code: string): HarnessIssueKind {
   if (code.includes("paper_result")) {
     return "paper_result_mismatch";
   }
-  if (code.includes("review_") || code.includes("run_state_") || code.includes("status_")) {
+  if (
+    code.includes("checkpoint")
+    || code.includes("run_record")
+    || code.includes("runs_json_stale")
+    || code.includes("review_")
+    || code.includes("run_state_")
+    || code.includes("status_")
+  ) {
     return "status_artifact_mismatch";
   }
   if (code.includes("missing") || code.includes("empty") || code.includes("malformed") || code.includes("parse")) {
@@ -314,6 +331,9 @@ export function defaultRemediationForIssueCode(code: string): string {
   }
   if (code.includes("runs_json")) {
     return "Repair malformed runs.json records or regenerate the affected run metadata.";
+  }
+  if (code.includes("checkpoint") || code.includes("run_record")) {
+    return "Repair run_record.json, runs.json, and checkpoint files so restart/resume state has one monotonic source of truth.";
   }
   return "Inspect the referenced artifact and regenerate the failing stage with /retry or targeted node rerun.";
 }

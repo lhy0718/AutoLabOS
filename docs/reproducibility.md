@@ -56,6 +56,8 @@ Before marking work complete:
 2. Confirm expected artifacts are present, parseable, and consistent across `runs.json`, `run_record.json` when present, optional `runs.sqlite` mirrors/indexes, `events.jsonl`, checkpoints, and other run-scoped artifacts.
 3. Record limitations and unresolved uncertainty.
 
+For long-running or resumed runs, `npm run validate:harness` also audits checkpoint/resume consistency across `runs.json`, `run_record.json`, `checkpoints/latest.json`, and numbered checkpoint records when those surfaces exist. This audit is not evidence of month-long autonomous completion; it only verifies that restart-critical state is inspectable and monotonic enough to investigate or resume safely.
+
 ## 6) Validation surfaces
 
 - Runtime diagnostics: `/doctor` in TUI and web Doctor tab (environment + workspace harness checks).

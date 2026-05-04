@@ -32,6 +32,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark batch --seeds <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
     "  autolabos governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]",
     "  autolabos meta-harness [--runs 5] [--node analyze_results|review] [--no-apply] [--dry-run]",
+    "  autolabos meta-harness --external-run <run-artifact-root> [--external-run <run-artifact-root>] --no-apply",
     "  autolabos --help",
     "  autolabos --version"
   ].join("\n") + "\n");
@@ -145,6 +146,7 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       runs: action.runs,
       nodes: action.nodes,
+      externalRunRoots: action.externalRunRoots,
       noApply: action.noApply,
       dryRun: action.dryRun
     });

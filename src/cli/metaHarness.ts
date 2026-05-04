@@ -4,6 +4,7 @@ export async function runMetaHarnessCli(input: {
   cwd: string;
   runs: number;
   nodes: MetaHarnessNode[];
+  externalRunRoots?: string[];
   noApply?: boolean;
   dryRun?: boolean;
 }): Promise<void> {
@@ -11,6 +12,7 @@ export async function runMetaHarnessCli(input: {
     cwd: input.cwd,
     runs: input.runs,
     nodes: input.nodes,
+    externalRunRoots: input.externalRunRoots,
     noApply: input.noApply,
     dryRun: input.dryRun
   });

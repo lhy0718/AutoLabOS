@@ -24,6 +24,7 @@ export interface MetaHarnessOptions {
   cwd: string;
   runs: number;
   nodes: MetaHarnessNode[];
+  externalRunRoots?: string[];
   noApply?: boolean;
   dryRun?: boolean;
 }
@@ -53,6 +54,9 @@ export async function runMetaHarness(
   options: MetaHarnessOptions,
   deps: Partial<MetaHarnessDeps> = {}
 ): Promise<MetaHarnessResult> {
+  if ((options.externalRunRoots || []).length > 0 && !options.noApply) {
+    throw new Error("External meta-harness contexts are read-only in this slice; use --no-apply.");
+  }
   const resolvedDeps: MetaHarnessDeps = {
     bootstrapRuntime: bootstrapAutoLabOSRuntime,
     createLlm: createMetaHarnessLlm,
@@ -77,7 +81,8 @@ export async function runMetaHarness(
     cwd: options.cwd,
     contextDir,
     runs: selectedRuns,
-    nodes: options.nodes
+    nodes: options.nodes,
+    externalRunRoots: options.externalRunRoots || []
   });
 
   if (options.noApply) {
@@ -85,6 +90,7 @@ export async function runMetaHarness(
       contextDir,
       lines: [
         `Meta-harness context prepared: ${contextDir}`,
+        ...formatExternalRunLines(options.externalRunRoots || []),
         `Use codex --context ${contextDir} for manual review.`
       ]
     };
@@ -101,6 +107,7 @@ export async function runMetaHarness(
       contextDir,
       lines: [
         `Meta-harness context prepared: ${contextDir}`,
+        ...formatExternalRunLines(options.externalRunRoots || []),
         "LLM response did not match the required TARGET_FILE + unified diff format.",
         "No files were changed."
       ]
@@ -114,6 +121,7 @@ export async function runMetaHarness(
       targetFile: parsed.targetFile,
       lines: [
         `Meta-harness context prepared: ${contextDir}`,
+        ...formatExternalRunLines(options.externalRunRoots || []),
         `TARGET_FILE: ${parsed.targetFile}`,
         parsed.diffText
       ]
@@ -129,8 +137,8 @@ export async function runMetaHarness(
     newContent,
     source: "meta-harness",
     candidateId: timestamp,
-      scoreBefore
-    });
+    scoreBefore
+  });
 
   return {
     contextDir,
@@ -139,6 +147,7 @@ export async function runMetaHarness(
     applied: applyResult,
     lines: [
       `Meta-harness context prepared: ${contextDir}`,
+      ...formatExternalRunLines(options.externalRunRoots || []),
       `TARGET_FILE: ${parsed.targetFile}`,
       applyResult.applied
         ? `Applied safely and committed. Audit log: ${applyResult.auditLogPath}`
@@ -154,6 +163,7 @@ async function buildMetaHarnessContext(input: {
   contextDir: string;
   runs: MetaHarnessRunSummary[];
   nodes: MetaHarnessNode[];
+  externalRunRoots: string[];
 }): Promise<void> {
   await ensureDir(input.contextDir);
   await writeTaskFile(input.contextDir);
@@ -203,6 +213,11 @@ async function buildMetaHarnessContext(input: {
       await copyFileToContext(paperReadinessPath, path.join(runContextDir, "paper_readiness.json"));
     }
   }
+
+  await copyExternalRunContexts({
+    contextDir: input.contextDir,
+    externalRunRoots: input.externalRunRoots
+  });
 }
 
 async function writeTaskFile(contextDir: string): Promise<void> {
@@ -232,6 +247,103 @@ async function assembleContextPrompt(contextDir: string): Promise<string> {
     contentBlocks.push(`## FILE: ${relative}\n${content}`);
   }
   return contentBlocks.join("\n\n");
+}
+
+async function copyExternalRunContexts(input: {
+  contextDir: string;
+  externalRunRoots: string[];
+}): Promise<void> {
+  if (input.externalRunRoots.length === 0) {
+    return;
+  }
+  const externalRoot = path.join(input.contextDir, "external-runs");
+  await ensureDir(externalRoot);
+  const manifest: Array<{
+    source_id: string;
+    source_label: string;
+    status: "available" | "missing";
+    copied_artifacts: string[];
+    missing_optional_artifacts: string[];
+  }> = [];
+
+  for (const [index, externalRunRoot] of input.externalRunRoots.entries()) {
+    const sourceId = `external-${index + 1}`;
+    const sourceDir = path.join(externalRoot, sourceId);
+    const sourceLabel = path.basename(path.resolve(externalRunRoot)) || sourceId;
+    const sourceExists = await fileExists(externalRunRoot);
+    await ensureDir(sourceDir);
+    if (!sourceExists) {
+      const missingEntry = {
+        source_id: sourceId,
+        source_label: sourceLabel,
+        status: "missing" as const,
+        copied_artifacts: [],
+        missing_optional_artifacts: [...EXTERNAL_CONTEXT_ARTIFACTS].map((artifact) => artifact.replace(/\\/g, "/"))
+      };
+      manifest.push(missingEntry);
+      await fs.writeFile(path.join(sourceDir, "manifest.json"), `${JSON.stringify(missingEntry, null, 2)}\n`, "utf8");
+      continue;
+    }
+
+    const copiedArtifacts: string[] = [];
+    const missingOptionalArtifacts: string[] = [];
+    for (const artifact of EXTERNAL_CONTEXT_ARTIFACTS) {
+      const sourcePath = path.join(externalRunRoot, artifact);
+      if (!(await fileExists(sourcePath))) {
+        missingOptionalArtifacts.push(artifact.replace(/\\/g, "/"));
+        continue;
+      }
+      await copyFileToContext(sourcePath, path.join(sourceDir, artifact));
+      copiedArtifacts.push(artifact.replace(/\\/g, "/"));
+    }
+    const entry = {
+      source_id: sourceId,
+      source_label: sourceLabel,
+      status: "available" as const,
+      copied_artifacts: copiedArtifacts,
+      missing_optional_artifacts: missingOptionalArtifacts
+    };
+    manifest.push(entry);
+    await fs.writeFile(path.join(sourceDir, "manifest.json"), `${JSON.stringify(entry, null, 2)}\n`, "utf8");
+  }
+
+  await fs.writeFile(path.join(externalRoot, "manifest.json"), `${JSON.stringify({ sources: manifest }, null, 2)}\n`, "utf8");
+  await fs.writeFile(
+    path.join(input.contextDir, "manifest.json"),
+    `${JSON.stringify(
+      {
+        mode: "external_context",
+        external_context_count: manifest.length,
+        external_contexts: manifest,
+        note: "External run roots are copied as read-only context and are not scored or auto-applied."
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+}
+
+const EXTERNAL_CONTEXT_ARTIFACTS = [
+  "events.jsonl",
+  "result_analysis.json",
+  "result_analysis_synthesis.json",
+  "baseline_comparison.json",
+  "result_table.json",
+  "transition_recommendation.json",
+  path.join("analysis", "evidence_scale_assessment.json"),
+  path.join("review", "decision.json"),
+  path.join("review", "review_packet.json"),
+  path.join("review", "paper_critique.json"),
+  path.join("paper", "paper_readiness.json"),
+  path.join("paper", "paper_critique.json")
+] as const;
+
+function formatExternalRunLines(externalRunRoots: string[]): string[] {
+  if (externalRunRoots.length === 0) {
+    return [];
+  }
+  return [`External run contexts included: ${externalRunRoots.length}`];
 }
 
 function filterRunEventsByNode(events: AutoLabOSEvent[], node: MetaHarnessNode): AutoLabOSEvent[] {

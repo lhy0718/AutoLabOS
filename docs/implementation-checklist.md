@@ -1,7 +1,7 @@
 # AutoLabOS Governance Benchmark Implementation Checklist
 
 Created: 2026-05-02
-Updated: 2026-05-03
+Updated: 2026-05-04
 
 This checklist turns repo contracts and private planning notes into repo-local implementation work. Do not include machine-local reference paths or private documentation paths in this public checklist.
 
@@ -69,10 +69,10 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 ### P2 — Longer-Horizon Queue
 
 - [x] P2-1. Whole-run evolution regression scope: existing `evolve` support covers fresh run cycles, `paper_readiness` fitness, `evo-N` tags, `--max-cycles`, target selection, and dry-run behavior.
-- [ ] P2-2. Meta-Harness external multi-run loop.
-- [ ] P2-3. Month-long autonomous execution checkpoint/resume review.
-- [ ] P2-4. DeepReviewer-style review backend integration study.
-- [ ] P2-5. StagePolicies autonomous evolution experiment design.
+- [x] P2-2. Meta-Harness external multi-run loop.
+- [x] P2-3. Month-long autonomous execution checkpoint/resume review.
+- [x] P2-4. DeepReviewer-style review backend integration study.
+- [x] P2-5. StagePolicies autonomous evolution experiment design.
 - [ ] P2-6. ExplorationManager autonomous knowledge-retention design review.
 - [ ] P2-7. Multimodal memory layer review.
 - [ ] P2-8. Node output serialization stability audit.
@@ -593,12 +593,12 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P2-2 Through P2-17. Longer-Horizon Design Queue
 
-- [ ] Status: not started
+- [ ] Status: P2-2 through P2-5 completed as bounded slices; P2-6 through P2-17 remain pending.
 - Scope checklist:
-  - [ ] P2-2. Meta-Harness external multi-run loop.
-  - [ ] P2-3. Month-long autonomous execution checkpoint/resume review.
-  - [ ] P2-4. DeepReviewer-style review backend integration study.
-  - [ ] P2-5. StagePolicies autonomous evolution experiment design.
+  - [x] P2-2. Meta-Harness external multi-run loop.
+  - [x] P2-3. Month-long autonomous execution checkpoint/resume review.
+  - [x] P2-4. DeepReviewer-style review backend integration study.
+  - [x] P2-5. StagePolicies autonomous evolution experiment design.
   - [ ] P2-6. ExplorationManager autonomous knowledge-retention design review.
   - [ ] P2-7. Multimodal memory layer review.
   - [ ] P2-8. Node output serialization stability audit.
@@ -619,6 +619,19 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Existing: `src/core/exploration/`
   - Existing: `src/core/metaHarness/`
   - Existing: `src/core/reviewSystem.ts`
+  - Added: `docs/meta-harness-external-loop.md`
+  - Updated: `src/core/metaHarness/metaHarness.ts`
+  - Updated: `src/cli/args.ts`
+  - Updated: `src/cli/main.ts`
+  - Updated: `src/cli/metaHarness.ts`
+  - Added: `src/core/validation/longRunResumeAudit.ts`
+  - Updated: `src/core/validation/harnessValidationService.ts`
+  - Updated: `docs/long-run-stability-review.md`
+  - Updated: `docs/reproducibility.md`
+  - Added: `docs/deep-reviewer-backend-integration-study.md`
+  - Added: `docs/stage-evolution-design.md`
+  - Tests: `tests/metaHarness.test.ts`, `tests/cliArgs.test.ts`
+  - Tests: `tests/harnessValidationService.test.ts`
 - Planned docs if needed:
   - `docs/long-run-stability-review.md`
   - `docs/domain-agent-plugin-design.md`
@@ -630,8 +643,20 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Docs-only review: markdown/readability inspection plus portability scan.
   - If harness expectations change: `npm run validate:harness`.
   - If runtime code changes: `npm run build` and targeted `npm test`.
+  - P2-2 validation: `npm test -- tests/metaHarness.test.ts tests/cliArgs.test.ts`; `npm run build`; `npm run validate:harness`.
+  - P2-3 validation: `npm test -- tests/harnessValidationService.test.ts`; `npm run build`; `npm run validate:harness`.
+  - P2-4 validation: markdown/readability inspection plus portability scan.
+  - P2-5 validation: markdown/readability inspection plus portability scan.
 - Completion criteria:
-  - Each P2 item receives its own design note or an explicit deferral rationale before implementation.
+  - [x] P2-2 receives its own design note and first read-only external context ingestion slice.
+  - [x] P2-2 supports repeatable `--external-run <run-artifact-root>` only with `--no-apply`, copies allowlisted artifacts into a meta-harness context, records safe source labels without absolute external paths, and avoids LLM/apply behavior in this slice.
+  - [x] P2-3 adds a deterministic harness audit for restart-critical state across `runs.json`, `run_record.json`, `checkpoints/latest.json`, and numbered checkpoint records.
+  - [x] P2-3 explicitly remains an operational checkpoint/resume review, not proof of month-long autonomous execution or paper readiness.
+  - [x] P2-4 documents an optional stronger-review backend contract that is additive, bounded, provenance-recorded, and lower-authority than deterministic minimum gates.
+  - [x] P2-4 preserves review-before-writing, claim ceilings, human approval, artifact validation, and paper-readiness downgrade paths.
+  - [x] P2-5 documents StagePolicy candidate artifacts, shadow/advisory/gated modes, invariant checks, comparison metrics, promotion rules, and failure conditions.
+  - [x] P2-5 keeps StagePolicies evolution separate from prompt/skill `evolve` loops and disallows automatic production policy mutation without validation and human review.
+  - Each remaining P2 item receives its own design note or an explicit deferral rationale before implementation.
   - Long-run checkpointing, review backend integration, autonomous StagePolicies, knowledge retention, multimodal memory, serialization stability, intermediate artifact capture, reverse-from-data design, peer-agent coordination, distributed experiments, knowledge graphs, zero-cost monitoring, SOTA tracking, strategist/worker separation, and domain-agent plugins remain under existing governance and artifact contracts.
   - Existing whole-run evolution behavior remains regression-protected rather than rebuilt.
 

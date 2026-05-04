@@ -14,6 +14,8 @@ import {
   writeLiveFixtureWorkspace
 } from "./helpers/liveFixtureWorkspace.js";
 import { VALIDATION_WORKSPACE_ROOT_ENV } from "../src/validationWorkspace.js";
+import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
+import { RunRecord } from "../src/types.js";
 
 const tempDirs: string[] = [];
 let originalValidationWorkspaceRoot: string | undefined;
@@ -195,6 +197,69 @@ describe("harnessValidationService", () => {
     expect(report.runsChecked).toBe(1);
     expect(report.findings.some((f) => f.code === "issues_file_missing")).toBe(false);
   });
+
+  it("reports long-run resume drift across runs.json, run_record, and checkpoints", async () => {
+    const workspace = createTempWorkspace("autolabos-harness-long-run-resume-");
+    await writeFile(path.join(workspace, "ISSUES.md"), "## Active issues\nnone\n", "utf8");
+
+    const run = makeRunRecord("long-run", 1);
+    const runsDir = path.join(workspace, ".autolabos", "runs");
+    const runDir = path.join(runsDir, run.id);
+    const checkpointsDir = path.join(runDir, "checkpoints");
+    await writeJson(path.join(runsDir, "runs.json"), {
+      version: 3,
+      runs: [run]
+    });
+    await writeJson(path.join(runDir, "run_record.json"), run);
+    await writeFile(
+      path.join(runDir, "events.jsonl"),
+      `${JSON.stringify({
+        id: "evt-long-run",
+        type: "NODE_COMPLETED",
+        timestamp: "2026-04-04T00:00:00.000Z",
+        runId: run.id,
+        node: "collect_papers",
+        payload: {}
+      })}\n`,
+      "utf8"
+    );
+
+    await writeJson(path.join(checkpointsDir, "0001-collect_papers-after.json"), {
+      seq: 1,
+      runId: run.id,
+      node: "collect_papers",
+      phase: "after",
+      createdAt: "2026-04-04T00:01:00.000Z",
+      runSnapshot: run
+    });
+    await writeJson(path.join(checkpointsDir, "0002-analyze_papers-before.json"), {
+      seq: 2,
+      runId: run.id,
+      node: "analyze_papers",
+      phase: "before",
+      createdAt: "2026-04-04T00:02:00.000Z",
+      runSnapshot: makeRunRecord(run.id, 2)
+    });
+    await writeJson(path.join(checkpointsDir, "latest.json"), {
+      seq: 1,
+      node: "collect_papers",
+      phase: "after",
+      createdAt: "2026-04-04T00:01:00.000Z",
+      file: "0001-collect_papers-after.json"
+    });
+
+    const report = await runHarnessValidation({
+      workspaceRoot: workspace,
+      includeWorkspaceRuns: true,
+      includeTestRunStores: false
+    });
+
+    const codes = new Set(report.findings.map((finding) => finding.code));
+    expect(codes).toContain("checkpoint_latest_stale_for_resume");
+    expect(codes).toContain("runs_json_stale_vs_checkpoint");
+    expect(codes).toContain("run_record_stale_vs_checkpoint");
+    expect(report.countsByKind.status_artifact_mismatch).toBeGreaterThanOrEqual(3);
+  });
 });
 
 function createTempWorkspace(prefix: string): string {
@@ -206,4 +271,41 @@ function createTempWorkspace(prefix: string): string {
 async function writeJson(filePath: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function makeRunRecord(id: string, checkpointSeq: number): RunRecord {
+  const graph = createDefaultGraphState();
+  graph.checkpointSeq = checkpointSeq;
+  graph.currentNode = checkpointSeq > 1 ? "analyze_papers" : "collect_papers";
+  graph.nodeStates.collect_papers = {
+    status: "completed",
+    updatedAt: "2026-04-04T00:01:00.000Z"
+  };
+  if (checkpointSeq > 1) {
+    graph.nodeStates.analyze_papers = {
+      status: "running",
+      updatedAt: "2026-04-04T00:02:00.000Z"
+    };
+  }
+  return {
+    version: 3,
+    workflowVersion: 3,
+    id,
+    title: "Long Run",
+    topic: "Long run resume audit",
+    constraints: [],
+    objectiveMetric: "resume consistency",
+    status: "paused",
+    currentNode: graph.currentNode,
+    latestSummary: "Paused for long-run audit.",
+    nodeThreads: {},
+    createdAt: "2026-04-04T00:00:00.000Z",
+    updatedAt: checkpointSeq > 1 ? "2026-04-04T00:02:00.000Z" : "2026-04-04T00:01:00.000Z",
+    graph,
+    memoryRefs: {
+      runContextPath: `.autolabos/runs/${id}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${id}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${id}/memory/episodes.jsonl`
+    }
+  };
 }

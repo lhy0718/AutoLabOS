@@ -85,8 +85,35 @@ describe("resolveCliAction", () => {
       kind: "meta-harness",
       runs: 2,
       nodes: ["review"],
+      externalRunRoots: [],
       noApply: true,
       dryRun: false
+    });
+  });
+
+  it("supports read-only external meta-harness contexts", () => {
+    expect(resolveCliAction(["meta-harness", "--external-run", "runs/run-a", "--external-run", "runs/run-b", "--no-apply"])).toEqual({
+      kind: "meta-harness",
+      runs: 0,
+      nodes: ["analyze_results", "review"],
+      externalRunRoots: ["runs/run-a", "runs/run-b"],
+      noApply: true,
+      dryRun: false
+    });
+  });
+
+  it("rejects external meta-harness contexts outside read-only mode", () => {
+    expect(resolveCliAction(["meta-harness", "--external-run", "runs/run-a"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--no-apply")
+    });
+    expect(resolveCliAction(["meta-harness", "--external-run", "runs/run-a", "--dry-run", "--no-apply"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--dry-run")
+    });
+    expect(resolveCliAction(["meta-harness", "--external-run", "runs/run-a", "--runs", "2", "--no-apply"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--runs")
     });
   });
 

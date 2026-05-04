@@ -56,6 +56,96 @@ describe("runMetaHarness", () => {
     expect(await fs.readFile(path.join(workspace, "node-prompts", "analyze_results.md"), "utf8")).toBe(before);
   });
 
+  it("builds read-only external multi-run context bundles without calling LLM or apply", async () => {
+    const workspace = await createWorkspaceWithCompletedRun();
+    const externalRunA = await createExternalRunRoot("external-a", {
+      resultAnalysis: true,
+      reviewDecision: true,
+      paperReadiness: true,
+      unrelated: true
+    });
+    const externalRunB = await createExternalRunRoot("external-b", {
+      resultAnalysis: true,
+      reviewDecision: false,
+      paperReadiness: false,
+      unrelated: true
+    });
+    const callLlm = vi.fn();
+    const applyWithSafetyNet = vi.fn();
+
+    const result = await runMetaHarness(
+      {
+        cwd: workspace,
+        runs: 0,
+        nodes: ["analyze_results", "review"],
+        externalRunRoots: [externalRunA, externalRunB],
+        noApply: true
+      },
+      {
+        bootstrapRuntime: fakeBootstrapRuntime(workspace),
+        callLlm,
+        applyWithSafetyNet
+      }
+    );
+
+    expect(result.lines.join("\n")).toContain("External run contexts included: 2");
+    expect(callLlm).not.toHaveBeenCalled();
+    expect(applyWithSafetyNet).not.toHaveBeenCalled();
+    await expect(
+      fs.stat(path.join(result.contextDir, "external-runs", "external-1", "result_analysis.json"))
+    ).resolves.toBeTruthy();
+    await expect(
+      fs.stat(path.join(result.contextDir, "external-runs", "external-1", "review", "decision.json"))
+    ).resolves.toBeTruthy();
+    await expect(
+      fs.stat(path.join(result.contextDir, "external-runs", "external-1", "paper", "paper_readiness.json"))
+    ).resolves.toBeTruthy();
+    await expect(
+      fs.stat(path.join(result.contextDir, "external-runs", "external-1", "secret.txt"))
+    ).rejects.toThrow();
+
+    const manifestRaw = await fs.readFile(path.join(result.contextDir, "manifest.json"), "utf8");
+    const manifest = JSON.parse(manifestRaw) as {
+      mode: string;
+      external_context_count: number;
+      external_contexts: Array<{
+        source_label: string;
+        copied_artifacts: string[];
+        missing_optional_artifacts: string[];
+      }>;
+    };
+    expect(manifest.mode).toBe("external_context");
+    expect(manifest.external_context_count).toBe(2);
+    expect(manifestRaw).not.toContain(externalRunA);
+    expect(manifest.external_contexts[0]).toMatchObject({
+      source_label: path.basename(externalRunA),
+      copied_artifacts: expect.arrayContaining(["result_analysis.json", "review/decision.json", "paper/paper_readiness.json"])
+    });
+    expect(manifest.external_contexts[1]?.missing_optional_artifacts).toEqual(
+      expect.arrayContaining(["review/decision.json", "paper/paper_readiness.json"])
+    );
+  });
+
+  it("blocks external meta-harness contexts when apply mode is requested", async () => {
+    const workspace = await createWorkspaceWithCompletedRun();
+    const externalRun = await createExternalRunRoot("external-blocked", { resultAnalysis: true });
+
+    await expect(
+      runMetaHarness(
+        {
+          cwd: workspace,
+          runs: 0,
+          nodes: ["analyze_results"],
+          externalRunRoots: [externalRun],
+          noApply: false
+        },
+        {
+          bootstrapRuntime: fakeBootstrapRuntime(workspace)
+        }
+      )
+    ).rejects.toThrow("--no-apply");
+  });
+
   it("prints diff only in dry-run mode without changing files", async () => {
     const workspace = await createWorkspaceWithCompletedRun();
     const targetFile = path.join(workspace, "node-prompts", "analyze_results.md");
@@ -215,6 +305,38 @@ async function createWorkspaceWithCompletedRun(): Promise<string> {
   await fs.writeFile(path.join(workspace, "node-prompts", "review.md"), "Review prompt\n", "utf8");
   await fs.writeFile(path.join(workspace, "outputs", "eval-harness", "history.jsonl"), "{\"timestamp\":\"2026-04-02T00:00:00.000Z\"}\n", "utf8");
   return workspace;
+}
+
+async function createExternalRunRoot(
+  name: string,
+  options: {
+    resultAnalysis?: boolean;
+    reviewDecision?: boolean;
+    paperReadiness?: boolean;
+    unrelated?: boolean;
+  }
+): Promise<string> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), `autolabos-meta-harness-${name}-`));
+  cleanupPaths.push(root);
+  await fs.mkdir(path.join(root, "review"), { recursive: true });
+  await fs.mkdir(path.join(root, "paper"), { recursive: true });
+  if (options.resultAnalysis) {
+    await fs.writeFile(path.join(root, "result_analysis.json"), JSON.stringify({ summary: name }, null, 2), "utf8");
+  }
+  if (options.reviewDecision) {
+    await fs.writeFile(path.join(root, "review", "decision.json"), JSON.stringify({ outcome: "revise" }, null, 2), "utf8");
+  }
+  if (options.paperReadiness) {
+    await fs.writeFile(
+      path.join(root, "paper", "paper_readiness.json"),
+      JSON.stringify({ paper_ready: false, overall_score: 5 }, null, 2),
+      "utf8"
+    );
+  }
+  if (options.unrelated) {
+    await fs.writeFile(path.join(root, "secret.txt"), "do not copy\n", "utf8");
+  }
+  return root;
 }
 
 function fakeBootstrapRuntime(workspace: string) {

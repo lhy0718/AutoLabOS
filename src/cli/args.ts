@@ -11,7 +11,14 @@ export type CliAction =
   | { kind: "governance-benchmark-dry-run"; seedPath: string; taskId?: string; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "governance-benchmark-batch"; seedsRoot: string; taskIds: string[]; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "governance-benchmark-export-bundles"; publicOutputRoots: string[]; outDir?: string; maxBundles?: number }
-  | { kind: "meta-harness"; runs: number; nodes: ("analyze_results" | "review")[]; noApply: boolean; dryRun: boolean }
+  | {
+      kind: "meta-harness";
+      runs: number;
+      nodes: ("analyze_results" | "review")[];
+      externalRunRoots: string[];
+      noApply: boolean;
+      dryRun: boolean;
+    }
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "error"; message: string };
@@ -453,7 +460,9 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "meta-harness") {
     let runs = 5;
+    let runsProvided = false;
     const nodes: ("analyze_results" | "review")[] = [];
+    const externalRunRoots: string[] = [];
     let noApply = false;
     let dryRun = false;
     for (let index = 1; index < args.length; index += 1) {
@@ -468,6 +477,16 @@ export function resolveCliAction(args: string[]): CliAction {
           return { kind: "error", message: `Invalid run count: ${value}` };
         }
         runs = Math.floor(parsed);
+        runsProvided = true;
+        index += 1;
+        continue;
+      }
+      if (token === "--external-run") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --external-run." };
+        }
+        externalRunRoots.push(value);
         index += 1;
         continue;
       }
@@ -499,10 +518,29 @@ export function resolveCliAction(args: string[]): CliAction {
         message: `Unsupported meta-harness argument: ${token}`
       };
     }
+    if (externalRunRoots.length > 0 && !noApply) {
+      return {
+        kind: "error",
+        message: "meta-harness --external-run is read-only in this slice; pass --no-apply."
+      };
+    }
+    if (externalRunRoots.length > 0 && dryRun) {
+      return {
+        kind: "error",
+        message: "meta-harness --external-run does not support --dry-run in the read-only context slice."
+      };
+    }
+    if (externalRunRoots.length > 0 && runsProvided) {
+      return {
+        kind: "error",
+        message: "meta-harness --external-run cannot be combined with --runs in the first external context slice."
+      };
+    }
     return {
       kind: "meta-harness",
-      runs,
+      runs: externalRunRoots.length > 0 ? 0 : runs,
       nodes: nodes.length > 0 ? nodes : ["analyze_results", "review"],
+      externalRunRoots,
       noApply,
       dryRun
     };
