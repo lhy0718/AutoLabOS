@@ -37,6 +37,11 @@ smoke_has_expect() {
 smoke_prepare_workspace() {
   rm -rf "$SMOKE_WORK_DIR/.autolabos"
   mkdir -p "$SMOKE_WORK_DIR/.autolabos/runs" "$SMOKE_WORK_DIR/.autolabos/logs"
+  cat > "$SMOKE_WORK_DIR/ISSUES.md" <<'MARKDOWN'
+## Active issues
+
+none
+MARKDOWN
 
   cat > "$SMOKE_WORK_DIR/.autolabos/config.yaml" <<'YAML'
 version: 1
@@ -149,7 +154,6 @@ fs.writeFileSync(
 
 for (const dir of [
   runRoot,
-  path.join(runRoot, "checkpoints"),
   path.join(runRoot, "memory"),
   path.join(runRoot, "patches"),
   path.join(runRoot, "exec_logs"),
