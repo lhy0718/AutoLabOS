@@ -28,7 +28,7 @@ function printHelp(): void {
     "  autolabos compare-analysis --run <run-id> [--limit 3] [--no-judge]",
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
-    "  autolabos audit (--run <run-artifact-root> | --seed AGB-001|AGB-003|AGB-010) [--out-dir outputs/audit]",
+    "  autolabos audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>] | --seed AGB-001..AGB-010) [--out-dir outputs/audit]",
     "  autolabos governance-benchmark seed --source <path> [--task AGB-001] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]",
     "  autolabos governance-benchmark dry-run --seed <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/AGB-001]",
     "  autolabos governance-benchmark batch --seeds <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
@@ -48,19 +48,22 @@ function printAuditHelp(): void {
     "",
     "Usage:",
     "  autolabos audit --seed AGB-001 [--out-dir outputs/audit]",
-    "  autolabos audit --seed AGB-003 [--out-dir outputs/audit]",
-    "  autolabos audit --seed AGB-010 [--out-dir outputs/audit]",
+    "  autolabos audit --seed AGB-001..AGB-010 [--out-dir outputs/audit]",
     "  autolabos audit --run <run-artifact-root> [--out-dir outputs/audit]",
+    "  autolabos audit --external <artifact-root> [--draft <draft.md>] [--log <run.log>] [--out-dir outputs/audit]",
     "",
     "Examples:",
     "  autolabos audit --seed AGB-001",
     "  autolabos audit --seed AGB-003 --out-dir outputs/audit/AGB-003",
     "  autolabos audit --run .autolabos/runs/<run-id> --out-dir outputs/audit/<run-id>",
+    "  autolabos audit --external <external-artifact-root> --draft <draft.md> --log <run.log> --out-dir outputs/audit/external",
     "",
     "Outputs:",
     "  paper-readiness-audit.md",
+    "  claim-evidence-table.json",
     "  audit-summary.json",
-    "  blockers.json"
+    "  blockers.json",
+    "  external-intake-manifest.json (for --external)"
   ].join("\n") + "\n");
 }
 
@@ -133,6 +136,9 @@ async function main(): Promise<void> {
     await runPaperReadinessAuditCli({
       cwd: process.cwd(),
       runRoot: action.runRoot,
+      externalRoot: action.externalRoot,
+      draftPath: action.draftPath,
+      logPath: action.logPath,
       seedId: action.seedId,
       outDir: action.outDir
     });

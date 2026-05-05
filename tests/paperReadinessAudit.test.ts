@@ -33,6 +33,7 @@ describe("paper-readiness audit", () => {
     expect(summary.top_blockers.map((blocker) => blocker.code)).toContain(expectedBlocker);
     expect(summary.claim_ceiling.allowed_level).toBe(expectedCeiling);
     expect(summary.outputs.report_path).toBe("outputs/audit/paper-readiness-audit.md");
+    expect(summary.outputs.claim_evidence_path).toBe("outputs/audit/claim-evidence-table.json");
 
     const report = await readFile(path.join(workspace, "outputs", "audit", "paper-readiness-audit.md"), "utf8");
     expect(report).toContain("Verdict: blocked");
@@ -44,6 +45,7 @@ describe("paper-readiness audit", () => {
     expect(report).toContain('<a id="figure-result-caption-mismatch"></a>');
     expect(report).toContain('<a id="citation-support"></a>');
     expect(report).toContain('<a id="design-contract-findings"></a>');
+    expect(report).toContain('<a id="literature-discovery-findings"></a>');
     expect(report).toContain("## Claim Ceiling");
     expect(report).toContain('<a id="claim-ceiling"></a>');
     expect(report).toContain('<a id="next-actions"></a>');
@@ -54,11 +56,15 @@ describe("paper-readiness audit", () => {
     expect(cliOutput).toContain("Top blockers:");
     expect(cliOutput).toContain("  blocker:");
     expect(cliOutput).toContain(`report: ${summary.outputs.report_path}`);
+    expect(cliOutput).toContain(`claim evidence: ${summary.outputs.claim_evidence_path}`);
 
     const blockers = JSON.parse(
       await readFile(path.join(workspace, "outputs", "audit", "blockers.json"), "utf8")
     ) as { blockers: Array<{ code: string }> };
     expect(blockers.blockers.map((blocker) => blocker.code)).toContain(expectedBlocker);
+
+    const claimEvidence = await readFile(path.join(workspace, "outputs", "audit", "claim-evidence-table.json"), "utf8");
+    expect(claimEvidence).toContain("does not create evidence");
   });
 
   it("audits an existing run artifact root", async () => {

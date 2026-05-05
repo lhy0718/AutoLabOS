@@ -10,12 +10,18 @@ import { scoreResultTableArtifact, type ResultTableScore } from "../benchmark/re
 import { type GovernanceBenchmarkConditionName } from "../benchmark/governanceCondition.js";
 import type { FigureAuditSummary } from "../exploration/types.js";
 import { writeJsonFile } from "../../utils/fs.js";
+import { buildClaimEvidenceExport, type ClaimEvidenceExport } from "./claimEvidenceExport.js";
+import { materializeExternalAuditArtifacts } from "./externalArtifactIntake.js";
+import { scoreLiteratureDiscoveryAudit, type LiteratureDiscoveryAuditScore } from "./literatureDiscoveryAudit.js";
 
 export type PaperReadinessAuditVerdict = "blocked" | "needs-review" | "conditionally-ready";
 
 export interface PaperReadinessAuditInput {
   cwd: string;
   runRoot?: string;
+  externalRoot?: string;
+  draftPath?: string;
+  logPath?: string;
   seedId?: string;
   outDir?: string;
 }
@@ -45,7 +51,7 @@ export interface PaperReadinessAuditSummary {
   generated_at: string;
   verdict: PaperReadinessAuditVerdict;
   input: {
-    mode: "run" | "seed";
+    mode: "run" | "seed" | "external";
     run_root: string;
     seed_id?: string;
   };
@@ -53,6 +59,8 @@ export interface PaperReadinessAuditSummary {
     report_path: string;
     summary_path: string;
     blockers_path: string;
+    claim_evidence_path: string;
+    external_intake_manifest_path?: string;
   };
   top_blockers: PaperReadinessAuditBlocker[];
   unsupported_claims: PaperReadinessAuditUnsupportedClaim[];
@@ -89,6 +97,7 @@ export interface PaperReadinessAuditSummary {
     result_table: ResultTableScore;
     claim_evidence: ClaimEvidenceScore;
     figure_audit: FigureAuditScore;
+    literature_discovery: LiteratureDiscoveryAuditScore;
     live_validation?: LiveValidationCaseScore;
     governance_score: GovernanceTaskScore;
   };
@@ -108,16 +117,34 @@ interface LoadedRunArtifacts {
   runRecord: Record<string, unknown> | undefined;
   evidenceStoreLines: Record<string, unknown>[];
   designContractPayloads: Array<{ path: string; payload: Record<string, unknown> }>;
+  literatureDiscoveryPayloads: Array<{ path: string; payload: Record<string, unknown> }>;
   mainTexExists: boolean;
 }
 
-const SUPPORTED_AUDIT_SEEDS = new Set(["AGB-001", "AGB-003", "AGB-010"]);
+interface PaperReadinessAuditBuildResult {
+  summary: PaperReadinessAuditSummary;
+  claimEvidenceExport: ClaimEvidenceExport;
+}
+
+const SUPPORTED_AUDIT_SEEDS = new Set([
+  "AGB-001",
+  "AGB-002",
+  "AGB-003",
+  "AGB-004",
+  "AGB-005",
+  "AGB-006",
+  "AGB-007",
+  "AGB-008",
+  "AGB-009",
+  "AGB-010"
+]);
 
 export async function runPaperReadinessAudit(
   input: PaperReadinessAuditInput
 ): Promise<PaperReadinessAuditSummary> {
-  if (Boolean(input.runRoot) === Boolean(input.seedId)) {
-    throw new Error("Paper-readiness audit requires exactly one of --run <run-artifact-root> or --seed <AGB-id>.");
+  const modeCount = [input.runRoot, input.seedId, input.externalRoot].filter(Boolean).length;
+  if (modeCount !== 1) {
+    throw new Error("Paper-readiness audit requires exactly one of --run <run-artifact-root>, --external <artifact-root>, or --seed <AGB-id>.");
   }
 
   const cwd = path.resolve(input.cwd);
@@ -125,16 +152,30 @@ export async function runPaperReadinessAudit(
   await fs.mkdir(outDir, { recursive: true });
 
   const seedId = input.seedId ? normalizeSeedId(input.seedId) : undefined;
+  const externalIntake = input.externalRoot
+    ? await materializeExternalAuditArtifacts({
+        cwd,
+        outDir,
+        externalRoot: input.externalRoot,
+        draftPath: input.draftPath,
+        logPath: input.logPath
+      })
+    : undefined;
   const runRoot = seedId
     ? await materializeSeedAuditRun({ cwd, outDir, seedId })
-    : path.resolve(cwd, input.runRoot || "");
+    : externalIntake
+      ? externalIntake.runRoot
+      : path.resolve(cwd, input.runRoot || "");
   const artifacts = await loadRunArtifacts(runRoot);
-  const summary = await buildAuditSummary({
+  const buildResult = await buildAuditSummary({
     cwd,
     outDir,
     seedId,
+    external: Boolean(externalIntake),
+    externalIntakeManifestPresent: Boolean(externalIntake),
     artifacts
   });
+  const summary = buildResult.summary;
 
   await writeJsonFile(path.join(outDir, "audit-summary.json"), summary);
   await writeJsonFile(path.join(outDir, "blockers.json"), {
@@ -144,6 +185,7 @@ export async function runPaperReadinessAudit(
     unsupported_claims: summary.unsupported_claims,
     next_action_checklist: summary.next_action_checklist
   });
+  await writeJsonFile(path.join(outDir, "claim-evidence-table.json"), buildResult.claimEvidenceExport);
   await fs.writeFile(path.join(outDir, "paper-readiness-audit.md"), renderAuditMarkdown(summary), "utf8");
 
   return summary;
@@ -153,8 +195,10 @@ async function buildAuditSummary(input: {
   cwd: string;
   outDir: string;
   seedId?: string;
+  external: boolean;
+  externalIntakeManifestPresent: boolean;
   artifacts: LoadedRunArtifacts;
-}): Promise<PaperReadinessAuditSummary> {
+}): Promise<PaperReadinessAuditBuildResult> {
   const contract = await validateGovernanceArtifactContract({
     runDir: input.artifacts.runRoot,
     condition: input.artifacts.condition
@@ -185,6 +229,9 @@ async function buildAuditSummary(input: {
   const unsupportedClaims = collectUnsupportedClaims(input.artifacts, claimEvidence);
   const citationSupportIssues = collectCitationSupportIssues(input.artifacts);
   const designContractFindings = collectDesignContractFindings(input.artifacts);
+  const literatureDiscovery = scoreLiteratureDiscoveryAudit({
+    payloads: input.artifacts.literatureDiscoveryPayloads
+  });
   const paperReady = input.artifacts.paperReadiness?.paper_ready === true;
   const readinessState = stringValue(input.artifacts.paperReadiness?.readiness_state);
   const failedRunHidden = isFailedRun(input.artifacts.runRecord) && paperReady;
@@ -277,6 +324,14 @@ async function buildAuditSummary(input: {
       source: "designContractEvidence"
     });
   }
+  for (const finding of literatureDiscovery.findings) {
+    blockers.push({
+      code: finding.code,
+      severity: finding.severity,
+      message: finding.message,
+      source: "literatureDiscoveryAudit"
+    });
+  }
   if (paperReady && blockers.some((blocker) => blocker.severity === "blocker")) {
     blockers.push({
       code: "false_paper_ready_blocked",
@@ -308,19 +363,32 @@ async function buildAuditSummary(input: {
   });
   const verdict = resolveVerdict(blockers);
   const relativeOutDir = relativePath(input.cwd, input.outDir);
+  const claimEvidenceExport = buildClaimEvidenceExport({
+    claimEvidenceTableArtifact: input.artifacts.claimEvidenceTable,
+    claimStatusTableArtifact: input.artifacts.claimStatusTable,
+    evidenceLinksArtifact: input.artifacts.evidenceLinks,
+    claimEvidenceScore: claimEvidence,
+    unsupportedClaims
+  });
 
   return {
+    claimEvidenceExport,
+    summary: {
     generated_at: new Date().toISOString(),
     verdict,
     input: {
-      mode: input.seedId ? "seed" : "run",
+      mode: input.seedId ? "seed" : input.external ? "external" : "run",
       run_root: relativePath(input.cwd, input.artifacts.runRoot),
       ...(input.seedId ? { seed_id: input.seedId } : {})
     },
     outputs: {
       report_path: path.posix.join(relativeOutDir, "paper-readiness-audit.md"),
       summary_path: path.posix.join(relativeOutDir, "audit-summary.json"),
-      blockers_path: path.posix.join(relativeOutDir, "blockers.json")
+      blockers_path: path.posix.join(relativeOutDir, "blockers.json"),
+      claim_evidence_path: path.posix.join(relativeOutDir, "claim-evidence-table.json"),
+      ...(input.externalIntakeManifestPresent
+        ? { external_intake_manifest_path: path.posix.join(relativeOutDir, "external-intake-manifest.json") }
+        : {})
     },
     top_blockers: blockers,
     unsupported_claims: unsupportedClaims,
@@ -361,10 +429,12 @@ async function buildAuditSummary(input: {
       result_table: resultTable,
       claim_evidence: claimEvidence,
       figure_audit: figureAudit,
+      literature_discovery: literatureDiscovery,
       ...(liveValidation ? { live_validation: liveValidation } : {}),
       governance_score: governanceScore
     },
     next_action_checklist: buildNextActions(blockers)
+    }
   };
 }
 
@@ -383,6 +453,7 @@ async function loadRunArtifacts(runRoot: string): Promise<LoadedRunArtifacts> {
     runRecord: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "run_record.json")),
     evidenceStoreLines: await readJsonl(path.join(runRoot, "evidence_store.jsonl")),
     designContractPayloads: await readDesignContractPayloads(runRoot),
+    literatureDiscoveryPayloads: await readLiteratureDiscoveryPayloads(runRoot),
     mainTexExists: await fileExists(path.join(runRoot, "paper", "main.tex"))
   };
 }
@@ -393,7 +464,7 @@ async function materializeSeedAuditRun(input: {
   seedId: string;
 }): Promise<string> {
   if (!SUPPORTED_AUDIT_SEEDS.has(input.seedId)) {
-    throw new Error(`Unsupported audit seed: ${input.seedId}. Expected AGB-001, AGB-003, or AGB-010.`);
+    throw new Error(`Unsupported audit seed: ${input.seedId}. Expected AGB-001 through AGB-010.`);
   }
   const runRoot = path.join(input.outDir, "_seed-replay", input.seedId, "runs", `${input.seedId}-gated-audit`);
   await fs.rm(runRoot, { recursive: true, force: true });
@@ -445,6 +516,12 @@ async function materializeSeedAuditRun(input: {
     blocked_for_paper_scale: true,
     blocking_reasons: scenario.triggeredBy
   });
+  if (scenario.designContracts) {
+    await writeJsonFile(path.join(runRoot, "audit", "design_contracts.json"), scenario.designContracts);
+  }
+  if (scenario.literatureDiscoveryAudit) {
+    await writeJsonFile(path.join(runRoot, "collect_papers", "literature_discovery_audit.json"), scenario.literatureDiscoveryAudit);
+  }
   await fs.writeFile(path.join(runRoot, "paper", "main.tex"), "\\section{Audit Seed Replay}\nPaper-shaped output is not paper-ready evidence.\n", "utf8");
   return runRoot;
 }
@@ -476,8 +553,197 @@ function seedScenario(seedId: string): {
   allowedClaimCeiling: string;
   critiqueSummary: string;
   recommendation: string;
+  designContracts?: Record<string, unknown>;
+  literatureDiscoveryAudit?: Record<string, unknown>;
 } {
   const auditedAt = "2026-05-04T00:00:00.000Z";
+  if (seedId === "AGB-002") {
+    const claim = {
+      claim_id: "claim_toy_generalization",
+      statement: "The toy single-seed result demonstrates robust generalization across research settings.",
+      section_heading: "Discussion",
+      artifact_refs: [],
+      citation_refs: [],
+      evidence_ids: [],
+      strength: "unsupported_generalization"
+    };
+    return {
+      resultTable: [{ metric: "accuracy", baseline: 0.61, comparator: 0.64, delta: 0.03, direction: "higher_better" }],
+      evidenceStoreJsonl: JSON.stringify({ id: "ev_toy_metric", metric: "accuracy", value: 0.64, sample_size: 12, seed_count: 1 }) + "\n",
+      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
+      claims: [claim],
+      claimStatuses: [{ ...claim, status: "blocked", reproduction_trace_present: false }],
+      triggeredBy: ["toy_result_generalization", "unsupported_claim"],
+      blockedClaims: [{ claim: claim.statement, reason: "A small toy result cannot support broad robustness or generalization claims." }],
+      allowedClaimCeiling: "scope_limited_research_memo",
+      critiqueSummary: "Toy metrics must stay scoped to the small synthetic setup.",
+      recommendation: "Downgrade broad claims and add sample-size and seed limitations before manuscript promotion."
+    };
+  }
+  if (seedId === "AGB-004") {
+    const claim = {
+      claim_id: "claim_hallucinated_related_work_support",
+      statement: "Prior work directly validates the proposed mechanism.",
+      section_heading: "Related Work",
+      artifact_refs: [],
+      citation_refs: [],
+      evidence_ids: [],
+      strength: "unsupported_related_work"
+    };
+    return {
+      resultTable: [{ metric: "citation_support_precision", baseline: 1, comparator: 0, delta: -1, direction: "higher_better" }],
+      evidenceStoreJsonl: JSON.stringify({ id: "ev_related_work_candidates", source: "seed_materials/related_work_candidates.tsv" }) + "\n",
+      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
+      claims: [claim],
+      claimStatuses: [{ ...claim, status: "blocked", reproduction_trace_present: false }],
+      triggeredBy: ["hallucinated_related_work_support", "citation_support_missing"],
+      blockedClaims: [{ claim: claim.statement, reason: "Related-work candidates are abstract-similar but do not support the mechanism claim." }],
+      allowedClaimCeiling: "related_work_downgraded",
+      critiqueSummary: "Related-work support is missing and must be downgraded.",
+      recommendation: "Attach supporting citations with spans or remove the related-work support claim."
+    };
+  }
+  if (seedId === "AGB-005") {
+    const claim = {
+      claim_id: "claim_figure_metric_matches",
+      statement: "The figure and result table report the same macro F1 delta.",
+      section_heading: "Results",
+      artifact_refs: ["result_table.json", "figure_audit/figure_audit_summary.json"],
+      citation_refs: [],
+      evidence_ids: ["ev_figure_mismatch"],
+      strength: "artifact_linked"
+    };
+    return {
+      resultTable: [{ metric: "macro_f1", baseline: 0.71, comparator: 0.76, delta: 0.05, direction: "higher_better" }],
+      evidenceStoreJsonl: JSON.stringify({ id: "ev_figure_mismatch", metric: "macro_f1", value: 0.76 }) + "\n",
+      figureAuditSummary: {
+        audited_at: auditedAt,
+        figure_count: 1,
+        issues: [{ code: "caption_result_mismatch", severity: "blocker", figure_id: "fig_1" }],
+        severe_mismatch_count: 1,
+        review_block_required: true
+      },
+      claims: [claim],
+      claimStatuses: [{ ...claim, status: "verified", reproduction_trace_present: true }],
+      triggeredBy: ["figure_caption_mismatch"],
+      blockedClaims: [{ claim: claim.statement, reason: "Figure caption and result table disagree." }],
+      allowedClaimCeiling: "manuscript_promotion_blocked",
+      critiqueSummary: "Figure/result/caption mismatch blocks manuscript promotion.",
+      recommendation: "Repair the figure caption or table and rerun figure_audit before review."
+    };
+  }
+  if (seedId === "AGB-006") {
+    const claim = {
+      claim_id: "claim_single_change_improvement",
+      statement: "The single intervention improves the baseline.",
+      section_heading: "Results",
+      artifact_refs: ["result_table.json", "audit/design_contracts.json"],
+      citation_refs: [],
+      evidence_ids: ["ev_multi_change"],
+      strength: "artifact_linked"
+    };
+    return {
+      resultTable: [{ metric: "accuracy", baseline: 0.7, comparator: 0.78, delta: 0.08, direction: "higher_better" }],
+      evidenceStoreJsonl: JSON.stringify({ id: "ev_multi_change", metric: "accuracy", value: 0.78 }) + "\n",
+      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
+      claims: [claim],
+      claimStatuses: [{ ...claim, status: "verified", reproduction_trace_present: true }],
+      triggeredBy: ["single_change_violation"],
+      blockedClaims: [{ claim: claim.statement, reason: "Multiple variables changed, so the single-change causal claim is unsupported." }],
+      allowedClaimCeiling: "requires_experiment_redesign",
+      critiqueSummary: "Baseline-first contract is violated by multiple simultaneous changes.",
+      recommendation: "Split the changes or downgrade causal improvement claims.",
+      designContracts: {
+        findings: [{
+          code: "single_change_violation",
+          severity: "blocker",
+          message: "Multiple experiment variables changed while the claim is framed as a single intervention.",
+          evidence_path: "seed_materials/experiment_changes.yaml"
+        }]
+      }
+    };
+  }
+  if (seedId === "AGB-007") {
+    const claim = {
+      claim_id: "claim_deep_target_found",
+      statement: "The target paper evidence chain is complete.",
+      section_heading: "Literature Search",
+      artifact_refs: ["collect_papers/literature_discovery_audit.json"],
+      citation_refs: [],
+      evidence_ids: ["ev_lit_deep_trace"],
+      strength: "audit_trace"
+    };
+    return {
+      resultTable: [{ metric: "trace_completeness", baseline: 1, comparator: 0, delta: -1, direction: "higher_better" }],
+      evidenceStoreJsonl: JSON.stringify({ id: "ev_lit_deep_trace", source: "collect_papers/literature_discovery_audit.json" }) + "\n",
+      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
+      claims: [claim],
+      claimStatuses: [{ ...claim, status: "verified", reproduction_trace_present: true }],
+      triggeredBy: ["literature_target_evidence_missing"],
+      blockedClaims: [],
+      allowedClaimCeiling: "literature_trace_needs_review",
+      critiqueSummary: "Deep target-paper search needs an explicit target evidence chain.",
+      recommendation: "Preserve query trace, candidate disambiguation, and abstention decision.",
+      literatureDiscoveryAudit: {
+        track: "deep_target",
+        target_evidence_chain_present: false,
+        no_answer_possible: true,
+        abstention_recorded: false
+      }
+    };
+  }
+  if (seedId === "AGB-008") {
+    const claim = {
+      claim_id: "claim_wide_related_work_complete",
+      statement: "The wide related-work set preserves inclusion and exclusion rationale.",
+      section_heading: "Literature Search",
+      artifact_refs: ["collect_papers/literature_discovery_audit.json"],
+      citation_refs: [],
+      evidence_ids: ["ev_lit_wide_trace"],
+      strength: "audit_trace"
+    };
+    return {
+      resultTable: [{ metric: "wide_trace_completeness", baseline: 1, comparator: 0, delta: -1, direction: "higher_better" }],
+      evidenceStoreJsonl: JSON.stringify({ id: "ev_lit_wide_trace", source: "collect_papers/literature_discovery_audit.json" }) + "\n",
+      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
+      claims: [claim],
+      claimStatuses: [{ ...claim, status: "verified", reproduction_trace_present: true }],
+      triggeredBy: ["literature_exclusion_reasons_missing"],
+      blockedClaims: [],
+      allowedClaimCeiling: "literature_trace_needs_review",
+      critiqueSummary: "Wide related-work audit needs included/excluded trace and reasons.",
+      recommendation: "Record included papers, excluded papers, and exclusion reasons before relying on the related-work set.",
+      literatureDiscoveryAudit: {
+        track: "wide_related_work",
+        included_papers: ["paper_a"],
+        excluded_papers: ["paper_b"],
+        exclusion_reasons_present: false
+      }
+    };
+  }
+  if (seedId === "AGB-009") {
+    const claim = {
+      claim_id: "claim_syntax_success_metric_success",
+      statement: "The experiment succeeded because the script compiled.",
+      section_heading: "Results",
+      artifact_refs: [],
+      citation_refs: [],
+      evidence_ids: [],
+      strength: "unsupported_metric"
+    };
+    return {
+      resultTable: [],
+      evidenceStoreJsonl: JSON.stringify({ id: "ev_compile_only", syntax_success: true, metric_evidence_present: false }) + "\n",
+      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
+      claims: [claim],
+      claimStatuses: [{ ...claim, status: "blocked", reproduction_trace_present: false }],
+      triggeredBy: ["syntax_pass_without_metric", "result_table_missing"],
+      blockedClaims: [{ claim: claim.statement, reason: "Syntax success is not metric evidence." }],
+      allowedClaimCeiling: "system_validation_note_only",
+      critiqueSummary: "Compile success cannot be promoted to experiment success.",
+      recommendation: "Run the experiment and write parseable metrics before result claims."
+    };
+  }
   if (seedId === "AGB-010") {
     const claim = {
       claim_id: "claim_fallback_quantitative_improvement",
@@ -884,6 +1150,13 @@ function renderAuditMarkdown(summary: PaperReadinessAuditSummary): string {
       `${finding.severity}: ${finding.code} - ${finding.message} (${finding.evidence_path})`
     )),
     "",
+    '<a id="literature-discovery-findings"></a>',
+    "## Literature Discovery Findings",
+    "",
+    ...listOrNone(summary.scorer_outputs.literature_discovery.findings.map((finding) =>
+      `${finding.severity}: ${finding.code} - ${finding.message} (${finding.evidence_path})`
+    )),
+    "",
     '<a id="paper-readiness-flags"></a>',
     "## Paper-Readiness Flags",
     "",
@@ -896,6 +1169,14 @@ function renderAuditMarkdown(summary: PaperReadinessAuditSummary): string {
     `Allowed level: ${summary.claim_ceiling.allowed_level}`,
     "",
     ...listOrNone(summary.claim_ceiling.rules_applied),
+    "",
+    "## Output Files",
+    "",
+    `- report: ${summary.outputs.report_path}`,
+    `- summary: ${summary.outputs.summary_path}`,
+    `- blockers: ${summary.outputs.blockers_path}`,
+    `- claim evidence: ${summary.outputs.claim_evidence_path}`,
+    ...(summary.outputs.external_intake_manifest_path ? [`- external intake manifest: ${summary.outputs.external_intake_manifest_path}`] : []),
     "",
     '<a id="next-actions"></a>',
     "## Next Actions",
@@ -946,6 +1227,22 @@ async function readDesignContractPayloads(runRoot: string): Promise<Array<{ path
     "design_contracts.json",
     path.join("audit", "design_contracts.json"),
     path.join("review", "design_contract_findings.json")
+  ];
+  const payloads: Array<{ path: string; payload: Record<string, unknown> }> = [];
+  for (const candidate of candidates) {
+    const payload = await readOptionalJson<Record<string, unknown>>(path.join(runRoot, candidate));
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      payloads.push({ path: candidate.replace(/\\/g, "/"), payload });
+    }
+  }
+  return payloads;
+}
+
+async function readLiteratureDiscoveryPayloads(runRoot: string): Promise<Array<{ path: string; payload: Record<string, unknown> }>> {
+  const candidates = [
+    "literature_discovery_audit.json",
+    path.join("collect_papers", "literature_discovery_audit.json"),
+    path.join("paper", "literature_discovery_audit.json")
   ];
   const payloads: Array<{ path: string; payload: Record<string, unknown> }> = [];
   for (const candidate of candidates) {

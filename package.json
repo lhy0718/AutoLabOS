@@ -51,6 +51,7 @@
     "eval:harness": "tsx src/cli/main.ts eval-harness",
     "evolve:skills": "bash scripts/evolve-skills.sh",
     "demo:audit-blockers": "npm run build && node scripts/demo-audit-blockers.mjs",
+    "demo:audit-full-seeds": "npm run build && node scripts/demo-audit-full-seeds.mjs",
     "validate:harness": "tsx src/cli/validateHarness.ts",
     "test:smoke:natural-collect": "bash tests/smoke/run_natural_collect_pending_command.sh",
     "test:smoke:natural-collect-execute": "bash tests/smoke/run_natural_collect_execute_and_verify_artifacts.sh",

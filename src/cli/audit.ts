@@ -24,10 +24,15 @@ export function formatPaperReadinessAuditCliSummary(summary: PaperReadinessAudit
     `Figure audit: ${summary.figure_result_caption_mismatch.status}; severe mismatches=${summary.figure_result_caption_mismatch.severe_mismatch_count}; manuscript promotion allowed=${yesNo(summary.figure_result_caption_mismatch.manuscript_promotion_allowed)}`,
     `Citation support issues: ${summary.citation_support_issues.length}`,
     `Design contract findings: ${summary.design_contract_findings.length}`,
+    `Literature discovery findings: ${summary.scorer_outputs.literature_discovery.findings.length}`,
     "Outputs:",
     `  report: ${summary.outputs.report_path}`,
     `  summary: ${summary.outputs.summary_path}`,
     `  blockers: ${summary.outputs.blockers_path}`,
+    `  claim evidence: ${summary.outputs.claim_evidence_path}`,
+    ...(summary.outputs.external_intake_manifest_path
+      ? [`  external intake: ${summary.outputs.external_intake_manifest_path}`]
+      : []),
     "Top blockers:"
   ];
 

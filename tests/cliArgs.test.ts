@@ -90,11 +90,26 @@ describe("resolveCliAction", () => {
       kind: "audit",
       seedId: "AGB-001",
       runRoot: undefined,
+      externalRoot: undefined,
+      draftPath: undefined,
+      logPath: undefined,
       outDir: "outputs/audit"
     });
     expect(resolveCliAction(["audit", "--run", "outputs/run-a"])).toEqual({
       kind: "audit",
       runRoot: "outputs/run-a",
+      externalRoot: undefined,
+      draftPath: undefined,
+      logPath: undefined,
+      seedId: undefined,
+      outDir: undefined
+    });
+    expect(resolveCliAction(["audit", "--external", "incoming/run-a", "--draft", "incoming/draft.md", "--log", "incoming/run.log"])).toEqual({
+      kind: "audit",
+      runRoot: undefined,
+      externalRoot: "incoming/run-a",
+      draftPath: "incoming/draft.md",
+      logPath: "incoming/run.log",
       seedId: undefined,
       outDir: undefined
     });
@@ -108,6 +123,10 @@ describe("resolveCliAction", () => {
     expect(resolveCliAction(["audit", "--run", "outputs/run-a", "--seed", "AGB-001"])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("--run")
+    });
+    expect(resolveCliAction(["audit", "--draft", "draft.md"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--external")
     });
   });
 

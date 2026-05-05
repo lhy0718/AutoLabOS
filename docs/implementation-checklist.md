@@ -26,6 +26,7 @@ The governed workflow remains fixed around:
 - Repo: `docs/research-brief-template.md`
 - Repo: `docs/live-validation-issue-template.md`
 - Competitive-analysis planning inputs, summarized here as repo-local implementation requirements without exposing local vault paths or private note names.
+- Product strategy, startup pressure-test, governance benchmark, repository knowledge, and latest competitive-briefing inputs, summarized here as repo-local implementation requirements without exposing local vault paths or private note names.
 
 ## Execution Order
 
@@ -40,7 +41,7 @@ The governed workflow remains fixed around:
 
 ## Unified Priority Checklist
 
-This is the canonical checklist. Legacy numeric-only implementation items have been merged into the P0/P1/P2/P3 sequence below.
+This is the canonical checklist. Legacy numeric-only implementation items have been merged into the P0/P1/P2/P3/P4 sequence below.
 
 ### P0 — Sprint Queue
 
@@ -94,6 +95,16 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P3-3. Live validation playbook.
 - [x] P3-4. Audit integration for selected P2 design contracts.
 - [x] P3-5. Release hygiene and milestone review package.
+
+### P4 — External Pilot And Full Audit Coverage
+
+- [x] P4-1. External artifact intake contract for draft/run/log audits.
+- [x] P4-2. Audit output contract expansion for claim-evidence exports.
+- [x] P4-3. Full AGB seed audit coverage beyond AGB-001/003/010.
+- [x] P4-4. Concierge pilot workflow for real user artifacts.
+- [x] P4-5. Literature discovery audit track for AGB-007/008.
+- [x] P4-6. Competitive-signal watchlist for domain skill libraries and benchmark-store UX.
+- [x] P4-7. Pilot readiness review and go/no-go package.
 
 ## Detailed Task Cards
 
@@ -774,11 +785,85 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - [x] P3-5 verifies package metadata, CLI help, npm audit status, full tests, build, and harness before release-facing commits.
   - [x] P3 keeps the audit-first positioning and does not introduce broad research OS, fully autonomous scientist, or paper-ready-by-default claims.
 
+### P4-1 Through P4-7. External Pilot And Full Audit Coverage
+
+- [x] Status: P4 complete; external intake, claim-evidence export, full-seed audit replay, literature discovery audit checks, concierge pilot docs, competitive watch triggers, and pilot go/no-go review are implemented and validated on 2026-05-05.
+- Planning interpretation:
+  - The next implementation wedge is not more autonomous research. It is the ability to accept a real draft/run/log bundle, produce a conservative paper-readiness audit, and learn whether external users will share artifacts and request repeat audits.
+  - AGB-001/003/010 remain the short demo path; P4 broadens regression coverage to the remaining governance seeds and adds the customer-facing intake workflow.
+  - Competitive tracking should focus on domain skill libraries, benchmark/run-store onboarding, citation hallucination checking, method-evolution graphs, and evidence governance signals only when they change implementation priorities.
+- Scope checklist:
+  - [x] P4-1. External artifact intake contract for draft/run/log audits.
+  - [x] P4-2. Audit output contract expansion for claim-evidence exports.
+  - [x] P4-3. Full AGB seed audit coverage beyond AGB-001/003/010.
+  - [x] P4-4. Concierge pilot workflow for real user artifacts.
+  - [x] P4-5. Literature discovery audit track for AGB-007/008.
+  - [x] P4-6. Competitive-signal watchlist for domain skill libraries and benchmark-store UX.
+  - [x] P4-7. Pilot readiness review and go/no-go package.
+- Related repo files:
+  - Existing: `src/cli/args.ts`
+  - Existing: `src/cli/main.ts`
+  - Existing: `src/cli/audit.ts`
+  - Existing: `src/core/audit/paperReadinessAudit.ts`
+  - Existing: `src/core/audit/auditDemoBundle.ts`
+  - Existing: `src/core/benchmark/governanceSeedBundle.ts`
+  - Existing: `src/core/benchmark/governanceDryRun.ts`
+  - Existing: `src/core/benchmark/governanceScorer.ts`
+  - Existing: `src/core/benchmark/claimEvidenceScoring.ts`
+  - Existing: `src/core/benchmark/resultTableScoring.ts`
+  - Existing: `src/core/benchmark/figureAuditScoring.ts`
+  - Existing: `src/core/audit/externalArtifactIntake.ts`
+  - Existing: `src/core/audit/claimEvidenceExport.ts`
+  - Existing: `src/core/audit/literatureDiscoveryAudit.ts`
+  - Existing: `scripts/demo-audit-full-seeds.mjs`
+  - Existing: `docs/roadmap/p4-external-pilot.md`
+  - Existing: `docs/status/pilot-readiness-review.md`
+  - Existing: `docs/templates/concierge-audit-request.md`
+  - Existing: `docs/status/audit-first-milestone-review.md`
+  - Existing: `docs/live-validation-playbook.md`
+  - Existing: `docs/external-benchmark-plan.md`
+  - Existing: `docs/differentiation.md`
+  - Existing: `tests/paperReadinessAudit.test.ts`
+  - Existing: `tests/auditDemoBundle.test.ts`
+  - Existing: `tests/externalArtifactIntake.test.ts`
+  - Existing: `tests/auditClaimEvidenceExport.test.ts`
+  - Existing: `tests/literatureDiscoveryAudit.test.ts`
+  - Existing: `tests/fullSeedAuditDemo.test.ts`
+  - Existing: `tests/governanceDryRun.test.ts`
+  - Existing: `tests/governanceSeedBundle.test.ts`
+- Planned files if needed:
+  - None currently; next work should be driven by pilot evidence or a new P5 checklist.
+- Validation commands:
+  - P4 docs-only edits: markdown/readability inspection plus portability scan.
+  - Audit intake/runtime changes: `npm test -- tests/paperReadinessAudit.test.ts tests/externalArtifactIntake.test.ts tests/auditClaimEvidenceExport.test.ts`; `npm run build`; `npm run validate:harness`.
+  - Full seed demo changes: run the demo in ignored `outputs/`, verify expected verdicts/blockers for each included seed, then run targeted tests and portability scan.
+  - Literature discovery audit changes: `npm test -- tests/literatureDiscoveryAudit.test.ts tests/governanceDryRun.test.ts`; `npm run build`.
+  - Pilot readiness changes: `npm audit`; `npm --prefix web audit`; `npm test`; `npm run build`; `npm run validate:harness`; `npm run demo:audit-blockers -- --out-dir outputs/audit-demo`.
+  - Completed P4 validation on 2026-05-05: targeted P4 tests passed; `npm run build` passed; `npm test` passed; `npm run validate:harness` passed; `npm audit` and `npm --prefix web audit` found 0 vulnerabilities; `npm run demo:audit-blockers -- --out-dir outputs/audit-demo-p4-smoke` passed; `npm run demo:audit-full-seeds -- --out-dir outputs/audit-full-seeds-p4-smoke` passed with all expected outcomes met.
+- Completion criteria:
+  - [x] P4-1 defines a repo-safe external artifact intake contract for draft, run root, logs, result tables, citation lists, figure audit summaries, and optional paper artifacts.
+  - [x] P4-1 accepts external artifacts through explicit caller-provided paths, copies or summarizes only allowlisted files into repo-controlled output, and never commits machine-local paths or private source names.
+  - [x] P4-2 emits `claim-evidence-table.json` or an equivalent normalized claim-evidence export alongside `paper-readiness-audit.md`, `audit-summary.json`, and `blockers.json`.
+  - [x] P4-2 keeps the claim-evidence export derived from existing artifacts/scorers and does not invent support for unsupported claims.
+  - [x] P4-3 extends audit regression coverage to AGB-002, AGB-004, AGB-005, AGB-006, AGB-009, and any available remaining seeds without weakening the AGB-001/003/010 demo path.
+  - [x] P4-3 keeps each seed's expected failure mode explicit: toy overgeneralization, hallucinated related-work support, figure-caption mismatch, single-change violation, syntax-without-metric, or fallback confusion.
+  - [x] P4-4 adds a concierge pilot request template and operator checklist for receiving one real external artifact bundle, running the audit, redacting sensitive paths, and recording follow-up behavior.
+  - [x] P4-4 measures pilot signals as artifact access, repeat audit request, repo integration request, and concrete recent failure examples rather than generic praise.
+  - [x] P4-5 adds literature discovery audit checks for included/excluded paper trace, exclusion reasons, target-paper evidence chains, and abstention correctness.
+  - [x] P4-5 keeps literature discovery findings separate from paper-readiness findings unless claims in a manuscript depend on unsupported related work.
+  - [x] P4-6 records competitive watch items as implementation triggers only when a competitor adds runnable domain skills, benchmark-store launch flow, citation hallucination checks, method-evolution provenance, or governance/HITL/reproducibility contracts.
+  - [x] P4-6 does not add checklist work just because a paper or repository appears; it must affect audit-first product risk or customer validation.
+  - [x] P4-7 adds a pilot readiness review distinguishing implemented runtime behavior, demo-only evidence, manual concierge steps, and blocked future work.
+  - [x] P4-7 defines go/no-go thresholds for the next cycle: recent pain evidence, artifact sharing, repeat audit request, and clear paper-readiness audit positioning.
+  - [x] P4 keeps AutoLabOS positioned as an evidence governance and paper-readiness audit layer, not as a broad autonomous scientist or paper-ready-by-default system.
+
 ## First Implementation Slice
 
 Start with P0-1 through P0-6 before executing benchmark runs. These establish the hardening, input, condition, artifact, and scoring contracts. Then run P0-7 as the contract lock. Only after AGB-001 passes should P1-1 through P1-7 be broadened across AGB-002 through AGB-010. P1-8 through P1-11 and the P2 queue should be implemented incrementally after the P0 hardening slice has validation coverage.
 
 P3 starts only after the P0/P1/P2 checklist is complete. P3 should harden the audit-first product surface, demo reliability, live-validation workflow, and release package without changing the governed workflow or weakening evidence gates.
+
+P4 starts after P3 release hygiene. P4 should convert the audit-first surface into a pilot-ready artifact intake and full-seed regression package while preserving public-repo portability and conservative claim ceilings.
 
 ## Validation Policy For Future Edits
 

@@ -11,7 +11,7 @@ export type CliAction =
   | { kind: "governance-benchmark-dry-run"; seedPath: string; taskId?: string; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "governance-benchmark-batch"; seedsRoot: string; taskIds: string[]; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "governance-benchmark-export-bundles"; publicOutputRoots: string[]; outDir?: string; maxBundles?: number }
-  | { kind: "audit"; runRoot?: string; seedId?: string; outDir?: string }
+  | { kind: "audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; seedId?: string; outDir?: string }
   | { kind: "audit-help" }
   | {
       kind: "meta-harness";
@@ -241,6 +241,9 @@ export function resolveCliAction(args: string[]): CliAction {
       return { kind: "audit-help" };
     }
     let runRoot: string | undefined;
+    let externalRoot: string | undefined;
+    let draftPath: string | undefined;
+    let logPath: string | undefined;
     let seedId: string | undefined;
     let outDir: string | undefined;
     for (let index = 1; index < args.length; index += 1) {
@@ -251,6 +254,33 @@ export function resolveCliAction(args: string[]): CliAction {
           return { kind: "error", message: "Missing value for --run." };
         }
         runRoot = value;
+        index += 1;
+        continue;
+      }
+      if (token === "--external") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --external." };
+        }
+        externalRoot = value;
+        index += 1;
+        continue;
+      }
+      if (token === "--draft") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --draft." };
+        }
+        draftPath = value;
+        index += 1;
+        continue;
+      }
+      if (token === "--log") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --log." };
+        }
+        logPath = value;
         index += 1;
         continue;
       }
@@ -277,13 +307,16 @@ export function resolveCliAction(args: string[]): CliAction {
         message: `Unsupported audit argument: ${token}`
       };
     }
-    if (Boolean(runRoot) === Boolean(seedId)) {
+    if ([runRoot, seedId, externalRoot].filter(Boolean).length !== 1) {
       return {
         kind: "error",
-        message: "Usage: audit (--run <run-artifact-root> | --seed AGB-001|AGB-003|AGB-010) [--out-dir outputs/audit]."
+        message: "Usage: audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>] | --seed AGB-001..AGB-010) [--out-dir outputs/audit]."
       };
     }
-    return { kind: "audit", runRoot, seedId, outDir };
+    if (!externalRoot && (draftPath || logPath)) {
+      return { kind: "error", message: "--draft and --log require --external <artifact-root>." };
+    }
+    return { kind: "audit", runRoot, externalRoot, draftPath, logPath, seedId, outDir };
   }
 
   if (first === "governance-benchmark") {
