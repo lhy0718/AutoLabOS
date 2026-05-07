@@ -94,8 +94,10 @@ The run currently includes:
 - Final audit figure status: warn, with 0 severe figure/result/caption mismatches.
 - Final audit blockers after the readiness-artifact repair: `write_paper_failed`.
 - Final audit outputs after the readiness-artifact repair: `<repo-root>/outputs/audit/p6-live-2dcc480e-after-readiness-artifact/`.
-- Follow-up scientific-validator replay: the persisted P6 artifacts now classify as `lm_benchmark`; offline replay reports `method`, `results`, `related`, and `discussion` complete under that protocol.
-- Follow-up live revalidation status: not complete. The attempted same-flow `write_paper` continuation did not emit new artifacts and appeared to attach to stale persisted `write_paper: running` state.
+- Follow-up scientific-validator replay: the persisted P6 artifacts classify as `lm_benchmark`; offline replay reports `method`, `results`, `related`, and `discussion` complete under that protocol.
+- Follow-up live revalidation status: complete for the scientific-validator blocker. A normal resumed `write_paper` continuation emitted fresh artifacts; the new `scientific_validation.json` reports `method`, `results`, `related`, and `discussion` complete with no issues.
+- Follow-up final audit after the LM benchmark validator repair: `blocked`, with top blockers `unsupported_claims_present` and `write_paper_failed`.
+- Follow-up audit outputs: `<repo-root>/outputs/audit/p6-live-2dcc480e-after-lm-validator-recheck/`.
 
 ## Regression Validation
 
@@ -109,8 +111,8 @@ The run currently includes:
 
 ## Current Limitation
 
-The run is not paper-ready. It has real repeated-seed quantitative evidence, a complete audit-visible result table, figure audit, review artifacts, manuscript artifacts, `paper/paper_readiness.json`, and a final audit report, but `write_paper` failed the manuscript-quality gate after bounded repair. Follow-up offline replay shows the scientific-writing validator no longer blocks this run on tabular-CV-only requirements, but the same-flow live `write_paper -> audit` rerun still has to recover from the stale running state before manuscript promotion can be reconsidered.
+The run is not paper-ready. It has real repeated-seed quantitative evidence, a complete audit-visible result table, figure audit, review artifacts, manuscript artifacts, `paper/paper_readiness.json`, and a final audit report. The scientific-writing validator no longer blocks this run on tabular-CV-only requirements, including in the same live `write_paper` flow, but manuscript promotion remains blocked by unsupported claims and the failed manuscript-quality gate.
 
 ## Next Action
 
-Recover or safely reset the stale `write_paper: running` continuation boundary, rerun the gated `write_paper -> audit` path, and keep the claim ceiling at `paper_scale_candidate` or lower unless the live audit removes all blockers.
+Repair the unsupported manuscript claims and remaining manuscript-quality findings, then rerun the gated `write_paper -> audit` path. Keep the claim ceiling at `paper_scale_candidate` or lower unless the live audit removes all blockers.

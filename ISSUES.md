@@ -17,7 +17,7 @@ Path placeholders:
 
 ## Issue: LV-378
 
-- Status: scientific-validator repair implemented; targeted regression/build/full test/harness passed; same-flow live revalidation blocked by stale `write_paper: running` state.
+- Status: scientific-validator repair implemented; targeted regression/build/full test/harness passed; same-flow live revalidation passed for the scientific-validator blocker; final audit still blocked by unsupported claims and failed manuscript-quality gate.
 - Validation target: P6 `write_paper` scientific writing validation should judge the LoRA/ARC/HellaSwag run as an LM benchmark, not as a tabular nested-CV experiment, when `latest_results.json` is absent but `result_analysis.json` contains benchmark metrics, repeated-trial counts, confidence evidence, and resource measurements.
 - Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, follow-up after the final audit showed `write_paper_failed` as the remaining blocker.
 
@@ -35,17 +35,18 @@ Path placeholders:
 - Actual behavior:
   - The validator treated the P6 run like a tabular CV experiment and reported missing tabular-only method fields.
   - Result and reproducibility checks were under-crediting run-owned `result_analysis.json` evidence when no `latest_results.json` was present.
-  - Offline replay after the repair now reports `method`, `results`, `related`, and `discussion` as complete for the persisted P6 artifacts under the LM benchmark protocol.
-  - Same-flow live revalidation has not completed: rerunning the P6 continuation helper did not produce new `write_paper` artifacts and appeared to attach to a stale persisted `write_paper: running` state.
+  - Offline replay after the repair reports `method`, `results`, `related`, and `discussion` as complete for the persisted P6 artifacts under the LM benchmark protocol.
+  - Same-flow live revalidation reran `write_paper`, emitted fresh paper artifacts, and produced a new `scientific_validation.json` with `method`, `results`, `related`, and `discussion` all complete.
+  - The run still fails manuscript promotion because manuscript-quality review finds reader-facing failures and the final audit reports unsupported claims plus `write_paper_failed`.
 
 - Fresh vs existing session comparison:
   - Fresh session: not started for this specific repair; the available evidence is from the persisted P6 run and deterministic regression coverage.
-  - Existing session: the stale persisted run stayed at `currentNode=write_paper` and node status `running` without advancing paper artifact mtimes during the revalidation attempt.
-  - Divergence: unresolved; the next validation step should compare a recovered/resumed run against a fresh `write_paper` continuation boundary if possible.
+  - Existing session: the first revalidation attempt stalled against stale `write_paper: running` state after interruption, but the persisted run later settled to `paused`/`pending` and a normal `p6:continue` reran `write_paper` successfully through the scientific validator.
+  - Divergence: no fresh/resume divergence is confirmed for the scientific-validator repair; the remaining blockers are manuscript-quality and unsupported-claim audit blockers.
 
 - Root cause hypothesis:
   - Type: `resume_reload_bug`
-  - Hypothesis: the scientific-validator failure was caused by domain misclassification and incomplete fallback from `result_analysis.json`; the remaining live-revalidation failure is a resume/reload recovery issue where the continuation helper observes stale persisted `write_paper: running` state without launching a fresh artifact-producing attempt.
+  - Hypothesis: the scientific-validator failure was caused by domain misclassification and incomplete fallback from `result_analysis.json`; the transient live-revalidation stall was a resume/reload recovery issue after an interrupted helper attempt, but a normal resumed continuation later produced fresh artifacts without additional helper changes.
 
 - Code/test changes:
   - Code: `src/core/analysis/scientificWriting.ts` now infers `lm_benchmark`, adjusts method completeness requirements by protocol kind, derives benchmark task summaries and dispersion/CI/runtime evidence from `result_analysis.json`, accepts repeated-trial evidence outside `latest_results.json`, and recognizes conservative supporting related-work positioning notes.
@@ -56,13 +57,16 @@ Path placeholders:
   - Build: passed with `npm run build`.
   - Full test suite: passed with `npm test`.
   - Harness validation: passed with `npm run validate:harness`.
-  - Same-flow live revalidation: blocked. The continuation helper was stopped after no new `write_paper` artifacts were emitted from the stale running state.
+  - Same-flow live revalidation: passed for the scientific-validator blocker with `AUTOLABOS_P6_RUN_ID=2dcc480e-b4e5-4863-9c7f-6872f9c672e7 AUTOLABOS_P6_NEXT_NODE=write_paper npm run p6:continue`.
+  - Final audit after the live rerun: `blocked`; top blockers are `unsupported_claims_present` and `write_paper_failed`.
 
 - Evidence/artifacts:
   - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/experiment_plan.yaml`
   - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/result_analysis.json`
   - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/related_work_notes.json`
   - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/scientific_validation.json`
+  - `<repo-root>/outputs/audit/p6-live-2dcc480e-after-lm-validator-recheck/audit-summary.json`
+  - `<repo-root>/outputs/audit/p6-live-2dcc480e-after-lm-validator-recheck/blockers.json`
 
 ---
 
