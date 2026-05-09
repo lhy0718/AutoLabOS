@@ -32,6 +32,7 @@ Use this skill when the user asks to:
 - If the user names both a workspace root and a nested prior run folder, treat the workspace root as the execution root unless they explicitly override it.
 - Keep current input files at the workspace root: active brief, `.env`, `.autolabos/config.yaml`, manuscript template files, and style files.
 - Treat repo files as implementation; do not copy private validation templates into the repo.
+- Treat the validation workspace as a runtime workspace, not necessarily a git repository. Run implementation git commands from the AutoLabOS repo root, and verify with `git rev-parse --show-toplevel` when a tool reports `not a git repository`.
 - Treat generated outputs, `.tmp`, old logs, and old `.autolabos/runs` state as disposable unless the user explicitly asks to preserve them.
 - If a recent brief lives under a nested folder, promote it to the workspace root before rerunning.
 - If promoting config from a nested validation folder, inspect it first and preserve only the intended provider, workflow, experiment, and paper settings.

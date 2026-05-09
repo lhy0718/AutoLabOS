@@ -6093,6 +6093,51 @@ export class ImplementSessionManager {
       }
     }
 
+    const runtimePathsMappingRepair =
+      await repairPythonRuntimePathsMappingRecordSurface(executionScriptPath);
+    if (runtimePathsMappingRepair.repaired) {
+      onProgress?.(
+        runtimePathsMappingRepair.message ||
+          "Repaired runtime_paths mapping compatibility before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            runtimePathsMappingRepair.message ||
+            "Repaired runtime_paths mapping compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const commandTokensRepair = await repairPythonCommandTokensNamespaceSurface(executionScriptPath);
     if (commandTokensRepair.repaired) {
       onProgress?.(
@@ -8665,6 +8710,14 @@ export class ImplementSessionManager {
       await repairPythonAutolabosSupportedArgsDuplicateArgsSurface(executionScriptPath);
     const missingBuildExperimentConfigRepair =
       await repairPythonMissingBuildExperimentConfigSurface(executionScriptPath);
+    const helperResolverCallableClassRepair =
+      await repairPythonFindHelperCallableClassSurface(executionScriptPath);
+    const roleCallableResolverClassRepair =
+      await repairPythonRoleCallableResolverClassSurface(executionScriptPath);
+    const mainFindCallableStudyResolverRepair =
+      await repairPythonMainFindCallableStudyResolverSurface(executionScriptPath);
+    const finalOrchestrationHelperRepair =
+      await repairPythonFinalOrchestrationHelperSurface(executionScriptPath);
     const entrypointStudyRunnerResolverRepair =
       await repairPythonEntrypointStudyRunnerResolverSurface(executionScriptPath);
     const planSnapshotPathArgumentRepair =
@@ -8747,8 +8800,12 @@ export class ImplementSessionManager {
       entrypointAtomicWriterCallOrderRepair,
       entrypointMetricsAggregationBridgeRepair,
       autolabosCliParserBuilderAliasRepair,
-      autolabosSupportedArgsDuplicateArgsRepair,
-      missingBuildExperimentConfigRepair,
+        autolabosSupportedArgsDuplicateArgsRepair,
+        missingBuildExperimentConfigRepair,
+        helperResolverCallableClassRepair,
+        roleCallableResolverClassRepair,
+        mainFindCallableStudyResolverRepair,
+        finalOrchestrationHelperRepair,
       entrypointStudyRunnerResolverRepair,
       planSnapshotPathArgumentRepair,
       planArgumentPathChoicesRepair,
@@ -8853,6 +8910,78 @@ export class ImplementSessionManager {
         });
         return repairedReport;
       }
+    }
+
+    const finalTrainingArgumentsRepair =
+      await repairPythonUnsupportedTrainingArgumentsKwargs(executionScriptPath);
+    if (finalTrainingArgumentsRepair.repaired) {
+      onProgress?.(
+        finalTrainingArgumentsRepair.message ||
+          "Removed unsupported TrainingArguments kwargs after late handoff repairs.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            finalTrainingArgumentsRepair.message ||
+            "Removed unsupported TrainingArguments kwargs after late handoff repairs."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const finalUnsupportedTrainingArgumentsKwarg =
+      await detectPythonUnsupportedTrainingArgumentsKwarg(executionScriptPath);
+    if (finalUnsupportedTrainingArgumentsKwarg) {
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: "implementation",
+          stderr: finalUnsupportedTrainingArgumentsKwarg,
+          attempt: attemptNumber
+        }
+      });
+      return {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: finalUnsupportedTrainingArgumentsKwarg,
+        summary: buildVerificationFailureSummary(command, "implementation", finalUnsupportedTrainingArgumentsKwarg)
+      };
     }
 
     if (attempt.experimentMode === "real_execution" && commandRequestsDryRun(attempt.runCommand)) {
@@ -14432,7 +14561,7 @@ async function detectPythonUnsupportedTrainingArgumentsKwarg(scriptPath?: string
   }
 
   const lines = source.split(/\r?\n/u);
-  const unsupportedTrainingArgumentsKwargs = ["overwrite_output_dir"];
+  const unsupportedTrainingArgumentsKwargs = unsupportedTrainingArgumentsKwargsForLocalRuntime();
   for (let index = 0; index < lines.length; index += 1) {
     if (!isPythonTrainingArgumentsCallStart(lines[index])) {
       continue;
@@ -14462,6 +14591,10 @@ async function detectPythonUnsupportedTrainingArgumentsKwarg(scriptPath?: string
   return undefined;
 }
 
+function unsupportedTrainingArgumentsKwargsForLocalRuntime(): string[] {
+  return ["overwrite_output_dir", "evaluation_strategy"];
+}
+
 async function repairPythonUnsupportedTrainingArgumentsKwargs(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
@@ -14478,7 +14611,10 @@ async function repairPythonUnsupportedTrainingArgumentsKwargs(
 
   if (
     !hasPythonTrainingArgumentsCall(source) ||
-    (!/\boverwrite_output_dir\s*=/u.test(source) && !/["']overwrite_output_dir["']\s*:/u.test(source))
+    !unsupportedTrainingArgumentsKwargsForLocalRuntime().some((name) => {
+      const escaped = escapeRegex(name);
+      return new RegExp(`\\b${escaped}\\s*=`, "u").test(source) || new RegExp(`["']${escaped}["']\\s*:`, "u").test(source);
+    })
   ) {
     return { repaired: false };
   }
@@ -14490,7 +14626,12 @@ async function repairPythonUnsupportedTrainingArgumentsKwargs(
       continue;
     }
     const call = extractPythonCallExpression(lines, index);
-    if (!call || !/\boverwrite_output_dir\s*=/u.test(call.text)) {
+    if (
+      !call ||
+      !unsupportedTrainingArgumentsKwargsForLocalRuntime().some((name) =>
+        new RegExp(`\\b${escapeRegex(name)}\\s*=`, "u").test(call.text)
+      )
+    ) {
       continue;
     }
     const repairedCall = removeUnsupportedTrainingArgumentsKwargsFromCall(call.text);
@@ -14512,7 +14653,7 @@ async function repairPythonUnsupportedTrainingArgumentsKwargs(
 
 function removeUnsupportedTrainingArgumentsKwargsFromCall(callText: string): string {
   let next = callText;
-  for (const name of ["overwrite_output_dir"]) {
+  for (const name of unsupportedTrainingArgumentsKwargsForLocalRuntime()) {
     const linePattern = new RegExp(`^\\s*${escapeRegex(name)}\\s*=.*?,?\\s*(?:#.*)?$`, "gmu");
     next = next.replace(linePattern, "");
     const leadingPattern = new RegExp(`${escapeRegex(name)}\\s*=\\s*[^,\\)\\n]+\\s*,\\s*`, "gu");
@@ -14536,7 +14677,7 @@ function isPythonTrainingArgumentsCallStart(line: string): boolean {
 
 function removeUnsupportedTrainingArgumentsKwargsFromExpandedDicts(source: string): string {
   const lines = source.split(/\r?\n/u);
-  const unsupportedNames = ["overwrite_output_dir"];
+  const unsupportedNames = unsupportedTrainingArgumentsKwargsForLocalRuntime();
   let changed = false;
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -25006,6 +25147,341 @@ export async function repairPythonEntrypointStudyRunnerResolverSurface(
   };
 }
 
+export async function repairPythonMainFindCallableStudyResolverSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _main_find_callable(") ||
+    !source.includes("orchestrator = _main_find_callable(") ||
+    !source.includes("def run_locked_condition_study(")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const beforeFinderRepair = nextSource;
+  nextSource = nextSource.replace(
+    "        if callable(obj):\n            return obj",
+    [
+      "        if callable(obj):",
+      "            if isinstance(obj, type):",
+      "                continue",
+      "            return obj"
+    ].join("\n")
+  );
+  if (!nextSource.includes("_autolabos_skip_callable_classes_marker")) {
+    nextSource = nextSource.replace(
+      "        if not callable(obj):\n            continue\n        lowered = str(name).lower()",
+      [
+        "        _autolabos_skip_callable_classes_marker = True",
+        "        if not callable(obj) or isinstance(obj, type):",
+        "            continue",
+        "        lowered = str(name).lower()"
+      ].join("\n")
+    );
+  }
+  if (nextSource !== beforeFinderRepair) {
+    repaired = true;
+  }
+
+  const beforeDuplicateArgsRepair = nextSource;
+  nextSource = nextSource.replace(
+    "    if accepts_varkw:\n        supported_kwargs = dict(kwargs)\n    else:\n        supported_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}\n",
+    [
+      "    if accepts_varkw:",
+      "        supported_kwargs = dict(kwargs)",
+      "    else:",
+      "        supported_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}",
+      "    if positional_args:",
+      "        _autolabos_consumed_positional_names = [",
+      "            param.name",
+      "            for param in parameters",
+      "            if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)",
+      "        ][: len(positional_args)]",
+      "        for _autolabos_name in _autolabos_consumed_positional_names:",
+      "            supported_kwargs.pop(_autolabos_name, None)",
+      ""
+    ].join("\n")
+  );
+  if (nextSource !== beforeDuplicateArgsRepair) {
+    repaired = true;
+  }
+
+  const orchestratorCallPattern =
+    /(\n\s*orchestrator\s*=\s*_main_find_callable\(\s*\n\s*\[\s*\n)([\s\S]*?)(\n\s*\]\s*,\s*\n\s*required_tokens=\(["']study["'],?\)\s*,)/u;
+  nextSource = nextSource.replace(
+    orchestratorCallPattern,
+    (full, prefix: string, candidates: string, suffix: string) => {
+      if (candidates.includes("\"run_locked_condition_study\"") || candidates.includes("'run_locked_condition_study'")) {
+        return full;
+      }
+      const indentMatch = candidates.match(/\n(\s*)["'][^"']+["'],/u);
+      const itemIndent = indentMatch?.[1] ?? "                ";
+      repaired = true;
+      return [
+        prefix,
+        `${itemIndent}"run_locked_condition_study",\n`,
+        `${itemIndent}"execute_locked_condition_study",\n`,
+        `${itemIndent}"run_locked_baseline_first_study",\n`,
+        `${itemIndent}"execute_locked_baseline_first_study",\n`,
+        candidates,
+        suffix
+      ].join("");
+    }
+  );
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Prioritized locked condition study callables and excluded callable classes in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonFinalOrchestrationHelperSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_final_orchestration_helper_marker") ||
+    !source.includes("def _lookup_orchestration_helper(") ||
+    !source.includes("raw_result = _invoke_helper(") ||
+    !source.includes("def run_baseline_first_locked_study(")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const explicitNamesPattern =
+    /(def _lookup_orchestration_helper\(\)\s*->\s*Optional\[Any\]:\n\s*explicit_names\s*=\s*\(\n)([\s\S]*?)(\n\s*\)\n\s*for name in explicit_names:)/u;
+  nextSource = nextSource.replace(
+    explicitNamesPattern,
+    (full, prefix: string, candidates: string, suffix: string) => {
+      const missingCandidates = [
+        "run_baseline_first_locked_study",
+        "execute_baseline_first_conditions",
+        "run_locked_condition_study",
+        "execute_locked_condition_study",
+        "run_locked_baseline_first_study",
+        "execute_locked_baseline_first_study"
+      ].filter((name) => !candidates.includes(`"${name}"`) && !candidates.includes(`'${name}'`));
+      if (missingCandidates.length === 0) {
+        return full;
+      }
+      const indentMatch = candidates.match(/\n(\s*)["'][^"']+["'],/u);
+      const itemIndent = indentMatch?.[1] ?? "        ";
+      repaired = true;
+      return [
+        prefix,
+        `${itemIndent}# _autolabos_final_orchestration_helper_marker\n`,
+        ...missingCandidates.map((name) => `${itemIndent}"${name}",\n`),
+        candidates,
+        suffix
+      ].join("");
+    }
+  );
+
+  const fallbackPattern =
+    /(\s*for name, candidate in globals\(\)\.items\(\):\n\s*lowered = name\.lower\(\)\n\s*if not callable\(candidate\) or name\.startswith\("_"\):\n\s*continue\n)(\s*if "main" in lowered or "write" in lowered or "metric" in lowered or "summary" in lowered:\n\s*continue\n)/u;
+  nextSource = nextSource.replace(
+    fallbackPattern,
+    (_full, prefix: string, suffix: string) => {
+      repaired = true;
+      return [
+        prefix,
+        `        if isinstance(candidate, type):\n`,
+        `            continue\n`,
+        `        if any(term in lowered for term in ("resolve", "config", "parser", "arg", "prepare", "build")):\n`,
+        `            continue\n`,
+        suffix
+      ].join("");
+    }
+  );
+
+  const contextPattern =
+    /(\s*["']summary_path["']:\s*summary_path,\n)(\s*["']run_command["']:\s*run_command,\n)/u;
+  nextSource = nextSource.replace(contextPattern, (_full, prefix: string, suffix: string) => {
+    repaired = true;
+    return [
+      prefix,
+      `                "condition_specs": None,\n`,
+      `                "run_config": args,\n`,
+      `                "runtime_context": run_context,\n`,
+      `                "experiment_start_time": started_at,\n`,
+      suffix
+    ].join("");
+  });
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Prioritized final baseline-first orchestration helpers and bridged run context in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonFindHelperCallableClassSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_find_helper_skip_callable_classes_marker") ||
+    !source.includes("def _find_helper_by_name(") ||
+    !source.includes("def _invoke_helper(")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const beforeCandidateRepair = nextSource;
+  nextSource = nextSource.replace(
+    "        if callable(helper):\n            return helper",
+    [
+      "        if callable(helper):",
+      "            if isinstance(helper, type):",
+      "                continue",
+      "            return helper"
+    ].join("\n")
+  );
+  if (nextSource !== beforeCandidateRepair) {
+    repaired = true;
+  }
+
+  const beforeFallbackRepair = nextSource;
+  nextSource = nextSource.replace(
+    "        if not callable(helper):\n            continue\n        lowered = name.lower()",
+    [
+      "        _autolabos_find_helper_skip_callable_classes_marker = True",
+      "        if not callable(helper) or isinstance(helper, type):",
+      "            continue",
+      "        if str(name).startswith('_'):",
+      "            continue",
+      "        lowered = name.lower()"
+    ].join("\n")
+  );
+  if (nextSource !== beforeFallbackRepair) {
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Excluded callable classes from generic helper lookup in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonRoleCallableResolverClassSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_role_callable_skip_callable_classes_marker") ||
+    !source.includes("def _resolve_callable_by_role(")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const beforeExplicitRepair = nextSource;
+  nextSource = nextSource.replace(
+    "        if callable(candidate):\n            return candidate",
+    [
+      "        if callable(candidate):",
+      "            if isinstance(candidate, type):",
+      "                continue",
+      "            return candidate"
+    ].join("\n")
+  );
+  if (nextSource !== beforeExplicitRepair) {
+    repaired = true;
+  }
+
+  const beforeFallbackRepair = nextSource;
+  nextSource = nextSource.replace(
+    "        if name in excluded or not callable(candidate):\n            continue\n        lower_name = name.lower()",
+    [
+      "        _autolabos_role_callable_skip_callable_classes_marker = True",
+      "        if name in excluded or not callable(candidate) or isinstance(candidate, type):",
+      "            continue",
+      "        if str(name).startswith('_'):",
+      "            continue",
+      "        lower_name = str(name).lower()"
+    ].join("\n")
+  );
+  if (nextSource !== beforeFallbackRepair) {
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Excluded callable classes from role-based callable lookup in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonPlanSnapshotPathArgumentSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
@@ -29179,6 +29655,79 @@ export async function repairPythonNamespaceParseArgsSurface(scriptPath?: string)
   return {
     repaired: true,
     message: `Made parse_args() calls Namespace-aware in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonRuntimePathsMappingRecordSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_runtime_paths_mapping_record_marker") ||
+    !source.includes("args.runtime_paths = build_runtime_paths(args)") ||
+    !source.includes("apply_path_environment(args.runtime_paths, args)")
+  ) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    "",
+    "def _autolabos_runtime_paths_record(value):",
+    "    _autolabos_runtime_paths_mapping_record_marker = True",
+    "    try:",
+    "        from collections.abc import Mapping as _AutoLabOSMapping",
+    "    except Exception:",
+    "        _AutoLabOSMapping = dict",
+    "    if isinstance(value, _AutoLabOSMapping):",
+    "        payload = dict(value)",
+    "        alias_pairs = {",
+    "            \"run_log_path\": \"log_path\",",
+    "            \"cache_dir\": \"scratch_dir\",",
+    "            \"conditions_dir\": \"condition_results_dir\",",
+    "            \"summary_path\": \"study_summary_path\",",
+    "        }",
+    "        for source_key, target_key in alias_pairs.items():",
+    "            if target_key not in payload and source_key in payload:",
+    "                payload[target_key] = payload[source_key]",
+    "        try:",
+    "            import argparse as _AutoLabOSArgparse",
+    "            return _AutoLabOSArgparse.Namespace(**payload)",
+    "        except Exception:",
+    "            class _AutoLabOSRuntimePathsRecord:",
+    "                pass",
+    "            record = _AutoLabOSRuntimePathsRecord()",
+    "            for key, item in payload.items():",
+    "                setattr(record, str(key), item)",
+    "            return record",
+    "    return value",
+    ""
+  ].join("\n");
+
+  let nextSource = insertPythonTopLevelHelperAfterImports(source, helper);
+  nextSource = nextSource.replace(
+    /args\.runtime_paths\s*=\s*build_runtime_paths\s*\(\s*args\s*\)/u,
+    "args.runtime_paths = _autolabos_runtime_paths_record(build_runtime_paths(args))"
+  );
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Made runtime_paths mapping returns attribute-accessible in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

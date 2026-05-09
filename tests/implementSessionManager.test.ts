@@ -69,6 +69,10 @@ import {
   repairPythonPeftAcronymClassAliasSurface,
   repairPythonEntrypointMetricsAggregationBridgeSurface,
   repairPythonEntrypointWorkflowSignatureBridgeSurface,
+  repairPythonFindHelperCallableClassSurface,
+  repairPythonFinalOrchestrationHelperSurface,
+  repairPythonMainFindCallableStudyResolverSurface,
+  repairPythonRoleCallableResolverClassSurface,
   repairPythonEntrypointStudyRunnerResolverSurface,
   repairPythonPlanSnapshotPathArgumentSurface,
   repairPythonPlanArgumentPathChoicesSurface,
@@ -128,6 +132,7 @@ import {
   repairPythonMissingParseArgsSurface,
   repairPythonMissingBuildExperimentConfigSurface,
   repairPythonNamespaceParseArgsSurface,
+  repairPythonRuntimePathsMappingRecordSurface,
   repairPythonCommandTokensNamespaceSurface,
   repairPythonOptionalPathArgDefaultsSurface,
   repairPythonNamespaceGetNoneDefaultSurface,
@@ -3586,6 +3591,8 @@ describe("ImplementSessionManager", () => {
         "    training_args = TrainingArguments(",
         '        output_dir=str("outputs"),',
         "        overwrite_output_dir=True,",
+        "        evaluation_strategy='no',",
+        "        per_device_train_batch_size=1,",
         "    )",
         "    return training_args",
         ""
@@ -3630,6 +3637,8 @@ describe("ImplementSessionManager", () => {
 
     expect(report.status, report.summary).toBe("pass");
     expect(readFileSync(scriptPath, "utf8")).not.toContain("overwrite_output_dir");
+    expect(readFileSync(scriptPath, "utf8")).not.toContain("evaluation_strategy");
+    expect(readFileSync(scriptPath, "utf8")).toContain("per_device_train_batch_size=1");
   });
 
   it("repairs unsupported TrainingArguments kwargs when called through a dependency mapping", async () => {
@@ -3657,6 +3666,7 @@ describe("ImplementSessionManager", () => {
         "    training_args = deps['TrainingArguments'](",
         '        output_dir=str("outputs"),',
         "        overwrite_output_dir=True,",
+        "        evaluation_strategy='no',",
         "        per_device_train_batch_size=1,",
         "    )",
         "    return training_args",
@@ -3703,6 +3713,7 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(report.status, report.summary).toBe("pass");
     expect(repairedSource).not.toContain("overwrite_output_dir");
+    expect(repairedSource).not.toContain("evaluation_strategy");
     expect(repairedSource).toContain("deps['TrainingArguments'](");
     expect(repairedSource).toContain("per_device_train_batch_size=1");
   });
@@ -3734,6 +3745,7 @@ describe("ImplementSessionManager", () => {
         "    kwargs: dict[str, Any] = {",
         '        "output_dir": "outputs",',
         '        "overwrite_output_dir": True,',
+        '        "evaluation_strategy": "no",',
         '        "per_device_train_batch_size": 1,',
         "    }",
         "    return TrainingArguments(**kwargs)",
@@ -3780,6 +3792,7 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(report.status, report.summary).toBe("pass");
     expect(repairedSource).not.toContain('"overwrite_output_dir"');
+    expect(repairedSource).not.toContain('"evaluation_strategy"');
     expect(repairedSource).toContain('"per_device_train_batch_size": 1');
     expect(repairedSource).toContain("TrainingArguments(**kwargs)");
   });
@@ -11660,6 +11673,88 @@ describe("ImplementSessionManager", () => {
     expect(output).toBe("7");
   });
 
+  it("repairs runtime_paths mappings before applying path environment", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-paths-mapping-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import os",
+        "from pathlib import Path",
+        "",
+        "RUN_ID_ENV_VAR = 'RUN_ID'",
+        "OUTPUT_DIR_ENV_VAR = 'OUTPUT_DIR'",
+        "METRICS_PATH_ENV_VAR = 'METRICS_PATH'",
+        "DEFAULT_OUTPUT_DIR = Path('out')",
+        "DEFAULT_METRICS_PATH = Path('metrics.json')",
+        "DEFAULT_RUN_ID = 'run-1'",
+        "",
+        "def build_argument_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--output-dir', default=str(DEFAULT_OUTPUT_DIR))",
+        "    parser.add_argument('--metrics-path', default=str(DEFAULT_METRICS_PATH))",
+        "    parser.add_argument('--run-id', default=DEFAULT_RUN_ID)",
+        "    return parser",
+        "",
+        "def build_runtime_paths(args):",
+        "    return {",
+        "        'run_id': args.run_id,",
+        "        'output_dir': Path(args.output_dir),",
+        "        'metrics_path': Path(args.metrics_path),",
+        "        'private_run_dir': Path('.autolabos/runs') / args.run_id,",
+        "        'run_log_path': Path('.autolabos/runs') / args.run_id / 'run.log',",
+        "        'cache_dir': Path(args.output_dir) / 'cache',",
+        "        'conditions_dir': Path(args.output_dir) / 'conditions',",
+        "        'summary_path': Path(args.output_dir) / 'study_summary.json',",
+        "    }",
+        "",
+        "def apply_path_environment(runtime_paths, args):",
+        "    os.environ[RUN_ID_ENV_VAR] = runtime_paths.run_id",
+        "    os.environ[OUTPUT_DIR_ENV_VAR] = str(runtime_paths.output_dir)",
+        "    os.environ[METRICS_PATH_ENV_VAR] = str(runtime_paths.metrics_path)",
+        "",
+        "def parse_args(argv=None):",
+        "    parser = build_argument_parser()",
+        "    args = parser.parse_args(argv)",
+        "    args.runtime_paths = build_runtime_paths(args)",
+        "    apply_path_environment(args.runtime_paths, args)",
+        "    args.log_path = args.runtime_paths.log_path",
+        "    args.scratch_dir = args.runtime_paths.scratch_dir",
+        "    args.condition_results_dir = args.runtime_paths.condition_results_dir",
+        "    args.study_summary_path = args.runtime_paths.study_summary_path",
+        "    return args",
+        "",
+        "def main():",
+        "    args = parse_args()",
+        "    assert args.runtime_paths.run_id == 'run-1'",
+        "    assert args.log_path.name == 'run.log'",
+        "    assert args.scratch_dir.name == 'cache'",
+        "    assert args.condition_results_dir.name == 'conditions'",
+        "    assert args.study_summary_path.name == 'study_summary.json'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/run_id/);
+
+    const repair = await repairPythonRuntimePathsMappingRecordSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_runtime_paths_mapping_record_marker");
+    expect(repairedSource).toContain(
+      "args.runtime_paths = _autolabos_runtime_paths_record(build_runtime_paths(args))"
+    );
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("repairs command_tokens metadata when main bypasses parse_cli_args", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-command-tokens-repair-"));
     tempDirs.push(workspace);
@@ -11965,6 +12060,406 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("'run_locked_baseline_first_study',");
     expect(repairedSource).toContain("'execute_locked_baseline_first_study',");
     execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("prevents callable study classes from shadowing locked condition study runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-study-class-shadow-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import inspect",
+        "from pathlib import Path",
+        "from typing import Any, Optional, Sequence",
+        "",
+        "class StudyCondition:",
+        "    def __init__(self, condition_marker: str, lora_r: int, lora_alpha: int, lora_dropout: float):",
+        "        self.condition_marker = condition_marker",
+        "",
+        "def run_locked_condition_study(args: argparse.Namespace, **kwargs: Any) -> dict[str, Any]:",
+        "    return {",
+        "        'condition_results': [",
+        "            {'condition_marker': 'unmodified_base', 'is_baseline': True, 'average_accuracy': 0.5},",
+        "            {'condition_marker': 'rank_8_dropout_0_0', 'is_baseline': False, 'average_accuracy': 0.55},",
+        "        ]",
+        "    }",
+        "",
+        "def _main_find_callable(",
+        "    candidate_names: Sequence[str],",
+        "    required_tokens: Sequence[str] = (),",
+        "    exclude_tokens: Sequence[str] = (),",
+        ") -> Optional[Any]:",
+        "    for name in candidate_names:",
+        "        obj = globals().get(name)",
+        "        if callable(obj):",
+        "            return obj",
+        "    for name, obj in globals().items():",
+        "        if not callable(obj):",
+        "            continue",
+        "        lowered = str(name).lower()",
+        "        if lowered.startswith('_main_'):",
+        "            continue",
+        "        if required_tokens and not all(token.lower() in lowered for token in required_tokens):",
+        "            continue",
+        "        if exclude_tokens and any(token.lower() in lowered for token in exclude_tokens):",
+        "            continue",
+        "        return obj",
+        "    return None",
+        "",
+        "def _main_invoke_callable(func: Any, positional_args: Optional[Sequence[Any]] = None, **kwargs: Any) -> Any:",
+        "    positional_args = list(positional_args or [])",
+        "    signature = inspect.signature(func)",
+        "    parameters = list(signature.parameters.values())",
+        "    accepts_varargs = any(param.kind == inspect.Parameter.VAR_POSITIONAL for param in parameters)",
+        "    accepts_varkw = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters)",
+        "    if accepts_varkw:",
+        "        supported_kwargs = dict(kwargs)",
+        "    else:",
+        "        supported_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}",
+        "    positional_capacity = sum(1 for param in parameters if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD))",
+        "    if positional_args and positional_capacity >= len(positional_args):",
+        "        return func(*positional_args, **supported_kwargs)",
+        "    return func(**supported_kwargs)",
+        "",
+        "def main(argv=None):",
+        "    args = argparse.Namespace(output_dir=Path('.'))",
+        "    orchestrator = _main_find_callable(",
+        "        [",
+        "            'orchestrate_study',",
+        "            'run_study',",
+        "            'execute_study',",
+        "        ],",
+        "        required_tokens=('study',),",
+        "        exclude_tokens=('metrics', 'parser', 'command', 'main', 'summary'),",
+        "    )",
+        "    if orchestrator is None:",
+        "        raise RuntimeError('Unable to locate the study orchestration callable in the current script.')",
+        "    payload = _main_invoke_callable(orchestrator, positional_args=[args], args=args)",
+        "    print(payload['condition_results'][1]['condition_marker'])",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/StudyCondition/);
+
+    const repair = await repairPythonMainFindCallableStudyResolverSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_skip_callable_classes_marker");
+    expect(repairedSource).toContain('"run_locked_condition_study",');
+    expect(repairedSource).toContain("_autolabos_consumed_positional_names");
+    const output = execFileSync("python3", [scriptPath], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("rank_8_dropout_0_0");
+  });
+
+  it("prevents callable helper classes from shadowing runtime preflight helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-helper-class-shadow-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "from dataclasses import dataclass",
+        "from typing import Any, Mapping, Optional, Sequence",
+        "",
+        "@dataclass",
+        "class PreflightRecord:",
+        "    ok: bool",
+        "",
+        "def _find_helper_by_name(candidates: Sequence[str], required_tokens: Sequence[str]) -> Optional[Any]:",
+        "    for name in candidates:",
+        "        helper = globals().get(name)",
+        "        if callable(helper):",
+        "            return helper",
+        "    for name, helper in globals().items():",
+        "        if not callable(helper):",
+        "            continue",
+        "        lowered = name.lower()",
+        "        if all(token in lowered for token in required_tokens):",
+        "            return helper",
+        "    return None",
+        "",
+        "def _invoke_helper(helper: Any, context: Mapping[str, Any]) -> Any:",
+        "    signature = inspect.signature(helper)",
+        "    keyword_args = {}",
+        "    for parameter in signature.parameters.values():",
+        "        value = context.get(parameter.name)",
+        "        if value is None and parameter.default is inspect._empty:",
+        "            raise TypeError(f\"Missing required parameter '{parameter.name}' for helper {helper.__name__}\")",
+        "        if value is not None or parameter.default is inspect._empty:",
+        "            keyword_args[parameter.name] = value",
+        "    return helper(**keyword_args)",
+        "",
+        "def _resolve_runtime_preflight(timeout_sec: int):",
+        "    helper = _find_helper_by_name(",
+        "        candidates=(",
+        "            'run_runtime_preflight',",
+        "            'perform_runtime_preflight',",
+        "            'prepare_runtime_preflight',",
+        "            'resolve_runtime_preflight',",
+        "            'build_runtime_preflight',",
+        "        ),",
+        "        required_tokens=('preflight',),",
+        "    )",
+        "    if helper is not None:",
+        "        return _invoke_helper(helper, {'timeout_sec': timeout_sec})",
+        "    return {'ok': 'fallback-preflight'}",
+        "",
+        "def main():",
+        "    print(_resolve_runtime_preflight(10)['ok'])",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Missing required parameter 'ok'/
+    );
+
+    const repair = await repairPythonFindHelperCallableClassSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_find_helper_skip_callable_classes_marker");
+    expect(repairedSource).toContain("isinstance(helper, type)");
+    expect(repairedSource).toContain("str(name).startswith('_')");
+    const output = execFileSync("python3", [scriptPath], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("fallback-preflight");
+  });
+
+  it("prevents role callable resolver classes from shadowing runtime preflight helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-role-callable-class-shadow-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "from dataclasses import dataclass",
+        "from typing import Any, Mapping, Optional, Sequence",
+        "",
+        "@dataclass",
+        "class PreflightRecord:",
+        "    ok: bool",
+        "",
+        "def _resolve_callable_by_role(",
+        "    explicit_names: Sequence[str],",
+        "    token_groups: Sequence[Sequence[str]],",
+        "    excluded_names: Optional[Sequence[str]] = None,",
+        ") -> Optional[Any]:",
+        "    excluded = {name for name in (excluded_names or ())}",
+        "    for name in explicit_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    for name, candidate in globals().items():",
+        "        if name in excluded or not callable(candidate):",
+        "            continue",
+        "        lower_name = name.lower()",
+        "        for tokens in token_groups:",
+        "            if all(token in lower_name for token in tokens):",
+        "                return candidate",
+        "    return None",
+        "",
+        "def _invoke_with_supported_kwargs(func: Any, kwargs: Mapping[str, Any], positional_fallback: Sequence[Any]) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    filtered_kwargs = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    required_missing = []",
+        "    for parameter in parameters.values():",
+        "        if parameter.default is inspect._empty and parameter.name not in filtered_kwargs:",
+        "            required_missing.append(parameter.name)",
+        "    if required_missing:",
+        "        raise TypeError(f\"Missing required parameter '{required_missing[0]}' for helper {func.__name__}\")",
+        "    return func(**filtered_kwargs)",
+        "",
+        "def _resolve_runtime_preflight(timeout_sec: int):",
+        "    helper = _resolve_callable_by_role(",
+        "        explicit_names=(",
+        "            'run_runtime_preflight',",
+        "            'perform_runtime_preflight',",
+        "            'prepare_runtime_preflight',",
+        "        ),",
+        "        token_groups=(('preflight',),),",
+        "    )",
+        "    if helper is not None:",
+        "        return _invoke_with_supported_kwargs(helper, {'timeout_sec': timeout_sec}, positional_fallback=())",
+        "    return {'ok': 'fallback-preflight'}",
+        "",
+        "def main():",
+        "    print(_resolve_runtime_preflight(10)['ok'])",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Missing required parameter 'ok'/
+    );
+
+    const repair = await repairPythonRoleCallableResolverClassSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_role_callable_skip_callable_classes_marker");
+    expect(repairedSource).toContain("isinstance(candidate, type)");
+    expect(repairedSource).toContain("str(name).startswith('_')");
+    const output = execFileSync("python3", [scriptPath], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("fallback-preflight");
+  });
+
+  it("prioritizes final baseline-first orchestration helpers over config resolvers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-final-orchestrator-resolver-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from pathlib import Path",
+        "from typing import Any, Mapping, Optional, Sequence",
+        "",
+        "def resolve_study_run_config(args):",
+        "    return argparse.Namespace(kind='config-only')",
+        "",
+        "def run_baseline_first_locked_study(condition_specs, run_config, output_dir, runtime_context=None, experiment_start_time=None):",
+        "    if condition_specs is not None:",
+        "        raise AssertionError('condition_specs should be materialized as None for this generated surface')",
+        "    return {",
+        "        'status': 'executed',",
+        "        'seed': run_config.seed,",
+        "        'output_dir': str(output_dir),",
+        "        'has_context': runtime_context is not None,",
+        "        'has_start_time': experiment_start_time is not None,",
+        "    }",
+        "",
+        "def _invoke_helper(callable_obj: Any, available: Mapping[str, Any]) -> Any:",
+        "    signature = inspect.signature(callable_obj)",
+        "    positional_args = []",
+        "    keyword_args = {}",
+        "    missing_required = []",
+        "    for parameter in signature.parameters.values():",
+        "        if parameter.name in available:",
+        "            keyword_args[parameter.name] = available[parameter.name]",
+        "        elif parameter.default is inspect._empty:",
+        "            missing_required.append(parameter.name)",
+        "    if not missing_required:",
+        "        return callable_obj(*positional_args, **keyword_args)",
+        "    trial_calls = []",
+        "    if 'args' in available:",
+        "        trial_calls.append(((available['args'],), {}))",
+        "    trial_calls.append((tuple(), {}))",
+        "    last_error = None",
+        "    for positional, keyword in trial_calls:",
+        "        try:",
+        "            return callable_obj(*positional, **keyword)",
+        "        except TypeError as exc:",
+        "            last_error = exc",
+        "            continue",
+        "    raise last_error",
+        "",
+        "def _lookup_orchestration_helper() -> Optional[Any]:",
+        "    explicit_names = (",
+        "        'run_lora_rank_dropout_study',",
+        "        'run_rank_dropout_study',",
+        "        'run_study',",
+        "        'execute_study',",
+        "        'execute_rank_dropout_study',",
+        "        'execute_baseline_first_study',",
+        "        'orchestrate_rank_dropout_study',",
+        "        'orchestrate_study',",
+        "        'run_condition_study',",
+        "        'run_condition_sequence',",
+        "    )",
+        "    for name in explicit_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    for name, candidate in globals().items():",
+        "        lowered = name.lower()",
+        "        if not callable(candidate) or name.startswith('_'):",
+        "            continue",
+        "        if 'main' in lowered or 'write' in lowered or 'metric' in lowered or 'summary' in lowered:",
+        "            continue",
+        "        if any(term in lowered for term in ('run', 'execute', 'orchestr')) and any(",
+        "            term in lowered for term in ('study', 'condition', 'experiment')",
+        "        ):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def main():",
+        "    started_at = 123.0",
+        "    args = argparse.Namespace(seed=42)",
+        "    output_dir = Path('out')",
+        "    metrics_path = Path('metrics.json')",
+        "    results_path = Path('results.json')",
+        "    summary_path = Path('summary.json')",
+        "    run_command = 'python runner.py'",
+        "    run_context = {'seed': args.seed}",
+        "    orchestrator = _lookup_orchestration_helper()",
+        "    raw_result = _invoke_helper(",
+        "        orchestrator,",
+        "        {",
+        "            'args': args,",
+        "            'output_dir': output_dir,",
+        "            'metrics_path': metrics_path,",
+        "            'results_path': results_path,",
+        "            'summary_path': summary_path,",
+        "            'run_command': run_command,",
+        "        },",
+        "    )",
+        "    print(raw_result.get('status', type(raw_result).__name__) if isinstance(raw_result, dict) else type(raw_result).__name__)",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim()).toBe(
+      "Namespace"
+    );
+
+    const repair = await repairPythonFinalOrchestrationHelperSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_final_orchestration_helper_marker");
+    expect(repairedSource).toContain('"run_baseline_first_locked_study",');
+    expect(repairedSource).toContain('"condition_specs": None');
+    expect(repairedSource).toContain('"run_config": args');
+    const output = execFileSync("python3", [scriptPath], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("executed");
   });
 
   it("repairs plan snapshot path loaders that receive the CLI Namespace positionally", async () => {

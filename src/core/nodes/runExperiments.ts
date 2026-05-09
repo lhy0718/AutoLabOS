@@ -341,6 +341,24 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         };
       }
 
+      const runtimeCompatibilityRepair = await repairPythonRuntimeCompatibilityBeforeRun({
+        runContext,
+        command: resolved.command,
+        cwd: resolved.cwd,
+        workspaceRoot: process.cwd()
+      });
+      if (runtimeCompatibilityRepair.repaired) {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            text: runtimeCompatibilityRepair.message
+          }
+        });
+      }
+
       executionPlan = buildRunExperimentsExecutionPlan({
         trigger,
         command: wrapCommandForExecutionProfile({
@@ -751,6 +769,18 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             throw new Error("metrics.json must decode to an object");
           }
           parsedMetrics = parsed as Record<string, unknown>;
+          const promotedObjectiveMetric = promoteSummaryPrimaryMetric(parsedMetrics);
+          if (promotedObjectiveMetric) {
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "run_experiments",
+              agentRole: "runner",
+              payload: {
+                text: promotedObjectiveMetric
+              }
+            });
+          }
           watchdog = setMetricsState(watchdog, "valid", logFile);
           const failedMetricsMessage = detectFailedMetricsPayload(parsedMetrics);
           if (failedMetricsMessage) {
@@ -1971,6 +2001,121 @@ function resolveMaybeRelative(value: string | undefined, workspaceRoot: string):
     return value;
   }
   return path.join(workspaceRoot, value);
+}
+
+async function repairPythonRuntimeCompatibilityBeforeRun(input: {
+  runContext: RunContextMemory;
+  command: string;
+  cwd: string;
+  workspaceRoot: string;
+}): Promise<{ repaired: boolean; message: string }> {
+  const scriptPath =
+    resolveMaybeRelative(await input.runContext.get<string>("implement_experiments.script"), input.workspaceRoot) ||
+    extractPythonScriptPathFromCommand(input.command, input.cwd);
+  if (!scriptPath || path.extname(scriptPath) !== ".py" || !(await fileExists(scriptPath))) {
+    return { repaired: false, message: "" };
+  }
+
+  const source = await fs.readFile(scriptPath, "utf8");
+  const repairedSource = removeUnsupportedTrainingArgumentsKwargLines(source);
+  if (repairedSource === source) {
+    return { repaired: false, message: "" };
+  }
+
+  await fs.writeFile(scriptPath, repairedSource, "utf8");
+  return {
+    repaired: true,
+    message: `Removed unsupported TrainingArguments kwarg(s) from ${path.basename(scriptPath)} before run_experiments execution.`
+  };
+}
+
+function extractPythonScriptPathFromCommand(command: string, cwd: string): string | undefined {
+  const match = command.match(/(?:^|\s)python(?:3)?(?:\s+-B)?\s+(?:"([^"]+\.py)"|'([^']+\.py)'|(\S+\.py))/u);
+  const candidate = match?.[1] || match?.[2] || match?.[3];
+  if (!candidate) {
+    return undefined;
+  }
+  return path.isAbsolute(candidate) ? candidate : path.join(cwd, candidate);
+}
+
+function removeUnsupportedTrainingArgumentsKwargLines(source: string): string {
+  const unsupportedNames = ["overwrite_output_dir", "evaluation_strategy"];
+  const unsupportedPattern = new RegExp(
+    `^\\s*(?:${unsupportedNames.map(escapeRegex).join("|")})\\s*=.*?,?\\s*(?:#.*)?$`,
+    "u"
+  );
+  const lines = source.split(/\r?\n/u);
+  const nextLines: string[] = [];
+  let inTrainingArgumentsCall = false;
+  let parenDepth = 0;
+  let changed = false;
+
+  for (const line of lines) {
+    const startsTrainingArgumentsCall =
+      /\bTrainingArguments\s*\(/u.test(line) || /\[\s*["']TrainingArguments["']\s*\]\s*\(/u.test(line);
+    if (startsTrainingArgumentsCall) {
+      inTrainingArgumentsCall = true;
+    }
+
+    if (inTrainingArgumentsCall && unsupportedPattern.test(line)) {
+      changed = true;
+      parenDepth += countTextOccurrences(line, "(") - countTextOccurrences(line, ")");
+      if (parenDepth <= 0) {
+        inTrainingArgumentsCall = false;
+        parenDepth = 0;
+      }
+      continue;
+    }
+
+    nextLines.push(line);
+    if (inTrainingArgumentsCall) {
+      parenDepth += countTextOccurrences(line, "(") - countTextOccurrences(line, ")");
+      if (parenDepth <= 0) {
+        inTrainingArgumentsCall = false;
+        parenDepth = 0;
+      }
+    }
+  }
+
+  return changed ? nextLines.join("\n").replace(/\n{3,}/gu, "\n\n") : source;
+}
+
+function promoteSummaryPrimaryMetric(metrics: Record<string, unknown>): string | undefined {
+  const summary = metrics.summary;
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) {
+    return undefined;
+  }
+  const summaryRecord = summary as Record<string, unknown>;
+  const primaryMetricKey = summaryRecord.primary_metric_key;
+  if (typeof primaryMetricKey !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(primaryMetricKey)) {
+    return undefined;
+  }
+  if (metrics[primaryMetricKey] !== undefined) {
+    return undefined;
+  }
+  const primaryMetric = summaryRecord.primary_metric;
+  if (typeof primaryMetric !== "number" || !Number.isFinite(primaryMetric)) {
+    return undefined;
+  }
+  metrics[primaryMetricKey] = primaryMetric;
+  return `Promoted summary primary metric ${primaryMetricKey}=${primaryMetric} to top-level metrics before contract evaluation.`;
+}
+
+function countTextOccurrences(text: string, token: string): number {
+  if (!token) {
+    return 0;
+  }
+  let count = 0;
+  let index = text.indexOf(token);
+  while (index !== -1) {
+    count += 1;
+    index = text.indexOf(token, index + token.length);
+  }
+  return count;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 async function loadImplementBootstrapContract(publicDir: string): Promise<{

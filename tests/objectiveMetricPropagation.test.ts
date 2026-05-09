@@ -3915,6 +3915,96 @@ describe("objective metric propagation", () => {
     expect(await memory.get("run_experiments.last_error")).toBeUndefined();
   });
 
+  it("promotes summary primary metric before run_experiments contract evaluation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-summary-primary-"));
+    process.chdir(root);
+
+    const runId = "run-summary-primary";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: "python3 experiment.py",
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: root,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.pending_handoff_to_run_experiments",
+            value: true,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                summary: {
+                  primary_metric_key: "accuracy",
+                  primary_metric: 0.91
+                }
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "done",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+
+    const metricsRaw = await readFile(path.join(runDir, "metrics.json"), "utf8");
+    expect(metricsRaw).toContain('"accuracy": 0.91');
+
+    const evaluationRaw = await readFile(path.join(runDir, "objective_evaluation.json"), "utf8");
+    expect(evaluationRaw).toContain('"status": "met"');
+  });
+
   it("retries a transient primary-command failure once and records triage artifacts", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-transient-retry-"));
     process.chdir(root);

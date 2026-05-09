@@ -98,6 +98,16 @@ For unattended helpers that drive a TUI or live workflow:
 - If a newly handed-off node is running while old error text remains in the record or terminal output, continue observing the fresh running node instead of aborting on the stale error.
 - When a node completes into `needs_approval`, do not report the next workflow node as executed until the approval has actually been sent and the persisted record shows the next node running or completed.
 
+## Same-node retry after implementation fixes
+When a live node exposes an implementation bug and you patch AutoLabOS repo code:
+
+- Rebuild before rerunning the live helper when the change affects shipped TypeScript.
+- Rerun the same workflow node that exposed the failure; do not skip ahead because a deterministic test passed.
+- Prefer an explicit retry command for the failed node when the workflow supports it.
+- Confirm the rerun from persisted artifacts such as `run_record.json`, node memory, metrics files, and node-owned summaries.
+- If a node succeeds but a gate backtracks to an earlier node, report the backtrack as a valid governed outcome rather than a failure to reach the paper step.
+- Treat missing top-level contract fields, hidden failed runs, and stale summary text as validation blockers until the same live flow proves the repair.
+
 ## Node-ownership rule
 During live validation or test-driven execution, do not let the external coding agent perform work that belongs to an AutoLabOS workflow node.
 
