@@ -34,6 +34,7 @@ import {
   parseHypotheses,
   parsePaperSummaries,
   parseResultAnalysis,
+  sanitizePaperNarrativeText,
   validatePaperDraft
 } from "../analysis/paperWriting.js";
 import {
@@ -52,6 +53,7 @@ import {
 } from "../readinessRisks.js";
 import {
   PaperManuscript,
+  PaperManuscriptVisualRow,
   PaperSubmissionValidationReport,
   PaperTraceabilityReport,
   buildFallbackPaperManuscript,
@@ -241,6 +243,8 @@ interface PaperReadinessArtifact {
   scientific_validation_status: "pass" | "warn" | "fail";
   submission_validation_ok: boolean;
   manuscript_quality_action: ManuscriptRepairDecision["action"];
+  compile_status?: PaperCompileResult["status"];
+  compiled_page_validation_status?: CompiledPdfPageValidationReport["status"];
   claim_status_counts: Record<ClaimEvidenceStatus, number>;
 }
 
@@ -1342,6 +1346,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.compile_status", compileResult.status);
       await runContextMemory.put("write_paper.compile_report", compileResult);
       await runContextMemory.put("write_paper.pdf_path", compileResult.pdf_path || null);
+      let pendingCompileError: string | undefined;
       if (compileResult.status === "failed") {
         const compileError = buildCompileFailureError(compileResult);
         emitLog(compileError);
@@ -1350,7 +1355,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         const isMissingTool = compileResult.attempts.some(
           (a) => a.error && /not found|command not found|ENOENT/iu.test(a.error)
         );
-        if (!isMissingTool) {
+        if (!isMissingTool && !compileResult.pdf_path) {
           await runContextMemory.put("write_paper.last_error", compileError);
           return {
             status: "failure",
@@ -1359,7 +1364,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
             toolCallsUsed
           };
         }
-        emitLog("PDF compilation tool is unavailable; continuing with LaTeX source only.");
+        if (isMissingTool) {
+          emitLog("PDF compilation tool is unavailable; continuing with LaTeX source only.");
+        } else {
+          pendingCompileError = compileError;
+        }
       }
       const compiledPageValidation = await validateCompiledPdfPageBudget({
         deps,
@@ -1382,6 +1391,64 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.compiled_page_validation", compiledPageValidation);
       if (compiledPageValidation.status === "warn") {
         emitLog(`Compiled PDF page-budget warning: ${compiledPageValidation.message}`);
+      }
+      const finalPaperReadiness = buildPaperReadinessArtifact({
+        manuscriptType: postDraftCritique.manuscript_type,
+        preDraftManuscriptType: postDraftCritique.pre_draft_manuscript_type,
+        claimCeilingApplied: postDraftCritique.claim_ceiling_applied,
+        overallScore: postDraftCritique.overall_score,
+        evidenceGateDecision,
+        claimStatusTable,
+        citationReport: citationConsistency,
+        scientificGateStatus: gateDecision.status,
+        submissionValidationOk: submissionValidation.ok,
+        manuscriptQualityAction: manuscriptQuality.repairDecision.action,
+        compileStatus: compileResult.status,
+        compiledPageValidationStatus: compiledPageValidation.status
+      });
+      const finalReadinessRisks = buildPaperReadinessRiskArtifact({
+        manuscriptType: postDraftCritique.manuscript_type,
+        paperReadiness: finalPaperReadiness,
+        verifiedRegistry,
+        claimStatusTable,
+        evidenceGateDecision,
+        scientificGateStatus: gateDecision.status,
+        submissionValidationOk: submissionValidation.ok,
+        manuscriptQualityAction: manuscriptQuality.repairDecision.action,
+        compileStatus: compileResult.status,
+        compiledPageValidation,
+        config: deps.config
+      });
+      await writeRunArtifact(
+        run,
+        "paper/paper_readiness.json",
+        `${JSON.stringify(finalPaperReadiness, null, 2)}\n`
+      );
+      await writeRunArtifact(
+        run,
+        "paper/readiness_risks.json",
+        `${JSON.stringify(finalReadinessRisks, null, 2)}\n`
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "paper_readiness.json"),
+        `${JSON.stringify(finalPaperReadiness, null, 2)}\n`,
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "readiness_risks.json"),
+        `${JSON.stringify(finalReadinessRisks, null, 2)}\n`,
+        "utf8"
+      );
+      await runContextMemory.put("write_paper.paper_readiness", finalPaperReadiness);
+      await runContextMemory.put("write_paper.readiness_risks", finalReadinessRisks);
+      if (pendingCompileError) {
+        await runContextMemory.put("write_paper.last_error", pendingCompileError);
+        return {
+          status: "failure",
+          error: pendingCompileError,
+          summary: pendingCompileError,
+          toolCallsUsed
+        };
       }
       if (compiledPageValidation.status === "fail") {
         const pageValidationError = buildCompiledPdfPageValidationError(compiledPageValidation);
@@ -1922,6 +1989,8 @@ async function maybeBuildPaperPdf(input: {
 
   if (!firstAttempt.repairable) {
     input.emitLog(`LaTeX compilation failed without repair attempt: ${firstAttempt.attempt.error || "unknown error"}`);
+    const pdfPath = path.join(runPaperDir, "main.pdf");
+    const pdfExists = await fileExists(pdfPath);
     const report: PaperCompileResult = {
       enabled: true,
       status: "failed",
@@ -1929,7 +1998,8 @@ async function maybeBuildPaperPdf(input: {
       toolCallsUsed,
       attempts,
       warnings: compileWarnings,
-      build_log_path: path.join(runPaperDir, "build.log")
+      build_log_path: path.join(runPaperDir, "build.log"),
+      ...(pdfExists ? { pdf_path: pdfPath } : {})
     };
     await writeRunArtifact(input.run, "paper/compile_report.json", `${JSON.stringify(report, null, 2)}\n`);
     return report;
@@ -1985,6 +2055,8 @@ async function maybeBuildPaperPdf(input: {
     input.emitLog(`Automatic LaTeX repair failed: ${repairError}`);
   }
 
+  const failedPdfPath = path.join(runPaperDir, "main.pdf");
+  const failedPdfExists = await fileExists(failedPdfPath);
   const report: PaperCompileResult = {
     enabled: true,
     status: "failed",
@@ -1993,6 +2065,7 @@ async function maybeBuildPaperPdf(input: {
     attempts,
     warnings: compileWarnings,
     build_log_path: path.join(runPaperDir, "build.log"),
+    ...(failedPdfExists ? { pdf_path: failedPdfPath } : {}),
     repair_error: repairError
   };
   await writeRunArtifact(input.run, "paper/compile_report.json", `${JSON.stringify(report, null, 2)}\n`);
@@ -2046,8 +2119,10 @@ async function runLatexCompileAttempt(input: {
     logChunks.push(`$ ${item.command}`, obs.stdout || "", obs.stderr || "", "");
 
     if (obs.status !== "ok") {
-      if (item.optional && isMissingBinaryObservation(obs)) {
-        warnings.push(`${item.step} unavailable: ${(obs.stderr || "").trim() || "missing binary"}`);
+      if (item.optional) {
+        warnings.push(
+          `${item.step} failed but is optional: ${(obs.stderr || obs.stdout || "").trim() || "optional command failed"}`
+        );
         input.emitLog(`Optional LaTeX step "${item.step}" failed; continuing with warnings.`);
         continue;
       }
@@ -2165,6 +2240,129 @@ function describeScientificGateStatus(result: {
     return `fail (${result.blocking_issue_count} blocking issue${result.blocking_issue_count === 1 ? "" : "s"})`;
   }
   return `warn (${result.warning_count} issue${result.warning_count === 1 ? "" : "s"})`;
+}
+
+function sanitizeReaderFacingRepairTargets(
+  manuscriptBeforeRepair: PaperManuscript,
+  repairedManuscript: PaperManuscript,
+  repairPlan: ManuscriptRepairPlanArtifact
+): PaperManuscript {
+  const allowedLocationKeys = new Set(
+    repairPlan.targets.flatMap((target) =>
+      target.allowed_location_keys.length > 0 ? target.allowed_location_keys : [target.location_key]
+    )
+  );
+  const selectIfAllowed = (locationKey: string, beforeText: string, repairedText: string | undefined): string =>
+    allowedLocationKeys.has(locationKey)
+      ? sanitizePaperNarrativeText(repairedText ?? beforeText)
+      : beforeText;
+  const sanitizeVisualRows = (
+    beforeRows: PaperManuscriptVisualRow[],
+    repairedRows: PaperManuscriptVisualRow[] | undefined
+  ): PaperManuscriptVisualRow[] => {
+    if (!Array.isArray(repairedRows) || repairedRows.length === 0) {
+      return beforeRows;
+    }
+    return repairedRows
+      .filter((row) => Number.isFinite(row.value))
+      .map((row) => ({
+        label: sanitizePaperNarrativeText(row.label),
+        value: row.value
+      }));
+  };
+  return {
+    ...manuscriptBeforeRepair,
+    title: selectIfAllowed("title", manuscriptBeforeRepair.title, repairedManuscript.title),
+    abstract: selectIfAllowed("abstract", manuscriptBeforeRepair.abstract, repairedManuscript.abstract),
+    sections: manuscriptBeforeRepair.sections.map((section, sectionIndex) => ({
+      ...section,
+      paragraphs: section.paragraphs.map((paragraph, paragraphIndex) =>
+        selectIfAllowed(
+          buildMainParagraphLocationKey(section.heading, paragraphIndex),
+          paragraph,
+          repairedManuscript.sections[sectionIndex]?.paragraphs[paragraphIndex]
+        )
+      )
+    })),
+    ...(manuscriptBeforeRepair.appendix_sections
+      ? {
+          appendix_sections: manuscriptBeforeRepair.appendix_sections.map((section, sectionIndex) => ({
+            ...section,
+            paragraphs: section.paragraphs.map((paragraph, paragraphIndex) =>
+              selectIfAllowed(
+                buildAppendixParagraphLocationKey(section.heading, paragraphIndex),
+                paragraph,
+                repairedManuscript.appendix_sections?.[sectionIndex]?.paragraphs[paragraphIndex]
+              )
+            )
+          }))
+        }
+      : {}),
+    ...(manuscriptBeforeRepair.tables
+      ? {
+          tables: manuscriptBeforeRepair.tables.map((table, index) => ({
+            ...table,
+            caption: selectIfAllowed(`table:${index}`, table.caption, repairedManuscript.tables?.[index]?.caption),
+            rows: allowedLocationKeys.has(`table:${index}`)
+              ? sanitizeVisualRows(table.rows, repairedManuscript.tables?.[index]?.rows)
+              : table.rows
+          }))
+        }
+      : {}),
+    ...(manuscriptBeforeRepair.figures
+      ? {
+          figures: manuscriptBeforeRepair.figures.map((figure, index) => ({
+            ...figure,
+            caption: selectIfAllowed(`figure:${index}`, figure.caption, repairedManuscript.figures?.[index]?.caption),
+            bars: allowedLocationKeys.has(`figure:${index}`)
+              ? sanitizeVisualRows(figure.bars, repairedManuscript.figures?.[index]?.bars)
+              : figure.bars
+          }))
+        }
+      : {}),
+    ...(manuscriptBeforeRepair.appendix_tables
+      ? {
+          appendix_tables: manuscriptBeforeRepair.appendix_tables.map((table, index) => ({
+            ...table,
+            caption: selectIfAllowed(
+              `appendix_table:${index}`,
+              table.caption,
+              repairedManuscript.appendix_tables?.[index]?.caption
+            ),
+            rows: allowedLocationKeys.has(`appendix_table:${index}`)
+              ? sanitizeVisualRows(table.rows, repairedManuscript.appendix_tables?.[index]?.rows)
+              : table.rows
+          }))
+        }
+      : {}),
+    ...(manuscriptBeforeRepair.appendix_figures
+      ? {
+          appendix_figures: manuscriptBeforeRepair.appendix_figures.map((figure, index) => ({
+            ...figure,
+            caption: selectIfAllowed(
+              `appendix_figure:${index}`,
+              figure.caption,
+              repairedManuscript.appendix_figures?.[index]?.caption
+            ),
+            bars: allowedLocationKeys.has(`appendix_figure:${index}`)
+              ? sanitizeVisualRows(figure.bars, repairedManuscript.appendix_figures?.[index]?.bars)
+              : figure.bars
+          }))
+        }
+      : {})
+  };
+}
+
+function buildMainParagraphLocationKey(heading: string, paragraphIndex: number): string {
+  return `paragraph:${normalizeLocationKeyFragment(heading)}:${paragraphIndex}`;
+}
+
+function buildAppendixParagraphLocationKey(heading: string, paragraphIndex: number): string {
+  return `appendix_paragraph:${normalizeLocationKeyFragment(heading)}:${paragraphIndex}`;
+}
+
+function normalizeLocationKeyFragment(value: string): string {
+  return value.replace(/\s+/gu, "_").toLowerCase();
 }
 
 async function runManuscriptQualityLoop(input: {
@@ -2341,6 +2539,8 @@ let currentManuscript = input.initialManuscript;
       paperProfile: input.paperProfile,
       objectiveMetricProfile: input.objectiveMetricProfile,
       objectiveEvaluation: input.objectiveEvaluation,
+      traceability: cycleInput.evaluation.traceability,
+      citationKeysByPaperId: input.citationKeysByPaperId,
       stage: "manuscript_review",
       passLabel: cycleInput.passLabel,
       repairPlan: cycleInput.repairPlan,
@@ -2371,6 +2571,8 @@ let currentManuscript = input.initialManuscript;
         paperProfile: input.paperProfile,
         objectiveMetricProfile: input.objectiveMetricProfile,
         objectiveEvaluation: input.objectiveEvaluation,
+        traceability: cycleInput.evaluation.traceability,
+        citationKeysByPaperId: input.citationKeysByPaperId,
         stage: "manuscript_review_retry",
         passLabel: `${cycleInput.passLabel} retry`,
         previousReview: review,
@@ -2400,6 +2602,7 @@ let currentManuscript = input.initialManuscript;
       validation: reviewValidation,
       lint: cycleInput.evaluation.styleLint,
       traceability: cycleInput.evaluation.traceability,
+      citationKeysByPaperId: input.citationKeysByPaperId,
       passLabel: cycleInput.passLabel,
       abortSignal: input.abortSignal
     });
@@ -2419,6 +2622,8 @@ let currentManuscript = input.initialManuscript;
         paperProfile: input.paperProfile,
         objectiveMetricProfile: input.objectiveMetricProfile,
         objectiveEvaluation: input.objectiveEvaluation,
+        traceability: cycleInput.evaluation.traceability,
+        citationKeysByPaperId: input.citationKeysByPaperId,
         stage: "manuscript_review_retry",
         passLabel: `${cycleInput.passLabel} retry`,
         previousReview: review,
@@ -2447,6 +2652,7 @@ let currentManuscript = input.initialManuscript;
         validation: reviewValidation,
         lint: cycleInput.evaluation.styleLint,
         traceability: cycleInput.evaluation.traceability,
+        citationKeysByPaperId: input.citationKeysByPaperId,
         passLabel: `${cycleInput.passLabel} audit recheck`,
         abortSignal: input.abortSignal
       });
@@ -2508,7 +2714,8 @@ let currentManuscript = input.initialManuscript;
       mustImproveIssues: inputPlan.issues
     });
     await persistRepairPlanArtifact(inputPlan.passIndex, repairPlan);
-    if (repairPlan.targets.length > 0 && repairPlan.blocked_targets.length === 0) {
+    const blockedFailTargets = repairPlan.blocked_targets.filter((target) => target.severity === "fail");
+    if (repairPlan.targets.length > 0 && blockedFailTargets.length === 0) {
       return {
         plan: repairPlan,
         decision: inputPlan.decision
@@ -2523,7 +2730,9 @@ let currentManuscript = input.initialManuscript;
         stop_or_continue_reason:
           repairPlan.targets.length === 0
             ? "Repairable manuscript issues remained, but no bounded local repair target could be derived safely."
-            : "Repairable manuscript issues remained, but some issues could not be converted into safe bounded local repair targets."
+            : blockedFailTargets.length > 0
+              ? "Repairable manuscript issues remained, but some blocking issues could not be converted into safe bounded local repair targets."
+              : "Repairable manuscript issues remained, but some issues could not be converted into safe bounded local repair targets."
       }
     };
   };
@@ -2622,7 +2831,7 @@ let currentManuscript = input.initialManuscript;
     if (repairResult.source !== "fallback") {
       toolCallsUsed += 1;
     }
-    currentManuscript = repairResult.manuscript;
+    currentManuscript = sanitizeReaderFacingRepairTargets(manuscriptBeforeRepair, repairResult.manuscript, repairPlan);
     evaluation = evaluateCandidate(currentManuscript);
     reviewCycle = await runGroundedReviewCycle({
       evaluation,
@@ -2694,7 +2903,7 @@ let currentManuscript = input.initialManuscript;
     await writeRunArtifact(
       input.run,
       `paper/manuscript_repair_${passIndex}.json`,
-      `${JSON.stringify(repairResult.manuscript, null, 2)}\n`
+      `${JSON.stringify(currentManuscript, null, 2)}\n`
     );
     await writeRunArtifact(
       input.run,
@@ -2808,7 +3017,7 @@ function buildInitialManuscriptRepairDecision(input: {
     return finalizeManuscriptRepairDecision({
       action: "repair",
       pass_index: 0,
-      triggered_by: uniqueStrings(issuesBefore.map((issue) => issue.code)),
+      triggered_by: buildInitialManuscriptRepairTriggers(issuesBefore, failCount),
       allowed_max_passes: 1,
       remaining_allowed_repairs: 1,
       issues_before: issuesBefore,
@@ -2824,6 +3033,19 @@ function buildInitialManuscriptRepairDecision(input: {
     issues_before: issuesBefore,
     stop_or_continue_reason: "Initial manuscript review found only non-blocking manuscript warnings."
   }, reviewReliability);
+}
+
+function buildInitialManuscriptRepairTriggers(
+  issues: ManuscriptQualityIssueSnapshot[],
+  failCount: number
+): string[] {
+  if (failCount > 0) {
+    return uniqueStrings(issues.filter((issue) => issue.severity === "fail").map((issue) => issue.code));
+  }
+  const reviewIssueCodes = issues
+    .filter((issue) => issue.source === "review")
+    .map((issue) => issue.code);
+  return uniqueStrings(reviewIssueCodes.length > 0 ? reviewIssueCodes : issues.map((issue) => issue.code));
 }
 
 function buildFollowupManuscriptRepairDecision(input: {
@@ -2938,6 +3160,33 @@ function buildFollowupManuscriptRepairDecision(input: {
         "Deterministic hard-stop manuscript policy findings remain after repair, so another local manuscript repair is not allowed."
     }, reviewReliability);
   }
+  if (reviewReliability === "partially_grounded") {
+    return finalizeManuscriptRepairDecision({
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason:
+        "The follow-up manuscript review remained only partially grounded, so a second manuscript repair is not allowed."
+    }, reviewReliability);
+  }
+  if (remainingFailCount === 0 && input.gateDecision.status !== "fail" && input.submissionValidation.ok) {
+    return finalizeManuscriptRepairDecision({
+      action: "pass",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
+      allowed_max_passes: input.passIndex === 1 ? 1 : 2,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason: "Only non-blocking manuscript warnings remain after repair."
+    }, reviewReliability);
+  }
   if (input.passIndex >= 2) {
     return finalizeManuscriptRepairDecision({
       action: "stop",
@@ -2949,19 +3198,6 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason: "A third manuscript repair pass is forbidden."
-    }, reviewReliability);
-  }
-  if (remainingFailCount === 0 && input.review.overall_decision !== "repair") {
-    return finalizeManuscriptRepairDecision({
-      action: "pass",
-      pass_index: input.passIndex,
-      triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
-      allowed_max_passes: input.passIndex === 1 ? 1 : 2,
-      remaining_allowed_repairs: 0,
-      issues_before: input.previousIssues,
-      issues_after: input.issuesAfter,
-      improvement_detected: improvement,
-      stop_or_continue_reason: "Only non-blocking manuscript warnings remain after repair."
     }, reviewReliability);
   }
   if (input.gateDecision.status === "fail" || !input.submissionValidation.ok) {
@@ -2991,7 +3227,7 @@ function buildFollowupManuscriptRepairDecision(input: {
         "The follow-up manuscript review artifact remained degraded after bounded validation and audit, so a second manuscript repair is not allowed."
     }, reviewReliability);
   }
-  if (reviewReliability === "partially_grounded") {
+  if (!improvement || worsenedIssues(input.previousIssues, input.issuesAfter)) {
     return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,
@@ -3001,8 +3237,28 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_before: input.previousIssues,
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
+      stop_or_continue_reason: "The first manuscript repair did not show a reliable quality improvement."
+    }, reviewReliability);
+  }
+  const blockingIssuesAfter = input.issuesAfter.filter((issue) => issue.severity === "fail");
+  const narrowBlockingScope =
+    remainingFailCount > 0 &&
+    blockingIssuesAfter.every((issue) => issue.repairable) &&
+    blockingIssuesAfter.length <= 3 &&
+    uniqueStrings(blockingIssuesAfter.map((issue) => `${issue.source}:${issue.code}`)).length <= 3 &&
+    input.review.overall_decision !== "stop";
+  if (narrowBlockingScope) {
+    return finalizeManuscriptRepairDecision({
+      action: "repair",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(blockingIssuesAfter.map((issue) => issue.code)),
+      allowed_max_passes: 2,
+      remaining_allowed_repairs: 1,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
       stop_or_continue_reason:
-        "The follow-up manuscript review remained only partially grounded, so a second manuscript repair is not allowed."
+        "A second and final manuscript repair is allowed because the remaining blocking issues are narrow, repairable, and improved after pass 1."
     }, reviewReliability);
   }
   if (repeatedCriticalIssues.length > 0) {
@@ -3029,19 +3285,6 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason: "The same manuscript-quality issue code repeated after repair, so the loop stops instead of retrying silently."
-    }, reviewReliability);
-  }
-  if (!improvement || worsenedIssues(input.previousIssues, input.issuesAfter)) {
-    return finalizeManuscriptRepairDecision({
-      action: "stop",
-      pass_index: input.passIndex,
-      triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
-      allowed_max_passes: 1,
-      remaining_allowed_repairs: 0,
-      issues_before: input.previousIssues,
-      issues_after: input.issuesAfter,
-      improvement_detected: improvement,
-      stop_or_continue_reason: "The first manuscript repair did not show a reliable quality improvement."
     }, reviewReliability);
   }
   const narrowScope =
@@ -3138,6 +3381,7 @@ function collectChangedVisualReviewIssues(
 ): ManuscriptReviewArtifact["issues"] {
   const changedSet = new Set(changedLocationKeys);
   return review.issues.filter((issue) =>
+    isVisualSurfaceReviewIssue(issue) &&
     (issue.visual_targets || []).some((target) => {
       const locationKey = target.kind === "table"
         ? `table:${target.index}`
@@ -3149,6 +3393,22 @@ function collectChangedVisualReviewIssues(
       return changedSet.has(locationKey);
     })
   );
+}
+
+function isVisualSurfaceReviewIssue(issue: ManuscriptReviewArtifact["issues"][number]): boolean {
+  const code = String(issue.code || "").trim().toLowerCase();
+  if (
+    code.includes("visual")
+    || code.includes("figure")
+    || code.includes("caption")
+    || code.includes("table_caption")
+    || code === "rhetorical_overreach"
+  ) {
+    return true;
+  }
+  const text = `${issue.message || ""} ${issue.fix_recommendation || ""}`.toLowerCase();
+  return /\b(figure|caption|visual|table)\b/u.test(text)
+    && /\b(overclaim|overstate|mislead|mismatch|inconsistent|unsupported)\b/u.test(text);
 }
 
 function resolveReviewArtifactReliability(
@@ -3740,8 +4000,12 @@ function buildPaperReadinessArtifact(input: {
   scientificGateStatus: "pass" | "warn" | "fail";
   submissionValidationOk: boolean;
   manuscriptQualityAction: ManuscriptRepairDecision["action"];
+  compileStatus?: PaperCompileResult["status"];
+  compiledPageValidationStatus?: CompiledPdfPageValidationReport["status"];
 }): PaperReadinessArtifact {
   const claimCeilingApplied = input.claimCeilingApplied === true;
+  const compileFailed = input.compileStatus === "failed";
+  const compiledPageValidationFailed = input.compiledPageValidationStatus === "fail";
   const paperReady =
     input.manuscriptType === "paper_ready"
     && !claimCeilingApplied
@@ -3749,13 +4013,17 @@ function buildPaperReadinessArtifact(input: {
     && input.citationReport.status !== "fail"
     && input.scientificGateStatus !== "fail"
     && input.submissionValidationOk
-    && input.manuscriptQualityAction !== "stop";
+    && input.manuscriptQualityAction !== "stop"
+    && !compileFailed
+    && !compiledPageValidationFailed;
   const triggeredBy = [
     ...(input.evidenceGateDecision.status === "fail" ? ["evidence_gate"] : []),
     ...(input.citationReport.status === "fail" ? ["citation_check"] : []),
     ...(input.scientificGateStatus === "fail" ? ["scientific_validation"] : []),
     ...(!input.submissionValidationOk ? ["submission_validation"] : []),
     ...(input.manuscriptQualityAction === "stop" ? ["manuscript_quality"] : []),
+    ...(compileFailed ? ["compile"] : []),
+    ...(compiledPageValidationFailed ? ["compiled_page_validation"] : []),
     ...(claimCeilingApplied ? ["claim_ceiling"] : [])
   ];
   return {
@@ -3776,16 +4044,22 @@ function buildPaperReadinessArtifact(input: {
         ? "citation_gap"
       : input.evidenceGateDecision.status === "fail"
         ? "paper_ready is blocked because at least one major claim remained blocked at the evidence gate."
-        : !input.submissionValidationOk
-          ? "paper_ready is blocked because submission validation failed."
-          : input.scientificGateStatus === "fail"
-            ? "paper_ready is blocked because the scientific validation gate failed."
-            : `paper_ready remains ${input.manuscriptType} after post-draft critique.`,
+      : !input.submissionValidationOk
+        ? "paper_ready is blocked because submission validation failed."
+      : input.scientificGateStatus === "fail"
+        ? "paper_ready is blocked because the scientific validation gate failed."
+      : compileFailed
+        ? "paper_ready is blocked because PDF compilation failed."
+      : compiledPageValidationFailed
+        ? "paper_ready is blocked because the compiled PDF failed page-budget validation."
+        : `paper_ready remains ${input.manuscriptType} after post-draft critique.`,
     triggered_by: triggeredBy,
     evidence_gate_status: input.evidenceGateDecision.status,
     scientific_validation_status: input.scientificGateStatus,
     submission_validation_ok: input.submissionValidationOk,
     manuscript_quality_action: input.manuscriptQualityAction,
+    compile_status: input.compileStatus,
+    compiled_page_validation_status: input.compiledPageValidationStatus,
     claim_status_counts: input.claimStatusTable.counts
   };
 }
@@ -3799,6 +4073,8 @@ function buildPaperReadinessRiskArtifact(input: {
   scientificGateStatus: "pass" | "warn" | "fail";
   submissionValidationOk: boolean;
   manuscriptQualityAction: ManuscriptRepairDecision["action"];
+  compileStatus?: PaperCompileResult["status"];
+  compiledPageValidation?: CompiledPdfPageValidationReport;
   config: NodeExecutionDeps["config"];
 }): ReadinessRiskArtifact {
   const risks: ReadinessRisk[] = buildNetworkDependencyReadinessRisks({
@@ -3904,6 +4180,36 @@ function buildPaperReadinessRiskArtifact(input: {
       affected_citation_ids: [],
       recommended_action: "Resolve the remaining manuscript-quality blockers or accept an honest downgrade.",
       recheck_condition: "The manuscript-quality gate passes without a stop decision."
+    });
+  }
+
+  if (input.compileStatus === "failed") {
+    risks.push({
+      risk_code: "paper_compile_failed",
+      severity: "blocked",
+      category: "submission_validation",
+      status: "blocked",
+      message: "PDF compilation failed, so the paper bundle cannot be treated as final paper-ready output.",
+      triggered_by: ["compile_report"],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: "Fix the LaTeX/PDF build and rerun compiled page validation before final paper handoff.",
+      recheck_condition: "PDF compilation succeeds or is explicitly unavailable under a non-PDF handoff policy."
+    });
+  }
+
+  if (input.compiledPageValidation?.status === "fail") {
+    risks.push({
+      risk_code: "compiled_page_validation_fail",
+      severity: "blocked",
+      category: "submission_validation",
+      status: "blocked",
+      message: input.compiledPageValidation.message,
+      triggered_by: ["compiled_page_validation"],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: "Expand or re-layout the paper through the normal writing pipeline until the compiled PDF meets the configured page floor.",
+      recheck_condition: "compiled_page_validation.json reports status=pass."
     });
   }
 

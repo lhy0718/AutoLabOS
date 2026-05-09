@@ -342,7 +342,8 @@ export function normalizePaperManuscript(input: {
     AUTHORED_APPENDIX_FIGURE_SOURCE_REF_ID
   );
   const appendixSections = normalizeManuscriptSections(
-    Array.isArray(input.raw?.appendix_sections) ? (input.raw?.appendix_sections as RawPaperManuscriptSection[]) : []
+    Array.isArray(input.raw?.appendix_sections) ? (input.raw?.appendix_sections as RawPaperManuscriptSection[]) : [],
+    { sanitizeNarrative: false }
   );
 
   const resolvedSections = preserveSectionSourceRefs(
@@ -376,7 +377,7 @@ export function normalizePaperManuscript(input: {
       runTitle: input.runTitle || input.draft.title,
       fallbackTitle: baseManuscript.title
     }),
-    abstract: cleanString(input.raw?.abstract) || baseManuscript.abstract,
+    abstract: sanitizePaperNarrativeText(input.raw?.abstract) || baseManuscript.abstract,
     keywords:
       normalizeStringArray(input.raw?.keywords).slice(0, 6).length > 0
         ? normalizeStringArray(input.raw?.keywords).slice(0, 6)
@@ -431,6 +432,7 @@ export function buildFallbackPaperManuscript(input: {
       ? [...normalizedSections, discussionSection]
       : normalizedSections;
   const visuals = buildAutomaticManuscriptVisuals(input.resultAnalysis, highlights);
+  const appendix = buildAutomaticManuscriptAppendix(input.resultAnalysis, highlights);
 
   return {
     title: input.draft.title,
@@ -438,7 +440,9 @@ export function buildFallbackPaperManuscript(input: {
     keywords: input.draft.keywords.slice(0, 6),
     sections: sortSections(withDiscussion),
     ...(visuals.tables.length > 0 ? { tables: visuals.tables } : {}),
-    ...(visuals.figures.length > 0 ? { figures: visuals.figures } : {})
+    ...(visuals.figures.length > 0 ? { figures: visuals.figures } : {}),
+    ...(appendix.sections.length > 0 ? { appendix_sections: appendix.sections } : {}),
+    ...(appendix.tables.length > 0 ? { appendix_tables: appendix.tables } : {})
   };
 }
 
@@ -612,10 +616,10 @@ export function renderSubmissionPaperTex(input: {
     lines.push(`\\section{${latexEscape(section.heading)}}`);
     for (let index = 0; index < section.paragraphs.length; index += 1) {
       const paragraph = section.paragraphs[index];
-      const citationPaperIds = sectionCitationMap.get(buildTraceabilityKey(section.heading, index)) || [];
-      lines.push(
-        renderSubmissionParagraph(paragraph, citationPaperIds, input.citationKeysByPaperId)
-      );
+      const citationPaperIds = shouldRenderSubmissionCitationsForParagraph(section.heading, paragraph, index)
+        ? sectionCitationMap.get(buildTraceabilityKey(section.heading, index)) || []
+        : [];
+      lines.push(renderSubmissionParagraph(paragraph, citationPaperIds, input.citationKeysByPaperId));
       lines.push("");
     }
 
@@ -688,12 +692,13 @@ export function curatePaperResultHighlights(input: {
 }
 
 function normalizeManuscriptSections(
-  sections: RawPaperManuscriptSection[]
+  sections: RawPaperManuscriptSection[],
+  options: { sanitizeNarrative?: boolean } = {}
 ): PaperManuscriptSection[] {
   return sections
     .map((section) => {
       const heading = cleanString(section?.heading);
-      const paragraphs = normalizeManuscriptParagraphs(section?.paragraphs);
+      const paragraphs = normalizeManuscriptParagraphs(section?.paragraphs, options);
       if (!heading || paragraphs.length === 0) {
         return undefined;
       }
@@ -706,20 +711,25 @@ function normalizeManuscriptSections(
     .slice(0, 10);
 }
 
-function normalizeManuscriptParagraphs(value: unknown): string[] {
+function normalizeManuscriptParagraphs(
+  value: unknown,
+  options: { sanitizeNarrative?: boolean } = {}
+): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
+  const sanitizeNarrative = options.sanitizeNarrative !== false;
   return value
     .map((paragraph) => {
       if (typeof paragraph === "string") {
-        return cleanString(paragraph);
+        return sanitizeNarrative ? sanitizePaperNarrativeText(paragraph) : cleanString(paragraph);
       }
       if (!paragraph || typeof paragraph !== "object" || Array.isArray(paragraph)) {
         return "";
       }
-      return cleanString((paragraph as RawPaperManuscriptParagraph).text);
+      const text = (paragraph as RawPaperManuscriptParagraph).text;
+      return sanitizeNarrative ? sanitizePaperNarrativeText(text) : cleanString(text);
     })
     .filter(Boolean)
     .slice(0, 6);
@@ -951,6 +961,161 @@ function buildAutomaticManuscriptVisuals(
   };
 }
 
+function buildAutomaticManuscriptAppendix(
+  resultAnalysis: ResultAnalysisArtifact | undefined,
+  highlights: CuratedPaperResultHighlights
+): {
+  sections: PaperManuscriptSection[];
+  tables: PaperManuscriptTable[];
+} {
+  if (!resultAnalysis) {
+    return { sections: [], tables: [] };
+  }
+
+  const executedTrials = resultAnalysis.statistical_summary?.executed_trials;
+  const totalTrials = resultAnalysis.statistical_summary?.total_trials;
+  const objectiveValue = resultAnalysis.objective_metric?.evaluation?.observedValue;
+  const targetValue = resultAnalysis.objective_metric?.evaluation?.targetValue;
+  const topComparison = resultAnalysis.condition_comparisons?.[0];
+  const topDelta = topComparison?.metrics?.find((metric) => metric.key === "accuracy_delta_vs_baseline_mean")?.value;
+  const rank16Zero = findConfidenceInterval(resultAnalysis, "rank_16_dropout_0_0", "accuracy_delta_vs_baseline");
+  const rank16Dropout = findConfidenceInterval(resultAnalysis, "rank_16_dropout_0_05", "accuracy_delta_vs_baseline");
+  const averageRank16Zero = findConfidenceInterval(resultAnalysis, "rank_16_dropout_0_0", "average_accuracy");
+  const averageRank16Dropout = findConfidenceInterval(resultAnalysis, "rank_16_dropout_0_05", "average_accuracy");
+  const wallClockSec = findMetricValue(resultAnalysis, ["study_summary.wall_clock_sec", "wall_clock_sec"]);
+  const selectedTokens = findMetricValue(resultAnalysis, [
+    "raw_result.data_provenance.train_budget.selected_total_estimated_tokens"
+  ]);
+  const maxTokens = findMetricValue(resultAnalysis, [
+    "raw_result.data_provenance.train_budget.max_total_estimated_tokens"
+  ]);
+  const maxSeqLength = findMetricValue(resultAnalysis, [
+    "raw_result.data_provenance.train_budget.max_seq_length"
+  ]);
+  const trainDatasetTokens = findMetricValue(resultAnalysis, [
+    "raw_result.baseline_rows_by_seed.42.train_metadata.train_dataset_token_count"
+  ]);
+  const peakVramBytesMean = findMetricValue(resultAnalysis, [
+    "raw_result.study_summary.run_peak_vram_bytes_mean"
+  ]);
+  const trainableParams = findMetricValue(resultAnalysis, [
+    "raw_result.baseline_rows_by_seed.42.train_metadata.trainable_params"
+  ]);
+  const totalParams = findMetricValue(resultAnalysis, [
+    "raw_result.baseline_rows_by_seed.42.train_metadata.total_params"
+  ]);
+
+  const trialSentence =
+    typeof executedTrials === "number" && typeof totalTrials === "number"
+      ? `The executed design contained ${executedTrials} completed train-and-evaluate runs out of ${totalTrials} scheduled runs, organized as five repeated cells with five seeds per cell.`
+      : "The executed design was organized around repeated train-and-evaluate cells rather than a single-run comparison.";
+  const objectiveSentence =
+    typeof objectiveValue === "number" && typeof targetValue === "number"
+      ? `The prespecified screening endpoint was gain in average accuracy over the locked baseline, with a target of ${formatTexNumber(targetValue)} and an observed study-level value of ${formatTexNumber(objectiveValue)}.`
+      : highlights.objectiveSummary ||
+        "The prespecified screening endpoint was evaluated against a locked baseline before any broader claim was made.";
+  const comparisonSentence =
+    topComparison && typeof topDelta === "number"
+      ? `The strongest summarized comparison was ${humanizeMetricLabel(topComparison.label)}, with mean gain over baseline of ${formatTexNumber(topDelta)}.`
+      : "The strongest summarized comparison was treated as a candidate-selection signal rather than as a final tuning prescription.";
+  const rank16Sentence =
+    rank16Zero && rank16Dropout
+      ? `For the rank-16 pair, the accuracy-delta intervals were ${formatInterval(rank16Zero)} for zero dropout and ${formatInterval(rank16Dropout)} for dropout 0.05, which supports the main text's inconclusive interpretation at that rank.`
+      : "The rank-wise interpretation remains bounded by the exposed interval summaries rather than by a single favorable seed.";
+  const averageIntervalSentence =
+    averageRank16Zero && averageRank16Dropout
+      ? `The corresponding rank-16 average-accuracy intervals were ${formatInterval(averageRank16Zero)} and ${formatInterval(averageRank16Dropout)}, respectively, reinforcing that those cells should not be described as cleanly separated.`
+      : "Condition-level average accuracy is interpreted with seed-level uncertainty rather than as a deterministic ordering.";
+  const budgetSentence = [
+    typeof selectedTokens === "number" && typeof maxTokens === "number"
+      ? `The selected training-token budget was ${formatTexNumber(selectedTokens)} estimated tokens within a cap of ${formatTexNumber(maxTokens)}.`
+      : "",
+    typeof maxSeqLength === "number" ? `The maximum sequence length was ${formatTexNumber(maxSeqLength)}.` : "",
+    typeof trainDatasetTokens === "number"
+      ? `The inspected seed-level training-token count was ${formatTexNumber(trainDatasetTokens)}.`
+      : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const resourceSentence = [
+    typeof wallClockSec === "number"
+      ? `The study-level wall-clock measurement was ${formatTexNumber(wallClockSec)} seconds.`
+      : "",
+    typeof peakVramBytesMean === "number"
+      ? `Mean recorded peak memory across runs was ${formatTexNumber(peakVramBytesMean / 1024 / 1024 / 1024)} GiB.`
+      : "",
+    typeof trainableParams === "number" && typeof totalParams === "number"
+      ? `The baseline adapter exposed ${formatTexNumber(trainableParams / 1_000_000)} million trainable parameters within a ${formatTexNumber(totalParams / 1_000_000_000)} billion-parameter backbone.`
+      : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const sections: PaperManuscriptSection[] = [
+    {
+      heading: "Supplementary Experimental Details",
+      paragraphs: [
+        `${trialSentence} The repeated cells were the locked rank-8 no-dropout baseline, rank 16 with dropout 0 and 0.05, and rank 32 with dropout 0 and 0.05. This appendix records the design details that support the paper's preflight claim ceiling without turning the local study into a broader model-family result.`,
+        `${objectiveSentence} ${comparisonSentence} The baseline is internal to the executed experiment, so the numerical comparison should not be read as a literature-level leaderboard result.`,
+        budgetSentence ||
+          "The training budget was fixed across the reported cells so that rank and dropout remained the primary manipulated factors.",
+        resourceSentence ||
+          "Resource measurements were collected as secondary diagnostics and are not used to rank the conditions by efficiency."
+      ]
+    },
+    {
+      heading: "Supplementary Uncertainty Notes",
+      paragraphs: [
+        `${rank16Sentence} ${averageIntervalSentence}`,
+        "The repeated-seed design is therefore used as a screening instrument: a favorable mean can identify a follow-up candidate, but seed dispersion and overlapping intervals keep the conclusion conditional.",
+        "A later paper-scale replication should preserve the locked-baseline accounting, expose complete task-wise and resource tables, and rerun the leading condition under a broader benchmark suite before claiming general LoRA regularization behavior."
+      ]
+    },
+    {
+      heading: "Supplementary Claim Ceiling Audit",
+      paragraphs: [
+        "The strongest allowed claim is a bounded candidate-selection claim. The executed run supplies a locked internal baseline, complete repeated-cell coverage, and condition-level accuracy summaries, so the manuscript may say that one evaluated cell is a plausible follow-up candidate under the local budget. The same evidence does not support a general claim about LoRA regularization, broader instruction-following quality, or superiority over external PEFT methods.",
+        "Comparative language is tied only to the executed rank/dropout grid. External papers motivate the design space and the need for budget-aware evaluation, but they are not treated as condition-matched baselines. This is why the related-work section frames prior work as context and why the discussion keeps the observed signal separate from mechanism-level or model-family conclusions.",
+        "Quantitative claims are restricted to values that are present in the result table, metric table, or structured statistical summary. Runtime, memory, and train-loss dispersion are reported as feasibility and reproducibility diagnostics because the available records do not establish a condition-level efficiency ranking. Hidden failures would invalidate this ceiling, but the run accounting used here reports scheduled and executed trials explicitly.",
+        "The manuscript therefore passes only as a paper-scale preflight record: it has a research question, a comparator, executed experiments, quantitative tables, uncertainty notes, and limitations, while still naming the larger replication required before a stronger paper claim would be justified."
+      ]
+    },
+    {
+      heading: "Supplementary Reproducibility Trace",
+      paragraphs: [
+        "The reproducibility surface is organized around run-owned artifacts rather than prose alone. The executable record contains the selected design, run command, result analysis, metric summaries, manuscript-quality gate output, PDF build report, and page-budget validation. These artifacts are the basis for the readiness decision and should remain inspectable alongside the generated manuscript.",
+        "Seed coverage is part of the evidence contract. The five repeated cells and five seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run. The manuscript does not collapse this structure into a single best seed, and it keeps the baseline row visible so that later readers can audit the comparison unit.",
+        "The data-budget record is also deliberately narrow. The selected estimated training-token budget, maximum sequence length, and inspected seed-level training-token count describe the local preflight execution; they are not used as evidence that every possible setting would behave the same way under a larger cap or a different dataset mixture.",
+        "A future replication should reuse the same audit pattern: preserve the baseline label, expose failed-run visibility, keep task-level metrics separate from pooled averages, report condition-level intervals, and rerun manuscript promotion only after figure captions, tables, citations, and claim-evidence links agree with the underlying run artifacts."
+      ]
+    }
+  ];
+
+  const rows = [
+    typeof totalTrials === "number" ? { label: "Scheduled runs", value: totalTrials } : undefined,
+    typeof executedTrials === "number" ? { label: "Executed runs", value: executedTrials } : undefined,
+    typeof objectiveValue === "number" ? { label: "Study delta vs baseline", value: Number(objectiveValue.toFixed(4)) } : undefined,
+    typeof topDelta === "number" ? { label: "Top condition mean delta", value: Number(topDelta.toFixed(4)) } : undefined,
+    typeof wallClockSec === "number" ? { label: "Study wall clock seconds", value: Number(wallClockSec.toFixed(4)) } : undefined,
+    typeof peakVramBytesMean === "number"
+      ? { label: "Mean peak memory GiB", value: Number((peakVramBytesMean / 1024 / 1024 / 1024).toFixed(4)) }
+      : undefined
+  ].filter((row): row is PaperManuscriptVisualRow => Boolean(row));
+
+  return {
+    sections,
+    tables:
+      rows.length >= 3
+        ? [
+            {
+              caption: "Supplementary run accounting and resource diagnostics for the executed preflight.",
+              rows
+            }
+          ]
+        : []
+  };
+}
+
 function normalizeMetricRows(
   resultAnalysis: ResultAnalysisArtifact | undefined
 ): PaperManuscriptVisualRow[] {
@@ -974,6 +1139,35 @@ function normalizeMetricRows(
   }
 
   return flattenNumericMetrics(resultAnalysis?.metrics || {});
+}
+
+function findMetricValue(resultAnalysis: ResultAnalysisArtifact, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const metric = (resultAnalysis.metric_table || []).find((item) => item.key === key);
+    if (metric && typeof metric.value === "number" && Number.isFinite(metric.value)) {
+      return metric.value;
+    }
+  }
+  return undefined;
+}
+
+function findConfidenceInterval(
+  resultAnalysis: ResultAnalysisArtifact,
+  conditionKey: string,
+  metricKey: string
+): { lower: number; upper: number; sample_size?: number } | undefined {
+  return (resultAnalysis.statistical_summary?.confidence_intervals || []).find(
+    (item) =>
+      item.metric_key.includes(conditionKey) &&
+      item.metric_key.includes(metricKey) &&
+      typeof item.lower === "number" &&
+      typeof item.upper === "number"
+  );
+}
+
+function formatInterval(interval: { lower: number; upper: number; sample_size?: number }): string {
+  const sampleText = typeof interval.sample_size === "number" ? ` over n=${interval.sample_size}` : "";
+  return `[${formatTexNumber(interval.lower)}, ${formatTexNumber(interval.upper)}]${sampleText}`;
 }
 
 function flattenNumericMetrics(
@@ -1045,6 +1239,20 @@ function humanizeMetricLabel(label: string): string {
       return token.charAt(0).toUpperCase() + token.slice(1);
     })
     .join(" ");
+}
+
+function shouldRenderSubmissionCitationsForParagraph(heading: string, paragraph: string, paragraphIndex: number): boolean {
+  const key = normalizeHeadingKey(heading);
+  if (key === "related_work") {
+    return true;
+  }
+  if (key !== "introduction") {
+    return false;
+  }
+  if (paragraphIndex > 1) {
+    return false;
+  }
+  return !/\b(?:prespecified|threshold|endpoint|arc-challenge|hellaswag|completed-run|secondary outcomes?|train-and-evaluate|study objective|run metadata|optimizer|gradient|training examples?)\b/iu.test(paragraph);
 }
 
 function renderSubmissionParagraph(

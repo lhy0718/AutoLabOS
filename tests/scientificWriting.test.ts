@@ -13,7 +13,8 @@ import {
   experimentArtifactLoader,
   materializeScientificManuscript,
   pageBudgetManager,
-  resolvePaperProfile
+  resolvePaperProfile,
+  strengthenPaperScaleManuscript
 } from "../src/core/analysis/scientificWriting.js";
 
 const PAPER_PROFILE = {
@@ -29,7 +30,7 @@ const PAPER_PROFILE = {
     "environment_dump",
     "extended_error_analysis"
   ],
-  estimated_words_per_page: 420
+  estimated_words_per_page: 650
 };
 
 function makeRichBundle(): PaperWritingBundle {
@@ -477,7 +478,7 @@ describe("scientificWriting", () => {
     expect(profile.column_count).toBe(2);
     expect(profile.appendix_format).toBe("double_column");
     expect(profile.prefer_appendix_for).toEqual([]);
-    expect(profile.estimated_words_per_page).toBe(420);
+    expect(profile.estimated_words_per_page).toBe(650);
   });
 
   it("derives single-column layout defaults without inventing appendix routing preferences", () => {
@@ -502,7 +503,7 @@ describe("scientificWriting", () => {
     expect(report.target_main_pages).toBe(10);
     expect(report.minimum_main_pages).toBe(8);
     expect(report.main_page_limit).toBe(8);
-    expect(report.target_main_words).toBe(4200);
+    expect(report.target_main_words).toBe(6500);
     expect(report.warnings[0]).toContain("10-page target budget");
   });
 
@@ -548,6 +549,13 @@ describe("scientificWriting", () => {
     expect(manuscript.manuscript.appendix_sections?.length).toBeGreaterThan(0);
     expect(manuscript.manuscript.sections.find((section) => section.heading === "Method")?.paragraphs.at(-1)).toMatch(/Appendix/i);
     expect(manuscript.manuscript.sections.find((section) => section.heading === "Results")?.paragraphs.at(-1)).toMatch(/Appendix/i);
+    const relatedText = manuscript.manuscript.sections.find((section) => section.heading === "Related Work")?.paragraphs.join(" ") || "";
+    expect(relatedText).toContain("Nested Validation for Tabular Baselines");
+    expect(relatedText).toContain("CPU-Only Tree Baselines");
+    expect(relatedText).toMatch(/positioning anchors rather than direct condition-matched baselines/i);
+    const conclusionText = manuscript.manuscript.sections.find((section) => section.heading === "Conclusion")?.paragraphs.join(" ") || "";
+    expect(conclusionText).toMatch(/Brief execution-coverage and supplementary-metric summaries/i);
+    expect(conclusionText).not.toMatch(/Detailed protocol and repeat-level evidence/i);
     expect(manuscript.consistency_lint.ok).toBe(true);
     expect(manuscript.appendix_lint.ok).toBe(true);
     expect(manuscript.provenance_map.paragraph_anchors.length).toBeGreaterThan(0);
@@ -789,34 +797,323 @@ describe("scientificWriting", () => {
     });
     const candidate: PaperManuscript = {
       title: "Repeated-Seed LoRA Dropout Benchmark",
-      abstract: "A conservative repeated-seed benchmark.",
+      abstract: "The study-level average-accuracy improvement was 0.04479166666666667, and the strongest exposed comparison was rank 32 with dropout 0.05, with mean delta 0.0667.",
       keywords: ["LoRA", "instruction tuning"],
       sections: [
         {
           heading: "Introduction",
           paragraphs: [
-            "QLoRA [doi:10.48550/arxiv.2305.14314] motivates memory-aware adaptation, and adapter variants [15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a] motivate careful comparison."
+            "QLoRA [doi:10.48550/arxiv.2305.14314] motivates memory-aware adaptation, and adapter variants [15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a] motivate careful comparison.",
+            "The emphasis on benchmark accuracy rather than judge-based preference scoring is also compatible with prior warnings that chatbot evaluation can be noisy and order sensitive.",
+            "The first P6 run uses a cached, locally runnable small LLM target so the validation focuses on real training, result-table integrity, review gating, and paper-readiness audit rather than on new model access. Objective metric met: accuracy_delta_vs_baseline=0.04479166666666667 >= 0.01."
+          ]
+        },
+        {
+          heading: "Related Work",
+          paragraphs: [
+            "QLoRA is the closest prior reference because it links LoRA adaptation to local feasibility, but QLoRA is repeated here mostly as a self-positioning anchor.",
+            "Because several of these latter sources are available only through partial extraction in the present evidence base, they are used here for framing rather than detailed quantitative comparison."
           ]
         },
         {
           heading: "Method",
           paragraphs: [
+            "This narrowing follows the same resource-conscious logic emphasized in prior PEFT work, where fixed memory and runtime budgets make selective comparison preferable to shallow coverage of every configuration.",
             "The protocol compares high-rank LoRA conditions under fixed data order.",
-            "The implementation notes indicate that optimizer settings and LoRA target modules were held constant, although the compact study summary does not surface their exact numeric values in the manuscript-facing record."
+            "Training used an Alpaca Clean subset capped at 10,000 examples.",
+            "The implementation notes indicate that optimizer settings and LoRA target modules were held constant, although the compact study summary does not surface their exact numeric values in the manuscript-facing record.",
+            "To isolate rank and dropout as much as the budget allowed, the protocol held the optimizer, learning-rate schedule, LoRA target modules, effective batch size, token budget, and capped training set constant across cells."
           ]
         },
         {
           heading: "Results",
           paragraphs: [
             "The rank 32 dropout 0.05 condition has the strongest exposed mean delta. Direct supporting evidence is currently limited",
-            "The same aggregate comparison remains narrow; direct supporting evidence is currently limited"
+            "The same aggregate comparison remains narrow; direct supporting evidence is currently limited",
+            "Optimization and efficiency evidence is present but incomplete in the compact release.",
+            "The compact results summary does not expose condition-level runtime or memory aggregates.",
+            "Accordingly, the Results section limits its quantitative interpretation rather than inferring finer-grained per-task or compute trade-offs from tables that are not shown."
+          ]
+        },
+        {
+          heading: "Discussion",
+          paragraphs: [
+            "The compact release foregrounds mean deltas and selected confidence intervals more clearly than variance-ratio summaries or CI-width ratios."
           ]
         },
         {
           heading: "Conclusion",
-          paragraphs: ["The study supports a cautious preflight conclusion."]
+          paragraphs: [
+            "Within the released summary of this fixed-budget local benchmark, the study supports a cautious preflight conclusion.",
+            "The main outcome is therefore twofold: a limited but encouraging empirical signal for high-rank moderate-dropout tuning in this setting, and a practical benchmark template for later larger-scale experiments."
+          ]
         }
       ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+    const manuscript = result.manuscript;
+
+    const allText = [
+      manuscript.abstract,
+      ...manuscript.sections.flatMap((section) => section.paragraphs)
+    ].join(" ");
+    const methodText = manuscript.sections.find((section) => section.heading === "Method")?.paragraphs.join(" ") || "";
+    const relatedText = manuscript.sections.find((section) => section.heading === "Related Work")?.paragraphs.join(" ") || "";
+    expect(allText).not.toMatch(/doi:|15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a/);
+    expect(allText).not.toMatch(/arXiv:\d{4}\.\d{4,5}/i);
+    expect(allText).not.toMatch(/direct supporting evidence is currently limited/i);
+    expect(allText).not.toMatch(/present evidence base|compact release|released summary|reader-visible paper|prior warnings|prior PEFT work|P6 run|review gating|paper-readiness audit|Objective metric met/i);
+    expect(allText).not.toMatch(/compact results summary|compact artifact record|compact report|compact summary|compact bundle|manuscript-process/i);
+    expect(allText).not.toMatch(/tables that are not shown/i);
+    expect(allText).not.toMatch(/practical benchmark template/i);
+    expect(allText).toMatch(/evaluator-noise variable/i);
+    expect(allText).toMatch(/reported analyses foreground/i);
+    expect(allText).toMatch(/available records do not support condition-level runtime or memory efficiency rankings/i);
+    expect(allText).toMatch(/scoped protocol illustration/i);
+    expect(relatedText).toMatch(/memory-efficiency axis/i);
+    expect(relatedText).toMatch(/evaluation-axis/i);
+    expect(relatedText).toMatch(/mechanism axis/i);
+    expect(relatedText).not.toMatch(/closest prior reference because.*closest prior reference because/i);
+    expect(methodText).toMatch(/Qwen\/Qwen2\.5-1\.5B/);
+    expect(methodText).toMatch(/learning rate 0\.0002/);
+    expect(methodText).toMatch(/gradient accumulation 4/);
+    expect(methodText).toMatch(/optimizer steps/);
+    expect(methodText).toMatch(/budget ceiling rather than as the number consumed by every run/);
+    expect(methodText).toMatch(/preserved artifacts do not independently verify identical consumed token counts/i);
+    expect(methodText).not.toMatch(/executable run metadata|released study summary|released comparison table|run metadata records/i);
+    expect(methodText).not.toMatch(/token budget,\s*and capped training set constant across cells/i);
+    expect(
+      result.consistency_lint.issues.filter(
+        (issue) =>
+          ["numeric_inconsistency", "numeric_unverifiable"].includes(issue.kind)
+          && /percentage point|training examples|train dataset tokens|training-token count|data budget/i.test(JSON.stringify(issue.normalized_facts || []))
+      )
+    ).toHaveLength(0);
+    expect(methodText).not.toMatch(/5068 train dataset tokens|5068 dataset tokens/i);
+    expect(methodText).toMatch(/training-token count of 5068/i);
+  });
+
+  it("prefers the deterministic condition-level table and drops overlapping condition figures", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "LoRA rank-dropout repeated-seed benchmark";
+    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = {
+      baseline_marker: "rank_8_dropout_0_0",
+      condition_summaries: [
+        {
+          condition_marker: "rank_8_dropout_0_0",
+          lora_rank: 8,
+          lora_dropout: 0,
+          completed_seed_count: 5,
+          average_accuracy_mean: 0.4417,
+          accuracy_delta_vs_baseline_mean: 0,
+          accuracy_delta_vs_baseline_ci95: 0
+        },
+        {
+          condition_marker: "rank_16_dropout_0_0",
+          lora_rank: 16,
+          lora_dropout: 0,
+          completed_seed_count: 5,
+          average_accuracy_mean: 0.4667,
+          average_accuracy_ci95: 0.0586,
+          accuracy_delta_vs_baseline_mean: 0.025,
+          accuracy_delta_vs_baseline_ci95: 0.0841
+        },
+        {
+          condition_marker: "rank_16_dropout_0_05",
+          lora_rank: 16,
+          lora_dropout: 0.05,
+          completed_seed_count: 5,
+          average_accuracy_mean: 0.4583,
+          average_accuracy_ci95: 0.0542,
+          accuracy_delta_vs_baseline_mean: 0.0167,
+          accuracy_delta_vs_baseline_ci95: 0.051
+        },
+        {
+          condition_marker: "rank_32_dropout_0_0",
+          lora_rank: 32,
+          lora_dropout: 0,
+          completed_seed_count: 5,
+          average_accuracy_mean: 0.5125,
+          accuracy_delta_vs_baseline_mean: 0.0708,
+          accuracy_delta_vs_baseline_ci95: 0.071
+        },
+        {
+          condition_marker: "rank_32_dropout_0_05",
+          lora_rank: 32,
+          lora_dropout: 0.05,
+          completed_seed_count: 5,
+          average_accuracy_mean: 0.5083,
+          accuracy_delta_vs_baseline_mean: 0.0667,
+          accuracy_delta_vs_baseline_ci95: 0.0638
+        }
+      ]
+    };
+
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Repeated-Seed LoRA Dropout Benchmark",
+      abstract: "A conservative repeated-seed benchmark.",
+      keywords: ["LoRA", "instruction tuning"],
+      sections: scientific.draft.sections.map((section) => ({
+        heading: section.heading,
+        paragraphs: section.paragraphs.map((paragraph) => paragraph.text)
+      })),
+      tables: [
+        {
+          caption: "Key quantitative outcomes.",
+          rows: [
+            { label: "Conditions analyzed", value: 5 },
+            { label: "Study delta", value: 0.0448 }
+          ]
+        }
+      ],
+      figures: [
+        {
+          caption: "Study summary bars.",
+          bars: [
+            { label: "Accuracy delta vs baseline", value: 0.0448 },
+            { label: "Average accuracy", value: 0.4775 }
+          ]
+        }
+      ]
+    };
+    candidate.sections = candidate.sections.map((section) =>
+      section.heading === "Results"
+        ? {
+            ...section,
+            paragraphs: [
+              "Mean average accuracy rises from 0.4417 for the locked baseline at rank 8 and dropout 0.0 to 0.4667 for rank 16 with dropout 0.0, 0.4583 for rank 16 with dropout 0.05, 0.5125 for rank 32 with dropout 0.0, and 0.5083 for rank 32 with dropout 0.05.",
+              "The absolute mean-accuracy intervals were similarly close for rank 16: [0.4081, 0.5253] without dropout and [0.4125, 0.5209] with dropout 0.05.",
+              "The protocol tracked runtime, training loss, and peak memory, and the full 25-run workload completed under the workstation budget with planned parallelism.",
+              ...section.paragraphs
+            ]
+          }
+        : section.heading === "Related Work"
+          ? {
+              ...section,
+              paragraphs: [
+                "Adapter-variant studies instead modify the adapter mechanism itself, so their gains speak more directly to alternative PEFT parameterizations than to whether standard LoRA at rank 16 or 32 benefits from modest dropout in a local preflight.",
+                "QLoRA shows memory-efficient adaptation (QLoRA, arXiv:2305.14314), while MAPLE compares broader PEFT settings (MAPLE, arXiv:2403.14608).",
+                ...section.paragraphs
+              ]
+            }
+        : section
+    );
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+    const manuscript = result.manuscript;
+
+    expect(manuscript.tables?.[0]?.caption).toMatch(/Condition-level mean accuracy/i);
+    expect(manuscript.tables?.[0]?.rows).toHaveLength(5);
+    expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).toMatch(/rank 32 \/ dropout 0\.05/);
+    expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).toMatch(/n=5/);
+    expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).not.toMatch(/delta/);
+    expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).not.toMatch(/Conditions analyzed/);
+    expect(manuscript.figures ?? []).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.filter(
+        (issue) =>
+          issue.kind === "numeric_inconsistency"
+          && issue.severity === "error"
+          && (issue.involved_sections || []).some((section) => section.startsWith("Figure"))
+      )
+    ).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.filter(
+        (issue) =>
+          issue.kind === "numeric_inconsistency"
+          && issue.severity === "error"
+          && (issue.involved_sections || []).includes("Results")
+          && /0\.4417|0\.4667|0\.4583|0\.5125|0\.5083/.test(issue.message)
+      )
+    ).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.some(
+        (issue) =>
+          (issue.normalized_facts || []).some(
+            (fact) => fact.source === "results" && fact.value === 0.05 && fact.raw_text.includes("dropout 0.05")
+          )
+      )
+    ).toBe(false);
+    expect(
+      result.consistency_lint.issues.filter(
+        (issue) =>
+          issue.kind === "numeric_inconsistency"
+          && issue.severity === "error"
+          && /0\.4081|0\.5253|0\.4125|0\.5209/.test(issue.message)
+      )
+    ).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.filter(
+        (issue) =>
+          issue.kind === "numeric_inconsistency"
+          && issue.severity === "error"
+          && /peak memory mb/i.test(issue.message)
+      )
+    ).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.filter(
+        (issue) =>
+          /peak memory mb/i.test(issue.message)
+          && /2305\.143|2403\.146/i.test(JSON.stringify(issue.normalized_facts || []))
+      )
+    ).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.filter(
+        (issue) =>
+          issue.kind === "numeric_inconsistency"
+          && issue.severity === "error"
+          && /0\.04479|0\.0667/.test(issue.message)
+      )
+    ).toHaveLength(0);
+  });
+
+  it("does not parse comma-separated seed-resampling counts as manuscript repeat counts", () => {
+    const bundle = makeRichBundle();
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Repeated Tabular Benchmark",
+      abstract: "A short abstract.",
+      keywords: ["tabular"],
+      sections: scientific.draft.sections.map((section) =>
+        section.heading === "Method"
+          ? {
+              heading: section.heading,
+              paragraphs: [
+                "We evaluate 2 datasets with outer 5-fold CV and inner 3-fold tuning.",
+                "Uncertainty is summarized with bootstrap intervals over 10,000 seed resamples."
+              ]
+            }
+          : {
+              heading: section.heading,
+              paragraphs: section.paragraphs.map((paragraph) => paragraph.text)
+            }
+      )
     };
 
     const manuscript = materializeScientificManuscript({
@@ -826,19 +1123,17 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE,
       appendixPlan: scientific.appendix_plan,
       pageBudget: scientific.page_budget
-    }).manuscript;
+    });
 
-    const allText = [
-      manuscript.abstract,
-      ...manuscript.sections.flatMap((section) => section.paragraphs)
-    ].join(" ");
-    const methodText = manuscript.sections.find((section) => section.heading === "Method")?.paragraphs.join(" ") || "";
-    expect(allText).not.toMatch(/doi:|15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a/);
-    expect(allText).not.toMatch(/direct supporting evidence is currently limited/i);
-    expect(methodText).toMatch(/Qwen\/Qwen2\.5-1\.5B/);
-    expect(methodText).toMatch(/learning rate 0\.0002/);
-    expect(methodText).toMatch(/gradient accumulation 4/);
-    expect(methodText).toMatch(/optimizer steps/);
+    expect(
+      manuscript.consistency_lint.issues.some(
+        (issue) =>
+          issue.kind === "count_inconsistency"
+          && (issue.normalized_facts || []).some(
+            (fact) => fact.raw_text === "000 seed" || fact.raw_text === "10,000 seed" || fact.value === 0 || fact.value === 10000
+          )
+      )
+    ).toBe(false);
   });
 
   it("does not flag equivalent numeric formatting as a contradiction", () => {
@@ -1046,6 +1341,26 @@ describe("scientificWriting", () => {
 
     expect(scientific.claim_rewrite_report.rewrites.length).toBeGreaterThan(0);
     expect(scientific.draft.claims[0]?.statement).toMatch(/positive delta|suggests/i);
+  });
+
+  it("fills an evidence-rich terse draft to the six-page strict-paper floor without LLM repair", () => {
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle: makeRichBundle(),
+      profile: {
+        ...PAPER_PROFILE,
+        target_main_pages: 6,
+        minimum_main_pages: 6,
+        main_page_limit: 6
+      }
+    });
+    const validation = buildScientificValidationArtifact(scientific);
+
+    expect(scientific.page_budget.status).toBe("ok");
+    expect(scientific.page_budget.estimated_main_words).toBeGreaterThanOrEqual(
+      scientific.page_budget.minimum_main_words
+    );
+    expect(validation.issues.some((issue) => issue.code === "page_budget_warning")).toBe(false);
   });
 
   it("treats richness/page-budget issues as warn by default and fail in strict-paper mode", () => {
@@ -1396,6 +1711,248 @@ describe("scientificWriting", () => {
         )
     );
     expect(blockingErrors).toHaveLength(0);
+  });
+
+  it("does not treat uncertainty summaries as conflicting accuracy-delta means", () => {
+    const bundle = makeRichBundle();
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "accuracy_delta_vs_baseline", value: 0.0448 },
+        { key: "best_nonbaseline_accuracy_delta_vs_baseline_mean", value: 0.0667 }
+      ]
+    } as any;
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "LoRA Rank-Dropout Preflight",
+      abstract: "The study-level delta relative to baseline was +0.0448.",
+      keywords: ["LoRA"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a repeated-seed LoRA rank/dropout comparison."] },
+        { heading: "Method", paragraphs: ["We compare a locked rank-8 dropout-0.0 baseline with higher-rank cells."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The strongest cell achieved a mean accuracy delta of +0.0667, or 6.67 percentage points. Its maximum observed seed-level delta was +0.1667 and its minimum was -0.0208, while the reported standard deviation was 0.0728 and the standard error was 0.0325."
+          ]
+        },
+        { heading: "Conclusion", paragraphs: ["The result supports a narrow follow-up candidate."] }
+      ]
+    };
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const blockingUncertaintyErrors = result.consistency_lint.issues.filter(
+      (issue) =>
+        issue.kind === "numeric_inconsistency"
+        && issue.severity === "error"
+        && /0\.0728|0\.0325/.test(JSON.stringify(issue.normalized_facts || []))
+    );
+    expect(blockingUncertaintyErrors).toHaveLength(0);
+  });
+
+  it("does not headline the study-level objective check as a conflicting condition delta", () => {
+    const bundle = makeRichBundle();
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "accuracy_delta_vs_baseline", value: 0.04479166666666667 },
+        { key: "best_nonbaseline_accuracy_delta_vs_baseline_mean", value: 0.0667 }
+      ]
+    } as any;
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "LoRA Rank-Dropout Preflight",
+      abstract:
+        "The study-level objective was met: the available summary reports accuracy_delta_vs_baseline = 0.0448. The strongest summarized condition was rank 32 with dropout 0.05, with a mean delta of 0.0667.",
+      keywords: ["LoRA"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a repeated-seed LoRA rank/dropout comparison."] },
+        { heading: "Method", paragraphs: ["We compare a locked rank-8 dropout-0.0 baseline with higher-rank cells."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "At the study level, the primary metric was accuracy_delta_vs_baseline = 0.04479166666666667, which exceeded the predeclared target of 0.01.",
+            "The strongest cell achieved a mean accuracy delta of +0.0667, or 6.67 percentage points."
+          ]
+        },
+        { heading: "Conclusion", paragraphs: ["The result supports a narrow follow-up candidate."] }
+      ]
+    };
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const blockingDeltaErrors = result.consistency_lint.issues.filter(
+      (issue) =>
+        issue.kind === "numeric_inconsistency"
+        && issue.severity === "error"
+        && /0\.0448|0\.0667/.test(JSON.stringify(issue.normalized_facts || []))
+    );
+    expect(blockingDeltaErrors).toHaveLength(0);
+    expect(result.manuscript.abstract).not.toContain("accuracy_delta_vs_baseline = 0.0448");
+  });
+
+  it("can re-apply evidence-grounded paper-scale strengthening after manuscript repair", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "LoRA rank-dropout repeated-seed benchmark";
+    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = {
+      baseline_marker: "rank_8_dropout_0_0",
+      condition_summaries: [
+        {
+          condition_marker: "rank_8_dropout_0_0",
+          lora_rank: 8,
+          lora_dropout: 0,
+          completed_seed_count: 5,
+          average_accuracy_mean: 0.4417,
+          accuracy_delta_vs_baseline_mean: 0
+        },
+        {
+          condition_marker: "rank_32_dropout_0_05",
+          lora_rank: 32,
+          lora_dropout: 0.05,
+          completed_seed_count: 5,
+          average_accuracy_mean: 0.5084,
+          accuracy_delta_vs_baseline_mean: 0.0667
+        }
+      ]
+    } as any;
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "accuracy_delta_vs_baseline", value: 0.0448 },
+        { key: "completed_run_count", value: 25 }
+      ],
+      statistical_summary: {
+        effect_estimates: [
+          {
+            comparison_id: "rank32_drop005_vs_baseline",
+            metric_key: "accuracy_delta_vs_baseline",
+            delta: 0.0667,
+            direction: "positive",
+            summary: "The best nonbaseline cell has a positive mean delta."
+          }
+        ],
+        notes: ["Seed-level dispersion remains visible."]
+      },
+      synthesis: {
+        discussion_points: ["The evidence supports a narrow benchmark signal, not a universal LoRA prescription."],
+        failure_analysis: [],
+        follow_up_actions: ["Carry rank 32 dropout 0.05 into a larger scale-up."],
+        confidence_statement: "Confidence is moderate."
+      },
+      limitations: ["The small LLM preflight does not establish a general stability law."]
+    } as any;
+    const context = experimentArtifactLoader({ bundle });
+    const repaired: PaperManuscript = {
+      title: "Repeated-Seed LoRA Dropout Benchmark",
+      abstract: "The study-level delta relative to baseline was +0.0448.",
+      keywords: ["LoRA"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study LoRA rank and dropout under a fixed local budget."] },
+        { heading: "Related Work", paragraphs: ["QLoRA and PEFT benchmarks motivate the local adapter question."] },
+        { heading: "Method", paragraphs: ["The protocol uses a rank-8 no-dropout baseline and a higher-rank comparison."] },
+        { heading: "Results", paragraphs: ["The rank 32 dropout 0.05 cell had the strongest mean delta."] },
+        { heading: "Discussion", paragraphs: ["The result is a follow-up signal rather than a broad conclusion."] },
+        { heading: "Limitations", paragraphs: ["The study is a small-backbone preflight."] },
+        { heading: "Conclusion", paragraphs: ["The strongest cell merits follow-up."] }
+      ]
+    };
+
+    const strengthened = strengthenPaperScaleManuscript(repaired, context);
+    const resultsWords = strengthened.sections
+      .find((section) => section.heading === "Results")
+      ?.paragraphs.join(" ").split(/\s+/u).length || 0;
+
+    expect(resultsWords).toBeGreaterThan(150);
+    expect(strengthened.sections.find((section) => section.heading === "Limitations")?.paragraphs.length).toBeGreaterThan(1);
+  });
+
+  it("sanitizes reader-facing manuscript residue that blocks final manuscript-quality review", () => {
+    const context = experimentArtifactLoader({ bundle: makeRichBundle() });
+    const manuscript: PaperManuscript = {
+      title: "Repeated-Seed Evaluation",
+      abstract: "A short abstract.",
+      keywords: ["lora"],
+      sections: [
+        {
+          heading: "Method",
+          paragraphs: [
+            "The preserved manuscript bundle identifies the executed study only as a small-backbone local preflight and does not cleanly disambiguate whether the as-run model was the planned Qwen/Qwen2.5-1.5B backbone or the TinyLlama/TinyLlama-1.1B-Chat-v1.0 fallback.",
+            "The preferred backbone was Qwen/Qwen2.5-1.5B [Qwen2.5], with TinyLlama/TinyLlama-1.1B-Chat-v1.0 [TinyLlama] reserved as a fallback. Supervised instruction tuning used an Alpaca Clean subset capped at 10,000 examples [Alpaca Clean]. Evaluation used ARC-Challenge and HellaSwag [ARC-Challenge; HellaSwag].",
+            "The fixed search space includes LoRA target modules were q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, and down_proj., Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, weight decay 0, max gradient norm 1, and 6 optimizer steps., and The inspected seed-level record reports 32 training examples and 5068 train dataset tokens for the inspected seed-level record."
+          ]
+        },
+        {
+          heading: "Limitations",
+          paragraphs: [
+            "condition summaries / rank 16 dropout 0 0 / accuracy delta vs baseline 95% CI [-0.0591, 0.1091] over n=5."
+          ]
+        },
+        {
+          heading: "Discussion",
+          paragraphs: [
+            "The first P6 run uses a cached, locally runnable small LLM target so the validation focuses on real training, result-table integrity, review gating, and paper-readiness audit rather than on new model access."
+          ]
+        },
+        {
+          heading: "Results",
+          paragraphs: [
+            "raw result study summary run train loss std=0.1064. raw result study summary run runtime sec variance=0.0603. raw result study summary run peak vram bytes variance=271517912275551970.",
+            "Objective metric met: accuracy_delta_vs_baseline=0.04479166666666667 >= 0.01."
+          ]
+        },
+        {
+          heading: "Conclusion",
+          paragraphs: [
+            "This repeated-seed preflight provides conservative evidence that higher-rank LoRA with moderate dropout can be competitive under a strict local instruction-tuning budget.",
+            "Brief execution-coverage and supplementary-metric summaries are routed to the appendix, while the main paper carries the central interpretation.",
+            "The audit trail matters for this interpretation because the paper-ready claim depends on alignment between executed runs, result tables, captions, and the claim-evidence map. If a later run changes the baseline, hides failed executions, or moves numeric support out of the main table, the same text should be downgraded rather than reused as a stronger manuscript."
+          ]
+        }
+      ]
+    };
+
+    const strengthened = strengthenPaperScaleManuscript(manuscript, context);
+    const text = strengthened.sections.flatMap((section) => section.paragraphs).join(" ");
+
+    expect(text).toContain("Qwen/Qwen2.5-1.5B as the selected small-backbone model");
+    expect(text).toContain("rank-16, dropout-0.0 condition");
+    expect(text).toContain("best observed higher-rank LoRA cell is worth testing");
+    expect(text).toContain("local small-model preflight");
+    expect(text).toContain("secondary diagnostics rather than as a condition-level efficiency ranking");
+    expect(text).toContain("main text carries the central interpretation");
+    expect(text).toContain("condition-level values in Table 1 provide the main numeric support");
+    expect(text).toContain("One inspected seed-level record reports 32 training examples");
+    expect(text).toContain("Future extensions should re-check that alignment");
+    expect(text).not.toMatch(/manuscript bundle|manuscript-facing bundle|condition summaries \//i);
+    expect(text).not.toMatch(/can be competitive under a strict local instruction-tuning budget/i);
+    expect(text).not.toMatch(/\[(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|ARC-Challenge|HellaSwag)/i);
+    expect(text).not.toMatch(/Objective metric met|includes LoRA target modules were|for the inspected seed-level record|paper-ready claim/i);
+    expect(text).not.toMatch(/P6 run|review gating|paper-readiness audit|raw result study summary|routed to the appendix/i);
   });
 
   it("LV-016: comma-separated numbers (e.g. 20,789) are not split into phantom matches", () => {

@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-05-07
+Last updated: 2026-05-08
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -12,6 +12,217 @@ Usage rules:
 Path placeholders:
 - `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
 - `<repo-root>` means the local AutoLabOS implementation checkout.
+
+---
+
+## Issue: LV-384
+
+- Status: repair implemented; targeted regression/build passed; same-flow live revalidation pending.
+- Validation target: manuscript-quality review should judge citation hygiene against the reader-visible rendered citation surface, not only the raw `manuscript.json` paragraph text.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`.
+
+- Reproduction steps:
+  1. Rerun P6 `write_paper` after LV-382 and LV-383 repairs.
+  2. Inspect `paper/main.tex`, `paper/manuscript.json`, and `paper/manuscript_quality_failure.json`.
+  3. Confirm whether final manuscript-quality review still reports `citation_hygiene` failure even when TeX renders citation callouts.
+
+- Expected behavior:
+  - The manuscript-quality reviewer should see the same reader-facing citation callouts that the TeX renderer emits.
+  - `citation_hygiene` should not fail merely because internal `manuscript.json` stores citation support as source refs while the final rendered paper has visible citations.
+  - The repair must not insert raw citation tokens into manuscript prose or manually substitute TeX/PDF outputs.
+
+- Actual behavior:
+  - `paper/main.tex` contains visible safe citation callouts in Introduction, Related Work, Method, Results, Discussion, Limitations, and Conclusion.
+  - `paper/manuscript.json` stores raw paragraph text without citation callouts, with citation support available through traceability/source metadata.
+  - `paper/manuscript_quality_failure.json` reports a final `citation_hygiene` failure for Introduction and Related Work: visible prose appears unsupported even though the rendered TeX includes `\cite{...}` callouts.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this issue was reproduced in the persisted P6 live-validation workspace.
+  - Existing session: reproduced after same-flow continuation of the existing P6 run reached a fresh `write_paper` stop boundary.
+  - Divergence: no fresh/resume divergence observed; this is a review-input projection mismatch between manuscript JSON and rendered reader output.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `renderSubmissionPaperTex(...)` correctly appends citation callouts from traceability/citation keys, but `buildManuscriptReviewPrompt(...)` and the review audit prompt only expose raw `manuscript.json`, so the reviewer judges citation hygiene against a non-rendered internal representation.
+
+- Code/test changes:
+  - Code: `src/core/analysis/manuscriptQuality.ts` now builds a `reader_visible_manuscript` view from manuscript traceability and safe citation keys, appending reader-facing citation callouts to review/audit prompt context without mutating canonical manuscript prose.
+  - Code: `src/core/agents/paperWriterSessionManager.ts` forwards traceability and citation keys to manuscript review and review-audit prompt builders.
+  - Code: `src/core/nodes/writePaper.ts` passes the evaluated candidate traceability and BibTeX citation key map into manuscript review/audit cycles.
+  - Tests: `tests/manuscriptQuality.test.ts` covers reader-visible citation callouts in manuscript review prompts.
+
+- Regression status:
+  - Reproduced from final P6 live `write_paper` artifacts on 2026-05-08 KST.
+  - Targeted regression: passed with `npm test -- tests/manuscriptQuality.test.ts -t "reader-visible citation"`.
+  - Build: passed with `npm run build`.
+  - Same-flow live revalidation: pending.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/main.tex`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/manuscript.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/manuscript_quality_failure.json`
+
+---
+
+## Issue: LV-383
+
+- Status: repair implemented; targeted regression/build passed; same-flow live revalidation advanced to LV-384 on 2026-05-08.
+- Validation target: P6 same-flow `write_paper` revalidation should either run the target node to a fresh persisted stop boundary or fail cleanly without leaving the run projected as actively running.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`.
+
+- Reproduction steps:
+  1. Build the CLI after a `write_paper` validation repair.
+  2. Run `AUTOLABOS_P6_FORCE_RUN_ACTIVE=1 AUTOLABOS_P6_RUN_ID=2dcc480e-b4e5-4863-9c7f-6872f9c672e7 AUTOLABOS_P6_NEXT_NODE=write_paper AUTOLABOS_P6_NEXT_TIMEOUT_SEC=3600 npm run p6:continue`.
+  3. Observe whether `outputs/p6-preflight/p6-continue-write_paper-output.txt`, final `paper/*` artifacts, and `run_record.json` reach a fresh stop boundary.
+
+- Expected behavior:
+  - The wrapper should keep an active TUI child process until `write_paper` reaches a fresh persisted boundary.
+  - If the TUI child exits or cannot drive the target node, the wrapper should fail quickly and leave a truthful non-running projection.
+  - A partial rerun should not leave `run_record.json` at `status=running`, `currentNode=write_paper`, `write_paper.status=running` without a live AutoLabOS process.
+
+- Actual behavior:
+  - The rerun refreshed early artifacts such as `paper/input_validation.json`, `paper/write_paper_eligibility.json`, `paper/related_work_notes.json`, and `paper/outline.json`.
+  - The wrapper process then remained alive with no AutoLabOS `node dist/cli/main.js` child visible under the process tree and no updated `p6-continue-write_paper-output.txt`.
+  - After terminating the stuck wrapper process started by this validation attempt, `run_record.json` still reported `status=running`, `currentNode=write_paper`, and `write_paper.status=running`.
+  - The final manuscript/gate artifacts were not regenerated, so the same-flow validation result for the consistency repair is inconclusive.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this was reproduced in the persisted P6 live-validation workspace.
+  - Existing session: reproduced while trying to rerun the existing P6 `write_paper` node after it had already reached retry 3/3.
+  - Divergence: not yet compared with a fresh run; the observed risk is stale persisted state after resumed/forced continuation.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the forced continuation path can mark or leave the target node running before the PTY-controlled TUI has a durable child process and fresh stop boundary. When the wrapper loses the child or stalls before final artifact regeneration, persisted run state remains projected as running.
+
+- Code/test changes:
+  - Code: `src/core/stateGraph/runtime.ts` clears stale `lastError` when arming a manual retry so resumed nodes do not carry a failed marker while being retried.
+  - Code: `src/tui/TerminalApp.ts` treats a recently updated `running` node with a persisted failure marker as stale and recoverable, preventing the TUI from projecting a failed node as actively running.
+  - Code: `scripts/p6-approve-and-run-next.py` treats persisted failure markers as inactive, emits `/agent retry <node> <run>` for those nodes, and accepts the current `/doctor` readiness surface.
+  - Tests: `tests/stateGraphRuntime.test.ts`, `tests/terminalAppPlanExecution.test.ts`, and the P6 helper selftest cover the stale running/lastError recovery path.
+
+- Regression status:
+  - Reproduced on 2026-05-08 KST.
+  - Targeted regression: passed with `npm test -- tests/stateGraphRuntime.test.ts -t "manually retried"` and `npm test -- tests/terminalAppPlanExecution.test.ts -t "LV-383"`.
+  - Helper selftest: passed with `AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py`.
+  - Build: passed with `npm run build`.
+  - Same-flow revalidation: passed for the stale-running recovery boundary on 2026-05-08 KST. A subsequent `AUTOLABOS_P6_RUN_ID=2dcc480e-b4e5-4863-9c7f-6872f9c672e7 AUTOLABOS_P6_NEXT_NODE=write_paper AUTOLABOS_P6_NEXT_TIMEOUT_SEC=3600 npm run p6:continue` reran `write_paper` to a fresh persisted stop boundary instead of leaving the run projected as active.
+  - Follow-on result: the run advanced past LV-382's strict consistency blocker and exposed LV-384, a separate manuscript-quality citation-view projection issue.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/outline.json`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-write_paper-output.txt`
+
+---
+
+## Issue: LV-382
+
+- Status: repair implemented; targeted regression/build passed; same-flow live revalidation advanced to LV-384 on 2026-05-08.
+- Validation target: P6 `write_paper` strict scientific consistency should not block a generated manuscript on false-positive numeric/count contradictions when the underlying condition-level paper artifacts are scoped correctly.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`.
+
+- Reproduction steps:
+  1. Rerun P6 `write_paper` after the LV-381 condition-visual and Method-cap repairs.
+  2. Inspect `paper/gate_decision.json`, `paper/consistency_lint.json`, `paper/manuscript_quality_failure.json`, and `paper/paper_readiness.json`.
+  3. Confirm whether strict consistency blocks on count or condition-figure comparisons.
+
+- Expected behavior:
+  - `10,000 seed resamples` should not be parsed as a `0`-repeat manuscript claim.
+  - Condition-level figure deltas should not be compared as if they were the study-level aggregate delta.
+  - If the manuscript is still blocked, the blocker should reflect a real paper-readiness problem rather than parser/scope drift in the consistency lint.
+
+- Actual behavior:
+  - `paper/gate_decision.json` blocked strict paper readiness with `count_inconsistency`: `Method reports 0 repeats, but upstream artifacts support 5`; the observed fact came from raw text `000 seed`.
+  - The same gate also blocked on two `numeric_inconsistency` errors where Figure 1 condition deltas `0.025` and `0.0625` were compared to the aggregate `accuracy_delta_vs_baseline=0.0448`.
+  - A later rerun exposed a related text-scope false positive: the Results sentence listing condition-level mean average accuracy values `0.4417`, `0.4667`, `0.5042`, and `0.5083` was compared against aggregate `arc_challenge_accuracy=0.6417`.
+  - `paper/paper_readiness.json` remained `paper_ready=false`, `readiness_state=paper_scale_candidate`, with `scientific_validation_status=fail`, while evidence gate and submission validation passed.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this issue was reproduced in the resumed persisted P6 live run.
+  - Existing session: reproduced by same-flow continuation of the existing P6 run.
+  - Divergence: no fresh/resume divergence observed; this is a deterministic lint/projection issue in generated paper validation.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: count extraction matched the suffix of comma-separated numeric literals after a comma, and visual/text metric extraction inferred condition-level rank/dropout values as aggregate accuracy/delta values because the lint did not expose `latest_results.condition_summaries` as comparable repeat-level structured facts.
+
+- Code/test changes:
+  - Code: `src/core/analysis/scientificWriting.ts` now parses comma-separated count literals as whole numeric tokens and rejects count matches that start after a digit/comma boundary.
+  - Code: `src/core/analysis/scientificWriting.ts` now treats condition-level/rank-dropout-grid visual text as repeat-level aggregation, preventing aggregate study metrics and condition-cell visual values from being compared as the same fact.
+  - Code: `src/core/analysis/scientificWriting.ts` now exposes condition-level mean accuracy and delta values from `latest_results.condition_summaries` as repeat-level structured facts for manuscript consistency checks.
+  - Code: `src/core/analysis/scientificWriting.ts` now skips LoRA `rank` and `dropout` hyperparameter literals when extracting metric values from Results prose.
+  - Tests: `tests/scientificWriting.test.ts` covers comma-separated seed-resampling counts and condition-level visual deltas avoiding blocking figure contradictions.
+  - Tests: `tests/scientificWriting.test.ts` covers condition-level Results prose values without comparing them to aggregate ARC-Challenge accuracy.
+
+- Regression status:
+  - Reproduced from final P6 live `write_paper` artifacts on 2026-05-08 KST.
+  - Targeted regression: passed with `npm test -- tests/scientificWriting.test.ts -t "condition-level"` and `npm test -- tests/scientificWriting.test.ts`.
+  - Build: passed with `npm run build`.
+  - Same-flow live revalidation: passed for the targeted consistency blocker on 2026-05-08 KST after LV-383 recovery. The fresh `paper/gate_decision.json` no longer contains blocking condition-level numeric/count consistency issues; it reports `status=warn`, `blocking_issue_count=0`, and only non-blocking validation warnings.
+  - Follow-on result: `paper/paper_readiness.json` remains `paper_ready=false` because `write_paper` now stops at LV-384, a separate manuscript-quality citation-view projection issue.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/gate_decision.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/consistency_lint.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/paper_readiness.json`
+
+---
+
+## Issue: LV-381
+
+- Status: first repair implemented and same-flow live revalidated; blocker narrowed but not resolved.
+- Validation target: P6 `write_paper` should render condition-level experimental evidence and reader-visible citation support strongly enough that the manuscript-quality gate does not block on redundant summary visuals or citation hygiene when the underlying run artifacts are adequate.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`.
+
+- Reproduction steps:
+  1. Rerun P6 `write_paper` on the persisted live run after LV-380.
+  2. Inspect `paper/manuscript.json`, `paper/main.tex`, `paper/references.bib`, and `paper/manuscript_quality_failure.json`.
+  3. Confirm whether the final manuscript-quality gate still flags `visual_redundancy`, `section_completeness`, or `citation_hygiene`.
+
+- Expected behavior:
+  - Main-paper visuals should expose the executed condition-level comparison when run artifacts contain repeated-seed `condition_summaries`.
+  - A condition-level table should let readers inspect the five-cell comparison directly instead of only seeing aggregate study-summary values.
+  - Any main figure should add a distinct trend or comparison view rather than repeating the table.
+  - TeX citation keys and bibliography entries should use safe BibTeX identifiers, and the manuscript review prompt should understand that citation source refs are rendered into reader-visible `\cite{...}` commands.
+
+- Actual behavior:
+  - The generated main table summarized study-level counts and aggregate deltas, while the generated figure repeated summary-level quantities and duplicated task-average bars.
+  - The final manuscript-quality review reported that Results condition-level claims were not backed by the main-paper visual/table surface.
+  - The generated TeX used DOI/URL-like citation keys in `\cite{...}` commands, and the final review still flagged citation hygiene despite backend source refs.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this issue; evidence comes from the persisted P6 live run.
+  - Existing session: reproduced from the resumed P6 run and manuscript-quality artifacts.
+  - Divergence: no fresh/resume divergence observed; this is a manuscript materialization and citation-rendering projection gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: manuscript materialization prefers LLM-authored candidate visuals even when deterministic condition-level metrics are available, and BibTeX/citation review paths do not consistently project reader-safe rendered citation identifiers back into manuscript-quality review.
+
+- Code/test changes:
+  - Code: `src/core/analysis/scientificWriting.ts` now derives deterministic condition-level main-paper visuals from repeated-seed `latest_results.condition_summaries` and prefers them over summary-only LLM-authored visuals.
+  - Code: `src/core/analysis/paperWriting.ts` rewrites DOI/URL-shaped BibTeX entry keys into reader-safe citation identifiers while keeping `references.bib` and rendered `\cite{...}` keys aligned.
+  - Code: `src/core/analysis/manuscriptQuality.ts` normalizes repeated terminal punctuation during bounded repair locality comparison so sanitizer-only punctuation differences do not falsely count as out-of-scope edits.
+  - Tests: `tests/scientificWriting.test.ts` covers deterministic condition-level visual selection over summary-only candidate visuals.
+  - Tests: `tests/paperSubmissionSanitization.test.ts` covers DOI/URL-shaped BibTeX key rewriting.
+
+- Regression status:
+  - Reproduced from final P6 manuscript-quality failure on 2026-05-07 KST.
+  - Targeted regression: passed with `npm test -- tests/scientificWriting.test.ts tests/paperSubmissionSanitization.test.ts tests/manuscriptQuality.test.ts`.
+  - Build: passed with `npm run build`.
+  - Full test suite: passed with `npm test`.
+  - Harness validation: passed with `npm run validate:harness`.
+  - Same-flow live revalidation: ran on 2026-05-08 KST with `AUTOLABOS_P6_FORCE_RUN_ACTIVE=1 AUTOLABOS_P6_RUN_ID=2dcc480e-b4e5-4863-9c7f-6872f9c672e7 AUTOLABOS_P6_NEXT_NODE=write_paper AUTOLABOS_P6_NEXT_TIMEOUT_SEC=3600 npm run p6:continue`.
+  - Live improvement: `main.tex` now renders safe BibTeX keys such as `dettmers_2023_qlora_efficient`; `references.bib` no longer uses DOI/URL-shaped entry keys for those references; the final audit reports `Unsupported claims: 0`, `Citation support issues: 0`, and `Figure audit: warn` with no severe mismatches.
+  - Live result: paper readiness remains `blocked` because `write_paper` stopped at manuscript-quality after one repair pass. Remaining final issues are Method section completeness, Results transition wording, baseline-row visual label ambiguity, table/figure redundancy, and appendix support selectivity.
+  - Narrowed next hypothesis: the deterministic main table still encodes delta and delta-CI in row labels while the figure plots delta, so the reviewer still treats the pair as redundant. The Method prose also conflates a planned Alpaca Clean cap with the inspected seed-level consumed training count.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/manuscript.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/main.tex`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/references.bib`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/manuscript_quality_failure.json`
 
 ---
 

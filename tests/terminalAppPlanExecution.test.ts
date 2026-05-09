@@ -3947,6 +3947,36 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs.some((line: string) => line.includes("Recovering stale running node"))).toBe(false);
   });
 
+  it("auto-recovers a recently updated running node that still carries a failure marker (LV-383)", async () => {
+    const app = makeApp();
+    const run = makeRun("run-recent-failed-running");
+    const now = new Date().toISOString();
+    run.status = "running";
+    run.currentNode = "write_paper";
+    run.graph.currentNode = "write_paper";
+    run.updatedAt = now;
+    run.graph.nodeStates.write_paper = {
+      ...run.graph.nodeStates.write_paper,
+      status: "running",
+      updatedAt: now,
+      note: "write_paper generated manuscript artifacts but stopped before scientific/submission acceptance.",
+      lastError: "write_paper generated manuscript artifacts but stopped before scientific/submission acceptance."
+    };
+    app.runIndex = [run];
+    app.orchestrator = { retryCurrent: vi.fn().mockResolvedValue(run) };
+    app.refreshRunIndex = vi.fn();
+    app.setActiveRunId = vi.fn();
+    app.continueSupervisedRun = vi.fn();
+
+    await app.recoverStaleRunningNode(run.id);
+
+    expect(app.orchestrator.retryCurrent).toHaveBeenCalledWith(run.id, "write_paper");
+    expect(app.refreshRunIndex).toHaveBeenCalled();
+    expect(app.setActiveRunId).toHaveBeenCalledWith(run.id);
+    expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id);
+    expect(app.logs.some((line: string) => line.includes("Recovering stale running node"))).toBe(true);
+  });
+
   it("auto-recovers an old running node on reopen (LV-037)", async () => {
     const app = makeApp();
     const run = makeRun("run-stale");

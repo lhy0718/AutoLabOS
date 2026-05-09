@@ -5,7 +5,9 @@ import {
   buildManuscriptRepairPlan,
   buildManuscriptRepairVerificationArtifact,
   buildFallbackManuscriptReview,
+  buildManuscriptReviewPrompt,
   buildManuscriptStyleLint,
+  buildReaderVisibleManuscript,
   collectManuscriptQualityIssues,
   normalizeManuscriptReview,
   reconcileManuscriptStyleLintWithReview,
@@ -117,6 +119,51 @@ function makeCleanManuscript(): PaperManuscript {
 }
 
 describe("manuscriptQuality style lint", () => {
+  it("adds reader-visible citation callouts to the manuscript review prompt", () => {
+    const manuscript = makeCleanManuscript();
+    const traceability = makeTraceability(manuscript);
+    const citationKeysByPaperId = new Map([["paper_1", "smith2024threaded"]]);
+
+    const readerVisible = buildReaderVisibleManuscript({
+      manuscript,
+      traceability,
+      citationKeysByPaperId
+    });
+
+    expect(readerVisible.abstract.text).not.toContain("smith2024threaded");
+    expect(readerVisible.sections[0]?.paragraphs[0]?.text).toContain("(Smith et al., 2024)");
+    expect(readerVisible.sections[0]?.paragraphs[0]?.text).not.toContain("smith2024threaded");
+    expect(readerVisible.sections[0]?.paragraphs[0]?.citation_paper_ids).toEqual(["paper_1"]);
+    expect(readerVisible.sections.find((section) => section.heading === "Method")?.paragraphs[0]?.text).not.toContain("smith2024threaded");
+
+    const prompt = buildManuscriptReviewPrompt({
+      manuscript,
+      traceability,
+      citationKeysByPaperId,
+      bundle: {
+        runTitle: "Thread-backed drafting",
+        topic: "manuscript generation",
+        objectiveMetric: "revision stability"
+      } as any,
+      constraintProfile: {
+        writing: {
+          targetVenue: "workshop",
+          toneHint: "careful",
+          lengthHint: "short paper"
+        }
+      } as any,
+      objectiveMetricProfile: {
+        primaryMetric: "revision stability",
+        targetDescription: "higher is better"
+      } as any
+    });
+
+    expect(prompt).toContain("reader_visible_manuscript");
+    expect(prompt).toContain("(Smith et al., 2024)");
+    expect(prompt).not.toContain("(citations: smith2024threaded)");
+    expect(prompt).toContain("judge citation_hygiene from reader_visible_manuscript");
+  });
+
   it("normalizes valid supporting spans and drops malformed ones", () => {
     const manuscript = makeCleanManuscript();
 
@@ -262,6 +309,42 @@ describe("manuscriptQuality style lint", () => {
     });
   });
 
+  it("keeps missing supporting spans on warning-only review issues non-blocking", () => {
+    const manuscript = makeCleanManuscript();
+    const review = normalizeManuscriptReview(
+      {
+        overall_decision: "repair",
+        summary: "The manuscript has a warning without a local span.",
+        issues: [
+          {
+            code: "citation_hygiene",
+            severity: "warning",
+            section: "Conclusion",
+            repairable: true,
+            message: "A citation warning lacks a local span.",
+            fix_recommendation: "Ground the warning or drop it.",
+            supporting_spans: []
+          }
+        ]
+      },
+      manuscript
+    );
+
+    const validated = validateManuscriptReviewArtifact({
+      review,
+      manuscript,
+      traceability: makeTraceability(manuscript)
+    });
+
+    expect(validated.validation.ok).toBe(true);
+    expect(validated.validation.artifact_reliability).toBe("partially_grounded");
+    expect(validated.validation.issues[0]).toMatchObject({
+      severity: "warning",
+      code: "issue_missing_supporting_span",
+      issue_code: "citation_hygiene"
+    });
+  });
+
   it("builds a bounded-local repair plan from validated review spans", () => {
     const manuscript = makeCleanManuscript();
     const review = normalizeManuscriptReview(
@@ -322,6 +405,126 @@ describe("manuscriptQuality style lint", () => {
           paragraph_index: 0,
           edit_scope: "paragraph_local",
           allowed_location_keys: ["paragraph:discussion:0"]
+        })
+      ])
+    );
+  });
+
+  it("records severity for untargetable warning-only review issues", () => {
+    const manuscript = makeCleanManuscript();
+    const review = normalizeManuscriptReview(
+      {
+        overall_decision: "repair",
+        summary: "One citation warning lacks a local span.",
+        issues: [
+          {
+            code: "citation_hygiene",
+            severity: "warning",
+            section: "Results and Conclusion",
+            repairable: true,
+            message: "Citation placement should be checked in Results and Conclusion.",
+            fix_recommendation: "Add a concrete span before attempting local repair.",
+            supporting_spans: []
+          }
+        ]
+      },
+      manuscript
+    );
+    const validated = validateManuscriptReviewArtifact({
+      review,
+      manuscript,
+      traceability: makeTraceability(manuscript)
+    });
+
+    const repairPlan = buildManuscriptRepairPlan({
+      passIndex: 1,
+      manuscript,
+      review: validated.review,
+      lint: buildManuscriptStyleLint({ manuscript, traceability: makeTraceability(manuscript) }),
+      mustImproveIssues: [
+        {
+          source: "review",
+          code: "citation_hygiene",
+          severity: "warning",
+          section: "Results and Conclusion",
+          repairable: true,
+          message: "Citation placement should be checked in Results and Conclusion."
+        }
+      ]
+    });
+
+    expect(repairPlan.targets).toHaveLength(0);
+    expect(repairPlan.blocked_targets).toEqual([
+      expect.objectContaining({
+        source: "review",
+        issue_code: "citation_hygiene",
+        severity: "warning",
+        section: "Results and Conclusion"
+      })
+    ]);
+  });
+
+  it("builds section-bounded targets for anchorless blocking citation hygiene issues", () => {
+    const manuscript = makeCleanManuscript();
+    const review = normalizeManuscriptReview(
+      {
+        overall_decision: "repair",
+        summary: "Citation placement needs a section-level cleanup.",
+        issues: [
+          {
+            code: "citation_hygiene",
+            severity: "fail",
+            section: "Method; Conclusion",
+            repairable: true,
+            message: "Citation placement is inconsistent in Method and Conclusion.",
+            fix_recommendation: "Repair citation placement in the named sections without changing claims.",
+            supporting_spans: []
+          }
+        ]
+      },
+      manuscript
+    );
+    const validated = validateManuscriptReviewArtifact({
+      review,
+      manuscript,
+      traceability: makeTraceability(manuscript)
+    });
+
+    const repairPlan = buildManuscriptRepairPlan({
+      passIndex: 1,
+      manuscript,
+      review: validated.review,
+      lint: buildManuscriptStyleLint({ manuscript, traceability: makeTraceability(manuscript) }),
+      mustImproveIssues: [
+        {
+          source: "review",
+          code: "citation_hygiene",
+          severity: "fail",
+          section: "Method; Conclusion",
+          repairable: true,
+          message: "Citation placement is inconsistent in Method and Conclusion."
+        }
+      ]
+    });
+
+    expect(repairPlan.blocked_targets).toHaveLength(0);
+    expect(repairPlan.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issue_code: "citation_hygiene",
+          section: "Method",
+          scope_downgraded: true,
+          allowed_location_keys: [
+            "paragraph:method:0",
+            "paragraph:method:1",
+            "paragraph:method:2"
+          ]
+        }),
+        expect.objectContaining({
+          issue_code: "citation_hygiene",
+          section: "Conclusion",
+          scope_downgraded: true,
+          allowed_location_keys: ["paragraph:conclusion:0"]
         })
       ])
     );
@@ -488,6 +691,78 @@ describe("manuscriptQuality style lint", () => {
         expect.objectContaining({ source: "review", kind: "figure", location_key: "figure:0" })
       ])
     );
+  });
+
+  it("allows same-section paragraph edits when a section-level review issue targets a table", () => {
+    const manuscript = makeCleanManuscript();
+    manuscript.sections[3] = {
+      heading: "Results",
+      paragraphs: [
+        "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline.",
+        "The first result paragraph needs a clearer explanation of the table.",
+        "The later results paragraph also needs to connect the table back to the claim."
+      ]
+    };
+    manuscript.tables = [
+      {
+        caption: "Exact numeric comparison for the main revision-stability result.",
+        rows: [
+          { label: "Stateless baseline", value: 0.71 },
+          { label: "Thread-backed drafting", value: 0.76 }
+        ]
+      }
+    ];
+
+    const review = normalizeManuscriptReview(
+      {
+        overall_decision: "repair",
+        summary: "The results section needs a table-local section repair.",
+        issues: [
+          {
+            code: "section_completeness",
+            severity: "fail",
+            section: "Results",
+            repairable: true,
+            message: "The Results section does not yet explain how Table 1 supports the main comparison.",
+            fix_recommendation: "Clarify the Results section around Table 1 without changing unrelated sections.",
+            visual_targets: [
+              { kind: "table", index: 0, rationale: "Table 1 is the relevant section-level comparison surface." }
+            ]
+          }
+        ]
+      },
+      manuscript
+    );
+    const validated = validateManuscriptReviewArtifact({
+      review,
+      manuscript,
+      traceability: makeTraceability(manuscript)
+    });
+
+    const repairPlan = buildManuscriptRepairPlan({
+      passIndex: 1,
+      manuscript,
+      review: validated.review,
+      lint: { mode: "hard_policy_only", checked_rules: [], ok: true, issues: [], summary: [] },
+      mustImproveIssues: [
+        {
+          source: "review",
+          code: "section_completeness",
+          severity: "fail",
+          section: "Results",
+          repairable: true,
+          message: "The Results section does not yet explain how Table 1 supports the main comparison."
+        }
+      ]
+    });
+
+    const tableTarget = repairPlan.targets.find((target) => target.location_key === "table:0");
+    expect(tableTarget?.allowed_location_keys).toEqual([
+      "table:0",
+      "paragraph:results:0",
+      "paragraph:results:1",
+      "paragraph:results:2"
+    ]);
   });
 
   it("allows an adjacent-two-paragraph repair scope for section transitions within one section", () => {

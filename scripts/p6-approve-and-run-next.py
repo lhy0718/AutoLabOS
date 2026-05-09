@@ -24,6 +24,7 @@ READY_PATTERN = (
     r"Add steering, or wait for the next (?:run or )?approval\.|"
     r"Research Brief workflow is ready)"
 )
+DOCTOR_READY_PATTERN = r"(\[(OK|ATTN)\] readiness:|codex-research-backend-model:|workspace-config:)"
 STOP_BOUNDARY_STABLE_SECONDS = 2.0
 
 
@@ -113,19 +114,39 @@ def node_status(record: dict, node: str) -> str:
     return str(record.get("graph", {}).get("nodeStates", {}).get(node, {}).get("status", ""))
 
 
+def node_state(record: dict, node: str) -> dict:
+    state = record.get("graph", {}).get("nodeStates", {}).get(node, {})
+    return state if isinstance(state, dict) else {}
+
+
+def node_has_persisted_failure(record: dict, node: str) -> bool:
+    state = node_state(record, node)
+    return bool(str(state.get("lastError") or "").strip())
+
+
 def current_node(record: dict) -> str:
     return str(record.get("currentNode") or record.get("graph", {}).get("currentNode") or "")
 
 
 def is_active_running(record: dict) -> bool:
     current = current_node(record)
-    return bool(current) and record.get("status") == "running" and node_status(record, current) == "running"
+    return (
+        bool(current)
+        and record.get("status") == "running"
+        and node_status(record, current) == "running"
+        and not node_has_persisted_failure(record, current)
+    )
 
 
 def is_target_node_running(record: dict | None, node: str) -> bool:
     if not record:
         return False
-    return record.get("status") == "running" and current_node(record) == node and node_status(record, node) == "running"
+    return (
+        record.get("status") == "running"
+        and current_node(record) == node
+        and node_status(record, node) == "running"
+        and not node_has_persisted_failure(record, node)
+    )
 
 
 def active_running_node(record: dict | None) -> str:
@@ -217,6 +238,9 @@ def build_continue_command(record: dict, run_id: str, next_node: str, node_args:
     current_status = node_status(record, current)
     target_status = node_status(record, next_node)
 
+    if current == next_node and node_has_persisted_failure(record, current):
+        return f"/agent retry {next_node} {run_id}"
+
     if current == next_node and current_status in {"pending", "running", "failed"}:
         command = f"/agent run {next_node} {run_id}"
         if node_args:
@@ -228,6 +252,9 @@ def build_continue_command(record: dict, run_id: str, next_node: str, node_args:
 
     if current_status == "needs_approval":
         return "/approve"
+
+    if target_status in {"running", "failed"} and node_has_persisted_failure(record, next_node):
+        return f"/agent retry {next_node} {run_id}"
 
     if target_status in {"pending", "running", "failed"}:
         command = f"/agent run {next_node} {run_id}"
@@ -353,6 +380,11 @@ def run_selftest() -> int:
         "currentNode": "analyze_papers",
         "graph": {"nodeStates": {"analyze_papers": {"status": "running"}}},
     }
+    analyze_running_with_error = {
+        "status": "running",
+        "currentNode": "analyze_papers",
+        "graph": {"nodeStates": {"analyze_papers": {"status": "running", "lastError": "previous failure"}}},
+    }
     collect_needs_approval = {
         "currentNode": "collect_papers",
         "graph": {
@@ -372,6 +404,10 @@ def run_selftest() -> int:
             build_continue_command(analyze_running, run_id, "analyze_papers", args),
             "/agent run analyze_papers run-p6 --top-n 12",
         ),
+        (
+            build_continue_command(analyze_running_with_error, run_id, "analyze_papers", args),
+            "/agent retry analyze_papers run-p6",
+        ),
         (build_continue_command(collect_needs_approval, run_id, "analyze_papers", args), "/approve"),
         (build_continue_command(analyze_needs_approval, run_id, "analyze_papers", args), "/approve"),
     ]
@@ -387,6 +423,12 @@ def run_selftest() -> int:
         return 1
     if not is_target_node_running(analyze_running, "analyze_papers"):
         print("FAIL: target-node running state was not detected")
+        return 1
+    if is_active_running(analyze_running_with_error):
+        print("FAIL: running node with a persisted failure was incorrectly treated as active")
+        return 1
+    if is_target_node_running(analyze_running_with_error, "analyze_papers"):
+        print("FAIL: target-node running state ignored a persisted failure marker")
         return 1
     if is_target_node_running(analyze_running, "collect_papers"):
         print("FAIL: unrelated node was incorrectly detected as running")
@@ -505,6 +547,9 @@ def run_selftest() -> int:
     if not re.search(READY_PATTERN, "Add steering, or wait for the next run or approval."):
         print("FAIL: ready pattern did not preserve older paused/failure guidance")
         return 1
+    if not re.search(DOCTOR_READY_PATTERN, "+ [OK] codex-research-backend-model: configured"):
+        print("FAIL: doctor ready pattern did not match current doctor output")
+        return 1
     if pending_transition_target({
         "graph": {"pendingTransition": {"targetNode": "generate_hypotheses"}}
     }) != "generate_hypotheses":
@@ -598,7 +643,7 @@ def main() -> int:
         else:
             if not force_run_active:
                 send_line(master_fd, "/doctor")
-                buffer_text = wait_for(master_fd, r"\[(OK|ATTN)\] readiness:", 60, buffer_text)
+                buffer_text = wait_for(master_fd, DOCTOR_READY_PATTERN, 60, buffer_text)
                 buffer_text = wait_for(master_fd, r"\[(OK|FAIL)\] harness-validation:", 60, buffer_text)
             record_before_command = load_run_record(workspace, run_id)
             command = (

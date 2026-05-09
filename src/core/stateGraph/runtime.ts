@@ -606,7 +606,8 @@ export class StateGraphRuntime {
       ...run.graph.nodeStates[target],
       status: "running",
       updatedAt: new Date().toISOString(),
-      note: "manual retry"
+      note: "manual retry",
+      lastError: undefined
     };
     run.status = "running";
 

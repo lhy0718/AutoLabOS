@@ -246,6 +246,7 @@ export interface ManuscriptRepairTarget {
 export interface ManuscriptRepairBlockedTarget {
   source: "review" | "style_lint";
   issue_code: string;
+  severity: "warning" | "fail";
   section: string;
   reason: string;
 }
@@ -321,6 +322,119 @@ const MANUSCRIPT_REVIEW_CODES: ManuscriptReviewIssueCode[] = [
   "rhetorical_overreach"
 ];
 
+interface ReaderVisibleParagraph {
+  text: string;
+  citation_callout?: string;
+  citation_paper_ids?: string[];
+}
+
+interface ReaderVisibleManuscriptSection {
+  heading: string;
+  paragraphs: ReaderVisibleParagraph[];
+}
+
+export interface ReaderVisibleManuscript {
+  title: string;
+  abstract: ReaderVisibleParagraph;
+  sections: ReaderVisibleManuscriptSection[];
+  appendix_sections?: ReaderVisibleManuscriptSection[];
+}
+
+export function buildReaderVisibleManuscript(input: {
+  manuscript: PaperManuscript;
+  traceability: PaperTraceabilityReport;
+  citationKeysByPaperId: Map<string, string>;
+}): ReaderVisibleManuscript {
+  const traceByLocation = new Map<string, PaperTraceabilityEntry>();
+  for (const entry of input.traceability.paragraphs) {
+    traceByLocation.set(buildTraceLocationKey(entry.manuscript_section, entry.paragraph_index), entry);
+  }
+
+  const renderParagraph = (section: string, paragraphIndex: number, text: string): ReaderVisibleParagraph => {
+    const trace = traceByLocation.get(buildTraceLocationKey(section, paragraphIndex));
+    const citationKeys = shouldShowReaderVisibleCitations(section, text, paragraphIndex)
+      ? uniqueStrings(
+          (trace?.citation_paper_ids || [])
+            .map((paperId) => input.citationKeysByPaperId.get(paperId))
+            .filter((key): key is string => Boolean(key))
+        )
+      : [];
+    const citationLabels = uniqueStrings(
+      citationKeys.map(formatReaderVisibleCitationLabel).filter((label): label is string => Boolean(label))
+    ).slice(0, 4);
+    const citationCallout = citationLabels.length > 0 ? `(${citationLabels.join("; ")})` : undefined;
+    return {
+      text: citationCallout ? `${text} ${citationCallout}` : text,
+      ...(citationCallout ? { citation_callout: citationCallout } : {}),
+      ...(trace?.citation_paper_ids?.length ? { citation_paper_ids: trace.citation_paper_ids } : {})
+    };
+  };
+
+  const renderSections = (sections: PaperManuscript["sections"] | undefined): ReaderVisibleManuscriptSection[] | undefined =>
+    sections?.map((section) => ({
+      heading: section.heading,
+      paragraphs: section.paragraphs.map((paragraph, paragraphIndex) =>
+        renderParagraph(section.heading, paragraphIndex, paragraph)
+      )
+    }));
+
+  return {
+    title: input.manuscript.title,
+    abstract: { text: input.manuscript.abstract },
+    sections: renderSections(input.manuscript.sections) || [],
+    ...(input.manuscript.appendix_sections?.length
+      ? { appendix_sections: renderSections(input.manuscript.appendix_sections) }
+      : {})
+  };
+}
+
+function formatReaderVisibleCitationLabel(citationKey: string): string | undefined {
+  const cleaned = citationKey.replace(/[^A-Za-z0-9_ -]+/gu, " ").replace(/\s+/gu, " ").trim();
+  if (!cleaned) {
+    return undefined;
+  }
+  const separated = cleaned.match(/^([A-Za-z]+)[_-]((?:19|20)\d{2})\b/u);
+  if (separated) {
+    return `${titleCaseToken(separated[1])} et al., ${separated[2]}`;
+  }
+  const compact = cleaned.match(/^([A-Za-z]+)((?:19|20)\d{2})/u);
+  if (compact) {
+    return `${titleCaseToken(compact[1])} et al., ${compact[2]}`;
+  }
+  const tokens = cleaned.split(/[_\s-]+/u).filter(Boolean);
+  const yearIndex = tokens.findIndex((token) => /^(?:19|20)\d{2}$/u.test(token));
+  if (yearIndex > 0) {
+    return `${titleCaseToken(tokens[0])} et al., ${tokens[yearIndex]}`;
+  }
+  return undefined;
+}
+
+function titleCaseToken(token: string): string {
+  const lower = token.toLowerCase();
+  return `${lower.slice(0, 1).toUpperCase()}${lower.slice(1)}`;
+}
+
+function buildTraceLocationKey(section: string, paragraphIndex: number): string {
+  return `${section.toLowerCase()}::${paragraphIndex}`;
+}
+
+function shouldShowReaderVisibleCitations(section: string, paragraph: string, paragraphIndex: number): boolean {
+  const key = section.toLowerCase().replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "");
+  if (key === "related_work") {
+    return true;
+  }
+  if (/\b(?:QLoRA|MAPLE|PEFT|prior work|literature|cited work|adapter-variant|benchmarking papers)\b/iu.test(paragraph)) {
+    return true;
+  }
+  if (key !== "introduction") {
+    return false;
+  }
+  if (paragraphIndex > 1) {
+    return false;
+  }
+  return !/\b(?:prespecified|threshold|endpoint|completed-run|secondary outcomes?|train-and-evaluate|study objective|run metadata|optimizer|gradient|training examples?)\b/iu.test(paragraph);
+}
+
 export function buildManuscriptReviewPrompt(input: {
   manuscript: PaperManuscript;
   bundle: PaperWritingBundle;
@@ -328,6 +442,8 @@ export function buildManuscriptReviewPrompt(input: {
   paperProfile?: PaperProfileConfig;
   objectiveMetricProfile: ObjectiveMetricProfile;
   objectiveEvaluation?: ObjectiveMetricEvaluation;
+  traceability?: PaperTraceabilityReport;
+  citationKeysByPaperId?: Map<string, string>;
   passLabel?: string;
   previousReview?: ManuscriptReviewArtifact;
   reviewValidation?: ManuscriptReviewValidationArtifact;
@@ -354,6 +470,15 @@ export function buildManuscriptReviewPrompt(input: {
       objective_summary: input.objectiveEvaluation?.summary || input.bundle.resultAnalysis?.objective_metric?.evaluation?.summary || ""
     },
     manuscript: input.manuscript,
+    ...(input.traceability && input.citationKeysByPaperId
+      ? {
+          reader_visible_manuscript: buildReaderVisibleManuscript({
+            manuscript: input.manuscript,
+            traceability: input.traceability,
+            citationKeysByPaperId: input.citationKeysByPaperId
+          })
+        }
+      : {}),
     ...(input.previousReview ? { previous_review: input.previousReview } : {}),
     ...(input.reviewValidation ? { previous_review_validation: input.reviewValidation } : {}),
     ...(input.reviewAudit ? { previous_review_audit: input.reviewAudit } : {}),
@@ -400,6 +525,7 @@ export function buildManuscriptReviewPrompt(input: {
     "",
     "Review requirements:",
     "- Evaluate section completeness, paragraph-level redundancy, related-work comparison quality, transitions from Method to Results to Discussion, visual redundancy, appendix contamination, citation-text hygiene, title/abstract/conclusion alignment, and rhetorical overreach.",
+    "- When reader_visible_manuscript is present, judge citation_hygiene from reader_visible_manuscript because it includes the citation callouts that the paper renderer shows to readers.",
     "- Use reviewer judgment instead of keyword matching for section-level adequacy. Check whether Abstract covers problem, method, main result, and takeaway; whether Introduction frames the problem and contribution; whether Related Work compares along axes; whether Method, Results, Discussion, and Limitations read like complete paper sections; and whether Conclusion stays aligned with earlier evidence.",
     "- Flag factual or comparative paragraphs that appear to need citation support or more cautious wording.",
     "- Treat evidence discipline as fixed. Do not request new experiments, new citations, or stronger evidence than the artifacts support.",
@@ -493,10 +619,20 @@ export function buildManuscriptReviewAuditPrompt(input: {
   validation: ManuscriptReviewValidationArtifact;
   lint: ManuscriptStyleLintArtifact;
   traceability: PaperTraceabilityReport;
+  citationKeysByPaperId?: Map<string, string>;
   passLabel?: string;
 }): string {
   const promptPayload = {
     manuscript: input.manuscript,
+    ...(input.citationKeysByPaperId
+      ? {
+          reader_visible_manuscript: buildReaderVisibleManuscript({
+            manuscript: input.manuscript,
+            traceability: input.traceability,
+            citationKeysByPaperId: input.citationKeysByPaperId
+          })
+        }
+      : {}),
     review: input.review,
     review_validation: input.validation,
     style_lint: input.lint,
@@ -532,6 +668,7 @@ export function buildManuscriptReviewAuditPrompt(input: {
     "",
     "Audit rules:",
     "- Do not create a new manuscript critique. Audit whether the existing review artifact is reliable and well-grounded.",
+    "- When reader_visible_manuscript is present, use it as the reader-facing citation view for citation_hygiene reliability checks.",
     "- Focus on unsupported issues, missing major issues, mismatches between checks and issue list, or insufficient grounding relative to the manuscript text and traceability.",
     "- Recommend retry only when the review artifact itself is not trustworthy enough to drive repair decisions safely.",
     "- Use artifact_reliability=partially_grounded when the review remains usable but warning-level grounding or coverage gaps remain.",
@@ -725,7 +862,7 @@ export function validateManuscriptReviewArtifact(input: {
       if (validatedSpans.length === 0) {
         if (!issue.visual_targets?.length) {
           issues.push({
-            severity: "fail",
+            severity: issue.severity === "fail" ? "fail" : "warning",
             code: "issue_missing_supporting_span",
             section: issue.section,
             message: `Review issue ${issue.code} has no retained supporting span after validation.`,
@@ -916,9 +1053,15 @@ export function buildManuscriptRepairPlan(input: {
       }
     }
     if (issue.supporting_spans.length === 0) {
+      const anchorlessTargets = buildAnchorlessSectionRepairTargets(input.manuscript, issue);
+      if (anchorlessTargets.length > 0) {
+        targets.push(...anchorlessTargets);
+        continue;
+      }
       blockedTargets.push({
         source: "review",
         issue_code: issue.code,
+        severity: issue.severity,
         section: issue.section,
         reason: "Review issue had no validated supporting span, so bounded local repair cannot target it safely."
       });
@@ -942,6 +1085,7 @@ export function buildManuscriptRepairPlan(input: {
       blockedTargets.push({
         source: "style_lint",
         issue_code: issue.code,
+        severity: issue.severity,
         section: issue.section,
         reason: "No deterministic bounded local or visual-local target could be derived from the style lint issue."
       });
@@ -1290,6 +1434,51 @@ function buildRepairTargetFromSpan(
   });
 }
 
+function buildAnchorlessSectionRepairTargets(
+  manuscript: PaperManuscript,
+  issue: ManuscriptReviewIssue
+): ManuscriptRepairTarget[] {
+  if (issue.severity !== "fail" || issue.code !== "citation_hygiene") {
+    return [];
+  }
+  return splitReviewSectionNames(issue.section)
+    .flatMap((sectionName) => {
+      const section = manuscript.sections.find((item) => normalizeHeading(item.heading) === normalizeHeading(sectionName));
+      if (!section || section.paragraphs.length === 0) {
+        return [];
+      }
+      const allowedLocationKeys = buildSectionParagraphLocationKeys(manuscript, section.heading);
+      if (allowedLocationKeys.length === 0) {
+        return [];
+      }
+      return [{
+        source: "review" as const,
+        issue_code: issue.code,
+        severity: issue.severity,
+        kind: "paragraph" as const,
+        section: section.heading,
+        location_key: allowedLocationKeys[0] as string,
+        paragraph_index: 0,
+        excerpt: issue.message,
+        source_refs: [],
+        edit_scope: "adjacent_two_paragraphs" as const,
+        allowed_location_keys: allowedLocationKeys,
+        scope_reason:
+          "Citation-hygiene repair may revise paragraphs within the explicitly named section because the review identified section-level citation placement but did not provide a safe paragraph span.",
+        scope_downgraded: true
+      }];
+    });
+}
+
+function splitReviewSectionNames(section: string): string[] {
+  return uniqueStrings(
+    section
+      .split(/\s*(?:;|,|\band\b|\/)\s*/iu)
+      .map((item) => cleanString(item))
+      .filter(Boolean)
+  );
+}
+
 function applyReviewRepairScope(input: {
   manuscript: PaperManuscript;
   issue: ManuscriptReviewIssue;
@@ -1297,6 +1486,18 @@ function applyReviewRepairScope(input: {
 }): ManuscriptRepairTarget {
   if (input.target.kind !== "paragraph") {
     return input.target;
+  }
+  if (input.issue.code === "section_completeness" || input.issue.code === "related_work_quality") {
+    const sectionLocationKeys = buildSectionParagraphLocationKeys(input.manuscript, input.target.section);
+    if (sectionLocationKeys.length > 0) {
+      return {
+        ...input.target,
+        edit_scope: "adjacent_two_paragraphs",
+        allowed_location_keys: uniqueStrings(sectionLocationKeys),
+        scope_reason:
+          "Section-level manuscript repair may revise paragraphs within the same section because the validated issue concerns section coherence rather than a single sentence."
+      };
+    }
   }
   if (input.issue.code === "section_transition") {
     return expandTargetToAdjacentParagraph({
@@ -1353,6 +1554,14 @@ function applyReviewRepairScope(input: {
     });
   }
   return input.target;
+}
+
+function buildSectionParagraphLocationKeys(manuscript: PaperManuscript, sectionName: string): string[] {
+  const section = manuscript.sections.find((item) => normalizeHeading(item.heading) === normalizeHeading(sectionName));
+  if (!section) {
+    return [];
+  }
+  return section.paragraphs.map((_, index) => buildParagraphLocationKey("paragraph", section.heading, index));
 }
 
 function isAlignmentAdjacentSection(section: string): boolean {
@@ -1604,21 +1813,33 @@ function resolveReviewVisualRepairTarget(
         : visualTarget.kind === "appendix_table"
           ? `appendix_table:${visualTarget.index}`
           : `appendix_figure:${visualTarget.index}`;
+  const section = visualTarget.kind.startsWith("appendix_") ? "Appendix" : "Results";
+  const sameSectionParagraphKeys =
+    issue.code === "section_completeness" || issue.code === "related_work_quality"
+      ? buildSectionParagraphLocationKeys(manuscript, section)
+      : [];
   return {
     source: "review",
     issue_code: issue.code,
     severity: issue.severity,
     kind: visualTarget.kind,
-    section: visualTarget.kind.startsWith("appendix_") ? "Appendix" : "Results",
+    section,
     location_key: locationKey,
     visual_index: visualTarget.index,
     excerpt: cleanString(item.caption),
     source_refs: item.source_refs || [],
-    edit_scope: visualTarget.kind.startsWith("appendix_") ? "appendix_local" : "visual_local",
-    allowed_location_keys: [locationKey],
+    edit_scope:
+      sameSectionParagraphKeys.length > 0
+        ? "adjacent_two_paragraphs"
+        : visualTarget.kind.startsWith("appendix_")
+          ? "appendix_local"
+          : "visual_local",
+    allowed_location_keys: uniqueStrings([locationKey, ...sameSectionParagraphKeys]),
     scope_reason:
-      visualTarget.rationale
-      || `Reviewer-directed ${visualTarget.kind.replace(/_/gu, " ")} repair is limited to ${locationKey}.`
+      sameSectionParagraphKeys.length > 0
+        ? "Section-level manuscript repair may revise the targeted visual and paragraphs within the same section because the issue concerns section coherence."
+        : visualTarget.rationale
+          || `Reviewer-directed ${visualTarget.kind.replace(/_/gu, " ")} repair is limited to ${locationKey}.`
   };
 }
 
@@ -1726,13 +1947,19 @@ function collectChangedParagraphKeys(
     const afterSection = afterSections.find((section) => section.heading === heading);
     const paragraphCount = Math.max(beforeSection?.paragraphs.length || 0, afterSection?.paragraphs.length || 0);
     for (let paragraphIndex = 0; paragraphIndex < paragraphCount; paragraphIndex += 1) {
-      const beforeParagraph = cleanString(beforeSection?.paragraphs[paragraphIndex]);
-      const afterParagraph = cleanString(afterSection?.paragraphs[paragraphIndex]);
+      const beforeParagraph = normalizeParagraphForLocalityComparison(beforeSection?.paragraphs[paragraphIndex]);
+      const afterParagraph = normalizeParagraphForLocalityComparison(afterSection?.paragraphs[paragraphIndex]);
       if (beforeParagraph !== afterParagraph) {
         changed.add(buildParagraphLocationKey(kind, heading, paragraphIndex));
       }
     }
   }
+}
+
+function normalizeParagraphForLocalityComparison(value: unknown): string {
+  return cleanString(value)
+    .replace(/([.!?]){2,}/gu, "$1")
+    .replace(/\s+([,.;:!?])/gu, "$1");
 }
 
 function collectChangedVisualKeys(

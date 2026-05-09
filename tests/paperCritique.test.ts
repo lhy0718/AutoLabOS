@@ -378,6 +378,30 @@ describe("post-draft critique", () => {
     expect(critique.needs_additional_experiments).toBe(true);
   });
 
+  it("treats thin-but-expandable sections as writing repair instead of additional experiments", () => {
+    const critique = buildPostDraftCritique(makePostDraftInput({
+      gateDecision: {
+        status: "warn",
+        blocking_issue_count: 0,
+        warning_count: 1,
+        failure_reasons: [],
+        summary: ["warning-only gate"]
+      },
+      evidenceDiagnostics: {
+        blocked_by_evidence_insufficiency: false,
+        missing_evidence_categories: [],
+        thin_sections: ["Results", "Related Work"],
+        expandable_from_existing_evidence: true
+      }
+    }));
+
+    expect(critique.manuscript_type).toBe("paper_ready");
+    expect(critique.overall_decision).toBe("advance");
+    expect(critique.blocking_issues_count).toBe(0);
+    expect(critique.non_blocking_issues_count).toBe(2);
+    expect(critique.needs_additional_experiments).toBe(false);
+  });
+
   it("writing/style-only defects trigger repair not backtrack", () => {
     const critique = buildPostDraftCritique(makePostDraftInput({
       submissionValidation: {

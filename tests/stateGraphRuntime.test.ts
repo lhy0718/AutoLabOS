@@ -1330,6 +1330,35 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.graph.nodeStates.generate_hypotheses.lastError).toBeUndefined();
   });
 
+  it("clears stale lastError when a node is manually retried", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Clear Retry Error",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "write_paper";
+    run.graph.currentNode = "write_paper";
+    run.status = "failed";
+    run.graph.nodeStates.write_paper.status = "failed";
+    run.graph.nodeStates.write_paper.lastError = "manuscript-quality gate failed";
+    run.graph.nodeStates.write_paper.note = "manuscript-quality gate failed";
+    await store.updateRun(run);
+
+    const retried = await runtime.retryNode(run.id, "write_paper");
+
+    expect(retried.status).toBe("running");
+    expect(retried.graph.nodeStates.write_paper.status).toBe("running");
+    expect(retried.graph.nodeStates.write_paper.note).toBe("manual retry");
+    expect(retried.graph.nodeStates.write_paper.lastError).toBeUndefined();
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.graph.nodeStates.write_paper.lastError).toBeUndefined();
+  });
+
   it("clears downstream stale lastError values when backward jump resets later nodes", async () => {
     const { store, runtime } = await setup(new Registry({}));
 

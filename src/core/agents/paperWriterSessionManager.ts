@@ -504,6 +504,8 @@ export class PaperWriterSessionManager {
     paperProfile?: PaperProfileConfig;
     objectiveMetricProfile: ObjectiveMetricProfile;
     objectiveEvaluation?: ObjectiveMetricEvaluation;
+    traceability?: Parameters<typeof buildManuscriptReviewPrompt>[0]["traceability"];
+    citationKeysByPaperId?: Parameters<typeof buildManuscriptReviewPrompt>[0]["citationKeysByPaperId"];
     stage?: "manuscript_review" | "manuscript_review_retry";
     passLabel?: string;
     previousReview?: ManuscriptReviewArtifact;
@@ -543,6 +545,8 @@ export class PaperWriterSessionManager {
           paperProfile: input.paperProfile,
           objectiveMetricProfile: input.objectiveMetricProfile,
           objectiveEvaluation: input.objectiveEvaluation,
+          traceability: input.traceability,
+          citationKeysByPaperId: input.citationKeysByPaperId,
           passLabel: input.passLabel,
           previousReview: input.previousReview,
           reviewValidation: input.reviewValidation,
@@ -590,6 +594,7 @@ export class PaperWriterSessionManager {
     validation: ManuscriptReviewValidationArtifact;
     lint: ManuscriptStyleLintArtifact;
     traceability: Parameters<typeof buildManuscriptReviewAuditPrompt>[0]["traceability"];
+    citationKeysByPaperId?: Parameters<typeof buildManuscriptReviewAuditPrompt>[0]["citationKeysByPaperId"];
     passLabel?: string;
     abortSignal?: AbortSignal;
   }): Promise<PaperWriterManuscriptReviewAuditResult> {
@@ -620,6 +625,7 @@ export class PaperWriterSessionManager {
           validation: input.validation,
           lint: input.lint,
           traceability: input.traceability,
+          citationKeysByPaperId: input.citationKeysByPaperId,
           passLabel: input.passLabel
         }),
         agentRole: "reviewer",
@@ -956,17 +962,35 @@ export class PaperWriterSessionManager {
       }
     }
 
+    const timeoutMs = resolvePaperWriterStageTimeoutMs();
+    const controller = new AbortController();
+    const cleanupAbort = forwardAbort(input.abortSignal, controller);
+    let timedOut = false;
     try {
       const progress = createBoundedPaperWriterProgressEmitter({
         run: input.run,
         stage: input.stage,
         emit: (run, text) => this.emit(run, text)
       });
-      const completion = await this.deps.llm.complete(input.prompt, {
+      const completionPromise = this.deps.llm.complete(input.prompt, {
         systemPrompt: input.systemPrompt,
-        abortSignal: input.abortSignal,
+        abortSignal: controller.signal,
         onProgress: progress.onProgress
       });
+      const timeoutPromise = timeoutMs > 0
+        ? new Promise<never>((_, reject) => {
+            const timer = setTimeout(() => {
+              timedOut = true;
+              const message = `Paper writer stage "${input.stage}" exceeded the ${timeoutMs}ms timeout`;
+              controller.abort(new Error(message));
+              reject(new Error(message));
+            }, timeoutMs);
+            controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+          })
+        : undefined;
+      const completion = timeoutPromise
+        ? await Promise.race([completionPromise, timeoutPromise])
+        : await completionPromise;
       progress.flush();
       const completedAt = new Date().toISOString();
       input.trace?.push({
@@ -984,6 +1008,25 @@ export class PaperWriterSessionManager {
         threadId: input.threadId
       };
     } catch (error) {
+      if (timedOut && !input.abortSignal?.aborted) {
+        const message = error instanceof Error ? error.message : String(error);
+        const completedAt = new Date().toISOString();
+        input.trace?.push({
+          stage: input.stage,
+          mode: input.mode,
+          threadId: input.threadId,
+          fallbackUsed: true,
+          startedAt,
+          completedAt,
+          preview: "",
+          error: message
+        });
+        this.emit(input.run, `${message}. Falling back to staged defaults for this stage.`);
+        return {
+          text: "",
+          threadId: input.threadId
+        };
+      }
       if (input.abortSignal?.aborted) {
         throw error;
       }
@@ -1007,6 +1050,8 @@ export class PaperWriterSessionManager {
         text: "",
         threadId: input.threadId
       };
+    } finally {
+      cleanupAbort();
     }
   }
 

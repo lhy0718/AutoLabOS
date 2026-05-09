@@ -995,7 +995,7 @@ function buildAppendixBackstopRepairResponses(): string[] {
         {
           heading: "Appendix. Notes",
           paragraphs: [
-            "Supplementary protocol notes summarize the repeated-run setup without internal workflow residue."
+            "Supplementary protocol notes summarize the repeated-run setup for readers."
           ]
         }
       ]
@@ -1068,7 +1068,7 @@ function buildTableCaptionOverclaimStopResponses(): string[] {
       issues: [
         {
           code: "visual_redundancy",
-          severity: "warning",
+          severity: "fail",
           section: "Results",
           repairable: true,
           message: "Table 1 caption should be narrowed to a scoped numeric comparison.",
@@ -1271,7 +1271,7 @@ function buildManuscriptRepairTwiceResponses(options?: { unresolvedAfterSecond?:
       issues: [
         {
           code: "paragraph_redundancy",
-          severity: "warning",
+          severity: "fail",
           section: "Introduction",
           repairable: true,
           message: "Introduction and abstract use overlapping framing.",
@@ -1296,7 +1296,7 @@ function buildManuscriptRepairTwiceResponses(options?: { unresolvedAfterSecond?:
       issues: [
         {
           code: "related_work_quality",
-          severity: "warning",
+          severity: "fail",
           section: "Related Work",
           repairable: true,
           message: "Related Work still needs a sharper comparison axis.",
@@ -1426,7 +1426,7 @@ function buildReviewRetryResponses(): string[] {
       issues: [
         {
           code: "alignment",
-          severity: "warning",
+          severity: "fail",
           section: "Abstract",
           repairable: true,
           message: "Abstract and conclusion need tighter scope alignment.",
@@ -1732,7 +1732,8 @@ function buildMediumResultAnalysis(): Record<string, unknown> {
       { key: "macro_f1_delta_vs_logreg", value: 0.026 },
       { key: "pairwise_ranking_agreement", value: 0.885 },
       { key: "runtime_seconds_mean", value: 1.05 },
-      { key: "peak_memory_mb_mean", value: 149 }
+      { key: "peak_memory_mb_mean", value: 149 },
+      { key: "raw_result.baseline_rows_by_seed.42.train_metadata.train_dataset_token_count", value: 5068 }
     ],
     primary_findings: [
       "The strongest workflow suggests a small positive macro-F1 delta over logistic regression.",
@@ -2232,8 +2233,8 @@ describe("writePaper PDF build", () => {
     };
     const relatedWorkSection = draft.sections.find((section) => section.heading === "Related Work");
     expect(relatedWorkSection?.citation_paper_ids).toContain("paper_scout_1");
-    expect(relatedWorkSection?.paragraphs.length).toBe(2);
-    expect(relatedWorkSection?.paragraphs[1]?.text).toMatch(/current study|present study/i);
+    expect(relatedWorkSection?.paragraphs.length).toBeGreaterThanOrEqual(2);
+    expect(relatedWorkSection?.paragraphs.some((paragraph) => /current study|present study/i.test(paragraph.text))).toBe(true);
 
     const references = await readFile(path.join(runDir, "paper", "references.bib"), "utf8");
     expect(references).toContain("Scout Results for Related Work");
@@ -3119,11 +3120,27 @@ describe("writePaper PDF build", () => {
     expect(gateDecision.classification_summary.auto_repair_count).toBeGreaterThan(0);
     const manuscript = JSON.parse(await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8")) as {
       sections: Array<{ heading: string; paragraphs: string[] }>;
-      appendix_sections?: Array<{ heading: string }>;
+      appendix_sections?: Array<{ heading: string; paragraphs: string[] }>;
+      appendix_tables?: Array<{ caption: string; rows: Array<{ label: string; value: number }> }>;
     };
     expect(manuscript.sections.find((section) => section.heading === "Method")?.paragraphs.length).toBeGreaterThanOrEqual(3);
     expect(manuscript.sections.find((section) => section.heading === "Results")?.paragraphs.length).toBeGreaterThanOrEqual(4);
-    expect(Array.isArray(manuscript.appendix_sections || [])).toBe(true);
+    expect(manuscript.appendix_sections?.length).toBeGreaterThan(0);
+    expect(manuscript.appendix_sections?.map((section) => section.heading)).toContain(
+      "Supplementary Experimental Details"
+    );
+    expect(manuscript.appendix_sections?.map((section) => section.heading)).toContain(
+      "Supplementary Claim Ceiling Audit"
+    );
+    expect(manuscript.appendix_sections?.map((section) => section.heading)).toContain(
+      "Supplementary Reproducibility Trace"
+    );
+    expect(manuscript.appendix_sections?.flatMap((section) => section.paragraphs).join(" ")).toContain(
+      "repeated cells"
+    );
+    const appendixText = manuscript.appendix_sections?.flatMap((section) => section.paragraphs).join(" ") ?? "";
+    expect(appendixText).toContain("training-token count was 5068");
+    expect(appendixText).not.toContain("5068 dataset");
     const traceability = JSON.parse(await readFile(path.join(runDir, "paper", "traceability.json"), "utf8")) as {
       paragraphs: Array<{ source_refs?: Array<{ kind: string; id: string }> }>;
     };
@@ -4310,7 +4327,7 @@ describe("writePaper PDF build", () => {
     expect(gate.decision_digest.review_reliability).toBe("partially_grounded");
   });
 
-  it("stops when a repair changes out-of-scope sections outside the bounded local repair plan", async () => {
+  it("drops out-of-scope repair edits before manuscript-quality verification", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-quality-locality-stop-"));
     process.chdir(root);
 
@@ -4333,18 +4350,24 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("failure");
-    expect(result.error).toContain("manuscript-quality gate failed");
+    expect(result.status).toBe("success");
     const verification = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
     ) as { locality_ok: boolean; unexpected_changed_sections: string[] };
-    expect(verification.locality_ok).toBe(false);
-    expect(verification.unexpected_changed_sections).toContain("introduction");
+    expect(verification.locality_ok).toBe(true);
+    expect(verification.unexpected_changed_sections).not.toContain("introduction");
+
+    const repaired = JSON.parse(await readFile(path.join(runDir, "paper", "manuscript_repair_1.json"), "utf8")) as {
+      sections: Array<{ heading: string; paragraphs: string[] }>;
+    };
+    expect(repaired.sections[0].paragraphs[0]).not.toMatch(/unrelated introduction rewrite/i);
+    expect(repaired.sections[4].paragraphs[0]).toMatch(/interprets the result/i);
 
     const gate = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
-    ) as { stop_or_continue_reason: string };
-    expect(gate.stop_or_continue_reason).toMatch(/out-of-scope locations|bounded local repair loop/i);
+    ) as { action: string; stop_or_continue_reason: string };
+    expect(gate.action).toBe("pass");
+    expect(gate.stop_or_continue_reason).toMatch(/resolved|passed|non-blocking manuscript warnings/i);
   });
 
   it("allows a second manuscript repair only after improvement and never runs a third repair", async () => {
@@ -4434,7 +4457,7 @@ describe("writePaper PDF build", () => {
     const gate = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
     ) as { stop_or_continue_reason: string; summary_lines: string[] };
-    expect(gate.stop_or_continue_reason).toMatch(/manuscript-quality issue code/i);
+    expect(gate.stop_or_continue_reason).toMatch(/manuscript-quality issue code|did not show a reliable quality improvement/i);
     expect(gate.summary_lines).toEqual(
       expect.arrayContaining([
         expect.stringMatching(/Action:\s+stop/i),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildPaperBibtex,
   buildFallbackPaperDraft,
   PaperWritingBundle
 } from "../src/core/analysis/paperWriting.js";
@@ -8,6 +9,8 @@ import {
   buildFallbackPaperManuscript,
   buildPaperSubmissionValidation,
   buildPaperTraceability,
+  normalizePaperManuscript,
+  parsePaperManuscriptJson,
   renderSubmissionPaperTex
 } from "../src/core/analysis/paperManuscript.js";
 
@@ -101,5 +104,102 @@ describe("paper submission sanitization", () => {
 
     expect(JSON.stringify({ draft, manuscript, tex })).not.toContain(".autolabos/");
     expect(validation.issues.some((issue) => issue.kind === "absolute_path")).toBe(false);
+  });
+
+  it("rewrites DOI or URL shaped BibTeX keys to safe citation identifiers", () => {
+    const bibtex = buildPaperBibtex(
+      [
+        {
+          paper_id: "paper_qlora",
+          title: "QLoRA: Efficient Finetuning of Quantized LLMs",
+          abstract: "QLoRA enables memory-efficient finetuning.",
+          authors: ["Tim Dettmers"],
+          year: 2023,
+          venue: "NeurIPS",
+          bibtex: [
+            "@article{https://doi.org/10.48550/arXiv.2305.14314,",
+            "  title={QLoRA: Efficient Finetuning of Quantized LLMs},",
+            "  author={Tim Dettmers},",
+            "  year={2023}",
+            "}"
+          ].join("\n")
+        } as any
+      ],
+      ["paper_qlora"]
+    );
+
+    const key = bibtex.citationKeysByPaperId.get("paper_qlora");
+    expect(key).toBe("dettmers_2023_qlora_efficient");
+    expect(bibtex.references).toContain("@article{dettmers_2023_qlora_efficient,");
+    expect(bibtex.references).not.toContain("@article{https://doi.org");
+  });
+
+  it("removes raw DOI and opaque paper identifiers from normalized manuscript prose", () => {
+    const draft = buildFallbackPaperDraft({
+      runTitle: "LoRA benchmark",
+      topic: "LoRA rank/dropout benchmark",
+      objectiveMetric: "accuracy_delta_vs_baseline > 0",
+      constraints: [],
+      paperSummaries: [],
+      evidenceRows: [],
+      hypotheses: [],
+      corpus: [],
+      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+    } as any);
+    const manuscript = normalizePaperManuscript({
+      raw: {
+        title: "A LoRA Benchmark",
+        abstract: "A cautious benchmark (doi:10.48550/arxiv.2305.14314; arXiv:2305.14314; 15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a).",
+        keywords: ["LoRA"],
+        sections: [
+          {
+            heading: "Introduction",
+            paragraphs: [
+              "Prior PEFT work motivates this setup (e.g., doi:10.48550/arxiv.2305.14314; 75bc30bf394625c784ea59f8c2fe04718a4b4042)."
+            ]
+          }
+        ]
+      },
+      draft
+    });
+
+    const text = JSON.stringify(manuscript);
+    expect(text).not.toContain("doi:");
+    expect(text).not.toContain("arXiv:2305.14314");
+    expect(text).not.toContain("15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a");
+    expect(text).not.toContain("75bc30bf394625c784ea59f8c2fe04718a4b4042");
+  });
+
+  it("sanitizes wrapped revised manuscript repair prose", () => {
+    const draft = buildFallbackPaperDraft({
+      runTitle: "LoRA benchmark",
+      topic: "LoRA rank/dropout benchmark",
+      objectiveMetric: "accuracy_delta_vs_baseline > 0",
+      constraints: [],
+      paperSummaries: [],
+      evidenceRows: [],
+      hypotheses: [],
+      corpus: [],
+      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+    } as any);
+    const raw = parsePaperManuscriptJson(JSON.stringify({
+      revised_manuscript: {
+        title: "A LoRA Benchmark",
+        abstract: "A cautious benchmark.",
+        sections: [
+          {
+            heading: "Related Work",
+            paragraphs: [
+              "Prior work motivates this comparison (doi:10.48550/arxiv.2305.14314; 75bc30bf394625c784ea59f8c2fe04718a4b4042)."
+            ]
+          }
+        ]
+      }
+    }));
+    const manuscript = normalizePaperManuscript({ raw, draft });
+
+    const text = JSON.stringify(manuscript);
+    expect(text).not.toContain("doi:");
+    expect(text).not.toContain("75bc30bf394625c784ea59f8c2fe04718a4b4042");
   });
 });

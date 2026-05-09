@@ -5549,6 +5549,7 @@ export class TerminalApp {
     if (!run) return;
     const nodeState = run.graph.nodeStates[run.currentNode];
     if (nodeState?.status !== "running") return;
+    const runningWithPersistedFailure = Boolean(nodeState.lastError);
     const lastActivityMs = Math.max(
       Number.isFinite(Date.parse(run.updatedAt)) ? Date.parse(run.updatedAt) : Number.NEGATIVE_INFINITY,
       Number.isFinite(Date.parse(nodeState.updatedAt))
@@ -5556,6 +5557,7 @@ export class TerminalApp {
         : Number.NEGATIVE_INFINITY
     );
     if (
+      !runningWithPersistedFailure &&
       !recoverRecentNode &&
       Number.isFinite(lastActivityMs) &&
       Date.now() - lastActivityMs < STALE_RUNNING_NODE_RECOVERY_MS

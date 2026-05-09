@@ -97,7 +97,7 @@ describe("latexTemplateLoader", () => {
 
     const policy = deriveLatexTemplatePolicy(parsed);
     expect(policy.appendixFormat).toBe("double_column");
-    expect(policy.estimatedWordsPerPage).toBe(420);
+    expect(policy.estimatedWordsPerPage).toBe(650);
   });
 
   it("derives layout policy from a recognizable two-column template class", async () => {
@@ -119,7 +119,7 @@ describe("latexTemplateLoader", () => {
     const policy = deriveLatexTemplatePolicy(parsed);
 
     expect(policy.appendixFormat).toBe("double_column");
-    expect(policy.estimatedWordsPerPage).toBe(420);
+    expect(policy.estimatedWordsPerPage).toBe(650);
   });
 
   it("throws when the template file does not exist", async () => {

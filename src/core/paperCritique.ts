@@ -251,6 +251,7 @@ export interface PostDraftCritiqueInput {
     blocked_by_evidence_insufficiency: boolean;
     missing_evidence_categories: string[];
     thin_sections: string[];
+    expandable_from_existing_evidence?: boolean;
   };
   pageBudgetStatus: string;
   methodStatus: string;
@@ -276,7 +277,7 @@ export function buildPostDraftCritique(input: PostDraftCritiqueInput): PaperCrit
 
   // Upstream deficit flags
   const needsExperiments = input.evidenceDiagnostics.blocked_by_evidence_insufficiency
-    || blockingIssues.some((i) => i.category === "result_table_quality");
+    || blockingIssues.some((i) => i.category === "result_table_quality" && i.suggested_backtrack_target !== null);
   const needsStatistics = blockingIssues.some((i) => i.category === "statistical_adequacy");
   const needsRelatedWork = input.relatedWorkStatus === "fail" || input.relatedWorkStatus === "missing";
   const needsDesign = blockingIssues.some((i) => i.category === "methodological_completeness");
@@ -576,11 +577,7 @@ function classifyPostDraftManuscriptType(
     return "blocked_for_paper_scale";
   }
 
-  if (
-    input.gateDecision.status === "pass" &&
-    blockingIssues.length === 0 &&
-    input.submissionValidation.ok
-  ) {
+  if (blockingIssues.length === 0 && input.submissionValidation.ok) {
     return "paper_ready";
   }
 
@@ -870,14 +867,22 @@ function buildIssuesFromPostDraft(input: PostDraftCritiqueInput): CritiqueIssue[
 
   // Thin sections
   for (const section of input.evidenceDiagnostics.thin_sections) {
+    const writingOnlyThinSection =
+      !input.evidenceDiagnostics.blocked_by_evidence_insufficiency
+      && input.evidenceDiagnostics.missing_evidence_categories.length === 0
+      && input.evidenceDiagnostics.expandable_from_existing_evidence !== false;
     issues.push({
       issue_id: `post_draft_${idx++}`,
-      severity: "high",
+      severity: writingOnlyThinSection ? "medium" : "high",
       category: "result_table_quality",
       summary: `Section '${section}' is thin on evidence.`,
-      evidence: `The '${section}' section lacks sufficient supporting data.`,
-      recommended_fix: "Add experimental results or data to strengthen this section.",
-      suggested_backtrack_target: "implement_experiments"
+      evidence: writingOnlyThinSection
+        ? `The '${section}' section is underdeveloped, but the scientific validation reports no missing evidence category.`
+        : `The '${section}' section lacks sufficient supporting data.`,
+      recommended_fix: writingOnlyThinSection
+        ? "Expand the section from existing evidence before final acceptance."
+        : "Add experimental results or data to strengthen this section.",
+      suggested_backtrack_target: writingOnlyThinSection ? null : "implement_experiments"
     });
   }
 

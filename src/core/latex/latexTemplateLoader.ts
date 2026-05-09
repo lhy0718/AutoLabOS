@@ -182,7 +182,7 @@ export function deriveLatexTemplatePolicy(parsedTemplate: ParsedLatexTemplate | 
       parsedTemplate.columnLayout === 1
         ? 700
         : inferredTwoColumnDefault
-          ? 420
+          ? 650
           : null
   };
 }
