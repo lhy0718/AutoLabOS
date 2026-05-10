@@ -31,6 +31,7 @@ import {
   repairPythonBaselineFirstWorkflowInputMaterializationSurface,
   repairPythonBaselineFirstStudyLoopInputMaterializationSurface,
   repairPythonBaselineFirstEntrypointContextMaterializationSurface,
+  repairPythonBenchmarkAccuracyComprehensionSurface,
   repairPythonMainExecuteConditionsInputMaterializationSurface,
   repairPythonDeterministicSampleRecordsSaltAliasSurface,
   repairPythonConditionConfigRequiredFieldAliasSurface,
@@ -62,16 +63,28 @@ import {
   repairPythonConditionSuiteAliasSurface,
   repairPythonLockedConditionStudyOrchestrationAliasSurface,
   repairPythonConditionSpecFactoryKwargBridgeSurface,
+  repairPythonConfigInstanceDataclassFieldAliasSurface,
+  repairPythonStudyRuntimeHelperAliasSurface,
+  repairPythonTrainLossHelperAritySurface,
+  repairPythonConditionSuccessStatusAliasSurface,
+  repairPythonTerminalMetricsExistingConditionCountSurface,
+  repairPythonChunk3bStudyRunnerInvocationContextSurface,
+  repairPythonChunk3bConditionMarkerSelectionSurface,
+  repairPythonMultipleChoicePromptSignatureSurface,
+  repairPythonSafeMetricFloatHelperSurface,
   repairPythonBaselineFirstLockedWorkflowAliasSurface,
   repairPythonBaselineFirstConditionSequenceEntrypointFacadeSurface,
   repairPythonMetricsPayloadBuilderAliasSurface,
   repairPythonAccuracyDeltaBuilderAliasSurface,
   repairPythonMainExecutionLoopAliasSurface,
   repairPythonMainMetricsPayloadBuilderCallSurface,
+  repairPythonMetricsPayloadProjectionSurface,
   repairPythonMainCallableResolverSpecificitySurface,
   repairPythonRunContextHelperFallbackSurface,
   repairPythonMainStudyRunnerDeviceBridgeSurface,
   repairPythonLockedConditionSingleRunnerBridgeSurface,
+  repairPythonSingleConditionExecutorBridgeSurface,
+  repairPythonParameterSummaryRecordSurface,
   repairPythonMultipleChoiceDataclassChoiceAliasSurface,
   repairPythonPeftAcronymClassAliasSurface,
   repairPythonEntrypointMetricsAggregationBridgeSurface,
@@ -4778,6 +4791,7 @@ describe("ImplementSessionManager", () => {
         "from __future__ import annotations",
         "",
         "import argparse",
+        "import json",
         "from pathlib import Path",
         "from typing import Any, Dict, Mapping, Optional, Sequence",
         "",
@@ -16385,6 +16399,7 @@ describe("ImplementSessionManager", () => {
       scriptPath,
       [
         "import argparse",
+        "import json",
         "from pathlib import Path",
         "from typing import Optional, Sequence, Tuple",
         "",
@@ -18152,6 +18167,815 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("repairs _make_config_instance dataclass field aliases before runtime execution", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-config-instance-dataclass-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import asdict, dataclass",
+        "import json",
+        "",
+        "BASELINE_CONDITION_MARKER = 'rank8_dropout0'",
+        "",
+        "@dataclass(frozen=True)",
+        "class ConditionSpec:",
+        "    marker: str",
+        "    display_name: str",
+        "    lora_rank: int",
+        "    lora_alpha: int",
+        "    lora_dropout: float",
+        "    is_baseline: bool = False",
+        "",
+        "def _make_config_instance(type_name, **kwargs):",
+        "    cls = globals().get(type_name)",
+        "    if cls is None:",
+        "        payload = dict(kwargs)",
+        "        payload.setdefault('_type', type_name)",
+        "        return payload",
+        "    try:",
+        "        return cls(**kwargs)",
+        "    except TypeError:",
+        "        dataclass_fields = getattr(cls, '__dataclass_fields__', None)",
+        "        if dataclass_fields:",
+        "            filtered = {key: value for key, value in kwargs.items() if key in dataclass_fields}",
+        "            return cls(**filtered)",
+        "        payload = dict(kwargs)",
+        "        payload.setdefault('_type', type_name)",
+        "        return payload",
+        "",
+        "BASELINE_CONDITION_SPEC = _make_config_instance(",
+        "    'ConditionSpec',",
+        "    marker=BASELINE_CONDITION_MARKER,",
+        "    condition_id=BASELINE_CONDITION_MARKER,",
+        "    display_name='Baseline LoRA rank=8 dropout=0.0',",
+        "    is_baseline=True,",
+        "    rank=8,",
+        "    lora_alpha=16,",
+        "    lora_dropout=0.0,",
+        ")",
+        "",
+        "if __name__ == '__main__':",
+        `    with open(${JSON.stringify(metricsPath)}, 'w', encoding='utf8') as handle:`,
+        "        json.dump(asdict(BASELINE_CONDITION_SPEC), handle, sort_keys=True)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /lora_rank|unexpected keyword argument 'condition_id'/
+    );
+
+    const repair = await repairPythonConfigInstanceDataclassFieldAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_config_instance_dataclass_field_alias_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      marker: "rank8_dropout0",
+      display_name: "Baseline LoRA rank=8 dropout=0.0",
+      is_baseline: true,
+      lora_rank: 8,
+      lora_alpha: 16,
+      lora_dropout: 0
+    });
+  });
+
+  it("aliases generated study runtime helpers searched by run_single_condition", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-study-runtime-helper-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "",
+        "def execute_bounded_fine_tuning(bundle, condition, output_dir, seed=None):",
+        "    return {'status': 'trained', 'marker': condition['marker'], 'output_dir': output_dir}",
+        "",
+        "def evaluate_benchmark_suite(bundle, max_examples_per_task=None, seed=None):",
+        "    return {'average_accuracy': 0.5, 'tasks': {}}",
+        "",
+        "def _study_find_runtime_helper(explicit_names=(), required_substrings=(), any_of_substrings=(), exclude_substrings=()):",
+        "    for name in explicit_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def run_single_condition(condition, condition_dir):",
+        "    train_helper = _study_find_runtime_helper(",
+        "        explicit_names=(",
+        "            'run_condition_training',",
+        "            'run_bounded_fine_tuning',",
+        "            'train_condition_model',",
+        "            'fine_tune_model_for_condition',",
+        "            'run_finetuning_for_condition',",
+        "        ),",
+        "        required_substrings=('train',),",
+        "        any_of_substrings=('condition', 'fine', 'tune'),",
+        "        exclude_substrings=('run_single_condition', 'evaluation', 'metrics', 'normalize'),",
+        "    )",
+        "    if train_helper is None:",
+        "        raise RuntimeError('Unable to locate a bounded fine-tuning helper for the LoRA study runner')",
+        "    eval_helper = _study_find_runtime_helper(",
+        "        explicit_names=('run_condition_evaluation', 'evaluate_condition_model', 'evaluate_model_on_tasks', 'evaluate_model_bundle', 'run_benchmark_evaluation'),",
+        "        required_substrings=('evaluat',),",
+        "        any_of_substrings=('condition', 'model', 'task', 'benchmark'),",
+        "        exclude_substrings=('run_single_condition', 'normalize', 'metrics'),",
+        "    )",
+        "    if eval_helper is None:",
+        "        raise RuntimeError('Unable to locate an evaluation helper for ARC-Challenge/HellaSwag')",
+        "    return {'train': train_helper(bundle='bundle', condition=condition, output_dir=condition_dir), 'evaluation': eval_helper(bundle='bundle')}",
+        "",
+        "if __name__ == '__main__':",
+        "    result = run_single_condition({'marker': 'rank_8_dropout_0_0'}, 'out')",
+        `    with open(${JSON.stringify(metricsPath)}, 'w', encoding='utf8') as handle:`,
+        "        json.dump(result, handle, sort_keys=True)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Unable to locate a bounded fine-tuning helper/
+    );
+
+    const repair = await repairPythonStudyRuntimeHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_study_runtime_helper_alias_marker");
+    expect(repairedSource).toContain("run_bounded_fine_tuning = _autolabos_bounded_fine_tuning_alias");
+    expect(repairedSource).toContain("run_benchmark_evaluation = _autolabos_benchmark_evaluation_alias");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      train: {
+        status: "trained",
+        marker: "rank_8_dropout_0_0"
+      },
+      evaluation: {
+        average_accuracy: 0.5
+      }
+    });
+  });
+
+  it("moves misplaced study runtime helper aliases out of multiline signatures", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-study-runtime-helper-alias-move-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def execute_bounded_fine_tuning(bundle, condition, output_dir, seed=None):",
+        "    return {'status': 'trained'}",
+        "",
+        "def evaluate_benchmark_suite(",
+        "    bundle,",
+        "    max_examples_per_task=None,",
+        "    seed=None,",
+        "",
+        "# _autolabos_study_runtime_helper_alias_marker",
+        "run_bounded_fine_tuning = execute_bounded_fine_tuning",
+        "run_benchmark_evaluation = evaluate_benchmark_suite",
+        ") -> dict:",
+        "    return {'average_accuracy': 0.5}",
+        "",
+        "def _study_find_runtime_helper(explicit_names=(), required_substrings=(), any_of_substrings=(), exclude_substrings=()):",
+        "    for name in explicit_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def run_single_condition(condition, condition_dir):",
+        "    train_helper = _study_find_runtime_helper(",
+        "        explicit_names=('run_bounded_fine_tuning',),",
+        "        required_substrings=('train',),",
+        "        any_of_substrings=('condition', 'fine', 'tune'),",
+        "        exclude_substrings=('run_single_condition',),",
+        "    )",
+        "    if train_helper is None:",
+        "        raise RuntimeError('Unable to locate a bounded fine-tuning helper for the LoRA study runner')",
+        "    return train_helper(bundle='bundle', condition=condition, output_dir=condition_dir)",
+        "",
+        "if __name__ == '__main__':",
+        "    run_single_condition({'marker': 'rank_8_dropout_0_0'}, 'out')",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace })).toThrow(
+      /SyntaxError/
+    );
+
+    const repair = await repairPythonStudyRuntimeHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).not.toContain("seed=None,\n\n# _autolabos_study_runtime_helper_alias_marker");
+    expect(repairedSource.indexOf("_autolabos_study_runtime_helper_alias_marker")).toBeLessThan(
+      repairedSource.indexOf("def run_single_condition")
+    );
+    expect(repairedSource).toContain("run_bounded_fine_tuning = _autolabos_bounded_fine_tuning_alias");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("renames result-level train loss helpers that shadow training-metric helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-train-loss-helper-arity-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "",
+        "def execute_bounded_fine_tuning():",
+        "    train_metrics = {'train_loss': 0.2}",
+        "    log_history = [{'loss': 0.3}]",
+        "    return {'train_loss': _extract_train_loss(train_metrics, log_history)}",
+        "",
+        "def _extract_train_loss(train_metrics, log_history):",
+        "    if train_metrics.get('train_loss') is not None:",
+        "        return float(train_metrics['train_loss'])",
+        "    return float(log_history[-1]['loss'])",
+        "",
+        "def _extract_train_loss(result):",
+        "    return result.get('train_loss')",
+        "",
+        "def summarize_condition_result(result_payload):",
+        "    return {'train_loss': _extract_train_loss(result_payload)}",
+        "",
+        "if __name__ == '__main__':",
+        "    payload = {'train': execute_bounded_fine_tuning(), 'summary': summarize_condition_result({'train_loss': 0.4})}",
+        `    with open(${JSON.stringify(metricsPath)}, 'w', encoding='utf8') as handle:`,
+        "        json.dump(payload, handle, sort_keys=True)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /positional argument/
+    );
+
+    const repair = await repairPythonTrainLossHelperAritySurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_train_loss_helper_arity_marker");
+    expect(repairedSource).toContain("def _extract_result_train_loss(result)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      train: { train_loss: 0.2 },
+      summary: { train_loss: 0.4 }
+    });
+  });
+
+  it("normalizes generated successful condition status before baseline-first projection", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-success-status-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "",
+        "BASELINE_MARKER = 'rank_8_dropout_0_0'",
+        "PLANNED_CONDITIONS = [BASELINE_MARKER, 'rank_16_dropout_0_1']",
+        "",
+        "def run_single_condition(condition):",
+        "    result = {'marker': condition, 'train': {'train_loss': 0.2}}",
+        "    result[\"status\"] = \"succeeded\"",
+        "    result[\"success\"] = True",
+        "    return result",
+        "",
+        "def _build_live_payloads(condition_results):",
+        "    completed_count = sum(1 for result in condition_results if result.get(\"status\") == \"completed\")",
+        "    baseline_result = next((result for result in condition_results if result.get('marker') == BASELINE_MARKER), None)",
+        "    baseline_completed = bool(baseline_result and baseline_result.get(\"status\") == \"completed\")",
+        "    return {",
+        "        'status': 'completed' if baseline_completed and completed_count == len(PLANNED_CONDITIONS) else 'failed',",
+        "        'success': baseline_completed and completed_count == len(PLANNED_CONDITIONS),",
+        "        'completed_condition_count': completed_count,",
+        "        'condition_results': condition_results,",
+        "    }",
+        "",
+        "def main():",
+        "    condition_results = []",
+        "    baseline_failed = False",
+        "    for marker in PLANNED_CONDITIONS:",
+        "        if baseline_failed and marker != BASELINE_MARKER:",
+        "            result = {",
+        "                'marker': marker,",
+        "                'status': 'not_run_baseline_failed',",
+        "                'success': False,",
+        "                'error': f'Skipped {marker} because the required baseline condition {BASELINE_MARKER} did not complete successfully.',",
+        "            }",
+        "        else:",
+        "            result = run_single_condition(marker)",
+        "        if marker == BASELINE_MARKER and result.get(\"status\") != \"completed\":",
+        "            baseline_failed = True",
+        "        condition_results.append(result)",
+        "    with open('metrics.json', 'w', encoding='utf8') as handle:",
+        "        json.dump(_build_live_payloads(condition_results), handle, sort_keys=True)",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "failed",
+      completed_condition_count: 0,
+      condition_results: [
+        { marker: "rank_8_dropout_0_0", status: "succeeded", success: true },
+        { marker: "rank_16_dropout_0_1", status: "not_run_baseline_failed", success: false }
+      ]
+    });
+
+    const repair = await repairPythonConditionSuccessStatusAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_condition_success_status_alias_marker");
+    expect(repairedSource).not.toContain('result["status"] = "succeeded"');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      success: true,
+      completed_condition_count: 2,
+      condition_results: [
+        { marker: "rank_8_dropout_0_0", status: "completed", success: true },
+        { marker: "rank_16_dropout_0_1", status: "completed", success: true }
+      ]
+    });
+  });
+
+  it("preserves existing completed condition counts during terminal metrics finalization", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-terminal-metrics-count-preserve-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "",
+        "LOCKED_CONDITIONS = ['rank_8_dropout_0_0', 'rank_16_dropout_0_1']",
+        "RUN_ID = 'run-test'",
+        "STUDY_SLUG = 'study'",
+        "STUDY_TITLE = 'Study'",
+        "COMPARISON_PLAN_ID = 'plan'",
+        "COMPARISON_MODE = 'baseline_first_locked'",
+        "BUDGET_MODE = 'single_run_locked'",
+        "BUDGET_LOCKED = True",
+        "BASELINE_FIRST_REQUIRED = True",
+        "REQUIRED_CONDITION_MARKERS = ['rank_8_dropout_0_0']",
+        "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
+        "",
+        "def _coerce_mapping(value):",
+        "    return dict(value) if hasattr(value, 'items') else {}",
+        "",
+        "def _read_json_if_present(path):",
+        "    if Path(path).exists():",
+        "        return json.loads(Path(path).read_text(encoding='utf8'))",
+        "    return {}",
+        "",
+        "def _write_json(path, payload):",
+        "    Path(path).write_text(json.dumps(payload, sort_keys=True), encoding='utf8')",
+        "",
+        "def _count_condition_outcomes(study_result):",
+        "    payload = _coerce_mapping(study_result)",
+        "    completed = int(payload.get('completed_condition_count') or 0)",
+        "    failed = int(payload.get('failed_condition_count') or 0)",
+        "    required = int(payload.get('required_condition_count') or len(LOCKED_CONDITIONS))",
+        "    condition_results = payload.get('condition_results') or payload.get('conditions') or []",
+        "    if completed == 0 and condition_results:",
+        "        completed = sum(1 for row in condition_results if row.get('status') == 'completed' or row.get('success') is True)",
+        "    return completed, failed, required",
+        "",
+        "def _ensure_terminal_metrics(args, study_result, final_status, exit_code):",
+        "    metrics_path = Path(args['metrics_path'])",
+        "    output_dir = Path(args['output_dir'])",
+        "    log_path = output_dir / 'run.log'",
+        "    existing_metrics = _read_json_if_present(metrics_path)",
+        "    if not existing_metrics:",
+        "        study_payload = _coerce_mapping(study_result)",
+        "        existing_metrics = _coerce_mapping(study_payload.get('metrics'))",
+        "",
+        "    completed, failed, required = _count_condition_outcomes(study_result)",
+        "",
+        "    existing_metrics.update(",
+        "        {",
+        "            'run_id': RUN_ID,",
+        "            'study_slug': STUDY_SLUG,",
+        "            'study_title': STUDY_TITLE,",
+        "            'comparison_plan_id': COMPARISON_PLAN_ID,",
+        "            'comparison_mode': COMPARISON_MODE,",
+        "            'budget_mode': BUDGET_MODE,",
+        "            'budget_locked': BUDGET_LOCKED,",
+        "            'baseline_first_required': BASELINE_FIRST_REQUIRED,",
+        "            'final_status': final_status,",
+        "            'success': final_status == 'success',",
+        "            'exit_code': int(exit_code),",
+        "            'output_dir': str(output_dir),",
+        "            'metrics_path': str(metrics_path),",
+        "            'log_path': str(log_path),",
+        "            'completed_condition_count': int(completed),",
+        "            'failed_condition_count': int(failed),",
+        "            'required_condition_count': int(required),",
+        "            'required_condition_markers': list(REQUIRED_CONDITION_MARKERS),",
+        "            'primary_metric_key': PRIMARY_METRIC_KEY,",
+        "        }",
+        "    )",
+        "    _write_json(metrics_path, existing_metrics)",
+        "    return metrics_path",
+        "",
+        "def main():",
+        "    _write_json('metrics.json', {",
+        "        'status': 'completed',",
+        "        'completed_condition_count': 2,",
+        "        'failed_condition_count': 0,",
+        "        'required_condition_count': 2,",
+        "        'condition_results': [",
+        "            {'marker': 'rank_8_dropout_0_0', 'status': 'completed', 'success': True},",
+        "            {'marker': 'rank_16_dropout_0_1', 'status': 'completed', 'success': True},",
+        "        ],",
+        "    })",
+        "    study_result = {'status': 'completed', 'summary': {'completed_condition_count': 2}, 'metrics': {'completed_condition_count': 2}}",
+        "    _ensure_terminal_metrics({'metrics_path': 'metrics.json', 'output_dir': '.'}, study_result, 'success', 0)",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      completed_condition_count: 0,
+      failed_condition_count: 0,
+      required_condition_count: 2
+    });
+
+    const repair = await repairPythonTerminalMetricsExistingConditionCountSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_terminal_metrics_existing_condition_count_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      completed_condition_count: 2,
+      failed_condition_count: 0,
+      required_condition_count: 2
+    });
+  });
+
+  it("materializes chunk3b selected conditions and a condition runner for high-level study runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-chunk3b-study-runner-context-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "import json",
+        "import traceback",
+        "from pathlib import Path",
+        "from types import SimpleNamespace",
+        "",
+        "DEFAULT_MAX_TRAIN_SAMPLES = 4",
+        "DEFAULT_MAX_EVAL_SAMPLES = 2",
+        "DEFAULT_SEED = 17",
+        "DEFAULT_MAX_SEQ_LENGTH = 32",
+        "DEFAULT_MAX_NEW_TOKENS = 1",
+        "DEFAULT_MICRO_BATCH_SIZE = 1",
+        "DEFAULT_GRADIENT_ACCUMULATION_STEPS = 1",
+        "DEFAULT_LEARNING_RATE = 0.001",
+        "DEFAULT_WARMUP_RATIO = 0.0",
+        "DEFAULT_WEIGHT_DECAY = 0.0",
+        "DEFAULT_LOGGING_STEPS = 1",
+        "DEFAULT_SAVE_TOTAL_LIMIT = 1",
+        "DEFAULT_NUM_EPOCHS = 1.0",
+        "DEFAULT_OUTPUT_DIR = Path('out')",
+        "DEFAULT_PREFERRED_MODEL = 'preferred'",
+        "DEFAULT_FALLBACK_MODEL = 'fallback'",
+        "",
+        "class ConditionSpec:",
+        "    def __init__(self, marker):",
+        "        self.marker = marker",
+        "",
+        "def select_condition_specs(markers=None):",
+        "    return [ConditionSpec(marker) for marker in (markers or ['baseline'])]",
+        "",
+        "def prepare_instruction_tuning_records(max_samples=4, *, seed=17):",
+        "    return {'records': [{'prompt': 'p', 'target': 't'} for _ in range(max_samples)], 'metadata': {'source_kind': 'test'}}",
+        "",
+        "def prepare_benchmark_eval_samples(max_examples_per_task, seed=17):",
+        "    return {'arc_challenge': [{'answer': 'A'}], 'hellaswag': [{'answer': 'B'}]}, {'source_kind': 'test'}",
+        "",
+        "def flatten_benchmark_eval_samples(records_by_task):",
+        "    return [record for records in records_by_task.values() for record in records]",
+        "",
+        "def train_condition_with_lora(**kwargs):",
+        "    return {'status': 'completed', 'train_loss': 0.1, 'marker': kwargs['condition'].marker}",
+        "",
+        "def condition_training_bundle_to_record(bundle):",
+        "    return dict(bundle)",
+        "",
+        "def evaluate_condition_on_benchmarks(trained_state, evaluation_tasks, device, **kwargs):",
+        "    return {'average_accuracy': 0.5, 'arc_challenge_accuracy': 0.5, 'hellaswag_accuracy': 0.5}",
+        "",
+        "def release_condition_training_bundle(bundle):",
+        "    bundle['released'] = True",
+        "",
+        "def run_rank_dropout_study(selected_conditions, run_condition_fn, **run_context):",
+        "    condition_results = []",
+        "    for condition in selected_conditions:",
+        "        result = run_condition_fn(condition=condition, budget_context={}, condition_output_dir='out')",
+        "        result['marker'] = condition.marker",
+        "        condition_results.append(result)",
+        "    return {'status': 'completed', 'success': True, 'completed_condition_count': len(condition_results), 'condition_results': condition_results}",
+        "",
+        "def _chunk3b_invoke_runner(fn, args, run_config):",
+        "    context = {}",
+        "    context.update(",
+        "        {",
+        "            'args': args,",
+        "            'namespace': args,",
+        "            'config': run_config,",
+        "            'run_config': run_config,",
+        "            'selected_condition_markers': run_config.get('condition_markers'),",
+        "        }",
+        "    )",
+        "    signature = inspect.signature(fn)",
+        "    parameters = list(signature.parameters.values())",
+        "    accepts_var_kw = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters)",
+        "    if accepts_var_kw:",
+        "        return fn(**context)",
+        "    return fn()",
+        "",
+        "def main():",
+        "    args = SimpleNamespace(condition_markers=['baseline', 'candidate'], output_dir='out')",
+        "    payload = _chunk3b_invoke_runner(run_rank_dropout_study, args, {'condition_markers': args.condition_markers, 'output_dir': 'out'})",
+        "    Path('metrics.json').write_text(json.dumps(payload, sort_keys=True), encoding='utf8')",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /selected_conditions/
+    );
+
+    const repair = await repairPythonChunk3bStudyRunnerInvocationContextSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_chunk3b_study_runner_context_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      success: true,
+      completed_condition_count: 2,
+      condition_results: [
+        { marker: "baseline", status: "completed", success: true },
+        { marker: "candidate", status: "completed", success: true }
+      ]
+    });
+  });
+
+  it("filters unsupported chunk3b condition markers before selecting generated study specs", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-chunk3b-marker-selection-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Mapping, Sequence",
+        "",
+        "SUPPORTED_LORA_CONDITIONS = {",
+        "    'rank_8_dropout_0_0': object(),",
+        "    'rank_8_dropout_0_1': object(),",
+        "    'rank_16_dropout_0_0': object(),",
+        "    'rank_16_dropout_0_1': object(),",
+        "}",
+        "DEFAULT_SELECTED_CONDITION_MARKERS = ('rank_8_dropout_0_0', 'rank_16_dropout_0_1')",
+        "ALLOWED_COMPARATOR_MARKERS = ('rank_8_dropout_0_1', 'rank_16_dropout_0_0', 'rank_16_dropout_0_1')",
+        "",
+        "def _chunk3b_dedupe(values):",
+        "    result = []",
+        "    for value in values:",
+        "        if value not in result:",
+        "            result.append(value)",
+        "    return result",
+        "",
+        "def _chunk3b_flatten_marker_tokens(raw_value: Any) -> list[str]:",
+        "    return list(raw_value or [])",
+        "",
+        "def _chunk3b_resolve_selected_markers(args: argparse.Namespace) -> tuple[list[str], dict[str, Any]]:",
+        "    required_helper = globals().get('_discover_required_condition_markers')",
+        "    available_helper = globals().get('_discover_available_condition_markers')",
+        "    count_helper = globals().get('_expected_condition_count')",
+        "    required = list(required_helper()) if callable(required_helper) else ['rank_8_dropout_0_0']",
+        "    available = list(available_helper()) if callable(available_helper) else []",
+        "    try:",
+        "        expected_count = int(count_helper()) if callable(count_helper) else 2",
+        "    except Exception:",
+        "        expected_count = 2",
+        "    required = _chunk3b_dedupe(required or ['rank_8_dropout_0_0'])",
+        "    requested = _chunk3b_flatten_marker_tokens(getattr(args, 'condition_markers', None))",
+        "    target_count = max(expected_count, len(required))",
+        "    selected = list(required)",
+        "    for marker in requested:",
+        "        if marker not in selected:",
+        "            selected.append(marker)",
+        "    for marker in available:",
+        "        if len(selected) >= target_count:",
+        "            break",
+        "        if marker not in selected:",
+        "            selected.append(marker)",
+        "    selected = _chunk3b_dedupe(selected)",
+        "    ignored_markers = selected[target_count:]",
+        "    selected = selected[:target_count]",
+        "    return selected, {",
+        "        'requested_markers': requested,",
+        "        'required_markers': required,",
+        "        'available_markers': available,",
+        "        'selected_markers': selected,",
+        "        'ignored_markers': ignored_markers,",
+        "        'expected_condition_count': target_count,",
+        "    }",
+        "",
+        "def main():",
+        "    selected, metadata = _chunk3b_resolve_selected_markers(argparse.Namespace(condition_markers=['rank_8_dropout_0_0', 'rank_8_dropout_0_05']))",
+        "    print(json.dumps({'selected': selected, 'metadata': metadata}, sort_keys=True))",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const beforePayload = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(beforePayload.selected).toEqual(["rank_8_dropout_0_0", "rank_8_dropout_0_05"]);
+
+    const repair = await repairPythonChunk3bConditionMarkerSelectionSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_chunk3b_condition_marker_selection_marker");
+    const afterPayload = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(afterPayload.selected).toEqual(["rank_8_dropout_0_0", "rank_16_dropout_0_1"]);
+    expect(afterPayload.metadata).toMatchObject({
+      ignored_markers: ["rank_8_dropout_0_05"],
+      available_markers: [
+        "rank_8_dropout_0_0",
+        "rank_16_dropout_0_1",
+        "rank_8_dropout_0_1",
+        "rank_16_dropout_0_0"
+      ]
+    });
+  });
+
+  it("widens duplicate multiple-choice prompt helpers for generated benchmark normalizers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-multiple-choice-prompt-signature-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from typing import Any, Mapping, Sequence",
+        "",
+        "def _coerce_text(value: Any) -> str:",
+        "    return '' if value is None else str(value).strip()",
+        "",
+        "def _build_multiple_choice_prompt(stem: str, options: Sequence[tuple[str, str]], instruction: str) -> str:",
+        "    option_lines = [f'{label}. {text}' for label, text in options]",
+        "    return '\\n\\n'.join(part for part in [stem.strip(), '\\n'.join(option_lines), instruction.strip()] if part)",
+        "",
+        "def _build_multiple_choice_prompt(",
+        "    task_name: str,",
+        "    sample: Mapping[str, Any],",
+        "    choice_items: Sequence[tuple[str, str]],",
+        ") -> str:",
+        "    explicit_prompt = _coerce_text(sample.get(\"prompt\"))",
+        "    if explicit_prompt:",
+        "        stem = explicit_prompt",
+        "    else:",
+        "        question = _coerce_text(sample.get(\"question\"))",
+        "        stem = f\"Question: {question}\" if question else f\"Choose the best answer for this {task_name} example.\"",
+        "    lines = [f\"Task: {task_name}\", stem, \"\", \"Options:\"]",
+        "    for label, text in choice_items:",
+        "        lines.append(f\"{label}. {text}\")",
+        "    lines.extend([\"\", \"Answer with only the letter of the best option.\", \"Answer:\"])",
+        "    return \"\\n\".join(lines).strip()",
+        "",
+        "def main():",
+        "    normalizer_prompt = _build_multiple_choice_prompt(",
+        "        stem='Question: Which option is correct?',",
+        "        options=[('A', 'alpha'), ('B', 'beta')],",
+        "        instruction='Answer with only the letter of the correct option.',",
+        "    )",
+        "    evaluator_prompt = _build_multiple_choice_prompt(",
+        "        task_name='arc_challenge',",
+        "        sample={'question': 'Which option is correct?'},",
+        "        choice_items=[('A', 'alpha'), ('B', 'beta')],",
+        "    )",
+        "    print(json.dumps({'normalizer': normalizer_prompt, 'evaluator': evaluator_prompt}, sort_keys=True))",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toThrow(
+      /unexpected keyword argument 'stem'/
+    );
+
+    const repair = await repairPythonMultipleChoicePromptSignatureSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_multiple_choice_prompt_signature_marker");
+    const payload = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(payload.normalizer).toContain("Question: Which option is correct?");
+    expect(payload.normalizer).toContain("A. alpha");
+    expect(payload.evaluator).toContain("Task: arc_challenge");
+    expect(payload.evaluator).toContain("Answer:");
+  });
+
+  it("adds a safe metric float helper for generated condition record normalization", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-safe-metric-float-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "",
+        "def _condition_rank(condition):",
+        "    return condition.get('rank')",
+        "",
+        "def _normalize_condition_record(condition):",
+        "    rank_value = _safe_metric_float(_condition_rank(condition))",
+        "    return {'rank': int(rank_value) if rank_value is not None and float(rank_value).is_integer() else rank_value}",
+        "",
+        "def main():",
+        "    print(json.dumps({",
+        "        'valid': _normalize_condition_record({'rank': '8'}),",
+        "        'missing': _normalize_condition_record({'rank': ''}),",
+        "        'nan': _normalize_condition_record({'rank': 'nan'}),",
+        "    }, sort_keys=True))",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toThrow(
+      /_safe_metric_float/
+    );
+
+    const repair = await repairPythonSafeMetricFloatHelperSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _safe_metric_float(value, default=None):");
+    const payload = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(payload.valid.rank).toBe(8);
+    expect(payload.missing.rank).toBeNull();
+    expect(payload.nan.rank).toBeNull();
+  });
+
   it("repairs baseline-first condition runner aliases when the generated runner defines run_all_conditions_baseline_first", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-first-conditions-alias-"));
     tempDirs.push(workspace);
@@ -19576,6 +20400,103 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("wraps runtime-resolved keyword-only metrics payload builders with study result aliases", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-metrics-payload-call-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "import time",
+        "from typing import Any, Optional, Sequence",
+        "",
+        "class Config:",
+        "    dry_run = False",
+        "    baseline_only = False",
+        "",
+        "def build_metrics_payload(*, config, run_context, data_summary, condition_results):",
+        "    return {",
+        "        'status': 'completed',",
+        "        'condition_count': len(condition_results),",
+        "        'context_name': run_context.get('name'),",
+        "        'data_name': data_summary.get('name'),",
+        "        'dry_run': config.dry_run,",
+        "    }",
+        "",
+        "def _resolve_runtime_helper(candidate_names: Sequence[str]) -> Optional[Any]:",
+        "    for candidate_name in candidate_names:",
+        "        helper = globals().get(candidate_name)",
+        "        if callable(helper):",
+        "            return helper",
+        "    return None",
+        "",
+        "def _filter_kwargs_for_helper(helper: Any, kwargs: dict[str, Any]) -> dict[str, Any]:",
+        "    signature = inspect.signature(helper)",
+        "    parameters = signature.parameters",
+        "    accepts_var_keyword = any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())",
+        "    if accepts_var_keyword:",
+        "        return kwargs",
+        "    return {key: value for key, value in kwargs.items() if key in parameters}",
+        "",
+        "def _call_helper_variants(helper: Any, helper_name: str, call_variants):",
+        "    signature = inspect.signature(helper)",
+        "    for positional_args, keyword_args in call_variants:",
+        "        filtered_keyword_args = _filter_kwargs_for_helper(helper, dict(keyword_args))",
+        "        signature.bind_partial(*positional_args, **filtered_keyword_args)",
+        "        return helper(*positional_args, **filtered_keyword_args)",
+        "    raise RuntimeError('no variant')",
+        "",
+        "def main() -> int:",
+        "    config = Config()",
+        "    raw_result = {",
+        "        'condition_results': [{'marker': 'rank_8_dropout_0_0', 'status': 'completed'}],",
+        "        'run_context': {'name': 'live-run'},",
+        "        'data_summary': {'name': 'benchmark-bundle'},",
+        "    }",
+        "    normalized_result = dict(raw_result)",
+        "    metrics_builder = _resolve_runtime_helper(('build_metrics_payload',))",
+        "    metrics_payload = _call_helper_variants(",
+        "        metrics_builder,",
+        "        getattr(metrics_builder, '__name__', 'metrics_builder'),",
+        "        (",
+        "            ((), {",
+        "                'config': config,",
+        "                'study_result': raw_result,",
+        "                'result': raw_result,",
+        "                'study_result_dict': normalized_result,",
+        "                'started_at': time.time(),",
+        "                'finished_at': time.time(),",
+        "            }),",
+        "        ),",
+        "    )",
+        "    assert metrics_payload['condition_count'] == 1",
+        "    assert metrics_payload['context_name'] == 'live-run'",
+        "    assert metrics_payload['data_name'] == 'benchmark-bundle'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing 3 required keyword-only arguments/
+    );
+
+    const repair = await repairPythonMainMetricsPayloadBuilderCallSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_original_build_metrics_payload = build_metrics_payload");
+    expect(repairedSource).toContain("\"run_context\": _autolabos_runtime_context");
+    expect(repairedSource).toContain("\"data_summary\": _autolabos_data_summary");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("rejects helper-only python runners that would exit without writing metrics", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-helper-only-runner-"));
     tempDirs.push(workspace);
@@ -19963,6 +20884,61 @@ describe("ImplementSessionManager", () => {
     expect(twiceRepairedSource.match(/parser\.add_argument\('--output-dir', dest='public_dir'/gu) || []).toHaveLength(1);
   });
 
+  it("deduplicates generated --output-dir aliases on the same parser before runtime handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-output-dir-duplicate-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    const publicDir = path.join(workspace, "public");
+    const metricsPath = path.join(workspace, "metrics.json");
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    parser.add_argument('--output-dir', '--experiment-dir', dest='output_dir', default='outputs')",
+        "    parser.add_argument('--public-dir', dest='public_dir', default='public')",
+        "    parser.add_argument('--output-dir', dest='public_dir', default=None, help='Alias for --public-dir used by AutoLabOS run_experiments.')",
+        "    return parser.parse_args(argv)",
+        "",
+        "def main(argv=None):",
+        "    parse_args(argv)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath, "--help"], { cwd: workspace })).toThrow(
+      /conflicting option string/
+    );
+
+    const repair = await repairPythonOutputDirArgparseAlias(
+      scriptPath,
+      `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`
+    );
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource.match(/parser\.add_argument\('--output-dir'/gu) || []).toHaveLength(1);
+    expect(repairedSource).toContain("parser.add_argument('--public-dir'");
+    expect(() => execFileSync("python3", [scriptPath, "--help"], { cwd: workspace })).not.toThrow();
+
+    const secondRepair = await repairPythonOutputDirArgparseAlias(
+      scriptPath,
+      `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`
+    );
+    const twiceRepairedSource = readFileSync(scriptPath, "utf8");
+    expect(secondRepair.repaired).toBe(false);
+    expect(twiceRepairedSource.match(/parser\.add_argument\('--output-dir'/gu) || []).toHaveLength(1);
+  });
+
   it("constrains generated main callable resolver fallback to preferred-name matches", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-callable-resolver-"));
     tempDirs.push(workspace);
@@ -20327,6 +21303,249 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("'run_single_locked_condition',\n        \"execute_single_condition_with_capture\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("bridges duplicated single-condition executor resolvers to generated study helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-single-condition-executor-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import time",
+        "from types import SimpleNamespace",
+        "",
+        "class RunnerConfig:",
+        "    pass",
+        "",
+        "def load_base_model_bundle(config, model_id, *, condition=None, local_files_only=False):",
+        "    return SimpleNamespace(model='model', tokenizer='tokenizer', input_device='cpu', model_id=model_id)",
+        "",
+        "def release_model_bundle(bundle):",
+        "    return None",
+        "",
+        "def prepare_study_data(config, tokenizer):",
+        "    return SimpleNamespace(train_dataset=[1], eval_examples={'arc_challenge': [1]})",
+        "",
+        "def run_condition_finetuning(*, condition, model_bundle, prepared_data, config, logger=None, started_at=None):",
+        "    assert model_bundle.model == 'model'",
+        "    assert prepared_data.train_dataset == [1]",
+        "    return {'status': 'completed', 'condition_marker': condition['marker'], 'final_train_loss': 0.2}",
+        "",
+        "def evaluate_model_on_benchmarks(model, tokenizer, prepared_data, device, config):",
+        "    assert model == 'model'",
+        "    assert tokenizer == 'tokenizer'",
+        "    return {'average_accuracy': 0.5, 'metrics': {'arc_challenge_accuracy': 0.5}}",
+        "",
+        "def assemble_condition_result(*, condition, train_result, evaluation_summary, model_context=None, baseline_average_accuracy=None, failure=None, elapsed_wall_sec=None, device=None):",
+        "    return {'status': 'completed', 'marker': condition['marker'], 'average_accuracy': evaluation_summary['average_accuracy'], 'device': device}",
+        "",
+        "def _resolve_single_condition_executor(runtime_context=None):",
+        "    raise RuntimeError('original context-aware resolver was shadowed')",
+        "",
+        "def execute_planned_condition(condition, runner_config, runtime_context=None, *, baseline_result=None):",
+        "    executor = _resolve_single_condition_executor(runtime_context)",
+        "    return executor(condition=condition, runner_config=runner_config, runtime_context=runtime_context, baseline_result=baseline_result)",
+        "",
+        "def _resolve_single_condition_executor():",
+        "    candidate_names = ('execute_planned_condition',)",
+        "    for candidate_name in candidate_names:",
+        "        executor = globals().get(candidate_name)",
+        "        if callable(executor):",
+        "            return executor",
+        "    raise RuntimeError('Unable to resolve the single-condition execution helper needed for the locked study run.')",
+        "",
+        "def _invoke_single_condition_executor(executor, condition, config, model_spec, study_start_time, baseline_result):",
+        "    return executor(condition, config, model_spec)",
+        "",
+        "def main():",
+        "    result = execute_planned_condition({'marker': 'rank_8_dropout_0_0'}, RunnerConfig(), {'selected_model_id': 'fake-model'})",
+        "    assert result['status'] == 'completed'",
+        "    assert result['average_accuracy'] == 0.5",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /takes 0 positional arguments but 1 was given/
+    );
+
+    const repair = await repairPythonSingleConditionExecutorBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_single_condition_executor_bridge_marker");
+    expect(repairedSource).toContain("run_single_condition = _autolabos_single_condition_executor_bridge");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("normalizes tuple parameter counters before LoRA summary dict merging", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-parameter-summary-record-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from types import SimpleNamespace",
+        "",
+        "def count_model_parameters(model):",
+        "    return {'total_parameters': 10, 'trainable_parameters': 2, 'trainable_fraction': 0.2}",
+        "",
+        "def attach_lora_adapter_to_model(model, condition, target_modules=None):",
+        "    adapted_model = model",
+        "    parameter_summary = count_model_parameters(adapted_model)",
+        "    summary = {",
+        "        'condition_marker': condition.get('marker', 'unknown'),",
+        "        **parameter_summary,",
+        "    }",
+        "    return adapted_model, summary",
+        "",
+        "def load_base_model_bundle(config, model_id, *, condition=None, local_files_only=False):",
+        "    model = SimpleNamespace()",
+        "    model, lora_summary = attach_lora_adapter_to_model(model, condition or {})",
+        "    load_summary = {'model_id': model_id}",
+        "    load_summary.update(count_model_parameters(model))",
+        "    return {'lora_summary': lora_summary, 'load_summary': load_summary}",
+        "",
+        "def count_model_parameters(model):",
+        "    return (2, 10)",
+        "",
+        "def main():",
+        "    bundle = load_base_model_bundle({}, 'fake-model', condition={'marker': 'rank_8_dropout_0_0'})",
+        "    assert bundle['lora_summary']['trainable_parameters'] == 2",
+        "    assert bundle['load_summary']['total_parameters'] == 10",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /object is not a mapping/
+    );
+
+    const repair = await repairPythonParameterSummaryRecordSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_parameter_summary_record_marker");
+    expect(repairedSource).toContain("_autolabos_parameter_summary_record(count_model_parameters(adapted_model))");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs generated benchmark accuracy comprehensions that reference an undefined result variable", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-benchmark-accuracy-comprehension-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from types import SimpleNamespace",
+        "",
+        "DATA_TASK_ORDER = ['arc_challenge', 'hellaswag']",
+        "",
+        "def evaluate_arc_challenge(**kwargs):",
+        "    return SimpleNamespace(accuracy=0.5, scored_example_count=1, example_count=1, correct_count=1, failed_example_count=0)",
+        "",
+        "def evaluate_hellaswag(**kwargs):",
+        "    return SimpleNamespace(accuracy=0.25, scored_example_count=1, example_count=1, correct_count=0, failed_example_count=0)",
+        "",
+        "class BenchmarkEvaluationSummary:",
+        "    def __init__(self, **kwargs):",
+        "        self.__dict__.update(kwargs)",
+        "",
+        "def evaluate_model_on_benchmarks(model, tokenizer, prepared_data, device, config):",
+        "    task_results = {",
+        "        'arc_challenge': evaluate_arc_challenge(),",
+        "        'hellaswag': evaluate_hellaswag(),",
+        "    }",
+        "    accuracies = [",
+        "        result.accuracy for task_name in DATA_TASK_ORDER if task_name in task_results and task_results[task_name].scored_example_count > 0",
+        "    ]",
+        "    average_accuracy = float(sum(accuracies) / len(accuracies)) if accuracies else 0.0",
+        "    return BenchmarkEvaluationSummary(task_results=task_results, average_accuracy=average_accuracy)",
+        "",
+        "def main():",
+        "    summary = evaluate_model_on_benchmarks(None, None, None, None, None)",
+        "    assert summary.average_accuracy == 0.375",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /name 'result' is not defined/
+    );
+
+    const repair = await repairPythonBenchmarkAccuracyComprehensionSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_benchmark_accuracy_comprehension_marker");
+    expect(repairedSource).toContain("task_results[task_name].accuracy for task_name in DATA_TASK_ORDER");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("projects success condition rows onto top-level objective metrics", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-metrics-payload-projection-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "LOCKED_BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
+        "",
+        "def build_metrics_payload(*, condition_results):",
+        "    return {",
+        "        'status': 'not_started',",
+        "        'success': True,",
+        "        'required_condition_count': 3,",
+        "        'completed_condition_count': 0,",
+        "        'failed_condition_count': 0,",
+        "        'condition_results': condition_results,",
+        "        'primary_metric_key': 'accuracy_delta_vs_baseline',",
+        "    }",
+        "",
+        "def main():",
+        "    payload = build_metrics_payload(condition_results=[",
+        "        {'marker': 'rank_8_dropout_0_0', 'condition_id': 'rank_8_dropout_0_0', 'status': 'success', 'success': True, 'is_baseline': True, 'average_accuracy': 0.8, 'accuracy_delta_vs_baseline': 0.0},",
+        "        {'marker': 'rank_8_dropout_0_05', 'condition_id': 'rank_8_dropout_0_05', 'status': 'success', 'success': True, 'average_accuracy': 0.83, 'accuracy_delta_vs_baseline': 0.03},",
+        "        {'marker': 'rank_8_dropout_0_1', 'condition_id': 'rank_8_dropout_0_1', 'status': 'success', 'success': True, 'average_accuracy': 0.82, 'accuracy_delta_vs_baseline': 0.02},",
+        "    ])",
+        "    assert payload['status'] == 'completed'",
+        "    assert payload['completed_condition_count'] == 3",
+        "    assert payload['accuracy_delta_vs_baseline'] == 0.03",
+        "    assert payload['primary_metric'] == 0.03",
+        "    assert payload['best_condition_marker'] == 'rank_8_dropout_0_05'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonMetricsPayloadProjectionSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_metrics_payload_projection_marker");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 

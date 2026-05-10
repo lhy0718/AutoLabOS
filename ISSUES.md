@@ -15,6 +15,592 @@ Path placeholders:
 
 ---
 
+## Issue: LV-403
+
+- Status: repair implemented; automated regression/build passed and same-flow live revalidation completed `run_experiments` on 2026-05-10.
+- Validation target: same-flow P6 live validation after LV-402 duplicate `--output-dir` argparse repair.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-402 same-parser `--output-dir` deduplication repair.
+  2. Retry the same `run_experiments` node through the live continuation helper.
+  3. Observe the generated runner execute three real local LoRA conditions and write `metrics.json`.
+  4. Observe the metrics contract fail even though the runner wrote `primary_metric_key: "accuracy_delta_vs_baseline"` and numeric `primary_metric`.
+
+- Expected behavior:
+  - If a generated runner writes a numeric top-level `primary_metric` with a valid top-level `primary_metric_key`, `run_experiments` should project that value to the named top-level objective metric before objective evaluation and contract validation.
+  - The repair must only expose an already computed metric under its declared contract key; it must not fabricate metric values.
+
+- Actual behavior:
+  - Runner execution exited 0 and wrote real completed condition rows.
+  - `metrics.json` contained:
+    - `primary_metric_key: "accuracy_delta_vs_baseline"`
+    - `primary_metric: -0.03125` on the first retry and `primary_metric: -0.0625` on the same-flow revalidation.
+  - `metrics.json` lacked a top-level `accuracy_delta_vs_baseline` key, so contract validation failed:
+    - `Experiment metrics contract failed: Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started for this boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a metrics-contract projection boundary exposed after real execution completed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `promoteSummaryPrimaryMetric(...)` only handled nested `summary.primary_metric_key` / `summary.primary_metric`, but the regenerated runner wrote the same contract at top level. Objective evaluation therefore looked for the named metric before the run node had projected the top-level primary metric pair into the canonical objective key.
+
+- Code/test changes:
+  - Code: updated `promoteSummaryPrimaryMetric(...)` in `src/core/nodes/runExperiments.ts` to promote a numeric top-level `primary_metric` under a valid top-level `primary_metric_key`.
+  - Tests: added deterministic regression in `tests/runExperimentsExecutionProfile.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Automated regression: pass with `npm test -- --run tests/runExperimentsExecutionProfile.test.ts -t "primary_metric_key"`.
+  - Build: pass with `npm run build`.
+  - Same-flow live revalidation: pass; `run_experiments` completed, `run_experiments_verify_report.json` has `status: "pass"`, and `objective_evaluation.json` reports `status: "not_met"` for `accuracy_delta_vs_baseline=-0.0625`.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/objective_evaluation.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+
+## Issue: LV-402
+
+- Status: repair implemented; automated regression/build passed and same-flow live revalidation advanced to LV-403 on 2026-05-10.
+- Validation target: same-flow P6 live validation after the backtracked `design_experiments` -> `implement_experiments` regeneration paused for approval.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `implement_experiments` handoff into `run_experiments`
+
+- Reproduction steps:
+  1. Backtrack from the blocked two-condition result to `design_experiments`.
+  2. Approve the regenerated design and let `implement_experiments` materialize the public runner.
+  3. Observe `implement_experiments` pause with local verification passing via `python3 -m py_compile`.
+  4. Runtime-check the node-owned runner CLI surface with `python3 <runner> --help`.
+
+- Expected behavior:
+  - Generated runner CLI repair should not create duplicate `argparse` option strings on the same parser.
+  - Compile verification should not leave a runner that fails before argument parsing completes.
+  - The fix must only repair the CLI handoff surface; it must not fabricate experiment outputs or metrics.
+
+- Actual behavior:
+  - `implement_experiments` reported local verification pass via `py_compile`.
+  - The runner contained both:
+    - `parser.add_argument('--output-dir', '--experiment-dir', dest='output_dir', ...)`
+    - `parser.add_argument('--output-dir', dest='public_dir', ...)`
+  - Runtime CLI startup failed before any experiment execution:
+    - `argparse.ArgumentError: argument --output-dir: conflicting option string: --output-dir`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started for this boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a generated runner handoff repair bug exposed before `run_experiments`.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `repairPythonOutputDirArgparseAlias(...)` added an AutoLabOS `--output-dir` alias after `--public-dir` without checking whether the same parser already accepted `--output-dir` earlier. `py_compile` cannot catch `argparse` option conflicts because the parser is built only at runtime.
+
+- Code/test changes:
+  - Code: updated `repairPythonOutputDirArgparseAlias(...)` in `src/core/agents/implementSessionManager.ts` to skip adding a `--public-dir` alias when the same parser block already accepts `--output-dir`.
+  - Tests: added deterministic regression in `tests/implementSessionManager.test.ts` for deduplicating same-parser `--output-dir` aliases and runtime-checking `python3 <runner> --help`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Automated regression: pass with `npm test -- --run tests/implementSessionManager.test.ts -t "output-dir"`.
+  - Build: pass with `npm run build`.
+  - Same-flow live revalidation: pass for the argparse startup boundary; `run_experiments` executed real local conditions and advanced to LV-403 metrics projection failure.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_result.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+## Issue: LV-401
+
+- Status: repair implemented; automated regression/build passed and same-flow live revalidation completed `run_experiments` on 2026-05-10.
+- Validation target: same-flow P6 live validation after LV-400 multiple-choice prompt helper signature repair.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-400 duplicate prompt-helper signature repair.
+  2. Retry the same `run_experiments` node through the live continuation helper.
+  3. Observe ARC/HellaSwag evaluation records load and the first Qwen condition complete.
+  4. Observe result normalization fail while converting condition metadata.
+
+- Expected behavior:
+  - Generated condition-record normalization helpers should have a numeric coercion helper for `_safe_metric_float(...)`.
+  - The repair should only add deterministic numeric coercion for existing raw values; it must not synthesize condition rows or metrics.
+
+- Actual behavior:
+  - LV-400 was cleared: ARC/HellaSwag records loaded and the first condition completed training/evaluation setup.
+  - Execution then failed in `_normalize_condition_record(...)` with:
+    - `NameError: name '_safe_metric_float' is not defined`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started for this boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a generated helper alias omission exposed after the first condition produced real output.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged result-normalization code references `_safe_metric_float(...)` across several metric extraction helpers, but no generated section defines that helper. `py_compile` cannot catch this runtime name resolution until normalization is executed.
+
+- Code/test changes:
+  - Code: implemented `repairPythonSafeMetricFloatHelperSurface(...)` in `src/core/agents/implementSessionManager.ts` to add a deterministic `_safe_metric_float(...)` compatibility helper when referenced but missing.
+  - Code: wired the repair in `src/core/nodes/runExperiments.ts` so existing generated runners are repaired before execution.
+  - Tests: added deterministic regression in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Automated regressions: pass with `npm test -- --run tests/implementSessionManager.test.ts -t "chunk3b selected conditions|unsupported chunk3b condition markers|multiple-choice prompt helpers|safe metric float helper|terminal metrics"`.
+  - Build: pass with `npm run build`.
+  - Same-flow live revalidation: pass; `run_experiments` completed, wrote metrics, and paused for approval to continue. The experiment did not meet the objective metric (`accuracy_delta_vs_baseline=-0.0078125 < 0.01`), which is a valid scientific result and should constrain downstream claims.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+## Issue: LV-400
+
+- Status: repair implemented; automated regression/build passed and same-flow live revalidation advanced to LV-401 on 2026-05-10.
+- Validation target: same-flow P6 live validation after LV-399 unsupported condition-marker filtering.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-399 condition-marker selection repair.
+  2. Retry the same `run_experiments` node through the live continuation helper.
+  3. Observe the runner select only supported condition markers and start benchmark input loading.
+  4. Observe ARC example normalization fail before condition training starts.
+
+- Expected behavior:
+  - Generated duplicate multiple-choice prompt helpers should remain call-compatible with both call surfaces:
+    - `stem` / `options` / `instruction` keyword calls used by ARC/HellaSwag normalization.
+    - `task_name` / `sample` / `choice_items` keyword calls used by later benchmark evaluation helpers.
+  - The repair must only adapt prompt construction; it must not fabricate records, metrics, or condition results.
+
+- Actual behavior:
+  - LV-399 was cleared: the live metrics recorded `ignored_markers: ["rank_8_dropout_0_05"]` and selected supported markers.
+  - The generated runner then failed while loading ARC records:
+    - `TypeError: _build_multiple_choice_prompt() got an unexpected keyword argument 'stem'`
+  - The file contains an earlier `stem/options/instruction` helper and a later duplicate `task_name/sample/choice_items` helper; the later definition shadows the earlier one.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started for this boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a generated helper shadowing/signature drift boundary.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged code sections generated two `_build_multiple_choice_prompt(...)` helpers with incompatible signatures. Python's later definition shadows the earlier normalizer-compatible helper, so earlier normalization call sites fail at runtime even though `py_compile` passes.
+
+- Code/test changes:
+  - Code: implemented `repairPythonMultipleChoicePromptSignatureSurface(...)` in `src/core/agents/implementSessionManager.ts` to widen duplicate multiple-choice prompt helpers to a compatibility signature.
+  - Code: wired the repair in `src/core/nodes/runExperiments.ts` so existing generated runners are repaired before execution.
+  - Tests: added deterministic regression in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Automated regressions: pass with `npm test -- --run tests/implementSessionManager.test.ts -t "chunk3b selected conditions|unsupported chunk3b condition markers|multiple-choice prompt helpers|terminal metrics"`.
+  - Build: pass with `npm run build`.
+  - Same-flow live revalidation: pass for the multiple-choice prompt helper boundary; the previous `unexpected keyword argument 'stem'` TypeError did not recur, and the run advanced to LV-401.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+## Issue: LV-399
+
+- Status: repair implemented; automated regression/build passed and same-flow live revalidation advanced to LV-400 on 2026-05-10.
+- Validation target: same-flow P6 live validation after LV-398 chunk3b study-runner invocation context repair.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-398 `selected_conditions` / `run_condition_fn` context repair.
+  2. Retry the same `run_experiments` node through the live continuation helper.
+  3. Observe the repair apply to `run_lora_rank_dropout_study.py`.
+  4. Observe the runner fail during condition marker selection before training starts.
+
+- Expected behavior:
+  - If the run command contains an unsupported condition marker, the final runner should ignore that invalid requested marker and fall back to supported/generated markers while preserving the required baseline-first condition.
+  - The repair must not fabricate metrics; it should only align marker selection with the generated condition registry.
+
+- Actual behavior:
+  - The run command passed `--condition-markers rank_8_dropout_0_0 rank_8_dropout_0_05`.
+  - The generated runner supports `rank_8_dropout_0_0`, `rank_8_dropout_0_1`, `rank_16_dropout_0_0`, and `rank_16_dropout_0_1`.
+  - `_chunk3b_resolve_selected_markers(...)` accepted the unsupported requested marker before filling from available markers.
+  - Execution failed with:
+    - `ValueError: Unsupported condition marker 'rank_8_dropout_0_05'. Canonical form 'rank_8_dropout_0_05' is not one of: rank_8_dropout_0_0, rank_8_dropout_0_1, rank_16_dropout_0_0, rank_16_dropout_0_1.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started for this boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a generated marker-selection projection mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the implementation node's run command retained a planned dropout marker that was not present in the regenerated condition registry, while the final marker selector prioritizes requested markers over supported generated markers. The selector also fails to discover `SUPPORTED_LORA_CONDITIONS` as an available-marker source.
+
+- Code/test changes:
+  - Code: implemented `repairPythonChunk3bConditionMarkerSelectionSurface(...)` in `src/core/agents/implementSessionManager.ts` to discover generated marker sources such as `SUPPORTED_LORA_CONDITIONS` and skip unsupported requested markers.
+  - Code: wired the repair in `src/core/nodes/runExperiments.ts` so existing generated runners are repaired before execution.
+  - Tests: added deterministic regression in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Automated regressions: pass with `npm test -- --run tests/implementSessionManager.test.ts -t "chunk3b selected conditions|unsupported chunk3b condition markers|terminal metrics"`.
+  - Build: pass with `npm run build`.
+  - Same-flow live revalidation: pass for the unsupported-marker boundary; the previous `rank_8_dropout_0_05` ValueError did not recur, and the run advanced to LV-400.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+## Issue: LV-398
+
+- Status: repair implemented; automated regression/build passed and same-flow live revalidation advanced to LV-399 on 2026-05-10.
+- Validation target: same-flow P6 live validation after the backtracked `design_experiments` -> `implement_experiments` regeneration.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Approve regenerated `implement_experiments` after the live gate backtracked from `analyze_results` to `design_experiments`.
+  2. Let AutoLabOS generate the new public runner at `outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`.
+  3. Approve `run_experiments` through the same live continuation helper.
+  4. Observe the generated runner fail before any condition execution starts.
+
+- Expected behavior:
+  - The final generated runner invocation adapter should materialize the high-level study runner contract when the selected callable requires `selected_conditions` and `run_condition_fn`.
+  - The fix must bridge existing generated condition specs, data loaders, training helpers, and evaluation helpers; it must not synthesize successful condition rows.
+
+- Actual behavior:
+  - `run_experiments` invoked the node-owned runner command.
+  - `_chunk3b_invoke_runner(...)` built a context containing `args`, `namespace`, `config`, `run_config`, and `selected_condition_markers`.
+  - The selected callable was `run_rank_dropout_study(selected_conditions, run_condition_fn, ...)`.
+  - Execution failed with:
+    - `TypeError: run_rank_dropout_study() missing 2 required positional arguments: 'selected_conditions' and 'run_condition_fn'`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started for this boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a generated final invocation context mismatch in the live workflow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a real high-level `run_rank_dropout_study(...)` orchestration function and real lower-level training/evaluation helpers, but the final `_chunk3b_invoke_runner(...)` context projection only passed CLI/runtime objects and condition marker strings. Compile-only verification could not catch the missing runtime contract kwargs.
+
+- Code/test changes:
+  - Code: added `repairPythonChunk3bStudyRunnerInvocationContextSurface(...)` in `src/core/agents/implementSessionManager.ts`.
+  - Code: wired the repair into `src/core/nodes/runExperiments.ts` so existing generated runners are repaired immediately before `run_experiments` execution.
+  - Tests: added deterministic coverage in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Targeted automated regression: pass with `npm test -- --run tests/implementSessionManager.test.ts -t "successful condition status|terminal metrics|chunk3b selected conditions"`.
+  - Build: pass with `npm run build`.
+  - Same-flow live revalidation: pass for the missing-kwargs boundary; the previous `selected_conditions` / `run_condition_fn` TypeError did not recur, and the run advanced to LV-399.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+## Issue: LV-397
+
+- Status: repair implemented; automated regression and same-flow live revalidation passed on 2026-05-10, then the governed workflow advanced through `analyze_results` and backtracked to regenerate `design_experiments`/`implement_experiments`.
+- Validation target: same-flow P6 live validation after LV-396 successful-condition status normalization.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-396 status normalization repair.
+  2. Retry the same P6 `run_experiments` node through the live continuation helper.
+  3. Observe both planned conditions train/evaluate and record nested `status: "completed"`, `success: true`.
+  4. Observe the `run_experiments` verifier fail because top-level `completed_condition_count` is still 0.
+
+- Expected behavior:
+  - When node-owned metrics already contain completed condition rows, terminal metrics finalization must not overwrite `completed_condition_count` back to zero because the returned payload wraps metrics under `metrics`/`study_results`.
+  - The public metrics contract should agree with the nested condition rows.
+
+- Actual behavior:
+  - The live runner executed baseline `rank_8_dropout_0_0` and comparator `rank_16_dropout_0_1`; both rows show `status: "completed"` and `success: true`.
+  - The terminal metrics finalizer wrote `status: "completed"` and `success: true`, but also overwrote `completed_condition_count` to `0`.
+  - The `run_experiments` verifier then failed with: `Experiment metrics contract failed: No required experiment conditions completed successfully (0/2).`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started for this boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a final metrics projection mismatch after real condition execution completed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated study runner returns a wrapper payload with `summary`, `metrics`, and `study_results`, while `_count_condition_outcomes(...)` only inspects direct top-level counts/rows. The terminal finalizer therefore derives zero from the wrapper and overwrites the correct metrics emitted by `_persist_study_outputs(...)`.
+
+- Code/test changes:
+  - Code: added `repairPythonTerminalMetricsExistingConditionCountSurface(...)` in `src/core/agents/implementSessionManager.ts`.
+  - Code: wired the repair into `src/core/nodes/runExperiments.ts` so existing generated runners are repaired immediately before `run_experiments` execution.
+  - Tests: added deterministic coverage in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Targeted automated regression: pass with `npm test -- --run tests/implementSessionManager.test.ts -t "successful condition status|terminal metrics"`.
+  - Build: pass with `npm run build`.
+  - Same-flow live revalidation: pass; `run_experiments_verify_report.json` reported `status: "pass"` with `completed_condition_count: 2`, then `analyze_results` correctly backtracked because the objective metric was not met.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+
+---
+
+## Issue: LV-396
+
+- Status: repair implemented; targeted regression/build passed; same-flow live revalidation advanced to LV-397.
+- Validation target: same-flow P6 live validation after LV-395 study-runtime helper and train-loss arity repairs.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-395 generated-runtime helper alias repairs.
+  2. Retry the same P6 `run_experiments` node through the live continuation helper.
+  3. Observe the baseline condition train and evaluate successfully.
+  4. Observe the next condition get skipped as if the required baseline failed.
+
+- Expected behavior:
+  - A baseline condition that completed node-owned training/evaluation and records `success: true` should satisfy the generated runner's baseline-first gate.
+  - Completed condition counts, baseline-success checks, and downstream metrics projection should use the same status vocabulary.
+  - The repair must normalize the status contract only; it must not fabricate condition rows, metrics, or evaluation results.
+
+- Actual behavior:
+  - The baseline condition `rank_8_dropout_0_0` records `status: "succeeded"`, `success: true`, `failed_stage: null`, and a train loss after real execution.
+  - The generated summary and loop logic count only `status == "completed"` as completed.
+  - The comparator `rank_16_dropout_0_1` is skipped with `status: "not_run_baseline_failed"` and the message that `rank_8_dropout_0_0` did not complete successfully.
+  - Top-level metrics remain `status: "failed"`, `success: false`, and `completed_condition_count: 0` despite the nested baseline result showing successful execution.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started for this boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a generated-runner status vocabulary mismatch exposed after the live execution advanced past training/evaluation.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation sets successful condition rows to `status = "succeeded"`, while the later baseline-first loop and payload builders treat only `completed` as the executable contract status.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` normalizes generated successful condition status values from `succeeded` to the contract status `completed` before handoff/run execution.
+  - Code: `src/core/nodes/runExperiments.ts` applies that normalization immediately before `run_experiments` execution.
+  - Tests: deterministic regression in `tests/implementSessionManager.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Automated regressions: `npm test -- --run tests/implementSessionManager.test.ts -t "successful condition status"` passed.
+  - Build: `npm run build` passed.
+  - Same-flow live revalidation: same P6 `run_experiments` rerun executed both planned condition rows as `completed/success=true`; it exposed LV-397, where terminal metrics finalization overwrote the public completed-condition count to 0.
+
+- Follow-up risks:
+  - The current baseline evaluation reports zero evaluated tasks, so even after comparator execution the downstream paper-readiness gates may correctly block or backtrack for weak evidence.
+  - Additional generated-runner aggregation or result-table projection gaps may appear after this status contract mismatch is repaired.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-395
+
+- Status: repair implemented; targeted regressions/build passed; same-flow live revalidation advanced to LV-396.
+- Validation target: same-flow P6 live validation after the LV-394 `_make_config_instance(...)` dataclass alias repair.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-394 dataclass alias repair.
+  2. Retry the same P6 `run_experiments` node through the live TUI continuation helper.
+  3. Observe the runner advance past module-level `ConditionSpec` construction and load the Qwen model.
+  4. Observe `run_single_condition(...)` fail at the train-helper resolver.
+
+- Expected behavior:
+  - If the generated runner defines a real bounded fine-tuning helper such as `execute_bounded_fine_tuning(...)`, the runtime resolver should be able to select it through one of the names searched by `run_single_condition(...)`.
+  - The repair must alias already generated helpers only; it must not fabricate training outputs, metrics, or condition rows.
+
+- Actual behavior:
+  - The generated runner defines `execute_bounded_fine_tuning(bundle, condition, output_dir, seed=None)`.
+  - `run_single_condition(...)` searches names such as `run_bounded_fine_tuning`, `train_condition_model`, and `run_finetuning_for_condition`.
+  - Because no searched alias points to `execute_bounded_fine_tuning(...)`, the baseline condition fails after model preflight with:
+    - `RuntimeError: Unable to locate a bounded fine-tuning helper for the LoRA study runner`
+  - The comparator is then skipped because the baseline failed.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started for this boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a generated helper-name alias mismatch exposed after the LV-394 repair advanced execution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation emitted the real training helper under `execute_bounded_fine_tuning(...)`, while the later `run_single_condition(...)` resolver searched a nearby but non-overlapping vocabulary. Existing repairs cover other condition-executor aliases, but not this direct study-runtime helper-name mismatch.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` aliases `execute_bounded_fine_tuning(...)` into searched runtime helper names such as `run_bounded_fine_tuning`, aliases `evaluate_benchmark_suite(...)` into searched evaluation helper names, preserves runtime `TypeError`s from hidden retry masking, and repairs the shadowed train-loss helper arity.
+  - Code: `src/core/nodes/runExperiments.ts` applies those repairs immediately before `run_experiments` execution.
+  - Tests: deterministic regressions in `tests/implementSessionManager.test.ts` and `tests/runExperimentsExecutionProfile.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Automated regressions: passed targeted repair tests for runtime helper aliases, misplaced alias blocks, train-loss helper arity, and run-experiments pre-run wiring.
+  - Build: `npm run build` passed.
+  - Same-flow live revalidation: same P6 `run_experiments` rerun advanced past training/evaluation helper resolution and train-loss extraction; it exposed LV-396, where successful baseline rows use `succeeded` while the contract expects `completed`.
+
+- Follow-up risks:
+  - After this alias, training may still expose runtime Trainer/data-collator issues, CUDA memory pressure, evaluation helper mismatches, repeated-seed aggregation gaps, or downstream paper-readiness gate failures.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-394
+
+- Status: repair implemented; targeted regressions/build passed; same-flow live revalidation advanced to LV-395.
+- Validation target: same-flow P6 live validation after the cycle-7 `implement_experiments` rewrite of the LoRA rank/dropout runner.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Let the governed `analyze_results` gate backtrack to `design_experiments` because the prior 9-condition run lacked confidence-interval evidence.
+  2. Approve the new “Robustness-first full-factorial 8-condition x 5-seed run” design and complete `implement_experiments`.
+  3. Continue to `run_experiments` with the generated `run_lora_rank_dropout_study.py`.
+  4. Observe the generated runner pass `python3 -m py_compile` but fail immediately during module-level config construction.
+
+- Expected behavior:
+  - A generated `_make_config_instance(...)` helper should preserve executable dataclass fields when it receives semantically equivalent generated aliases such as `rank` for `ConditionSpec.lora_rank`.
+  - `run_experiments` should normalize this generated-runner boundary before actual execution, without manually fabricating condition rows or metrics.
+
+- Actual behavior:
+  - `implement_experiments` completed and verified the runner only with `python3 -m py_compile`.
+  - The live `run_experiments` command failed before model/dataset work began:
+    - `TypeError: ConditionSpec.__init__() got an unexpected keyword argument 'condition_id'`
+    - followed by `TypeError: ConditionSpec.__init__() missing 1 required positional argument: 'lora_rank'`
+  - The generated `_make_config_instance(...)` fallback filtered unknown kwargs but dropped `rank`, so the required `lora_rank` field was never supplied.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started for this boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a generated dataclass field-alias mismatch visible only when the node-owned runner is executed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created a `ConditionSpec` dataclass whose required field is `lora_rank`, while later config construction emitted the semantically equivalent alias `rank`. Existing runtime compatibility repairs covered factory kwargs and ConditionConfig aliases, but not generic `_make_config_instance(...)` dataclass field aliasing.
+
+- Code/test changes:
+  - Code: pending patch in `src/core/agents/implementSessionManager.ts` to add a narrow `_make_config_instance(...)` dataclass alias repair for `ConditionSpec` fields such as `rank -> lora_rank`.
+  - Code: pending patch in `src/core/nodes/runExperiments.ts` to apply the same repair immediately before `run_experiments` execution.
+  - Tests: pending deterministic regressions in `tests/implementSessionManager.test.ts` and `tests/runExperimentsExecutionProfile.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Automated regressions: targeted Vitest checks passed for `_make_config_instance(...)` dataclass field aliases and `run_experiments` pre-run repair wiring.
+  - Build: passed with `npm run build` on 2026-05-10.
+  - Same-flow live revalidation: rerun on 2026-05-10 advanced past the previous `ConditionSpec.__init__`/missing `lora_rank` failure and reached model preflight/training helper resolution, where LV-395 was exposed.
+
+- Follow-up risks:
+  - After this repair, the new 8-condition x 5-seed runner may still expose model/runtime limits, repeated-seed aggregation gaps, evidence-table gaps, or downstream paper-readiness gate failures before paper generation can be trusted.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_panel/triage.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-393
+
+- Status: repair implemented; targeted regressions/build passed; same-flow live revalidation completed; `run_experiments` now pauses at the governed approval gate.
+- Validation target: same-flow P6 live validation after the cycle-6 `implement_experiments` rewrite of the LoRA rank/dropout runner.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Complete the cycle-6 `implement_experiments` node that rewrites `run_lora_rank_dropout_study.py` for the updated 9-condition baseline-first plan.
+  2. Continue to `run_experiments` with `AUTOLABOS_ALLOW_MODEL_DOWNLOAD=1`.
+  3. Observe the generated runner pass `python3 -m py_compile` and fail immediately in the runtime command before model/dataset work begins.
+
+- Expected behavior:
+  - The final runner entrypoint should call `build_metrics_payload(...)` with the condition rows, run context, and data summary required by the generated helper signature.
+  - If runtime execution fails, the fallback metrics writer should still emit clean failure metrics without raising a second payload-builder `TypeError`.
+
+- Actual behavior:
+  - `implement_experiments` completed and verified the generated runner with `python3 -m py_compile`.
+  - Initial `run_experiments` failed immediately with:
+    - `build_metrics_payload() missing 3 required keyword-only arguments: 'run_context', 'data_summary', and 'condition_results'`
+  - Subsequent same-flow retries exposed additional generated-runner surface mismatches before the 9-condition experiment could be trusted:
+    - duplicated no-argument `_resolve_single_condition_executor(...)` shadowing the runtime-context-aware resolver
+    - tuple-returning `count_model_parameters(...)` shadowing the dict-shaped parameter summary used by LoRA adapter metadata
+    - benchmark accuracy comprehensions referencing an undefined `result` binding
+    - top-level metrics projection ignoring successful condition rows and failing to expose the objective metric alias
+  - After the repairs, the same P6 run executed all nine rank/dropout conditions and produced passing objective metrics.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this specific boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a generated final-entrypoint metrics-builder invocation mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated final entrypoint and generated helper aliases can drift from the runtime execution contract even after syntax compilation passes. Existing repair hooks covered earlier helper names and final metrics shapes, but did not normalize the newer runtime-resolved metrics-builder, duplicated executor resolver, tuple parameter summary, benchmark comprehension, or success-row objective projection surfaces.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` extends generated-runner repair coverage for runtime-resolved metrics payload builders, duplicated single-condition executor resolvers, tuple parameter counters, undefined benchmark accuracy comprehensions, and top-level objective metric projection.
+  - Code: `src/core/nodes/runExperiments.ts` applies the same generated-runner repair surfaces immediately before `run_experiments` execution, so persisted runners can be repaired without rerunning `implement_experiments`.
+  - Tests: `tests/implementSessionManager.test.ts` and `tests/runExperimentsExecutionProfile.test.ts` add deterministic regressions for each repaired generated-runner boundary.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Automated regressions: targeted Vitest checks passed for the metrics payload builder, single-condition executor bridge, tuple parameter summary normalization, benchmark accuracy comprehension repair, and success-row objective projection.
+  - Build: passed with `npm run build` on 2026-05-10.
+  - Same-flow live revalidation: rerun with `AUTOLABOS_ALLOW_MODEL_DOWNLOAD=1` on 2026-05-10 completed `run_experiments` with top-level `status: "completed"`, `success: true`, `completed_condition_count: 9`, `failed_condition_count: 0`, and `accuracy_delta_vs_baseline=0.02604166666666652`.
+  - Governed gate status: `run_experiments` is `needs_approval`; `analyze_results` remains `pending`. This is not yet a paper-ready result.
+
+- Follow-up risks:
+  - The generated runner now executes and verifies the 9-condition experiment, but downstream `analyze_results`, `figure_audit`, `review`, and `write_paper` still need live validation.
+  - The final manuscript must still satisfy the template, reference, table-width, figure, caption, author, and page-count requirements before any paper-ready claim is allowed.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run.log`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
 ## Issue: LV-392
 
 - Status: repair implemented; targeted regression/build passed; same-flow live revalidation completed; run_experiments now pauses at the objective gate.

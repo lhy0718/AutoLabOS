@@ -56,18 +56,32 @@ import { buildIntermediateArtifactCaptureManifest } from "../artifacts/intermedi
 import {
   repairPythonConditionMarkerDefaultKwargSurface,
   repairPythonConditionTrainEvalHelperBridgeSurface,
+  repairPythonConditionSuccessStatusAliasSurface,
+  repairPythonChunk3bStudyRunnerInvocationContextSurface,
+  repairPythonChunk3bConditionMarkerSelectionSurface,
+  repairPythonMultipleChoicePromptSignatureSurface,
+  repairPythonSafeMetricFloatHelperSurface,
+  repairPythonConfigInstanceDataclassFieldAliasSurface,
   repairPythonDataCollatorPrecomputedLabelReturnSurface,
   repairPythonDataCollatorTokenizerArgumentSurface,
   repairPythonDataclassEvaluationRecordCoercionSurface,
+  repairPythonBenchmarkAccuracyComprehensionSurface,
   repairPythonEvaluationAnswerLabelAliasSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
   repairPythonMainMetricsRawResultsAliasSurface,
+  repairPythonMainMetricsPayloadBuilderCallSurface,
   repairPythonMainCallableResolverSpecificitySurface,
   repairPythonMainStudyRunnerDeviceBridgeSurface,
   repairPythonLockedConditionSingleRunnerBridgeSurface,
   repairPythonMultipleChoiceDataclassChoiceAliasSurface,
   repairPythonOutputDirArgparseAlias,
-  repairPythonRunContextHelperFallbackSurface
+  repairPythonParameterSummaryRecordSurface,
+  repairPythonMetricsPayloadProjectionSurface,
+  repairPythonRunContextHelperFallbackSurface,
+  repairPythonSingleConditionExecutorBridgeSurface,
+  repairPythonStudyRuntimeHelperAliasSurface,
+  repairPythonTerminalMetricsExistingConditionCountSurface,
+  repairPythonTrainLossHelperAritySurface
 } from "../agents/implementSessionManager.js";
 
 type SupplementalProfileName = "quick_check" | "confirmatory";
@@ -2073,6 +2087,30 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
     repaired = true;
     messages.push(lockedConditionSingleRunnerBridgeRepair.message || `Bridged locked-condition single runner execution in ${path.basename(scriptPath)} before run_experiments execution.`);
   }
+  const singleConditionExecutorBridgeRepair =
+    await repairPythonSingleConditionExecutorBridgeSurface(scriptPath);
+  if (singleConditionExecutorBridgeRepair.repaired) {
+    repaired = true;
+    messages.push(singleConditionExecutorBridgeRepair.message || `Bridged generated single-condition executor resolution in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+  const parameterSummaryRecordRepair =
+    await repairPythonParameterSummaryRecordSurface(scriptPath);
+  if (parameterSummaryRecordRepair.repaired) {
+    repaired = true;
+    messages.push(parameterSummaryRecordRepair.message || `Normalized generated parameter summary records in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+  const benchmarkAccuracyComprehensionRepair =
+    await repairPythonBenchmarkAccuracyComprehensionSurface(scriptPath);
+  if (benchmarkAccuracyComprehensionRepair.repaired) {
+    repaired = true;
+    messages.push(benchmarkAccuracyComprehensionRepair.message || `Aligned generated benchmark accuracy comprehension in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+  const metricsPayloadProjectionRepair =
+    await repairPythonMetricsPayloadProjectionSurface(scriptPath);
+  if (metricsPayloadProjectionRepair.repaired) {
+    repaired = true;
+    messages.push(metricsPayloadProjectionRepair.message || `Projected completed condition metrics onto top-level payload fields in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
   const multipleChoiceDataclassChoiceAliasRepair =
     await repairPythonMultipleChoiceDataclassChoiceAliasSurface(scriptPath);
   if (multipleChoiceDataclassChoiceAliasRepair.repaired) {
@@ -2085,6 +2123,13 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   if (mainMetricsRawResultsAliasRepair.repaired) {
     repaired = true;
     messages.push(mainMetricsRawResultsAliasRepair.message || `Accepted raw_results aliases in final metrics extraction for ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const mainMetricsPayloadBuilderCallRepair =
+    await repairPythonMainMetricsPayloadBuilderCallSurface(scriptPath);
+  if (mainMetricsPayloadBuilderCallRepair.repaired) {
+    repaired = true;
+    messages.push(mainMetricsPayloadBuilderCallRepair.message || `Wrapped final metrics payload builder call surface in ${path.basename(scriptPath)} before run_experiments execution.`);
   }
 
   const dataCollatorTokenizerRepair = await repairPythonDataCollatorTokenizerArgumentSurface(scriptPath);
@@ -2119,6 +2164,65 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   if (conditionTrainEvalHelperBridgeRepair.repaired) {
     repaired = true;
     messages.push(conditionTrainEvalHelperBridgeRepair.message || `Bridged condition train/eval helpers in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const configInstanceDataclassFieldAliasRepair =
+    await repairPythonConfigInstanceDataclassFieldAliasSurface(scriptPath);
+  if (configInstanceDataclassFieldAliasRepair.repaired) {
+    repaired = true;
+    messages.push(configInstanceDataclassFieldAliasRepair.message || `Added dataclass field aliases for _make_config_instance in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const studyRuntimeHelperAliasRepair = await repairPythonStudyRuntimeHelperAliasSurface(scriptPath);
+  if (studyRuntimeHelperAliasRepair.repaired) {
+    repaired = true;
+    messages.push(studyRuntimeHelperAliasRepair.message || `Added study runtime helper aliases in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const trainLossHelperArityRepair = await repairPythonTrainLossHelperAritySurface(scriptPath);
+  if (trainLossHelperArityRepair.repaired) {
+    repaired = true;
+    messages.push(trainLossHelperArityRepair.message || `Preserved two-argument train-loss helper in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const conditionSuccessStatusAliasRepair = await repairPythonConditionSuccessStatusAliasSurface(scriptPath);
+  if (conditionSuccessStatusAliasRepair.repaired) {
+    repaired = true;
+    messages.push(conditionSuccessStatusAliasRepair.message || `Normalized successful condition status in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const terminalMetricsExistingConditionCountRepair =
+    await repairPythonTerminalMetricsExistingConditionCountSurface(scriptPath);
+  if (terminalMetricsExistingConditionCountRepair.repaired) {
+    repaired = true;
+    messages.push(terminalMetricsExistingConditionCountRepair.message || `Preserved terminal metrics condition counts in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const chunk3bStudyRunnerInvocationContextRepair =
+    await repairPythonChunk3bStudyRunnerInvocationContextSurface(scriptPath);
+  if (chunk3bStudyRunnerInvocationContextRepair.repaired) {
+    repaired = true;
+    messages.push(chunk3bStudyRunnerInvocationContextRepair.message || `Materialized chunk3b study runner context in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const chunk3bConditionMarkerSelectionRepair =
+    await repairPythonChunk3bConditionMarkerSelectionSurface(scriptPath);
+  if (chunk3bConditionMarkerSelectionRepair.repaired) {
+    repaired = true;
+    messages.push(chunk3bConditionMarkerSelectionRepair.message || `Filtered unsupported chunk3b condition markers in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const multipleChoicePromptSignatureRepair =
+    await repairPythonMultipleChoicePromptSignatureSurface(scriptPath);
+  if (multipleChoicePromptSignatureRepair.repaired) {
+    repaired = true;
+    messages.push(multipleChoicePromptSignatureRepair.message || `Widened multiple-choice prompt helper signature in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const safeMetricFloatRepair = await repairPythonSafeMetricFloatHelperSurface(scriptPath);
+  if (safeMetricFloatRepair.repaired) {
+    repaired = true;
+    messages.push(safeMetricFloatRepair.message || `Added _safe_metric_float helper in ${path.basename(scriptPath)} before run_experiments execution.`);
   }
 
   const evaluationAnswerLabelAliasRepair =
@@ -2195,6 +2299,19 @@ function removeUnsupportedTrainingArgumentsKwargLines(source: string): string {
 }
 
 function promoteSummaryPrimaryMetric(metrics: Record<string, unknown>): string | undefined {
+  const topLevelPrimaryMetricKey = metrics.primary_metric_key;
+  if (
+    typeof topLevelPrimaryMetricKey === "string" &&
+    /^[A-Za-z_][A-Za-z0-9_]*$/u.test(topLevelPrimaryMetricKey) &&
+    metrics[topLevelPrimaryMetricKey] === undefined
+  ) {
+    const topLevelPrimaryMetric = metrics.primary_metric;
+    if (typeof topLevelPrimaryMetric === "number" && Number.isFinite(topLevelPrimaryMetric)) {
+      metrics[topLevelPrimaryMetricKey] = topLevelPrimaryMetric;
+      return `Promoted primary metric ${topLevelPrimaryMetricKey}=${topLevelPrimaryMetric} to top-level metrics before contract evaluation.`;
+    }
+  }
+
   const summary = metrics.summary;
   if (!summary || typeof summary !== "object" || Array.isArray(summary)) {
     return undefined;

@@ -515,6 +515,417 @@ describe("run_experiments execution profile behavior", () => {
     });
   });
 
+  it("repairs runtime-resolved metrics payload builders before run_experiments execution", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-runtime-metrics-repair-"));
+    process.chdir(root);
+    const run = makeRun("run-runtime-metrics-repair");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "experiment.py");
+    await writeFile(
+      scriptPath,
+      [
+        "import inspect",
+        "from typing import Any, Optional, Sequence",
+        "",
+        "class Config:",
+        "    dry_run = False",
+        "",
+        "def build_metrics_payload(*, config, run_context, data_summary, condition_results):",
+        "    return {'condition_count': len(condition_results)}",
+        "",
+        "def _resolve_runtime_helper(candidate_names: Sequence[str]) -> Optional[Any]:",
+        "    for candidate_name in candidate_names:",
+        "        helper = globals().get(candidate_name)",
+        "        if callable(helper):",
+        "            return helper",
+        "    return None",
+        "",
+        "def _filter_kwargs_for_helper(helper: Any, kwargs: dict[str, Any]) -> dict[str, Any]:",
+        "    signature = inspect.signature(helper)",
+        "    parameters = signature.parameters",
+        "    accepts_var_keyword = any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())",
+        "    if accepts_var_keyword:",
+        "        return kwargs",
+        "    return {key: value for key, value in kwargs.items() if key in parameters}",
+        "",
+        "def _call_helper_variants(helper: Any, helper_name: str, call_variants):",
+        "    for positional_args, keyword_args in call_variants:",
+        "        filtered_keyword_args = _filter_kwargs_for_helper(helper, dict(keyword_args))",
+        "        return helper(*positional_args, **filtered_keyword_args)",
+        "    raise RuntimeError('no variant')",
+        "",
+        "def main() -> int:",
+        "    config = Config()",
+        "    raw_result = {'condition_results': [{'status': 'completed'}], 'run_context': {}, 'data_summary': {}}",
+        "    normalized_result = dict(raw_result)",
+        "    metrics_builder = _resolve_runtime_helper(('build_metrics_payload',))",
+        "    _call_helper_variants(metrics_builder, 'build_metrics_payload', (((), {",
+        "        'config': config,",
+        "        'study_result': raw_result,",
+        "        'result': raw_result,",
+        "        'study_result_dict': normalized_result,",
+        "    }),))",
+        "    return 0",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", `python3 ${JSON.stringify(scriptPath)}`);
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    let repairedBeforeExecution = false;
+    const eventStream = new InMemoryEventStream();
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          const repairedSource = await readFile(scriptPath, "utf8");
+          repairedBeforeExecution = repairedSource.includes("_autolabos_main_metrics_payload_builder_call_marker");
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric: {
+                  name: "accuracy_delta_vs_baseline",
+                  value: 0.02,
+                  target: 0.01,
+                  met: true
+                },
+                condition_results: [
+                  {
+                    condition_id: "baseline",
+                    condition_type: "baseline",
+                    status: "completed",
+                    accuracy: 0.4
+                  },
+                  {
+                    condition_id: "candidate",
+                    condition_type: "candidate",
+                    status: "completed",
+                    accuracy: 0.42
+                  }
+                ],
+                completed_condition_count: 2
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    await node.execute({ run, graph: run.graph });
+
+    expect(repairedBeforeExecution).toBe(true);
+    expect(await readFile(scriptPath, "utf8")).toContain("_autolabos_original_build_metrics_payload = build_metrics_payload");
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes("Wrapped generated build_metrics_payload calls")
+      )
+    ).toBe(true);
+  });
+
+  it("promotes top-level primary_metric_key and primary_metric before objective contract validation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-primary-metric-key-projection-"));
+    process.chdir(root);
+    const run = makeRun("run-primary-metric-key-projection");
+    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+    await runContext.put(EXPERIMENT_GOVERNANCE_CONTRACT_KEY, {
+      version: 1,
+      run_id: run.id,
+      plan_id: "plan-primary-metric-key-projection",
+      selected_hypothesis_ids: ["hypothesis-1"],
+      objective_metric_name: run.objectiveMetric,
+      baseline_first_required: true,
+      baseline_candidate_ids: ["baseline"],
+      comparison_mode: "baseline_first_locked",
+      budget_profile: {
+        mode: "single_run_locked",
+        locked: true,
+        timeout_sec: 1800
+      },
+      objective_profile: {
+        source: "test",
+        raw: run.objectiveMetric,
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        direction: "maximize",
+        threshold: 0.01,
+        thresholdOperator: ">="
+      },
+      created_at: new Date().toISOString()
+    });
+
+    const eventStream = new InMemoryEventStream();
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric_key: "accuracy_delta_vs_baseline",
+                primary_metric: -0.03125,
+                completed_condition_count: 3,
+                required_condition_count: 3,
+                conditions: [
+                  {
+                    marker: "rank_8_dropout_0_0",
+                    status: "completed",
+                    average_accuracy: 0.28125,
+                    accuracy_delta_vs_baseline: 0
+                  },
+                  {
+                    marker: "rank_16_dropout_0_0",
+                    status: "completed",
+                    average_accuracy: 0.25,
+                    accuracy_delta_vs_baseline: -0.03125
+                  },
+                  {
+                    marker: "rank_32_dropout_0_0",
+                    status: "completed",
+                    average_accuracy: 0.21875,
+                    accuracy_delta_vs_baseline: -0.0625
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).not.toBe("failure");
+    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
+      accuracy_delta_vs_baseline?: number;
+    };
+    expect(metrics.accuracy_delta_vs_baseline).toBe(-0.03125);
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; summary: string };
+    expect(verifierReport.status).toBe("pass");
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes("Promoted primary metric accuracy_delta_vs_baseline=-0.03125")
+      )
+    ).toBe(true);
+  });
+
+  it("repairs _make_config_instance dataclass aliases before run_experiments execution", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-config-instance-alias-"));
+    process.chdir(root);
+    const run = makeRun("run-config-instance-alias");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "experiment.py");
+    await writeFile(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "",
+        "@dataclass(frozen=True)",
+        "class ConditionSpec:",
+        "    marker: str",
+        "    lora_rank: int",
+        "    lora_alpha: int",
+        "    lora_dropout: float",
+        "",
+        "def _make_config_instance(type_name, **kwargs):",
+        "    cls = globals().get(type_name)",
+        "    if cls is None:",
+        "        payload = dict(kwargs)",
+        "        payload.setdefault('_type', type_name)",
+        "        return payload",
+        "    try:",
+        "        return cls(**kwargs)",
+        "    except TypeError:",
+        "        dataclass_fields = getattr(cls, '__dataclass_fields__', None)",
+        "        if dataclass_fields:",
+        "            filtered = {key: value for key, value in kwargs.items() if key in dataclass_fields}",
+        "            return cls(**filtered)",
+        "        payload = dict(kwargs)",
+        "        payload.setdefault('_type', type_name)",
+        "        return payload",
+        "",
+        "BASELINE_CONDITION_SPEC = _make_config_instance(",
+        "    'ConditionSpec',",
+        "    marker='baseline',",
+        "    condition_id='baseline',",
+        "    rank=8,",
+        "    lora_alpha=16,",
+        "    lora_dropout=0.0,",
+        ")",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", `python3 ${JSON.stringify(scriptPath)}`);
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    let repairedBeforeExecution = false;
+    const eventStream = new InMemoryEventStream();
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          const repairedSource = await readFile(scriptPath, "utf8");
+          repairedBeforeExecution = repairedSource.includes("_autolabos_config_instance_dataclass_field_alias_marker");
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric: {
+                  name: "accuracy_delta_vs_baseline",
+                  value: 0.02,
+                  target: 0.01,
+                  met: true
+                },
+                condition_results: [
+                  {
+                    condition_id: "baseline",
+                    condition_type: "baseline",
+                    status: "completed",
+                    accuracy: 0.4
+                  },
+                  {
+                    condition_id: "candidate",
+                    condition_type: "candidate",
+                    status: "completed",
+                    accuracy: 0.42
+                  }
+                ],
+                completed_condition_count: 2
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    await node.execute({ run, graph: run.graph });
+
+    expect(repairedBeforeExecution).toBe(true);
+    expect(await readFile(scriptPath, "utf8")).toContain("alias_values = dict(kwargs)");
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes("Added dataclass field aliases for _make_config_instance")
+      )
+    ).toBe(true);
+  });
+
   it("classifies all-condition Hugging Face model load failures as dependency blockers", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-model-dependency-blocker-"));
     process.chdir(root);
