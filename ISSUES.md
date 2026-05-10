@@ -15,6 +15,209 @@ Path placeholders:
 
 ---
 
+## Issue: LV-392
+
+- Status: repair implemented; targeted regression/build passed; same-flow live revalidation completed; run_experiments now pauses at the objective gate.
+- Validation target: same-flow P6 live validation from `run_experiments` toward paper generation.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Apply the LV-391 evaluator-alias repair and rebuild.
+  2. Retry `run_experiments` with `AUTOLABOS_ALLOW_MODEL_DOWNLOAD=1`.
+  3. Let the generated runner execute the three locked LoRA conditions and inspect the resulting `metrics.json`.
+
+- Expected behavior:
+  - Completed `raw_result.raw_results` rows should be projected into top-level `condition_results`.
+  - Top-level `completed_condition_count` should reflect the three completed locked conditions.
+  - `run_experiments` should not remain failed when all required condition rows completed with benchmark scores and no condition failures.
+
+- Actual behavior:
+  - Same-flow live revalidation advanced past LV-391: all three locked conditions completed training and benchmark evaluation.
+  - `raw_result.completed_condition_count` is `3`, `raw_result.failed_condition_count` is `0`, and `raw_result.raw_results` contains completed rows for `rank_8_dropout_0_0`, `rank_16_dropout_0_0`, and `rank_32_dropout_0_0`.
+  - The top-level metrics still report `status: "failed"`, `success: false`, `completed_condition_count: 0`, and `condition_results: []`.
+  - The run remains at `run_experiments` instead of advancing to `analyze_results`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this specific run.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 run.
+  - Divergence: none observed; this is a final metrics projection mismatch after real condition execution and evaluation succeeded.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated locked-sweep helper returns condition rows under `raw_results`, while the final main metrics extractor only reads `condition_results`, `conditions`, `results`, and `study_results`. Because no top-level condition rows are extracted, the final payload downgrades the run to failed despite complete nested evidence.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` adds `repairPythonMainMetricsRawResultsAliasSurface(...)`, which lets generated final metrics extractors read condition rows from `raw_results` and `raw_condition_results` aliases in addition to `condition_results`, `conditions`, `results`, and `study_results`.
+  - Code: `src/core/nodes/runExperiments.ts` applies the repair before executing generated Python runners.
+  - Tests: `tests/implementSessionManager.test.ts` covers a generated main metrics payload that previously left three completed `raw_results` rows as top-level `completed_condition_count: 0`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-10.
+  - Automated regression: targeted test passed with `npm test -- tests/implementSessionManager.test.ts -t "raw_results aliases|choice_texts|single runner|generic capture|study runner|output-dir|callable resolver|run context"` on 2026-05-10.
+  - Build: passed with `npm run build` on 2026-05-10.
+  - Same-flow live revalidation: rerun with `AUTOLABOS_ALLOW_MODEL_DOWNLOAD=1` on 2026-05-10 completed `run_experiments` with top-level `status: "completed"`, `success: true`, `completed_condition_count: 3`, `failed_condition_count: 0`, and three projected `condition_results` rows.
+  - Remaining governed gate: the run paused because the objective metric was not met (`accuracy_delta_vs_baseline=0` did not satisfy `>= 0.01`), so downstream continuation must treat this as a negative/null experimental result rather than paper-ready evidence.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-391
+
+- Status: repair implemented; targeted regression/build passed; same-flow live revalidation advanced to LV-392.
+- Validation target: same-flow P6 live validation from `run_experiments` toward paper generation.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Retry `run_experiments` with `AUTOLABOS_ALLOW_MODEL_DOWNLOAD=1`.
+  2. Let the runner download/cache `Qwen/Qwen2.5-1.5B`, prepare ARC-Challenge/HellaSwag examples, and complete all three 40-step LoRA training conditions.
+  3. Inspect `metrics.json` and per-condition evaluation failures.
+
+- Expected behavior:
+  - Prepared multiple-choice dataclass examples should be scoreable by the evaluator.
+  - The evaluator should accept `choice_texts`/`choice_labels`/`correct_label` fields produced by the generated `MultipleChoiceExample` data class.
+
+- Actual behavior:
+  - Real model download, loading, and training executed for all three locked conditions.
+  - Each condition then failed evaluation with `example has no answer choices`.
+  - The generated examples expose `choice_texts` and `choice_labels`, while `_extract_choice_texts(...)` only checks `choices`, `options`, `endings`, and `choice`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this specific run.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 run.
+  - Divergence: none observed; this is an extractor alias mismatch after real training completed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the dataset builder and evaluator were generated with two slightly different multiple-choice example contracts. The builder uses structured dataclass fields (`choice_labels`, `choice_texts`, `correct_label`, `correct_text`), but the evaluator only reads mapping-style `choices` and answer aliases.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` adds `repairPythonMultipleChoiceDataclassChoiceAliasSurface(...)`, which teaches generated evaluators to read `choice_texts`, `correct_label`, and `correct_text` from dataclass-style multiple-choice examples.
+  - Code: `src/core/nodes/runExperiments.ts` applies the repair before executing generated Python runners.
+  - Tests: `tests/implementSessionManager.test.ts` covers a dataclass example exposing `choice_labels`, `choice_texts`, and `correct_label`.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: passed with `npm test -- tests/implementSessionManager.test.ts -t "choice_texts|single runner|generic capture|study runner|output-dir|callable resolver|run context"` on 2026-05-10.
+  - Build: passed with `npm run build` on 2026-05-10.
+  - Same-flow live revalidation: rerun with `AUTOLABOS_ALLOW_MODEL_DOWNLOAD=1` on 2026-05-10 advanced past the multiple-choice alias failure, completed all three locked condition evaluations, and stopped at LV-392 because nested `raw_results` were not projected into top-level metrics.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-390
+
+- Status: environment/config retry advanced to LV-391.
+- Validation target: same-flow P6 live validation from `run_experiments` toward paper generation.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Apply LV-389 and rebuild.
+  2. Retry `run_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Inspect generated runner logs and `metrics.json`.
+
+- Expected behavior:
+  - Once the single-condition facade is selected, the runner should resolve a runnable preferred or fallback model and start real LoRA tuning.
+  - If the model is not already cached, the governed live run should either use an explicit remote-download setting or stop with an auditable preflight failure rather than silently treating the study as executed.
+
+- Actual behavior:
+  - The run advanced past LV-389: `run_single_locked_condition(...)` was selected and benchmark examples were prepared.
+  - ARC-Challenge and HellaSwag each prepared 64 usable validation examples.
+  - Model preflight failed for both `Qwen/Qwen2.5-1.5B` and `TinyLlama/TinyLlama-1.1B-Chat-v1.0` because model loading ran with `local_files_only=true` and neither model was present in the configured cache.
+  - The study wrote `status="failed"` with `completed_condition_count=0` and visible per-condition failure reasons.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this specific run.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 run.
+  - Divergence: none observed; this is an environment/model-cache preflight boundary after generated code wiring reached real data/model resolution.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the live validation brief assumes a cached locally runnable model target, but the active validation workspace cache does not contain either configured candidate. The generated runner supports `AUTOLABOS_ALLOW_MODEL_DOWNLOAD`, but the current node retry did not enable it.
+
+- Code/test changes:
+  - None yet; next step is an environment/config retry with explicit model download enabled, unless policy requires a brief/design change.
+
+- Regression status:
+  - Automated regression test linked: not applicable yet
+  - Targeted tests: not applicable yet
+  - Build: not applicable yet
+  - Same-flow live revalidation: rerun with `AUTOLABOS_ALLOW_MODEL_DOWNLOAD=1` on 2026-05-10 downloaded/loaded Qwen 1.5B and completed all three condition training loops, then stopped at LV-391 during evaluation.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-389
+
+- Status: repair implemented; targeted regression/build passed; same-flow live revalidation advanced to LV-390.
+- Validation target: same-flow P6 live validation from `run_experiments` toward paper generation.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Apply LV-388 and rebuild.
+  2. Retry `run_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Inspect generated `metrics.json` and the public experiment runner.
+
+- Expected behavior:
+  - `run_baseline_first_locked_sweep(...)` should resolve a real single-condition runner and execute node-owned LoRA training/evaluation work for each locked condition.
+  - The repair must reuse generated helpers such as `run_condition_tuning(...)`, `evaluate_condition_benchmarks(...)`, model loading, and benchmark data preparation; it must not synthesize condition metrics.
+
+- Actual behavior:
+  - The run advanced past the LV-388 study-runner/device boundary.
+  - `run_baseline_first_locked_sweep(...)` then failed before any condition completed with:
+    - `RuntimeError: Unable to resolve the single-condition runner. Expected one of the known helper names from the prior chunk or an explicit condition_runner.`
+  - The generated script contains `execute_single_condition_with_capture(...)`, `run_condition_tuning(...)`, and `evaluate_condition_benchmarks(...)`, but the locked-condition resolver only searches narrower names such as `run_single_locked_condition`, `execute_single_locked_condition`, `run_locked_condition`, and `run_condition`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this specific run.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 run.
+  - Divergence: none observed yet; the defect is generated helper-name and single-condition orchestration projection mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced usable model/data/training/evaluation helpers, but the final locked sweep expects a single-condition facade under a different vocabulary. Compile-only checks and study-runner selection do not prove that the per-condition executor is discoverable.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` adds `repairPythonLockedConditionSingleRunnerBridgeSurface(...)`, which inserts a generated-script-local `run_single_locked_condition(...)` facade that reuses `prepare_benchmark_task_data(...)`, `load_base_model_bundle(...)`, `run_condition_tuning(...)`, `evaluate_condition_benchmarks(...)`, and `unload_model_bundle(...)`.
+  - Code: `src/core/nodes/runExperiments.ts` applies the repair immediately before executing generated Python runners.
+  - Tests: `tests/implementSessionManager.test.ts` covers a locked sweep whose resolver cannot find any single-condition runner until the facade is inserted.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: passed with `npm test -- tests/implementSessionManager.test.ts -t "single runner|study runner|output-dir|callable resolver|run context"` on 2026-05-10.
+  - Build: passed with `npm run build` on 2026-05-10.
+  - Same-flow live revalidation: rerun on 2026-05-10 advanced past single-condition runner resolution into benchmark data preparation and model preflight, then stopped at LV-390.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+  - `<repo-root>/outputs/p6-live-root/p6-continue-run_experiments-output.txt`
+
+---
+
 ## Issue: LV-388
 
 - Status: repair implemented; targeted regression/build passed; same-flow live revalidation pending.

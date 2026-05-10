@@ -8724,6 +8724,12 @@ export class ImplementSessionManager {
       await repairPythonRunContextHelperFallbackSurface(executionScriptPath);
     const mainStudyRunnerDeviceBridgeRepair =
       await repairPythonMainStudyRunnerDeviceBridgeSurface(executionScriptPath);
+    const lockedConditionSingleRunnerBridgeRepair =
+      await repairPythonLockedConditionSingleRunnerBridgeSurface(executionScriptPath);
+    const multipleChoiceDataclassChoiceAliasRepair =
+      await repairPythonMultipleChoiceDataclassChoiceAliasSurface(executionScriptPath);
+    const mainMetricsRawResultsAliasRepair =
+      await repairPythonMainMetricsRawResultsAliasSurface(executionScriptPath);
     const entrypointStudyRunnerResolverRepair =
       await repairPythonEntrypointStudyRunnerResolverSurface(executionScriptPath);
     const planSnapshotPathArgumentRepair =
@@ -8829,31 +8835,34 @@ export class ImplementSessionManager {
         mainCallableResolverSpecificityRepair,
         runContextHelperFallbackRepair,
         mainStudyRunnerDeviceBridgeRepair,
-      entrypointStudyRunnerResolverRepair,
-      planSnapshotPathArgumentRepair,
-      planArgumentPathChoicesRepair,
-      conditionExecutorDeadlineArgumentRepair,
-      highLevelConditionSweepDispatchRepair,
-      coerceIntDefaultArgumentRepair,
-      resolveDeviceNameArityRepair,
-      loraStudyEntrypointContextRepair,
-      loraSeedTrainEvalAssemblyRepair,
-      prepareStudyInputsRuntimeContextRepair,
-      recipeExecutionAliasRepair,
-      candidateExecutorArgumentRepair,
-      entrypointWorkflowSignatureRepair,
-      finalMetricsSchemaCompatibilityRepair,
-      conditionEvaluationMetricsAssemblyBridgeRepair,
-      dataCollatorTokenizerArgumentRepair,
-      dataCollatorPrecomputedLabelReturnRepair,
-      dataclassEvaluationRecordCoercionRepair,
-      conditionMarkerDefaultKwargRepair,
-      conditionTrainEvalHelperBridgeRepair,
-      evaluationAnswerLabelAliasRepair,
-      chunk5OrchestrationHelperBridgeRepair,
-      buildMetricsPayloadFromOptionsBridgeRepair,
-      studyInvokeContractKwargRepair,
-      lockedSweepRuntimeKwargBridgeRepair
+        lockedConditionSingleRunnerBridgeRepair,
+        multipleChoiceDataclassChoiceAliasRepair,
+        mainMetricsRawResultsAliasRepair,
+        entrypointStudyRunnerResolverRepair,
+        planSnapshotPathArgumentRepair,
+        planArgumentPathChoicesRepair,
+        conditionExecutorDeadlineArgumentRepair,
+        highLevelConditionSweepDispatchRepair,
+        coerceIntDefaultArgumentRepair,
+        resolveDeviceNameArityRepair,
+        loraStudyEntrypointContextRepair,
+        loraSeedTrainEvalAssemblyRepair,
+        prepareStudyInputsRuntimeContextRepair,
+        recipeExecutionAliasRepair,
+        candidateExecutorArgumentRepair,
+        entrypointWorkflowSignatureRepair,
+        finalMetricsSchemaCompatibilityRepair,
+        conditionEvaluationMetricsAssemblyBridgeRepair,
+        dataCollatorTokenizerArgumentRepair,
+        dataCollatorPrecomputedLabelReturnRepair,
+        dataclassEvaluationRecordCoercionRepair,
+        conditionMarkerDefaultKwargRepair,
+        conditionTrainEvalHelperBridgeRepair,
+        evaluationAnswerLabelAliasRepair,
+        chunk5OrchestrationHelperBridgeRepair,
+        buildMetricsPayloadFromOptionsBridgeRepair,
+        studyInvokeContractKwargRepair,
+        lockedSweepRuntimeKwargBridgeRepair
     ].filter((repair) => repair.repaired);
     if (lateHandoffRepairs.length > 0) {
       for (const repair of lateHandoffRepairs) {
@@ -26110,6 +26119,303 @@ export async function repairPythonMainStudyRunnerDeviceBridgeSurface(
   };
 }
 
+export async function repairPythonLockedConditionSingleRunnerBridgeSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _resolve_locked_condition_runner(") ||
+    !source.includes("Unable to resolve the single-condition runner") ||
+    !source.includes("def run_condition_tuning(") ||
+    !source.includes("def evaluate_condition_benchmarks(") ||
+    !source.includes("def prepare_benchmark_task_data(") ||
+    !source.includes("def load_base_model_bundle(")
+  ) {
+    return { repaired: false };
+  }
+
+  const bridgeBlock = [
+    "",
+    "# _autolabos_locked_condition_single_runner_bridge_marker",
+    "_AUTOLABOS_LOCKED_CONDITION_INPUT_CACHE = {}",
+    "",
+    "def _autolabos_bridge_value(source, key, default=None):",
+    "    if source is None:",
+    "        return default",
+    "    if isinstance(source, Mapping):",
+    "        return source.get(key, default)",
+    "    return getattr(source, key, default)",
+    "",
+    "def _autolabos_bridge_examples_from_task_data(task_data):",
+    "    examples = _autolabos_bridge_value(task_data, \"examples\", None)",
+    "    if examples is None:",
+    "        return []",
+    "    return list(examples)",
+    "",
+    "def _autolabos_bridge_training_record(example):",
+    "    prompt = str(_autolabos_bridge_value(example, \"prompt\", \"\") or \"\").strip()",
+    "    correct_label = str(_autolabos_bridge_value(example, \"correct_label\", \"\") or \"\").strip()",
+    "    correct_text = str(_autolabos_bridge_value(example, \"correct_text\", \"\") or \"\").strip()",
+    "    output = correct_label or correct_text",
+    "    if prompt or output:",
+    "        return {",
+    "            \"instruction\": prompt,",
+    "            \"output\": output,",
+    "            \"task_name\": _autolabos_bridge_value(example, \"task_name\", None),",
+    "            \"example_id\": _autolabos_bridge_value(example, \"example_id\", None),",
+    "        }",
+    "    return example",
+    "",
+    "def _autolabos_prepare_locked_condition_bridge_inputs(args):",
+    "    cache_key = (",
+    "        str(_autolabos_bridge_value(args, \"cache_dir\", \"\")),",
+    "        str(_autolabos_bridge_value(args, \"seed\", \"\")),",
+    "        str(_autolabos_bridge_value(args, \"eval_example_limit\", \"\")),",
+    "        str(_autolabos_bridge_value(args, \"train_example_limit\", \"\")),",
+    "    )",
+    "    cached = _AUTOLABOS_LOCKED_CONDITION_INPUT_CACHE.get(cache_key)",
+    "    if isinstance(cached, Mapping):",
+    "        return dict(cached)",
+    "    prepared_tasks = prepare_benchmark_task_data(args)",
+    "    evaluation_examples_by_task = {",
+    "        str(task_name): _autolabos_bridge_examples_from_task_data(task_data)",
+    "        for task_name, task_data in prepared_tasks.items()",
+    "    }",
+    "    training_examples = []",
+    "    for task_examples in evaluation_examples_by_task.values():",
+    "        for example in task_examples:",
+    "            training_examples.append(_autolabos_bridge_training_record(example))",
+    "    if not training_examples:",
+    "        raise RuntimeError(\"No training examples could be materialized for locked-condition execution.\")",
+    "    payload = {",
+    "        \"prepared_tasks\": prepared_tasks,",
+    "        \"evaluation_examples_by_task\": evaluation_examples_by_task,",
+    "        \"training_examples\": training_examples,",
+    "    }",
+    "    _AUTOLABOS_LOCKED_CONDITION_INPUT_CACHE[cache_key] = payload",
+    "    return dict(payload)",
+    "",
+    "def _autolabos_condition_training_result_for_evaluation(tuned_bundle, loaded_bundle):",
+    "    if isinstance(tuned_bundle, Mapping):",
+    "        training_result = dict(tuned_bundle)",
+    "    else:",
+    "        training_result = {}",
+    "        for key in (",
+    "            \"model\",",
+    "            \"tokenizer\",",
+    "            \"device_context\",",
+    "            \"adapter_output_dir\",",
+    "            \"base_model_name\",",
+    "            \"generation_kwargs\",",
+    "        ):",
+    "            value = getattr(tuned_bundle, key, None)",
+    "            if value is not None:",
+    "                training_result[key] = value",
+    "        nested_training = getattr(tuned_bundle, \"training\", None)",
+    "        if nested_training is not None:",
+    "            training_result[\"training_summary\"] = asdict(nested_training) if hasattr(nested_training, \"__dataclass_fields__\") else nested_training",
+    "            for key in (\"status\", \"final_train_loss\", \"mean_train_loss\", \"runtime_sec\", \"peak_cuda_memory_bytes\"):",
+    "                value = _autolabos_bridge_value(nested_training, key, None)",
+    "                if value is not None:",
+    "                    training_result.setdefault(key, value)",
+    "    training_result.setdefault(\"model\", getattr(tuned_bundle, \"model\", None) or _autolabos_bridge_value(loaded_bundle, \"model\", None))",
+    "    training_result.setdefault(\"tokenizer\", getattr(tuned_bundle, \"tokenizer\", None) or _autolabos_bridge_value(loaded_bundle, \"tokenizer\", None))",
+    "    training_result.setdefault(\"device_context\", getattr(tuned_bundle, \"device_context\", None) or _autolabos_bridge_value(loaded_bundle, \"device_context\", None))",
+    "    training_result.setdefault(\"loaded_model_bundle\", loaded_bundle)",
+    "    return training_result",
+    "",
+    "def run_single_locked_condition(",
+    "    condition=None,",
+    "    args=None,",
+    "    cli_args=None,",
+    "    namespace=None,",
+    "    device=None,",
+    "    model_preflight=None,",
+    "    preflight=None,",
+    "    **context,",
+    "):",
+    "    active_args = args if args is not None else cli_args if cli_args is not None else namespace",
+    "    if active_args is None:",
+    "        active_args = context.get(\"args\") or context.get(\"cli_args\") or context.get(\"namespace\")",
+    "    if active_args is None:",
+    "        raise RuntimeError(\"run_single_locked_condition requires parsed CLI args.\")",
+    "    active_condition = condition or context.get(\"locked_condition\") or context.get(\"study_condition\")",
+    "    if active_condition is None:",
+    "        raise RuntimeError(\"run_single_locked_condition requires a locked condition.\")",
+    "    inputs = _autolabos_prepare_locked_condition_bridge_inputs(active_args)",
+    "    loaded_bundle = None",
+    "    tuned_bundle = None",
+    "    try:",
+    "        loaded_bundle = load_base_model_bundle(config_or_args=active_args)",
+    "        tuned_bundle = run_condition_tuning(",
+    "            loaded_bundle,",
+    "            active_condition,",
+    "            inputs[\"training_examples\"],",
+    "            active_args,",
+    "        )",
+    "        training_result = _autolabos_condition_training_result_for_evaluation(tuned_bundle, loaded_bundle)",
+    "        return evaluate_condition_benchmarks(",
+    "            active_condition,",
+    "            training_result,",
+    "            inputs[\"evaluation_examples_by_task\"],",
+    "            active_args,",
+    "            baseline_average_accuracy=None,",
+    "        )",
+    "    finally:",
+    "        unload_helper = globals().get(\"unload_model_bundle\")",
+    "        if callable(unload_helper):",
+    "            if tuned_bundle is not None:",
+    "                try:",
+    "                    unload_helper(tuned_bundle)",
+    "                except Exception:",
+    "                    pass",
+    "            if loaded_bundle is not None and loaded_bundle is not tuned_bundle:",
+    "                try:",
+    "                    unload_helper(loaded_bundle)",
+    "                except Exception:",
+    "                    pass",
+    ""
+  ].join("\n");
+
+  let repaired = false;
+  let nextSource = source;
+
+  if (!nextSource.includes("_autolabos_locked_condition_single_runner_bridge_marker")) {
+    const insertionMatch = nextSource.match(/\ndef\s+_resolve_locked_condition_runner\s*\(/u);
+    if (!insertionMatch || insertionMatch.index === undefined) {
+      return { repaired: false };
+    }
+    const insertionIndex = insertionMatch.index;
+    nextSource = `${nextSource.slice(0, insertionIndex)}${bridgeBlock}${nextSource.slice(insertionIndex)}`;
+    repaired = true;
+  }
+
+  const beforeCandidateOrder = nextSource;
+  nextSource = nextSource.replace(
+    /(\s*for candidate_name in \(\n)\s*["']execute_single_condition_with_capture["'],\n(\s*["']run_single_locked_condition["'],)/u,
+    "$1$2\n        \"execute_single_condition_with_capture\","
+  );
+  if (nextSource !== beforeCandidateOrder) {
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged locked-condition single runner execution in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonMultipleChoiceDataclassChoiceAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_multiple_choice_dataclass_choice_alias_marker") ||
+    !source.includes("def _extract_choice_texts(") ||
+    !source.includes("def _extract_answer_index(") ||
+    !source.includes("choice_labels") ||
+    !source.includes("choice_texts") ||
+    !source.includes("correct_label")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const choiceNeedle = [
+    "    if choices is None:",
+    "        choices = _namespace_get(example, \"endings\", None)",
+    "    if choices is None:",
+    "        raw_choices = _namespace_get(example, \"choice\", None)"
+  ].join("\n");
+  if (nextSource.includes(choiceNeedle)) {
+    nextSource = nextSource.replace(
+      choiceNeedle,
+      [
+        "    _autolabos_multiple_choice_dataclass_choice_alias_marker = True",
+        "    if choices is None:",
+        "        choices = _namespace_get(example, \"endings\", None)",
+        "    if choices is None:",
+        "        choices = _namespace_get(example, \"choice_texts\", None)",
+        "    if choices is None:",
+        "        raw_choices = _namespace_get(example, \"choice\", None)"
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  const answerTextTuple = 'answer_text_keys = ("answer", "answer_text", "target", "target_text", "correct_answer")';
+  if (nextSource.includes(answerTextTuple)) {
+    nextSource = nextSource.replace(
+      answerTextTuple,
+      'answer_text_keys = ("answer", "answer_text", "target", "target_text", "correct_answer", "correct_text")'
+    );
+    repaired = true;
+  }
+
+  const labelNeedle = [
+    "    label_value = _namespace_get(example, \"label\", None)",
+    "    if label_value is not None:"
+  ].join("\n");
+  if (nextSource.includes(labelNeedle)) {
+    nextSource = nextSource.replace(
+      labelNeedle,
+      [
+        "    correct_label = _namespace_get(example, \"correct_label\", None)",
+        "    if correct_label is not None:",
+        "        correct_label_text = str(correct_label).strip()",
+        "        candidate_labels = _namespace_get(example, \"choice_labels\", None)",
+        "        if isinstance(candidate_labels, Sequence) and not isinstance(candidate_labels, (str, bytes)):",
+        "            normalized_labels = [str(item).strip() for item in candidate_labels]",
+        "            if correct_label_text in normalized_labels:",
+        "                return normalized_labels.index(correct_label_text)",
+        "        if correct_label_text in choices:",
+        "            return choices.index(correct_label_text)",
+        "",
+        "    label_value = _namespace_get(example, \"label\", None)",
+        "    if label_value is not None:"
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Accepted choice_texts/correct_label dataclass fields in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonFindHelperCallableClassSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
@@ -28719,6 +29025,80 @@ export async function repairPythonFinalMetricsSchemaCompatibilitySurface(
   return {
     repaired: true,
     message: `Aligned final metrics schema kwargs and inline payload assembly in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonMainMetricsRawResultsAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  let repaired = false;
+
+  const mainExtractorNeedle = [
+    "    for key in (",
+    "        \"condition_results\",",
+    "        \"conditions\",",
+    "        \"results\",",
+    "        \"study_results\",",
+    "    ):"
+  ].join("\n");
+  if (nextSource.includes(mainExtractorNeedle)) {
+    nextSource = nextSource.replace(
+      mainExtractorNeedle,
+      [
+        "    for key in (",
+        "        \"condition_results\",",
+        "        \"conditions\",",
+        "        \"results\",",
+        "        \"study_results\",",
+        "        \"raw_results\",",
+        "        \"raw_condition_results\",",
+        "    ):"
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  const reportExtractorNeedle = [
+    "        \"condition_results\",",
+    "        \"results\",",
+    "        \"study_results\",",
+    "        default=(),"
+  ].join("\n");
+  if (nextSource.includes(reportExtractorNeedle)) {
+    nextSource = nextSource.replace(
+      reportExtractorNeedle,
+      [
+        "        \"condition_results\",",
+        "        \"results\",",
+        "        \"study_results\",",
+        "        \"raw_results\",",
+        "        \"raw_condition_results\",",
+        "        default=(),"
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Accepted raw_results aliases in final metrics extraction for ${path.basename(scriptPath)} before handoff.`
   };
 }
 

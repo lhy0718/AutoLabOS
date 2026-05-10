@@ -71,6 +71,8 @@ import {
   repairPythonMainCallableResolverSpecificitySurface,
   repairPythonRunContextHelperFallbackSurface,
   repairPythonMainStudyRunnerDeviceBridgeSurface,
+  repairPythonLockedConditionSingleRunnerBridgeSurface,
+  repairPythonMultipleChoiceDataclassChoiceAliasSurface,
   repairPythonPeftAcronymClassAliasSurface,
   repairPythonEntrypointMetricsAggregationBridgeSurface,
   repairPythonEntrypointWorkflowSignatureBridgeSurface,
@@ -94,6 +96,7 @@ import {
   repairPythonRunConditionsFromConfigRunnerBridgeSurface,
   repairPythonConditionEvaluationMetricsAssemblyBridgeSurface,
   repairPythonFinalMetricsSchemaCompatibilitySurface,
+  repairPythonMainMetricsRawResultsAliasSurface,
   repairPythonPeftRecipeConfigMetadataAliasSurface,
   repairPythonJsonSafeHelperAlias,
   repairPythonEntrypointDatasetLoaderAliasSurface,
@@ -20175,6 +20178,248 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("bridges locked-condition single runner execution to generated tuning and evaluation helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-condition-single-runner-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from dataclasses import asdict",
+        "from types import SimpleNamespace",
+        "from typing import Mapping",
+        "",
+        "class Condition:",
+        "    marker = 'rank_8_dropout_0_0'",
+        "",
+        "class Example:",
+        "    prompt = 'Question?\\nAnswer:'",
+        "    correct_label = 'A'",
+        "    correct_text = 'alpha'",
+        "    task_name = 'arc_challenge'",
+        "    example_id = 'arc_1'",
+        "",
+        "def prepare_benchmark_task_data(args):",
+        "    return {'arc_challenge': SimpleNamespace(examples=[Example()])}",
+        "",
+        "def load_base_model_bundle(config_or_args=None):",
+        "    return SimpleNamespace(model='model', tokenizer='tokenizer', device_context='device_ctx')",
+        "",
+        "def unload_model_bundle(bundle):",
+        "    return None",
+        "",
+        "def run_condition_tuning(loaded_bundle, condition, training_examples, config_or_args=None):",
+        "    assert training_examples[0]['output'] == 'A'",
+        "    return SimpleNamespace(",
+        "        model=loaded_bundle.model,",
+        "        tokenizer=loaded_bundle.tokenizer,",
+        "        device_context=loaded_bundle.device_context,",
+        "        training=SimpleNamespace(status='completed', final_train_loss=0.1),",
+        "    )",
+        "",
+        "def evaluate_condition_benchmarks(condition, training_result, evaluation_examples_by_task, config_or_args=None, baseline_average_accuracy=None):",
+        "    assert training_result['model'] == 'model'",
+        "    assert evaluation_examples_by_task['arc_challenge'][0].correct_label == 'A'",
+        "    return {'status': 'completed', 'average_accuracy': 0.5}",
+        "",
+        "def _resolve_locked_condition_runner(condition_runner=None):",
+        "    if condition_runner is not None:",
+        "        return condition_runner",
+        "    for candidate_name in (",
+        "        'run_single_locked_condition',",
+        "        'execute_single_locked_condition',",
+        "        'run_locked_condition',",
+        "        'execute_locked_condition',",
+        "        'run_single_condition',",
+        "        'execute_condition',",
+        "        'run_condition',",
+        "    ):",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    raise RuntimeError('Unable to resolve the single-condition runner. Expected one of the known helper names from the prior chunk or an explicit condition_runner.')",
+        "",
+        "def _invoke_locked_condition_runner(runner, *, args, condition, device):",
+        "    return runner(condition=condition, args=args, device=device)",
+        "",
+        "def run_baseline_first_locked_sweep(args, device, *, condition_runner=None):",
+        "    runner = _resolve_locked_condition_runner(condition_runner)",
+        "    return _invoke_locked_condition_runner(runner, args=args, condition=Condition(), device=device)",
+        "",
+        "def main():",
+        "    result = run_baseline_first_locked_sweep(argparse.Namespace(seed=7), 'cpu')",
+        "    return 0 if result.get('status') == 'completed' and result.get('average_accuracy') == 0.5 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonLockedConditionSingleRunnerBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_locked_condition_single_runner_bridge_marker");
+    expect(repairedSource).toContain("def run_single_locked_condition(");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("prefers the locked-condition facade over the generic capture wrapper when both exist", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-condition-runner-order-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Mapping",
+        "",
+        "def run_condition_tuning():",
+        "    pass",
+        "",
+        "def evaluate_condition_benchmarks():",
+        "    pass",
+        "",
+        "def prepare_benchmark_task_data():",
+        "    pass",
+        "",
+        "def load_base_model_bundle():",
+        "    pass",
+        "",
+        "# _autolabos_locked_condition_single_runner_bridge_marker",
+        "def execute_single_condition_with_capture():",
+        "    return 'wrong'",
+        "",
+        "def run_single_locked_condition():",
+        "    return 'right'",
+        "",
+        "def _resolve_locked_condition_runner(condition_runner=None):",
+        "    if condition_runner is not None:",
+        "        return condition_runner",
+        "    for candidate_name in (",
+        "        'execute_single_condition_with_capture',",
+        "        'run_single_locked_condition',",
+        "        'execute_single_locked_condition',",
+        "    ):",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    raise RuntimeError('Unable to resolve the single-condition runner')",
+        "",
+        "def main():",
+        "    return 0 if _resolve_locked_condition_runner()() == 'right' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonLockedConditionSingleRunnerBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("'run_single_locked_condition',\n        \"execute_single_condition_with_capture\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("accepts choice_texts and correct_label fields from multiple-choice dataclass examples", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-choice-texts-correct-label-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, Mapping, Sequence",
+        "",
+        "def _namespace_get(source: Any, key: str, default: Any = None) -> Any:",
+        "    if source is None:",
+        "        return default",
+        "    if isinstance(source, Mapping):",
+        "        return source.get(key, default)",
+        "    return getattr(source, key, default)",
+        "",
+        "@dataclass",
+        "class Example:",
+        "    prompt: str",
+        "    choice_labels: tuple[str, ...]",
+        "    choice_texts: tuple[str, ...]",
+        "    correct_label: str",
+        "    correct_text: str",
+        "",
+        "def _extract_choice_texts(example: Any) -> list[str]:",
+        "    choices = _namespace_get(example, \"choices\", None)",
+        "    if choices is None:",
+        "        choices = _namespace_get(example, \"options\", None)",
+        "    if choices is None:",
+        "        choices = _namespace_get(example, \"endings\", None)",
+        "    if choices is None:",
+        "        raw_choices = _namespace_get(example, \"choice\", None)",
+        "        if raw_choices is not None:",
+        "            choices = raw_choices",
+        "    extracted: list[str] = []",
+        "    if isinstance(choices, Sequence) and not isinstance(choices, (str, bytes)):",
+        "        extracted = [str(item) for item in choices]",
+        "    return extracted",
+        "",
+        "def _extract_answer_index(example: Any, choices: Sequence[str]) -> int | None:",
+        "    answer_text_keys = (\"answer\", \"answer_text\", \"target\", \"target_text\", \"correct_answer\")",
+        "    for key in answer_text_keys:",
+        "        value = _namespace_get(example, key, None)",
+        "        if value is not None and str(value).strip() in choices:",
+        "            return choices.index(str(value).strip())",
+        "    label_value = _namespace_get(example, \"label\", None)",
+        "    if label_value is not None:",
+        "        label_text = str(label_value).strip()",
+        "        if label_text in choices:",
+        "            return choices.index(label_text)",
+        "    answer_key = _namespace_get(example, \"answerKey\", None)",
+        "    if answer_key is not None:",
+        "        answer_key_text = str(answer_key).strip()",
+        "        candidate_labels = _namespace_get(example, \"choice_labels\", None)",
+        "        if isinstance(candidate_labels, Sequence) and not isinstance(candidate_labels, (str, bytes)):",
+        "            normalized_labels = [str(item).strip() for item in candidate_labels]",
+        "            if answer_key_text in normalized_labels:",
+        "                return normalized_labels.index(answer_key_text)",
+        "    return None",
+        "",
+        "def main():",
+        "    example = Example(",
+        "        prompt='Question?',",
+        "        choice_labels=('A', 'B'),",
+        "        choice_texts=('alpha', 'beta'),",
+        "        correct_label='B',",
+        "        correct_text='beta',",
+        "    )",
+        "    choices = _extract_choice_texts(example)",
+        "    index = _extract_answer_index(example, choices)",
+        "    return 0 if choices == ['alpha', 'beta'] and index == 1 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonMultipleChoiceDataclassChoiceAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_multiple_choice_dataclass_choice_alias_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("repairs a missing --private-run-dir argparse alias when config construction reads args.private_run_dir", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-private-run-dir-alias-"));
     tempDirs.push(workspace);
@@ -21946,6 +22191,144 @@ describe("ImplementSessionManager", () => {
     expect(metrics.run_metadata.seed).toBe(7);
     expect(metrics.device_metadata.device).toBe("cpu");
     expect(metrics.benchmark_results.arc_challenge.accuracy).toBe(0.71);
+  });
+
+  it("projects raw_results aliases into main metrics condition records", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-metrics-raw-results-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "import time",
+        "from collections.abc import Mapping as AbcMapping, Sequence as AbcSequence",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "STATUS_COMPLETED = 'completed'",
+        "STATUS_FAILED = 'failed'",
+        "REQUIRED_CONDITION_MARKERS = ('rank_8_dropout_0_0', 'rank_16_dropout_0_0', 'rank_32_dropout_0_0')",
+        "LOCKED_SWEEP_MARKERS = REQUIRED_CONDITION_MARKERS",
+        "BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
+        "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
+        "PRIMARY_SCORE_AGGREGATE_KEY = 'average_accuracy'",
+        "TASK_ACCURACY_KEYS = ('arc_challenge_accuracy', 'hellaswag_accuracy')",
+        "STUDY_SLUG = 'lora-rank-dropout'",
+        "",
+        "def _main_make_json_safe(value):",
+        "    return value",
+        "",
+        "def _coerce_main_float(value):",
+        "    if value is None:",
+        "        return None",
+        "    try:",
+        "        return float(value)",
+        "    except (TypeError, ValueError):",
+        "        return None",
+        "",
+        "def _extract_main_condition_records(result: Any) -> list[dict[str, Any]]:",
+        "    if not isinstance(result, AbcMapping):",
+        "        return []",
+        "    for key in (",
+        "        \"condition_results\",",
+        "        \"conditions\",",
+        "        \"results\",",
+        "        \"study_results\",",
+        "    ):",
+        "        value = result.get(key)",
+        "        if isinstance(value, AbcSequence) and not isinstance(value, (str, bytes, bytearray)):",
+        "            normalized: list[dict[str, Any]] = []",
+        "            for item in value:",
+        "                if isinstance(item, AbcMapping):",
+        "                    normalized.append(dict(item))",
+        "                else:",
+        "                    normalized.append({'value': _main_make_json_safe(item)})",
+        "            return normalized",
+        "    return []",
+        "",
+        "def _assemble_main_metrics_payload(*, args, runtime_paths, run_context, device, device_telemetry, result, error_info, started_at, finished_at):",
+        "    result_mapping = dict(result) if isinstance(result, AbcMapping) else {}",
+        "    condition_records = _extract_main_condition_records(result_mapping)",
+        "    normalized_conditions = []",
+        "    for record in condition_records:",
+        "        normalized = dict(record)",
+        "        marker = normalized.get('marker') or normalized.get('condition_marker') or normalized.get('condition')",
+        "        if marker is not None:",
+        "            normalized['marker'] = str(marker)",
+        "        status = str(normalized.get('status', STATUS_COMPLETED))",
+        "        normalized['status'] = status",
+        "        normalized_conditions.append(normalized)",
+        "    completed_condition_count = sum(1 for record in normalized_conditions if record.get('status') == STATUS_COMPLETED)",
+        "    failed_condition_count = sum(1 for record in normalized_conditions if record.get('status') == STATUS_FAILED)",
+        "    explicit_status = str(result_mapping.get('status', STATUS_COMPLETED))",
+        "    final_status = explicit_status",
+        "    if error_info is not None:",
+        "        final_status = STATUS_FAILED",
+        "    elif completed_condition_count < len(REQUIRED_CONDITION_MARKERS) or failed_condition_count > 0:",
+        "        final_status = STATUS_FAILED",
+        "    return {",
+        "        'status': final_status,",
+        "        'success': final_status == STATUS_COMPLETED,",
+        "        'completed_condition_count': completed_condition_count,",
+        "        'failed_condition_count': failed_condition_count,",
+        "        'condition_results': normalized_conditions,",
+        "        'raw_result': _main_make_json_safe(result),",
+        "    }",
+        "",
+        "def main():",
+        "    result = {",
+        "        'status': 'completed',",
+        "        'completed_condition_count': 3,",
+        "        'raw_results': [",
+        "            {'marker': 'rank_8_dropout_0_0', 'status': 'completed', 'average_accuracy': 0.34},",
+        "            {'marker': 'rank_16_dropout_0_0', 'status': 'completed', 'average_accuracy': 0.34},",
+        "            {'marker': 'rank_32_dropout_0_0', 'status': 'completed', 'average_accuracy': 0.33},",
+        "        ],",
+        "    }",
+        "    payload = _assemble_main_metrics_payload(",
+        "        args=argparse.Namespace(),",
+        "        runtime_paths={},",
+        "        run_context={},",
+        "        device='cpu',",
+        "        device_telemetry={},",
+        "        result=result,",
+        "        error_info=None,",
+        "        started_at=time.time(),",
+        "        finished_at=time.time(),",
+        "    )",
+        "    Path(" + JSON.stringify(metricsPath) + ").write_text(json.dumps(payload), encoding='utf-8')",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    let metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("failed");
+    expect(metrics.completed_condition_count).toBe(0);
+
+    const repair = await repairPythonMainMetricsRawResultsAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain('"raw_results"');
+    expect(repairedSource).toContain('"raw_condition_results"');
+
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.success).toBe(true);
+    expect(metrics.completed_condition_count).toBe(3);
+    expect(metrics.condition_results.map((item: { marker: string }) => item.marker)).toEqual([
+      "rank_8_dropout_0_0",
+      "rank_16_dropout_0_0",
+      "rank_32_dropout_0_0"
+    ]);
   });
 
   it("repairs final metrics document dispatch by bridging condition evaluation into metrics assembly", async () => {

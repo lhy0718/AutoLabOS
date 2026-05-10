@@ -61,8 +61,11 @@ import {
   repairPythonDataclassEvaluationRecordCoercionSurface,
   repairPythonEvaluationAnswerLabelAliasSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
+  repairPythonMainMetricsRawResultsAliasSurface,
   repairPythonMainCallableResolverSpecificitySurface,
   repairPythonMainStudyRunnerDeviceBridgeSurface,
+  repairPythonLockedConditionSingleRunnerBridgeSurface,
+  repairPythonMultipleChoiceDataclassChoiceAliasSurface,
   repairPythonOutputDirArgparseAlias,
   repairPythonRunContextHelperFallbackSurface
 } from "../agents/implementSessionManager.js";
@@ -2063,6 +2066,25 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   if (mainStudyRunnerDeviceBridgeRepair.repaired) {
     repaired = true;
     messages.push(mainStudyRunnerDeviceBridgeRepair.message || `Bridged main study runner device invocation in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+  const lockedConditionSingleRunnerBridgeRepair =
+    await repairPythonLockedConditionSingleRunnerBridgeSurface(scriptPath);
+  if (lockedConditionSingleRunnerBridgeRepair.repaired) {
+    repaired = true;
+    messages.push(lockedConditionSingleRunnerBridgeRepair.message || `Bridged locked-condition single runner execution in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+  const multipleChoiceDataclassChoiceAliasRepair =
+    await repairPythonMultipleChoiceDataclassChoiceAliasSurface(scriptPath);
+  if (multipleChoiceDataclassChoiceAliasRepair.repaired) {
+    repaired = true;
+    messages.push(multipleChoiceDataclassChoiceAliasRepair.message || `Accepted multiple-choice dataclass choice aliases in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const mainMetricsRawResultsAliasRepair =
+    await repairPythonMainMetricsRawResultsAliasSurface(scriptPath);
+  if (mainMetricsRawResultsAliasRepair.repaired) {
+    repaired = true;
+    messages.push(mainMetricsRawResultsAliasRepair.message || `Accepted raw_results aliases in final metrics extraction for ${path.basename(scriptPath)} before run_experiments execution.`);
   }
 
   const dataCollatorTokenizerRepair = await repairPythonDataCollatorTokenizerArgumentSurface(scriptPath);

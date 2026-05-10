@@ -107,6 +107,7 @@ When a live node exposes an implementation bug and you patch AutoLabOS repo code
 - Confirm the rerun from persisted artifacts such as `run_record.json`, node memory, metrics files, and node-owned summaries.
 - If a node succeeds but a gate backtracks to an earlier node, report the backtrack as a valid governed outcome rather than a failure to reach the paper step.
 - Treat missing top-level contract fields, hidden failed runs, and stale summary text as validation blockers until the same live flow proves the repair.
+- When a runner stores completed evidence under nested fields such as `raw_result.raw_results`, verify that the public/top-level contract fields (`status`, `success`, `condition_results`, completed/failed counts, objective metrics) project the same facts. A nested success with top-level failure is a validation blocker, not an acceptable completion.
 
 ## Node-ownership rule
 During live validation or test-driven execution, do not let the external coding agent perform work that belongs to an AutoLabOS workflow node.
