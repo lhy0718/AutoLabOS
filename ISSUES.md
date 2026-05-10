@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-05-08
+Last updated: 2026-05-10
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -12,6 +12,217 @@ Usage rules:
 Path placeholders:
 - `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
 - `<repo-root>` means the local AutoLabOS implementation checkout.
+
+---
+
+## Issue: LV-388
+
+- Status: repair implemented; targeted regression/build passed; same-flow live revalidation pending.
+- Validation target: same-flow P6 live validation from `run_experiments` toward paper generation.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Apply LV-385, LV-386, and LV-387 repairs and rebuild.
+  2. Retry `run_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Inspect the selected study runner and generated `metrics.json`.
+
+- Expected behavior:
+  - The final entrypoint should select the real condition execution function, such as `run_baseline_first_locked_sweep(args, device, ...)`.
+  - Study-runner invocation should pass the runtime device when the generated execution function requires it.
+
+- Actual behavior:
+  - The runner reached study startup and wrote `metrics.json`.
+  - `_resolve_main_callable(... contains_all=("condition", "sweep"))` selected `iter_locked_sweep_conditions()`, a condition-list helper, instead of `run_baseline_first_locked_sweep(...)`.
+  - `_attempt_main_invocations(...)` failed all provided argument patterns and metrics recorded `status="failed"`, `completed_condition_count=0`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this specific run.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 run.
+  - Divergence: none observed yet; the defect is generated study-runner resolver/invocation wiring.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the final entrypoint searches too broadly for callables containing `condition` and `sweep`, and its invocation bridge does not pass `device`, so it can select a non-execution helper or fail to call the real baseline-first sweep runner.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` adds `repairPythonMainStudyRunnerDeviceBridgeSurface(...)`, which prioritizes `run_baseline_first_locked_sweep`, passes `device` into `_call_main_study_runner(...)`, and adds an `(args, device)` invocation pattern.
+  - Code: `src/core/nodes/runExperiments.ts` applies the same study-runner device bridge before executing a generated Python runner.
+  - Tests: `tests/implementSessionManager.test.ts` covers a broad resolver that would otherwise choose `iter_locked_sweep_conditions()` and fail all runner invocation patterns.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: passed with `npm test -- tests/implementSessionManager.test.ts -t "study runner|output-dir|callable resolver|run context"` on 2026-05-10.
+  - Build: passed with `npm run build` on 2026-05-10.
+  - Same-flow live revalidation: pending
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+  - `<repo-root>/outputs/p6-live-root/p6-continue-run_experiments-output.txt`
+
+---
+
+## Issue: LV-387
+
+- Status: repair implemented; targeted regression/build passed; same-flow live revalidation pending.
+- Validation target: same-flow P6 live validation from `run_experiments` toward paper generation.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Apply LV-385 and LV-386 repairs and rebuild.
+  2. Retry `run_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Observe the generated runner after `_resolve_main_callable(...)` selects `build_run_context_payload(...)`.
+
+- Expected behavior:
+  - If an optional generated run-context helper is incompatible with the fallback entrypoint's runtime path representation, the runner should use its local fallback context builder.
+  - A helper mismatch should not stop execution before any experiment work or metrics writing.
+
+- Actual behavior:
+  - `_resolve_main_callable(...)` selected `build_run_context_payload(...)`.
+  - `_build_main_run_context(...)` passed a plain `dict[str, Path]` runtime path mapping to that helper.
+  - The helper expected a `RuntimePaths` object and failed with:
+    - `AttributeError: 'dict' object has no attribute 'as_payload'`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this specific run.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 run.
+  - Divergence: none observed yet; the defect is generated-runner context helper fallback handling.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the generated final entrypoint treats optional context helpers as mandatory once resolved. If the helper signature binds but its expected object schema differs, runtime exceptions are not caught and the local fallback context path is never used.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` adds `repairPythonRunContextHelperFallbackSurface(...)`, which lets `_build_main_run_context(...)` fall back to its local context payload when an optional generated context helper raises.
+  - Code: `src/core/nodes/runExperiments.ts` applies the same run-context fallback repair before executing a generated Python runner.
+  - Tests: `tests/implementSessionManager.test.ts` covers a context helper that expects `runtime_paths.as_payload()` while the final entrypoint has a plain mapping.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: passed with `npm test -- tests/implementSessionManager.test.ts -t "output-dir|callable resolver|run context"` on 2026-05-10.
+  - Build: passed with `npm run build` on 2026-05-10.
+  - Same-flow live revalidation: pending
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/events.jsonl`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+  - `<repo-root>/outputs/p6-live-root/p6-continue-run_experiments-output.txt`
+
+---
+
+## Issue: LV-386
+
+- Status: repair implemented; targeted regression/build passed; same-flow live revalidation pending.
+- Validation target: same-flow P6 live validation from `run_experiments` toward paper generation.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+
+- Reproduction steps:
+  1. Apply the LV-385 repair and rebuild.
+  2. Retry `run_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Observe the generated runner after it accepts `--output-dir`.
+
+- Expected behavior:
+  - Generated runner callable resolution should select a semantically compatible helper, such as `build_run_context_payload(...)`, for run-context construction.
+  - If no compatible helper exists, the generated fallback context builder should run instead of invoking an unrelated callable.
+
+- Actual behavior:
+  - `run_experiments` passed the previous `--output-dir` argparse surface and then failed before model/dataset work.
+  - The generated `_resolve_main_callable(...)` returned the first arbitrary callable in `globals()` when preferred helper names were absent and no `contains_all` constraint was supplied.
+  - For the run-context builder, this selected `dataclasses.asdict`, which was then called on a non-dataclass object and failed:
+    - `TypeError: asdict() should be called on dataclass instances`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this specific run.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 run.
+  - Divergence: none observed yet; the defect is generated-runner callable resolver specificity.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the generated main-entrypoint callable resolver has an over-broad fallback that returns any callable when preferred names are not found. This converts a missing helper into a misleading runtime call to `dataclasses.asdict`.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` adds `repairPythonMainCallableResolverSpecificitySurface(...)` so generated `_resolve_main_callable(...)` fallbacks only select helpers whose names match preferred-name tokens, instead of returning the first arbitrary callable.
+  - Code: `src/core/nodes/runExperiments.ts` applies the same resolver-specificity repair before live runner execution.
+  - Tests: `tests/implementSessionManager.test.ts` covers a generated resolver that previously selected imported `asdict` instead of `build_run_context_payload(...)`.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: passed with `npm test -- tests/implementSessionManager.test.ts -t "output-dir|callable resolver"` on 2026-05-10.
+  - Build: passed with `npm run build` on 2026-05-10.
+  - Same-flow live revalidation: pending
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/events.jsonl`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+  - `<repo-root>/outputs/p6-live-root/p6-continue-run_experiments-output.txt`
+
+---
+
+## Issue: LV-385
+
+- Status: repair implemented; targeted regression/build passed; same-flow live revalidation pending.
+- Validation target: same-flow P6 live validation from `run_experiments` toward paper generation.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - topic: LoRA rank/dropout interaction under fixed local compute
+  - node sequence: `analyze_results -> design_experiments -> implement_experiments -> run_experiments`
+
+- Reproduction steps:
+  1. Continue the existing live run after the governed `analyze_results` backtrack to `design_experiments`.
+  2. Let `implement_experiments` regenerate the LoRA rank/dropout runner and pass `python3 -m py_compile`.
+  3. Approve the transition to `run_experiments`.
+  4. Let `run_experiments` execute the persisted implementation command with `--metrics-path ... --output-dir ...`.
+
+- Expected behavior:
+  - The implementation handoff repair should align every executable argparse surface with the persisted `run_command`.
+  - If the command contains `--output-dir`, the Python runner that is actually invoked by `run_experiments` should accept it before any model or dataset work begins.
+  - `run_experiments` should not discover a trivial CLI contract mismatch after implementation handoff.
+
+- Actual behavior:
+  - `implement_experiments` completed and reported local verification via `python3 -m py_compile`.
+  - The generated runner contained multiple argparse surfaces. An earlier parser accepted `--output-dir`, but the parser reached by the final entrypoint accepted `--public-dir` and rejected `--output-dir`.
+  - `run_experiments` failed immediately with:
+    - `run_lora_rank_dropout_study.py: error: unrecognized arguments: --output-dir <validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this specific run; current reproduction is in the persisted live validation workspace.
+  - Existing session: reproduced through `npm run p6:continue` using the existing run state.
+  - Divergence: none observed yet; the dominant defect is a persisted implementation handoff contract issue.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the `--output-dir` argparse repair and mismatch detector inspect accepted flags globally across the file. In generated runners with multiple parser builders, an earlier unused parser can make `--output-dir` look accepted even though the final parser invoked by the entrypoint lacks the alias.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now adds `--output-dir` aliases to each `--public-dir` argparse surface that lacks it, instead of treating a file-global `--output-dir` occurrence as sufficient.
+  - Code: the `--output-dir` repair is idempotent across repeated live retries and removes duplicate single-line aliases within the same parser surface before adding any missing alias.
+  - Code: `src/core/nodes/runExperiments.ts` now applies the same `--output-dir` compatibility repair immediately before executing a generated Python runner, so an already-persisted node-owned script can be revalidated without manual artifact edits.
+  - Tests: `tests/implementSessionManager.test.ts` covers a generated runner with an unused parser that accepts `--output-dir` and a final parser that originally accepted only `--public-dir`.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: passed with `npm test -- tests/implementSessionManager.test.ts -t "output-dir|callable resolver"` on 2026-05-10.
+  - Build: passed with `npm run build` on 2026-05-10 after the idempotency repair.
+  - Same-flow live revalidation: pending
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/events.jsonl`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+  - `<repo-root>/outputs/p6-live-root/p6-continue-run_experiments-output.txt`
 
 ---
 

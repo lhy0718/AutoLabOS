@@ -34,6 +34,8 @@ import {
   repairPythonMainExecuteConditionsInputMaterializationSurface,
   repairPythonDeterministicSampleRecordsSaltAliasSurface,
   repairPythonConditionConfigRequiredFieldAliasSurface,
+  repairPythonConditionMarkerDefaultKwargSurface,
+  repairPythonConditionTrainEvalHelperBridgeSurface,
   repairPythonEntrypointConditionDatasetInputMaterializationSurface,
   repairPythonBaselineEvaluatorArgumentSurface,
   repairPythonBroaderTargetLoraMarkerSurface,
@@ -66,6 +68,9 @@ import {
   repairPythonAccuracyDeltaBuilderAliasSurface,
   repairPythonMainExecutionLoopAliasSurface,
   repairPythonMainMetricsPayloadBuilderCallSurface,
+  repairPythonMainCallableResolverSpecificitySurface,
+  repairPythonRunContextHelperFallbackSurface,
+  repairPythonMainStudyRunnerDeviceBridgeSurface,
   repairPythonPeftAcronymClassAliasSurface,
   repairPythonEntrypointMetricsAggregationBridgeSurface,
   repairPythonEntrypointWorkflowSignatureBridgeSurface,
@@ -78,6 +83,7 @@ import {
   repairPythonPlanArgumentPathChoicesSurface,
   repairPythonConditionExecutorDeadlineArgumentSurface,
   repairPythonHighLevelConditionSweepDispatchSurface,
+  repairPythonOutputDirArgparseAlias,
   repairPythonLoraStudyEntrypointContextSurface,
   repairPythonPrepareStudyInputsRuntimeContextSurface,
   repairPythonAutolabosCliParserBuilderAliasSurface,
@@ -113,6 +119,10 @@ import {
   repairPythonMetricsWriterAdapterPathSurface,
   repairPythonMetricsWriterDispatcherPayloadAliasSurface,
   repairPythonDeviceHelperAliasSurface,
+  repairPythonDataCollatorPrecomputedLabelReturnSurface,
+  repairPythonDataCollatorTokenizerArgumentSurface,
+  repairPythonDataclassEvaluationRecordCoercionSurface,
+  repairPythonEvaluationAnswerLabelAliasSurface,
   repairPythonModelLoaderDeviceInfoAliasSurface,
   repairPythonNeftuneEmbeddingForwardHookSurface,
   repairPythonNormalizeForJsonHelperAlias,
@@ -140,6 +150,7 @@ import {
   repairPythonTransformersLinearSchedulerSurface,
   repairPythonLockedConditionContractCallSurface,
   repairPythonLockedConditionNameProjectionSurface,
+  repairPythonLockedSweepRuntimeKwargBridgeSurface,
   repairPythonExecutionPlanMappingSequenceKeySurface,
   repairPythonTupleReturningMainArgsSurface,
   repairPythonWriteJsonMetricsAliasSurface,
@@ -4230,6 +4241,327 @@ describe("ImplementSessionManager", () => {
     expect(report.status, report.summary).toBe("pass");
     expect(repairedSource).toContain("DataCollatorForLanguageModeling creates padded causal-LM labels");
     expect(repairedSource).not.toContain("tokens[\"labels\"] = [list(ids) for ids in tokens[\"input_ids\"]]");
+  });
+
+  it("adds tokenizer to DataCollatorForLanguageModeling calls that omit the required tokenizer", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-data-collator-tokenizer-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "class DataCollatorForLanguageModeling:",
+        "    def __init__(self, tokenizer, mlm=False):",
+        "        self.tokenizer = tokenizer",
+        "        self.mlm = mlm",
+        "",
+        "def build_trainer(tokenizer):",
+        "    return DataCollatorForLanguageModeling(mlm=False)",
+        "",
+        "def main():",
+        "    collator = build_trainer('tok')",
+        "    assert collator.tokenizer == 'tok'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing 1 required positional argument: 'tokenizer'/
+    );
+
+    const repair = await repairPythonDataCollatorTokenizerArgumentSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("removes precomputed dataset labels when using DataCollatorForLanguageModeling", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-data-collator-label-return-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "DataCollatorForLanguageModeling = object",
+        "",
+        "class Label(list):",
+        "    def clone(self):",
+        "        return list(self)",
+        "",
+        "class Dataset:",
+        "    def __init__(self):",
+        "        self.examples = [{'input_ids': Label([1, 2]), 'attention_mask': [1, 1], 'labels': Label([1, 2])}]",
+        "",
+        "    def __getitem__(self, index):",
+        "        item = self.examples[index]",
+        "        row = {'input_ids': item['input_ids'], 'attention_mask': item['attention_mask']}",
+        "        row['labels'] = row['input_ids'].clone()",
+        "        return row",
+        "",
+        "def main():",
+        "    row = Dataset()[0]",
+        "    assert 'labels' not in row",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonDataCollatorPrecomputedLabelReturnSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("DataCollatorForLanguageModeling creates labels from padded input_ids");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("coerces dataclass evaluation records before choice normalization", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-dataclass-eval-records-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import asdict, dataclass",
+        "from typing import Mapping",
+        "",
+        "@dataclass(frozen=True)",
+        "class MultipleChoiceExample:",
+        "    prompt: str",
+        "    choices: list[str]",
+        "    correct_index: int",
+        "",
+        "def _exec_normalize_choice_example(task_name, row, index):",
+        "    if not isinstance(row, Mapping):",
+        "        return None",
+        "    if row.get('prompt') and row.get('choices') and isinstance(row.get('answer_index'), int):",
+        "        return row",
+        "    return None",
+        "",
+        "def _exec_to_plain_records(data, max_items=None):",
+        "    if data is None:",
+        "        return []",
+        "    if isinstance(data, Mapping):",
+        "        return [data]",
+        "    if isinstance(data, (list, tuple)):",
+        "        records = list(data)",
+        "        return records if max_items is None else records[: int(max_items)]",
+        "    return [data]",
+        "",
+        "def main():",
+        "    rows = [MultipleChoiceExample(prompt='Question?', choices=['A', 'B'], correct_index=0)]",
+        "    normalized = [_exec_normalize_choice_example('arc_challenge', row, idx) for idx, row in enumerate(_exec_to_plain_records(rows))]",
+        "    assert normalized == [{'prompt': 'Question?', 'choices': ['A', 'B'], 'correct_index': 0, 'answer_index': 0}]",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonDataclassEvaluationRecordCoercionSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_plain_eval_record");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("allows default keyword on late condition marker helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-marker-default-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Mapping, Optional",
+        "",
+        "def _condition_marker(record: Mapping[str, Any]) -> str:",
+        "    for key in ('condition_marker', 'marker', 'name'):",
+        "        value = record.get(key)",
+        "        if isinstance(value, str) and value.strip():",
+        "            return value.strip()",
+        "    return \"unknown_condition\"",
+        "",
+        "def main():",
+        "    assert _condition_marker({}, default='baseline') == 'baseline'",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/unexpected keyword argument/);
+
+    const repair = await repairPythonConditionMarkerDefaultKwargSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("default: Optional[str] = None");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("bridges generated train/eval helpers into baseline-first condition execution helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-train-eval-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import contextlib",
+        "import gc",
+        "import logging",
+        "from typing import Any, Dict, Mapping, Optional",
+        "",
+        "LOGGER = logging.getLogger(__name__)",
+        "torch = None",
+        "",
+        "class FakeContext:",
+        "    def as_dict(self):",
+        "        return {'output_dir': 'out', 'arc_eval_examples': 2, 'hellaswag_eval_examples': 2}",
+        "",
+        "def _condition_marker(spec: Any, *, default: Optional[str] = None) -> str:",
+        "    if isinstance(spec, Mapping):",
+        "        return str(spec.get('marker') or default or 'unknown')",
+        "    return str(default or 'unknown')",
+        "",
+        "def prepare_dataset_bundle(runtime: Mapping[str, Any], *, logger: Optional[logging.Logger] = None) -> Dict[str, Any]:",
+        "    return {'train_records': [{'prompt': 'a'}], 'eval_tasks': {'arc_challenge': [{'answer_label': 'A'}]}}",
+        "",
+        "def load_tokenizer_and_model(model_id: str, runtime: Mapping[str, Any], condition_marker: str):",
+        "    return object(), object(), 'cpu', {'condition_marker': condition_marker, 'model_id': model_id}",
+        "",
+        "def evaluate_condition_result(condition_result: Dict[str, Any], eval_bundle: Mapping[str, Any], *, logger: Optional[logging.Logger] = None, max_examples_per_task: Optional[int] = None):",
+        "    assert condition_result.get('model') is not None",
+        "    assert condition_result.get('tokenizer') is not None",
+        "    condition_result['average_accuracy'] = 0.5",
+        "    condition_result['evaluation'] = {'status': 'completed', 'tasks': eval_bundle}",
+        "    condition_result['status'] = 'completed'",
+        "    return condition_result",
+        "",
+        "def run_training_for_condition(condition: Any, runtime: Optional[Mapping[str, Any]], selected_model_id: str, train_examples: Any) -> Dict[str, Any]:",
+        "    try:",
+        "        model = object()",
+        "        tokenizer = object()",
+        "        device = 'cpu'",
+        "        train_result = {'status': 'completed', 'condition_marker': _condition_marker(condition), 'model_id': selected_model_id}",
+        "        return train_result",
+        "    except Exception as exc:",
+        "        raise exc",
+        "",
+        "def _call_first_matching_helper(helper_names, *, kwarg_variants, positional_variants):",
+        "    for helper_name in helper_names:",
+        "        helper = globals().get(helper_name)",
+        "        if callable(helper):",
+        "            return helper(**kwarg_variants[0])",
+        "    raise RuntimeError(f'No matching helper was found among candidates: {list(helper_names)}')",
+        "",
+        "def _execute_condition(spec: Mapping[str, Any], role: str):",
+        "    helper_names = ['run_condition_experiment', 'run_single_condition', 'execute_condition', 'train_and_evaluate_condition', 'run_lora_condition', 'execute_training_condition']",
+        "    if role == 'baseline':",
+        "        helper_names = ['run_baseline_condition'] + helper_names",
+        "    return _call_first_matching_helper(",
+        "        helper_names,",
+        "        kwarg_variants=[{'context': FakeContext(), 'condition': spec, 'selected_model_id': 'fake-model', 'preflight_result': {}}],",
+        "        positional_variants=[],",
+        "    )",
+        "",
+        "def main():",
+        "    baseline = _execute_condition({'marker': 'baseline'}, 'baseline')",
+        "    tuned = _execute_condition({'marker': 'rank_8_dropout_0_0'}, 'tuned_condition')",
+        "    assert baseline['status'] == 'success'",
+        "    assert tuned['status'] == 'success'",
+        "    assert baseline['average_accuracy'] == 0.5",
+        "    assert tuned['average_accuracy'] == 0.5",
+        "    assert 'model' not in baseline",
+        "    assert 'tokenizer' not in tuned",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No matching helper/
+    );
+
+    const repair = await repairPythonConditionTrainEvalHelperBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_train_eval_condition_bridge_marker");
+    expect(repairedSource).toContain("def run_baseline_condition(");
+    expect(repairedSource).toContain("def run_condition_experiment(");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("accepts answer_label as an evaluation gold-label alias", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-answer-label-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Dict, Optional, Sequence",
+        "",
+        "def _coerce_label_index(example: Dict[str, Any], choices: Sequence[Dict[str, str]]) -> Optional[int]:",
+        "    raw_label = None",
+        "    for key in (\"label\", \"answer\", \"answerKey\", \"gold\", \"target\", \"correct_index\"):",
+        "        if key in example and example[key] not in (None, \"\"):",
+        "            raw_label = example[key]",
+        "            break",
+        "    if raw_label is None:",
+        "        return None",
+        "    upper_label = str(raw_label).strip().upper()",
+        "    for index, choice in enumerate(choices):",
+        "        if str(choice.get(\"label\", \"\")).strip().upper() == upper_label:",
+        "            return index",
+        "    return None",
+        "",
+        "def main():",
+        "    choices = [{'label': 'A'}, {'label': 'B'}]",
+        "    assert _coerce_label_index({'answer_label': 'B'}, choices) == 1",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonEvaluationAnswerLabelAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain('"answer_label"');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
   it("repairs broad compatible-call adapters that reintroduce filtered kwargs and duplicate metrics args", async () => {
@@ -19524,6 +19856,325 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("parser.add_argument('--output-dir'");
   });
 
+  it("repairs --output-dir on the final parser when an unused parser already accepts it", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-output-dir-final-parser-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Output Dir Final Parser Alias",
+      topic: "runtime helper validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "import argparse",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    parser.add_argument('--output-dir')",
+        "    return parser",
+        "",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--public-dir', type=Path, default=Path('out'))",
+        "    parser.add_argument('--metrics-path', type=Path)",
+        "    return parser.parse_args(argv)",
+        "",
+        "def main(argv=None):",
+        "    parse_args(argv)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+        scriptPath,
+        workingDir: publicDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain("parser.add_argument('--output-dir', dest='public_dir', type=Path");
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", publicDir], {
+        cwd: publicDir
+      })
+    ).not.toThrow();
+
+    const secondRepair = await repairPythonOutputDirArgparseAlias(
+      scriptPath,
+      `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`
+    );
+    const twiceRepairedSource = readFileSync(scriptPath, "utf8");
+    expect(secondRepair.repaired).toBe(false);
+    expect(twiceRepairedSource.match(/parser\.add_argument\('--output-dir', dest='public_dir'/gu) || []).toHaveLength(1);
+  });
+
+  it("constrains generated main callable resolver fallback to preferred-name matches", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-callable-resolver-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import asdict",
+        "",
+        "def build_run_context_payload(args, runtime_paths):",
+        "    return {'ok': True}",
+        "",
+        "def _resolve_main_callable(",
+        "    preferred_names,",
+        "    *,",
+        "    required=False,",
+        "    contains_all=(),",
+        "    exclude=(),",
+        "):",
+        "    for name in preferred_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    for name, candidate in globals().items():",
+        "        if not callable(candidate):",
+        "            continue",
+        "        lowered = name.lower()",
+        "        if contains_all and not all(token.lower() in lowered for token in contains_all):",
+        "            continue",
+        "        if exclude and any(token.lower() in lowered for token in exclude):",
+        "            continue",
+        "        return candidate",
+        "    if required:",
+        "        raise RuntimeError('missing')",
+        "    return None",
+        "",
+        "def main():",
+        "    helper = _resolve_main_callable(('build_run_context', 'prepare_run_context'))",
+        "    return 0 if helper.__name__ == 'build_run_context_payload' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonMainCallableResolverSpecificitySurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_callable_resolver_specificity_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("falls back to local run context when a resolved context helper rejects runtime path mappings", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-context-fallback-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import logging",
+        "LOGGER = logging.getLogger(__name__)",
+        "class AbcMapping(dict):",
+        "    pass",
+        "",
+        "def build_run_context_payload(args, runtime_paths):",
+        "    return {'runtime_paths': runtime_paths.as_payload()}",
+        "",
+        "def _attempt_main_invocations(func, attempts, *, helper_label):",
+        "    positional_args, keyword_args = attempts[0]",
+        "    return func(*positional_args, **keyword_args)",
+        "",
+        "def _build_main_run_context(args, runtime_paths):",
+        "    context_helper = build_run_context_payload",
+        "    if callable(context_helper):",
+        "        helper_result = _attempt_main_invocations(",
+        "            context_helper,",
+        "            [",
+        "                ((args, runtime_paths), {}),",
+        "                ((args,), {'runtime_paths': runtime_paths}),",
+        "            ],",
+        "            helper_label='run-context builder',",
+        "        )",
+        "        if isinstance(helper_result, AbcMapping):",
+        "            return dict(helper_result)",
+        "    return {'fallback': True}",
+        "",
+        "def main():",
+        "    result = _build_main_run_context(argparse.Namespace(), {'public_dir': 'out'})",
+        "    return 0 if result.get('fallback') is True else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonRunContextHelperFallbackSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_run_context_helper_fallback_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("bridges final main study runner selection to the baseline-first sweep device signature", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-study-device-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from pathlib import Path",
+        "from typing import Any, Mapping",
+        "",
+        "def iter_locked_sweep_conditions():",
+        "    return ('not', 'a', 'runner')",
+        "",
+        "def run_baseline_first_locked_sweep(args: argparse.Namespace, device: Any, *, model_preflight=None, condition_runner=None, sweep_conditions=None):",
+        "    return {'ok': device == 'cuda0'}",
+        "",
+        "def _resolve_main_callable(preferred_names, *, required=False, contains_all=(), exclude=()):",
+        "    for name in preferred_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    for name, candidate in globals().items():",
+        "        if not callable(candidate):",
+        "            continue",
+        "        lowered = name.lower()",
+        "        if contains_all and not all(token.lower() in lowered for token in contains_all):",
+        "            continue",
+        "        if exclude and any(token.lower() in lowered for token in exclude):",
+        "            continue",
+        "        return candidate",
+        "    if required:",
+        "        raise RuntimeError('missing')",
+        "    return None",
+        "",
+        "def _attempt_main_invocations(func, attempts, *, helper_label):",
+        "    last_bind_error = None",
+        "    signature = inspect.signature(func)",
+        "    for positional_args, keyword_args in attempts:",
+        "        try:",
+        "            signature.bind_partial(*positional_args, **keyword_args)",
+        "        except TypeError as exc:",
+        "            last_bind_error = exc",
+        "            continue",
+        "        return func(*positional_args, **keyword_args)",
+        "    raise RuntimeError('Unable to invoke ' + helper_label) from last_bind_error",
+        "",
+        "def _call_main_study_runner(",
+        "    args: argparse.Namespace,",
+        "    runtime_paths: Mapping[str, Path],",
+        "    run_context: Mapping[str, Any],",
+        ") -> Any:",
+        "    study_runner = _resolve_main_callable(",
+        "        (",
+        "            'run_locked_condition_sweep',",
+        "            'orchestrate_locked_condition_sweep',",
+        "            'orchestrate_study',",
+        "            'run_study',",
+        "            'execute_study',",
+        "            'run_experiment',",
+        "        ),",
+        "        required=True,",
+        "        contains_all=('condition', 'sweep'),",
+        "        exclude=('write', 'summary', 'metrics', 'parse', 'main'),",
+        "    )",
+        "    return _attempt_main_invocations(",
+        "        study_runner,",
+        "        [",
+        "            ((args, runtime_paths, run_context), {}),",
+        "            ((args, runtime_paths), {'run_context': run_context}),",
+        "            ((args,), {'parsed_args': args, 'runtime_paths': runtime_paths, 'run_context': run_context}),",
+        "        ],",
+        "        helper_label='study runner',",
+        "    )",
+        "",
+        "def main():",
+        "    args = argparse.Namespace()",
+        "    runtime_paths = {'public_dir': Path('out')}",
+        "    run_context = {}",
+        "    device = 'cuda0'",
+        "    result = _call_main_study_runner(args, runtime_paths, run_context)",
+        "    return 0 if result.get('ok') is True else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonMainStudyRunnerDeviceBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_main_study_runner_device_bridge_marker");
+    expect(repairedSource).toContain("\"run_baseline_first_locked_sweep\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("repairs a missing --private-run-dir argparse alias when config construction reads args.private_run_dir", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-private-run-dir-alias-"));
     tempDirs.push(workspace);
@@ -27014,6 +27665,226 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("def _autolabos_filter_supported_signature_kwargs(");
     expect(repairedSource).toContain('"limit"');
     execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("bridges locked sweep data/model kwargs and raw condition results before runtime handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-sweep-runtime-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "import time",
+        "from pathlib import Path",
+        "from typing import Any, Mapping, Sequence",
+        "",
+        "JSONDict = dict[str, Any]",
+        "RUN_NAME_DEFAULT = 'locked_sweep'",
+        "DEFAULT_MAX_TRAIN_SAMPLES = 2",
+        "DEFAULT_MAX_EVAL_SAMPLES = 2",
+        "DEFAULT_SEED = 7",
+        "DEFAULT_CACHE_DIR = None",
+        "PREFERRED_MODEL_ID = 'local-test-model'",
+        "",
+        "class Example:",
+        "    def __init__(self, text):",
+        "        self.formatted_text = text",
+        "",
+        "def _coerce_mapping(value):",
+        "    return dict(value) if isinstance(value, Mapping) else {}",
+        "",
+        "def load_instruction_tuning_examples(*, max_samples, seed, cache_dir):",
+        "    return [Example(f'train-{seed}-{index}') for index in range(max_samples)], {'rows': max_samples}",
+        "",
+        "def load_evaluation_examples_bundle(*, max_samples, seed, cache_dir):",
+        "    return {'arc_challenge': ['arc'] * max_samples, 'hellaswag': ['hs'] * max_samples}, {'rows': max_samples}",
+        "",
+        "def train_and_evaluate_condition(condition, model_id, train_data, arc_data, hellaswag_data, output_dir, args=None):",
+        "    return {",
+        "        'status': 'completed',",
+        "        'success': True,",
+        "        'condition_id': condition['condition_id'],",
+        "        'model_id': model_id,",
+        "        'train_count': len(train_data),",
+        "        'arc_count': len(arc_data),",
+        "        'hellaswag_count': len(hellaswag_data),",
+        "    }",
+        "",
+        "def _context_from_args_kwargs(args, kwargs):",
+        "    return dict(kwargs)",
+        "",
+        "def _invoke_with_supported_kwargs(func: Any, **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):",
+        "        return func(**kwargs)",
+        "    accepted = {",
+        "        name",
+        "        for name, parameter in parameters.items()",
+        "        if parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)",
+        "    }",
+        "    filtered_kwargs = {key: value for key, value in kwargs.items() if key in accepted}",
+        "    return func(**filtered_kwargs)",
+        "",
+        "def _resolve_planned_conditions(context):",
+        "    return [{'condition_id': 'baseline'}]",
+        "",
+        "def _stable_baseline_first_order(planned_conditions):",
+        "    return planned_conditions",
+        "",
+        "def _condition_id(condition, index):",
+        "    return condition['condition_id']",
+        "",
+        "def _coerce_condition_mapping(condition, index):",
+        "    return dict(condition)",
+        "",
+        "def _json_safe(value):",
+        "    return value",
+        "",
+        "def _run_locked_baseline_first_sweep_impl(*args: Any, **kwargs: Any) -> JSONDict:",
+        "    context = _context_from_args_kwargs(args, kwargs)",
+        "    planned_conditions = _resolve_planned_conditions(context)",
+        "    ordered_conditions = _stable_baseline_first_order(planned_conditions)",
+        "    executor = train_and_evaluate_condition",
+        "    run_name = str(context.get('run_name') or RUN_NAME_DEFAULT)",
+        "    study_started_at = time.time()",
+        "    raw_results = []",
+        "    total_conditions = len(ordered_conditions)",
+        "    baseline_reference = None",
+        "    for condition_index, condition in enumerate(ordered_conditions, start=1):",
+        "        condition_dict = _coerce_condition_mapping(condition, condition_index - 1)",
+        "        condition_id = str(condition_dict['condition_id'])",
+        "        result_record = {**condition_dict, 'condition_id': condition_id, 'run_name': run_name}",
+        "        try:",
+        "            execution_kwargs = dict(context)",
+        "            execution_kwargs.update(",
+        "                {",
+        "                        \"condition\": condition,",
+        "                        'condition_index': condition_index,",
+        "                        'total_conditions': total_conditions,",
+        "                        'baseline_reference': baseline_reference,",
+        "                        'study_started_at': study_started_at,",
+        "                        'run_name': run_name,",
+        "                }",
+        "            )",
+        "            execution_payload = _invoke_with_supported_kwargs(executor, **execution_kwargs)",
+        "        except Exception as exc:",
+        "            execution_payload = {'status': 'failed', 'error_message': str(exc)}",
+        "        raw_results.append({**result_record, **execution_payload})",
+        "    return {'condition_results': raw_results}",
+        "",
+        "def existing_summary_alias(raw_results):",
+        "    return {",
+        "        \"raw_condition_results\": raw_results,",
+        "    }",
+        "",
+        "run_study = _run_locked_baseline_first_sweep_impl",
+        "",
+        "def build_metrics_payload(*, args, raw_condition_results: Sequence[Any], metrics_path: Path, output_dir: Path, selected_model_id=None, preflight_summary=None, study_start_time=None, study_end_time=None, run_command=None):",
+        "    if not isinstance(raw_condition_results, list):",
+        "        raise TypeError('raw_condition_results must be the per-condition result list')",
+        "    rows = raw_condition_results",
+        "    return {'status': 'completed', 'completed_condition_count': len(rows), 'selected_model_id': selected_model_id}",
+        "",
+        "def _resolve_callable(*candidate_names):",
+        "    for name in candidate_names:",
+        "        value = globals().get(name)",
+        "        if callable(value):",
+        "            return value",
+        "    return None",
+        "",
+        "def _invoke_helper(helper, positional_candidates: Sequence[tuple[Any, ...]], keyword_options: JSONDict):",
+        "    last_error = None",
+        "    signature = inspect.signature(helper)",
+        "    filtered_kwargs = {key: value for key, value in keyword_options.items() if key in signature.parameters}",
+        "    for args_candidate in positional_candidates:",
+        "        try:",
+        "            return helper(*args_candidate, **filtered_kwargs)",
+        "        except TypeError as exc:",
+        "            last_error = exc",
+        "    try:",
+        "        return helper(**filtered_kwargs)",
+        "    except TypeError as exc:",
+        "        last_error = exc",
+        "    raise RuntimeError(f'Unable to invoke helper {helper.__name__}: {last_error}')",
+        "",
+        "def _write_json_file(path, payload):",
+        "    Path(path).parent.mkdir(parents=True, exist_ok=True)",
+        "    Path(path).write_text(json.dumps(payload), encoding='utf-8')",
+        "",
+        "def main(argv=None) -> int:",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--output-dir', default='.')",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    parser.add_argument('--run-name', default=RUN_NAME_DEFAULT)",
+        "    parser.add_argument('--preferred-model-id', default=PREFERRED_MODEL_ID)",
+        "    parser.add_argument('--max-train-samples', type=int, default=2)",
+        "    parser.add_argument('--max-eval-samples', type=int, default=2)",
+        "    parser.add_argument('--seed', type=int, default=7)",
+        "    parser.add_argument('--cache-dir', default=None)",
+        "    args = parser.parse_args(argv)",
+        "    output_dir = Path(args.output_dir)",
+        "    metrics_path = Path(args.metrics_path)",
+        "    runnable_command = 'python run_lora_rank_dropout_study.py'",
+        "    started_at = time.time()",
+        "    run_context = {'run_name': args.run_name, 'output_dir': output_dir, 'metrics_path': metrics_path, 'args': args, 'selected_model_id': None}",
+        "    helper_kwargs: JSONDict = {",
+        "            \"args\": args,",
+        "            \"run_context\": run_context,",
+        "            \"context\": run_context,",
+        "            \"output_dir\": output_dir,",
+        "            \"metrics_path\": metrics_path,",
+        "            \"run_name\": args.run_name,",
+        "    }",
+        "    preflight_result = {'selected_model_id': args.preferred_model_id}",
+        "    if isinstance(preflight_result, dict):",
+        "        selected_model_id = preflight_result.get('selected_model_id') or preflight_result.get('model_id')",
+        "        if selected_model_id:",
+        "            run_context['selected_model_id'] = str(selected_model_id)",
+        "        orchestration_helper = _resolve_callable(",
+        "            'run_study',",
+        "        )",
+        "    reporting_helper = _resolve_callable('build_metrics_payload')",
+        "    orchestration_kwargs = {**helper_kwargs, 'preflight_result': preflight_result}",
+        "    raw_results = _invoke_helper(orchestration_helper, positional_candidates=((run_context,), (args,), tuple()), keyword_options=orchestration_kwargs)",
+        "    reporting_kwargs: JSONDict = {",
+        "            **helper_kwargs,",
+        "            \"preflight_result\": preflight_result,",
+        "            \"raw_results\": raw_results,",
+        "            \"results\": raw_results,",
+        "            \"study_results\": raw_results,",
+        "    }",
+        "    report_output = _invoke_helper(reporting_helper, positional_candidates=((raw_results, run_context), (run_context,), (args,), tuple()), keyword_options=reporting_kwargs)",
+        "    _write_json_file(metrics_path, report_output)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })
+    ).toThrow(/raw_condition_results/);
+
+    const repair = await repairPythonLockedSweepRuntimeKwargBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_locked_sweep_runtime_kwarg_bridge_marker");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8")) as {
+      completed_condition_count?: number;
+      selected_model_id?: string;
+    };
+    expect(metrics.completed_condition_count).toBe(1);
+    expect(metrics.selected_model_id).toBe("local-test-model");
   });
 
   it("repairs deterministic subset helpers generated with keyword-only subset sizes", async () => {

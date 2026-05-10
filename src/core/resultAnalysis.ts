@@ -29,7 +29,8 @@ export interface AnalysisConditionComparison {
     | "metrics.recipes"
     | "metrics.conditions"
     | "metrics.condition_results"
-    | "metrics.condition_summaries";
+    | "metrics.condition_summaries"
+    | "metrics.per_condition_average_accuracy";
   metrics: AnalysisComparisonMetric[];
   hypothesis_supported?: boolean;
   summary: string;
@@ -2206,7 +2207,11 @@ function buildConditionsArrayConditionComparison(args: {
 }
 
 function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
-  source: "metrics.conditions" | "metrics.condition_results" | "metrics.condition_summaries";
+  source:
+    | "metrics.conditions"
+    | "metrics.condition_results"
+    | "metrics.condition_summaries"
+    | "metrics.per_condition_average_accuracy";
   rows: Array<Record<string, unknown>>;
 } {
   const baselineMarkers = readBaselineConditionMarkers(metrics);
@@ -2264,7 +2269,66 @@ function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
   if (conditionResultRows.length > 0) {
     return { source: "metrics.condition_results", rows: conditionResultRows };
   }
+  const perConditionRows = readPerConditionAverageAccuracyRows(metrics)
+    .map((row) => markBaselineConditionRow(enrichConditionRow(row), baselineMarkers))
+    .filter((row) => Object.keys(row).length > 0);
+  if (perConditionRows.length > 0) {
+    return { source: "metrics.per_condition_average_accuracy", rows: perConditionRows };
+  }
   return { source: "metrics.condition_summaries", rows: summaryRows };
+}
+
+function readPerConditionAverageAccuracyRows(
+  metrics: Record<string, unknown>
+): Array<Record<string, unknown>> {
+  const averages = asRecord(metrics.per_condition_average_accuracy);
+  const conditionNames = uniqueStrings([
+    ...asArray(metrics.condition_order)
+      .map((item) => asString(item))
+      .filter((item): item is string => Boolean(item)),
+    ...Object.keys(averages)
+  ]);
+  if (conditionNames.length === 0) {
+    return [];
+  }
+
+  const statuses = asRecord(metrics.condition_statuses);
+  const trainLosses = asRecord(metrics.per_condition_train_loss);
+  const perTaskAccuracy = asRecord(metrics.per_task_accuracy);
+  const baselineAverage = asNumber(metrics.baseline_average_accuracy);
+
+  return conditionNames
+    .map((conditionName) => {
+      const averageAccuracy = asNumber(averages[conditionName]);
+      if (averageAccuracy === undefined) {
+        return undefined;
+      }
+      const taskAccuracy = asRecord(perTaskAccuracy[conditionName]);
+      const row: Record<string, unknown> = {
+        condition_name: conditionName,
+        condition_marker: conditionName,
+        status: asString(statuses[conditionName]) || "completed",
+        average_accuracy: averageAccuracy,
+        mean_accuracy: averageAccuracy,
+        mean_zero_shot_accuracy: averageAccuracy
+      };
+      const trainLoss = asNumber(trainLosses[conditionName]);
+      if (trainLoss !== undefined) {
+        row.train_loss = trainLoss;
+      }
+      if (baselineAverage !== undefined) {
+        row.accuracy_delta_vs_baseline = Number((averageAccuracy - baselineAverage).toFixed(6));
+      }
+      for (const [taskName, value] of Object.entries(taskAccuracy)) {
+        const numericValue = asNumber(value);
+        if (numericValue === undefined) {
+          continue;
+        }
+        row[`${taskName}_accuracy`] = numericValue;
+      }
+      return row;
+    })
+    .filter((row): row is Record<string, unknown> => row !== undefined);
 }
 
 function readBaselineConditionMarkers(metrics: Record<string, unknown>): Set<string> {

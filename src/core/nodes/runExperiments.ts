@@ -53,6 +53,19 @@ import {
   deriveRequiredPlannedConditionCount
 } from "../analysis/plannedConditionCoverage.js";
 import { buildIntermediateArtifactCaptureManifest } from "../artifacts/intermediateArtifactCapture.js";
+import {
+  repairPythonConditionMarkerDefaultKwargSurface,
+  repairPythonConditionTrainEvalHelperBridgeSurface,
+  repairPythonDataCollatorPrecomputedLabelReturnSurface,
+  repairPythonDataCollatorTokenizerArgumentSurface,
+  repairPythonDataclassEvaluationRecordCoercionSurface,
+  repairPythonEvaluationAnswerLabelAliasSurface,
+  repairPythonLockedSweepRuntimeKwargBridgeSurface,
+  repairPythonMainCallableResolverSpecificitySurface,
+  repairPythonMainStudyRunnerDeviceBridgeSurface,
+  repairPythonOutputDirArgparseAlias,
+  repairPythonRunContextHelperFallbackSurface
+} from "../agents/implementSessionManager.js";
 
 type SupplementalProfileName = "quick_check" | "confirmatory";
 
@@ -2016,16 +2029,95 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
     return { repaired: false, message: "" };
   }
 
+  const messages: string[] = [];
+  let repaired = false;
+
   const source = await fs.readFile(scriptPath, "utf8");
   const repairedSource = removeUnsupportedTrainingArgumentsKwargLines(source);
-  if (repairedSource === source) {
-    return { repaired: false, message: "" };
+  if (repairedSource !== source) {
+    await fs.writeFile(scriptPath, repairedSource, "utf8");
+    repaired = true;
+    messages.push(`Removed unsupported TrainingArguments kwarg(s) from ${path.basename(scriptPath)} before run_experiments execution.`);
   }
 
-  await fs.writeFile(scriptPath, repairedSource, "utf8");
+  const outputDirArgparseRepair = await repairPythonOutputDirArgparseAlias(scriptPath, input.command);
+  if (outputDirArgparseRepair.repaired) {
+    repaired = true;
+    messages.push(outputDirArgparseRepair.message || `Added --output-dir argparse alias to ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const mainCallableResolverSpecificityRepair =
+    await repairPythonMainCallableResolverSpecificitySurface(scriptPath);
+  if (mainCallableResolverSpecificityRepair.repaired) {
+    repaired = true;
+    messages.push(mainCallableResolverSpecificityRepair.message || `Constrained callable resolver fallback in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const runContextHelperFallbackRepair = await repairPythonRunContextHelperFallbackSurface(scriptPath);
+  if (runContextHelperFallbackRepair.repaired) {
+    repaired = true;
+    messages.push(runContextHelperFallbackRepair.message || `Allowed run-context helper fallback in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const mainStudyRunnerDeviceBridgeRepair = await repairPythonMainStudyRunnerDeviceBridgeSurface(scriptPath);
+  if (mainStudyRunnerDeviceBridgeRepair.repaired) {
+    repaired = true;
+    messages.push(mainStudyRunnerDeviceBridgeRepair.message || `Bridged main study runner device invocation in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const dataCollatorTokenizerRepair = await repairPythonDataCollatorTokenizerArgumentSurface(scriptPath);
+  if (dataCollatorTokenizerRepair.repaired) {
+    repaired = true;
+    messages.push(dataCollatorTokenizerRepair.message || `Passed tokenizer into DataCollatorForLanguageModeling in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const dataCollatorPrecomputedLabelRepair =
+    await repairPythonDataCollatorPrecomputedLabelReturnSurface(scriptPath);
+  if (dataCollatorPrecomputedLabelRepair.repaired) {
+    repaired = true;
+    messages.push(dataCollatorPrecomputedLabelRepair.message || `Removed precomputed dataset labels before DataCollatorForLanguageModeling in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const dataclassEvaluationRecordRepair =
+    await repairPythonDataclassEvaluationRecordCoercionSurface(scriptPath);
+  if (dataclassEvaluationRecordRepair.repaired) {
+    repaired = true;
+    messages.push(dataclassEvaluationRecordRepair.message || `Coerced dataclass evaluation records in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const conditionMarkerDefaultKwargRepair =
+    await repairPythonConditionMarkerDefaultKwargSurface(scriptPath);
+  if (conditionMarkerDefaultKwargRepair.repaired) {
+    repaired = true;
+    messages.push(conditionMarkerDefaultKwargRepair.message || `Allowed default= for condition marker helper in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const conditionTrainEvalHelperBridgeRepair =
+    await repairPythonConditionTrainEvalHelperBridgeSurface(scriptPath);
+  if (conditionTrainEvalHelperBridgeRepair.repaired) {
+    repaired = true;
+    messages.push(conditionTrainEvalHelperBridgeRepair.message || `Bridged condition train/eval helpers in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const evaluationAnswerLabelAliasRepair =
+    await repairPythonEvaluationAnswerLabelAliasSurface(scriptPath);
+  if (evaluationAnswerLabelAliasRepair.repaired) {
+    repaired = true;
+    messages.push(evaluationAnswerLabelAliasRepair.message || `Accepted answer_label evaluation records in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const lockedSweepRuntimeRepair = await repairPythonLockedSweepRuntimeKwargBridgeSurface(scriptPath);
+  if (lockedSweepRuntimeRepair.repaired) {
+    repaired = true;
+    messages.push(lockedSweepRuntimeRepair.message || `Bridged locked-sweep runtime kwargs in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  if (!repaired) {
+    return { repaired: false, message: "" };
+  }
   return {
     repaired: true,
-    message: `Removed unsupported TrainingArguments kwarg(s) from ${path.basename(scriptPath)} before run_experiments execution.`
+    message: messages.join(" ")
   };
 }
 
