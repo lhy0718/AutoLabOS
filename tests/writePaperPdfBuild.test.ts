@@ -1325,6 +1325,96 @@ function buildManuscriptRepairTwiceResponses(options?: { unresolvedAfterSecond?:
   ];
 }
 
+function buildNarrowBlockingRepairAfterNetImprovementResponses(): string[] {
+  const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  initial.sections[2].paragraphs[0] =
+    "We compare a thread-backed drafting workflow with a stateless baseline, but the realized setup is not stated cleanly enough for reconstruction.";
+  initial.sections[4].paragraphs[0] = initial.sections[0].paragraphs[0];
+
+  const repair1 = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  repair1.sections[2].paragraphs[0] =
+    "We compare a thread-backed drafting workflow with a stateless baseline on the AgentBench-mini benchmark, but the realized backbone description remains ambiguous.";
+  repair1.sections[4].paragraphs[0] =
+    "The result is best interpreted as a narrow revision-stability comparison within the tested workflow setting.";
+
+  const repair2 = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  repair2.sections[2].paragraphs[0] =
+    "We compare a thread-backed drafting workflow with a stateless baseline on the AgentBench-mini benchmark using the same realized evaluation setup for both conditions.";
+
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(initial),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "section_completeness",
+          severity: "warning",
+          section: "Method",
+          repairable: true,
+          message: "The Method does not cleanly state the realized setup.",
+          fix_recommendation: "State the realized setup in the Method without broad rewrites.",
+          supporting_spans: [
+            {
+              section: "Method",
+              paragraph_index: 0,
+              excerpt: initial.sections[2].paragraphs[0],
+              reason: "The realized setup remains underspecified."
+            }
+          ]
+        },
+        {
+          code: "paragraph_redundancy",
+          severity: "warning",
+          section: "Discussion",
+          repairable: true,
+          message: "Discussion repeats the abstract framing.",
+          fix_recommendation: "Rewrite the discussion opening to interpret the result.",
+          supporting_spans: [
+            {
+              section: "Discussion",
+              paragraph_index: 0,
+              excerpt: initial.sections[4].paragraphs[0],
+              reason: "This repeats the abstract framing."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repair1, {
+      changed_location_keys: ["paragraph:method:0", "paragraph:discussion:0"]
+    }),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "section_completeness",
+          severity: "fail",
+          section: "Method",
+          repairable: true,
+          message: "The Method still gives an ambiguous account of the realized setup.",
+          fix_recommendation: "Resolve the Method setup statement directly.",
+          supporting_spans: [
+            {
+              section: "Method",
+              paragraph_index: 0,
+              excerpt: repair1.sections[2].paragraphs[0],
+              reason: "The realized setup is still ambiguous."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repair2, {
+      changed_location_keys: ["paragraph:method:0"]
+    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
 function buildRepeatedLintRepairResponses(): string[] {
   const contaminated = JSON.parse(buildPolishedManuscriptResponse({
     abstract:
@@ -2034,6 +2124,16 @@ function createPdfBuildAci(options?: {
         commands.push(command);
         if (!cwd) {
           throw new Error("Expected cwd for paper compilation.");
+        }
+        if (command === "python3 render_paper_figures.py") {
+          await writeFile(path.join(cwd, "main-result-figure-1.pdf"), "%PDF-1.4 mock figure\n", "utf8");
+          return {
+            status: "ok" as const,
+            stdout: "rendered 1 figure",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 3
+          };
         }
         if (options?.failAllCompiles && command.startsWith("pdflatex")) {
           return {
@@ -4570,6 +4670,44 @@ describe("writePaper PDF build", () => {
     expect(traceRaw).not.toContain("manuscript_repair_3");
   });
 
+  it("allows a second repair when the first repair has net improvement but leaves a narrow blocking issue", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-quality-narrow-blocking-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-quality-narrow-blocking");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildNarrowBlockingRepairAfterNetImprovementResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const round1Gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate_round_1.json"), "utf8")
+    ) as { action: string; improvement_detected: boolean; stop_or_continue_reason: string };
+    expect(round1Gate.action, round1Gate.stop_or_continue_reason).toBe("repair");
+    expect(round1Gate.improvement_detected).toBe(true);
+    expect(round1Gate.stop_or_continue_reason).toMatch(/remaining blocking issues are narrow/i);
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(true);
+
+    const finalGate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
+    ) as { action: string };
+    expect(finalGate.action).toBe("pass");
+  });
+
   it("stops after the first repair when the same manuscript-quality issue code repeats and does not run a second repair", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-quality-repeat-stop-"));
     process.chdir(root);
@@ -4641,7 +4779,17 @@ describe("writePaper PDF build", () => {
       eventStream: new InMemoryEventStream(),
       llm: new SequencedLLMClient([
         ...buildSessionResponses(),
-        buildPolishedManuscriptResponse(),
+        buildPolishedManuscriptResponse({
+          figures: [
+            {
+              caption: "Python-rendered comparison of revision stability.",
+              bars: [
+                { label: "Stateless baseline", value: 0.71 },
+                { label: "Thread-backed drafting", value: 0.76 }
+              ]
+            }
+          ]
+        }),
         buildManuscriptReviewResponse({ decision: "pass" }),
         buildManuscriptReviewAuditResponse()
       ]),
@@ -4658,6 +4806,95 @@ describe("writePaper PDF build", () => {
     expect(tex).toContain("\\usepackage{amsmath}");
     expect(tex).toContain("\\newcommand{\\eg}{\\textit{e.g.,}}");
     expect(tex).not.toContain("\\usepackage[margin=0.75in]{geometry}");
+  });
+
+  it("keeps ACL template dependencies and uses Python-rendered figure assets in the compiled paper", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-write-paper-acl-template-pdf-"));
+    process.chdir(root);
+
+    const run = makeRun("run-write-paper-acl-template-pdf");
+    const runDir = await seedRun(root, run);
+    await writeFile(
+      path.join(root, "template.tex"),
+      [
+        "\\pdfoutput=1",
+        "\\documentclass[11pt]{article}",
+        "\\usepackage[review]{ACL2023}",
+        "\\begin{document}",
+        "\\section{Introduction}",
+        "\\section{Results}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(path.join(root, "ACL2023.sty"), "% mock ACL style\n", "utf8");
+    await seedMediumScientificRun(run);
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put(
+      "run_brief.raw",
+      [
+        "# Research Brief",
+        "",
+        "## Topic",
+        "Template-faithful paper writing",
+        "",
+        "## Manuscript Authors",
+        "- authors: AutoLabOS Validation Team",
+        "- affiliations: Local Validation Workspace"
+      ].join("\n")
+    );
+    const aci = createPdfBuildAci();
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: true,
+          latex_engine: "auto_install"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient([
+        ...buildSessionResponses(),
+        buildPolishedManuscriptResponse({
+          figures: [
+            {
+              caption: "Python-rendered comparison of revision stability.",
+              bars: [
+                { label: "Stateless baseline", value: 0.71 },
+                { label: "Thread-backed drafting", value: 0.76 }
+              ]
+            }
+          ]
+        }),
+        buildManuscriptReviewResponse({ decision: "pass" }),
+        buildManuscriptReviewAuditResponse()
+      ]),
+      codex: {} as any,
+      aci: aci.api as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
+    expect(tex).toContain("\\pdfoutput=1");
+    expect(tex).toContain("\\usepackage[review]{ACL2023}");
+    expect(tex).not.toContain("\\textbf{Keywords:}");
+    expect(tex).toContain("\\includegraphics[width=\\columnwidth]{figures/main-result-figure-1.pdf}");
+    expect(await exists(path.join(runDir, "paper", "ACL2023.sty"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "figures", "main-result-figure-1.pdf"))).toBe(true);
+    expect(await exists(path.join(buildPublicPaperDir(root, run), "figures", "main-result-figure-1.pdf"))).toBe(true);
+    const renderValidation = JSON.parse(
+      await readFile(path.join(runDir, "paper", "render_validation.json"), "utf8")
+    ) as {
+      status: string;
+      metrics: { final_tex_preserves_template: boolean; rendered_figure_asset_count: number };
+    };
+    expect(renderValidation.status).toBe("pass");
+    expect(renderValidation.metrics.final_tex_preserves_template).toBe(true);
+    expect(renderValidation.metrics.rendered_figure_asset_count).toBeGreaterThan(0);
   });
 
   it("uses the brief Manuscript Template path when provided", async () => {

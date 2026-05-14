@@ -54,6 +54,7 @@ import {
 import {
   type PaperManuscript,
   type PaperAuthorMetadata,
+  type PaperManuscriptFigure,
   type PaperManuscriptVisualRow,
   type PaperSubmissionValidationReport,
   type PaperTraceabilityReport,
@@ -180,6 +181,9 @@ interface PaperFigureManifestEntry {
   audit_status: "pending" | "pass" | "fail" | "not_applicable";
   path?: string;
   prompt_path?: string;
+  render_source?: "python_vector_pdf";
+  render_status?: "pass" | "fail" | "skipped";
+  render_error?: string;
 }
 
 interface PaperFigureManifest {
@@ -217,6 +221,8 @@ interface PaperRenderValidationReport {
     max_overfull_hbox_pt: number;
     main_body_pdf_page_count: number | null;
     target_main_pages: number;
+    rendered_figure_asset_count: number;
+    final_tex_preserves_template: boolean;
   };
   summary: string[];
 }
@@ -834,12 +840,56 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
 
       const manuscript = manuscriptQuality.evaluation.manuscript;
       const traceability = manuscriptQuality.evaluation.traceability;
-      const tex = manuscriptQuality.evaluation.tex;
-      const figureManifest = buildPaperFigureManifest({
+      let tex = manuscriptQuality.evaluation.tex;
+      let figureManifest = buildPaperFigureManifest({
         manuscript,
         runTitle: run.title,
         topic: bundle.experimentPlan?.selectedTitle || run.title
       });
+      const publicPaperDir = buildPublicPaperDir(process.cwd(), run);
+      await ensureDir(publicPaperDir);
+      const publicFiguresDir = path.join(publicPaperDir, "figures");
+      await ensureDir(publicFiguresDir);
+      const runPaperDirForFigures = path.join(process.cwd(), ".autolabos", "runs", run.id, "paper");
+      if (deps.config?.paper?.build_pdf === true && typeof deps.aci?.runCommand === "function") {
+        figureManifest = await maybeRenderPaperFigureAssets({
+          deps,
+          run,
+          manuscript,
+          figureManifest,
+          runPaperDir: runPaperDirForFigures,
+          publicPaperDir,
+          abortSignal,
+          emitLog
+        });
+      }
+      const renderedFigureAssetCount = figureManifest.figures.filter(
+        (entry) => entry.kind === "result_chart" && entry.render_status === "pass" && entry.path
+      ).length;
+      if ((manuscript.figures || []).length > 0 && renderedFigureAssetCount > 0) {
+        tex = renderSubmissionPaperTex({
+          manuscript,
+          traceability,
+          citationKeysByPaperId: bibtex.citationKeysByPaperId,
+          template: deps.config?.paper?.template,
+          paperProfile,
+          parsedTemplate,
+          authorMetadata,
+          includeKeywords: !parsedTemplate,
+          figureRenderMode: "external_pdf"
+        });
+      } else if (parsedTemplate) {
+        tex = renderSubmissionPaperTex({
+          manuscript,
+          traceability,
+          citationKeysByPaperId: bibtex.citationKeysByPaperId,
+          template: deps.config?.paper?.template,
+          paperProfile,
+          parsedTemplate,
+          authorMetadata,
+          includeKeywords: false
+        });
+      }
       const figureManifestJson = `${JSON.stringify(figureManifest, null, 2)}\n`;
       const conceptualDiagramPromptJson = figureManifest.conceptual_diagram_prompt
         ? `${JSON.stringify(figureManifest.conceptual_diagram_prompt, null, 2)}\n`
@@ -925,10 +975,6 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         `${JSON.stringify(validationRepair, null, 2)}\n`
       );
 
-      const publicPaperDir = buildPublicPaperDir(process.cwd(), run);
-      await ensureDir(publicPaperDir);
-      const publicFiguresDir = path.join(publicPaperDir, "figures");
-      await ensureDir(publicFiguresDir);
       await fs.writeFile(path.join(publicPaperDir, "main.tex"), tex, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "references.bib"), bibtex.references, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "manuscript.json"), manuscriptJson, "utf8");
@@ -1256,7 +1302,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         run,
         abortSignal,
         emitLog,
-        publicPaperDir
+        publicPaperDir,
+        parsedTemplate
       });
       const runPaperDir = path.join(process.cwd(), ".autolabos", "runs", run.id, "paper");
       const publicOutputs = await publishPublicRunOutputs({
@@ -1324,9 +1371,21 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
             targetRelativePath: "figures/concept_diagram_prompt.json",
             optional: true
           },
+          ...figureManifest.figures
+            .filter((entry) => entry.kind === "result_chart" && entry.path)
+            .map((entry) => ({
+              sourcePath: path.join(runPaperDir, entry.path!),
+              targetRelativePath: entry.path!,
+              optional: true
+            })),
           {
             sourcePath: path.join(runPaperDir, "paper_readiness.json"),
             targetRelativePath: "paper_readiness.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "submission_validation.json"),
+            targetRelativePath: "submission_validation.json",
             optional: true
           },
           {
@@ -1493,10 +1552,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       if (compiledPageValidation.status === "warn") {
         emitLog(`Compiled PDF page-budget warning: ${compiledPageValidation.message}`);
       }
+      const finalTexForValidation = (await safeRead(path.join(runPaperDir, "main.tex"))) || tex;
       const renderValidation = buildPaperRenderValidation({
         validationMode,
         manuscript,
-        tex,
+        tex: finalTexForValidation,
         authorMetadata,
         parsedTemplate,
         citationReport: citationConsistency,
@@ -2074,6 +2134,7 @@ async function maybeBuildPaperPdf(input: {
   abortSignal?: AbortSignal;
   emitLog: (text: string) => void;
   publicPaperDir: string;
+  parsedTemplate?: ParsedLatexTemplate | null;
 }): Promise<PaperCompileResult> {
   const buildPdf = input.deps.config?.paper?.build_pdf === true;
   if (!buildPdf) {
@@ -2095,6 +2156,12 @@ async function maybeBuildPaperPdf(input: {
   let repairError: string | undefined;
 
   input.emitLog("PDF build is enabled; starting LaTeX compilation.");
+  await copyLatexTemplateDependencies({
+    parsedTemplate: input.parsedTemplate,
+    runPaperDir,
+    publicPaperDir: input.publicPaperDir,
+    emitLog: input.emitLog
+  });
 
   const firstAttempt = await runLatexCompileAttempt({
     deps: input.deps,
@@ -2336,6 +2403,71 @@ async function runLatexCompileAttempt(input: {
       pdf_exists: true
     }
   };
+}
+
+async function copyLatexTemplateDependencies(input: {
+  parsedTemplate?: ParsedLatexTemplate | null;
+  runPaperDir: string;
+  publicPaperDir: string;
+  emitLog: (text: string) => void;
+}): Promise<void> {
+  const sourcePath = input.parsedTemplate?.sourcePath;
+  if (!sourcePath) {
+    return;
+  }
+  const templateDir = path.dirname(sourcePath);
+  const packageNames = new Set<string>();
+  for (const packageLine of input.parsedTemplate?.packages || []) {
+    for (const match of packageLine.matchAll(/\\usepackage(?:\[[^\]]*\])?\{([^}]+)\}/g)) {
+      for (const name of match[1].split(",")) {
+        const trimmed = name.trim();
+        if (trimmed) {
+          packageNames.add(trimmed);
+        }
+      }
+    }
+  }
+
+  const copied = new Set<string>();
+  const copyCandidate = async (candidate: string): Promise<void> => {
+    if (!(await fileExists(candidate))) {
+      return;
+    }
+    const basename = path.basename(candidate);
+    if (copied.has(basename)) {
+      return;
+    }
+    await fs.copyFile(candidate, path.join(input.runPaperDir, basename));
+    await fs.copyFile(candidate, path.join(input.publicPaperDir, basename));
+    copied.add(basename);
+  };
+
+  for (const name of packageNames) {
+    await copyCandidate(path.join(templateDir, `${name}.sty`));
+  }
+
+  let siblings: string[] = [];
+  try {
+    siblings = await fs.readdir(templateDir);
+  } catch {
+    siblings = [];
+  }
+  for (const sibling of siblings) {
+    if (!/\.(?:sty|bst|cls|bbx|cbx|def|cfg)$/iu.test(sibling)) {
+      continue;
+    }
+    const lower = sibling.toLowerCase();
+    const matchesPackage =
+      packageNames.size === 0 ||
+      Array.from(packageNames).some((name) => lower === `${name.toLowerCase()}.sty`);
+    if (matchesPackage || /\.(?:bst|cls)$/iu.test(sibling)) {
+      await copyCandidate(path.join(templateDir, sibling));
+    }
+  }
+
+  if (copied.size > 0) {
+    input.emitLog(`Copied ${copied.size} LaTeX template dependency file(s) into the paper build directory.`);
+  }
 }
 
 async function finalizeCompiledArtifacts(
@@ -3497,21 +3629,35 @@ function buildFollowupManuscriptRepairDecision(input: {
         "The follow-up manuscript review artifact remained degraded after bounded validation and audit, so a second manuscript repair is not allowed."
     }, reviewReliability);
   }
-  if (!improvement || worsenedIssues(input.previousIssues, input.issuesAfter)) {
+  if (repeatedCriticalIssues.length > 0) {
     return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,
-      triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
+      triggered_by: repeatedCriticalIssues.map((item) => item.code),
       allowed_max_passes: 1,
       remaining_allowed_repairs: 0,
       issues_before: input.previousIssues,
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
-      stop_or_continue_reason: "The first manuscript repair did not show a reliable quality improvement."
+      stop_or_continue_reason: "Critical manuscript-quality issue codes repeated after the first repair pass."
+    }, reviewReliability);
+  }
+  if (repeatedIssueSignatures.length > 0 && !improvement) {
+    return finalizeManuscriptRepairDecision({
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(repeatedIssueSignatures.map((item) => item.code)),
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason: "The same manuscript-quality issue code repeated after repair, so the loop stops instead of retrying silently."
     }, reviewReliability);
   }
   const blockingIssuesAfter = input.issuesAfter.filter((issue) => issue.severity === "fail");
   const narrowBlockingScope =
+    improvement &&
     remainingFailCount > 0 &&
     blockingIssuesAfter.every((issue) => issue.repairable) &&
     blockingIssuesAfter.length <= 3 &&
@@ -3531,33 +3677,21 @@ function buildFollowupManuscriptRepairDecision(input: {
         "A second and final manuscript repair is allowed because the remaining blocking issues are narrow, repairable, and improved after pass 1."
     }, reviewReliability);
   }
-  if (repeatedCriticalIssues.length > 0) {
+  if (!improvement || worsenedIssues(input.previousIssues, input.issuesAfter)) {
     return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,
-      triggered_by: repeatedCriticalIssues.map((item) => item.code),
+      triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
       allowed_max_passes: 1,
       remaining_allowed_repairs: 0,
       issues_before: input.previousIssues,
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
-      stop_or_continue_reason: "Critical manuscript-quality issue codes repeated after the first repair pass."
-    }, reviewReliability);
-  }
-  if (repeatedIssueSignatures.length > 0) {
-    return finalizeManuscriptRepairDecision({
-      action: "stop",
-      pass_index: input.passIndex,
-      triggered_by: uniqueStrings(repeatedIssueSignatures.map((item) => item.code)),
-      allowed_max_passes: 1,
-      remaining_allowed_repairs: 0,
-      issues_before: input.previousIssues,
-      issues_after: input.issuesAfter,
-      improvement_detected: improvement,
-      stop_or_continue_reason: "The same manuscript-quality issue code repeated after repair, so the loop stops instead of retrying silently."
+      stop_or_continue_reason: "The first manuscript repair did not show a reliable quality improvement."
     }, reviewReliability);
   }
   const narrowScope =
+    improvement &&
     input.issuesAfter.every((issue) => issue.repairable) &&
     input.issuesAfter.length <= 3 &&
     uniqueStrings(input.issuesAfter.map((issue) => `${issue.source}:${issue.code}`)).length <= 3 &&
@@ -3695,9 +3829,27 @@ function resolveReviewArtifactReliability(
     reviewValidation.artifact_reliability === "partially_grounded"
     || reviewAudit.artifact_reliability === "partially_grounded"
   ) {
+    if (isNonBlockingReviewValidationMismatch(reviewValidation, reviewAudit)) {
+      return "grounded";
+    }
     return "partially_grounded";
   }
   return "grounded";
+}
+
+function isNonBlockingReviewValidationMismatch(
+  reviewValidation: ManuscriptReviewValidationArtifact,
+  reviewAudit: ManuscriptReviewAuditArtifact
+): boolean {
+  return reviewValidation.ok
+    && reviewValidation.artifact_reliability === "grounded"
+    && reviewAudit.ok
+    && !reviewAudit.retry_recommended
+    && reviewAudit.artifact_reliability === "partially_grounded"
+    && reviewAudit.issues.length > 0
+    && reviewAudit.issues.every((issue) =>
+      issue.severity === "warning" && issue.code === "check_issue_mismatch"
+    );
 }
 
 function finalizeManuscriptRepairDecision(
@@ -4668,6 +4820,176 @@ function buildPaperFigureManifest(input: {
   };
 }
 
+async function maybeRenderPaperFigureAssets(input: {
+  deps: NodeExecutionDeps;
+  run: Parameters<GraphNodeHandler["execute"]>[0]["run"];
+  manuscript: PaperManuscript;
+  figureManifest: PaperFigureManifest;
+  runPaperDir: string;
+  publicPaperDir: string;
+  abortSignal?: AbortSignal;
+  emitLog: (text: string) => void;
+}): Promise<PaperFigureManifest> {
+  const figures = input.manuscript.figures || [];
+  if (figures.length === 0) {
+    return input.figureManifest;
+  }
+
+  const figuresDir = path.join(input.runPaperDir, "figures");
+  const publicFiguresDir = path.join(input.publicPaperDir, "figures");
+  await ensureDir(figuresDir);
+  await ensureDir(publicFiguresDir);
+
+  const payload = {
+    figures: figures.map((figure, index) => ({
+      id: `main-result-figure-${index + 1}`,
+      output_pdf: `main-result-figure-${index + 1}.pdf`,
+      caption: figure.caption,
+      bars: figure.bars.map((row) => ({
+        label: row.label,
+        value: row.value
+      }))
+    }))
+  };
+  await fs.writeFile(path.join(figuresDir, "figure_payload.json"), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  await fs.writeFile(path.join(figuresDir, "render_paper_figures.py"), buildPythonVectorFigureRendererScript(), "utf8");
+
+  const command = "python3 render_paper_figures.py";
+  input.deps.eventStream.emit({
+    type: "TOOL_CALLED",
+    runId: input.run.id,
+    node: "write_paper",
+    payload: {
+      command,
+      cwd: figuresDir,
+      source: "paper_figure_render"
+    }
+  });
+  const obs = await input.deps.aci.runCommand(command, figuresDir, input.abortSignal);
+  if (obs.status !== "ok") {
+    const error = (obs.stderr || obs.stdout || "Python figure rendering failed").trim();
+    input.emitLog(`Python figure rendering failed: ${error}`);
+    return {
+      ...input.figureManifest,
+      figures: input.figureManifest.figures.map((entry) =>
+        entry.kind === "result_chart"
+          ? {
+              ...entry,
+              status: "needs_generation",
+              render_source: "python_vector_pdf",
+              render_status: "fail",
+              render_error: error
+            }
+          : entry
+      )
+    };
+  }
+
+  const copiedIds: string[] = [];
+  for (const figure of payload.figures) {
+    const sourcePath = path.join(figuresDir, figure.output_pdf);
+    if (!(await fileExists(sourcePath))) {
+      continue;
+    }
+    await fs.copyFile(sourcePath, path.join(publicFiguresDir, figure.output_pdf));
+    copiedIds.push(figure.id);
+  }
+  input.emitLog(`Rendered ${copiedIds.length}/${figures.length} paper figure asset(s) with Python.`);
+
+  return {
+    ...input.figureManifest,
+    figures: input.figureManifest.figures.map((entry) => {
+      if (entry.kind !== "result_chart") {
+        return entry;
+      }
+      const outputPath = `figures/${entry.id}.pdf`;
+      return {
+        ...entry,
+        path: outputPath,
+        status: copiedIds.includes(entry.id) ? "rendered" : "needs_generation",
+        render_source: "python_vector_pdf",
+        render_status: copiedIds.includes(entry.id) ? "pass" : "fail",
+        ...(!copiedIds.includes(entry.id) ? { render_error: "expected Python-rendered PDF asset was not created" } : {})
+      };
+    })
+  };
+}
+
+function buildPythonVectorFigureRendererScript(): string {
+  return String.raw`#!/usr/bin/env python3
+import json
+import math
+from pathlib import Path
+
+def pdf_escape(value):
+    return str(value).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+def text_cmd(x, y, text, size=7, color=(0, 0, 0)):
+    r, g, b = color
+    return f"{r:.3f} {g:.3f} {b:.3f} rg BT /F1 {size} Tf {x:.2f} {y:.2f} Td ({pdf_escape(text)}) Tj ET\n"
+
+def rect_cmd(x, y, w, h, color):
+    r, g, b = color
+    return f"{r:.3f} {g:.3f} {b:.3f} rg {x:.2f} {y:.2f} {w:.2f} {h:.2f} re f\n"
+
+def line_cmd(x1, y1, x2, y2):
+    return f"0.25 w 0 0 0 RG {x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S\n"
+
+def render_figure(figure):
+    bars = figure.get("bars") or []
+    width, height = 288, 176
+    margin_l, margin_r, margin_t, margin_b = 100, 18, 22, 30
+    plot_w = width - margin_l - margin_r
+    plot_h = height - margin_t - margin_b
+    values = [float(row.get("value", 0) or 0) for row in bars]
+    max_value = max([abs(v) for v in values] + [1.0])
+    row_h = plot_h / max(len(bars), 1)
+    colors = [(0.196, 0.388, 0.733), (0.835, 0.369, 0.000), (0.235, 0.627, 0.310)]
+
+    content = []
+    content.append("1 1 1 rg 0 0 288 176 re f\n")
+    content.append(text_cmd(10, 160, "Task-level accuracy comparison", 8))
+    content.append(line_cmd(margin_l, margin_b, margin_l + plot_w, margin_b))
+    content.append(line_cmd(margin_l, margin_b, margin_l, margin_b + plot_h))
+    for tick in [0, 0.25, 0.5, 0.75, 1.0]:
+        x = margin_l + plot_w * tick
+        content.append("0.85 0.85 0.85 RG 0.2 w " + f"{x:.2f} {margin_b:.2f} m {x:.2f} {margin_b + plot_h:.2f} l S\n")
+        content.append(text_cmd(x - 5, 16, f"{tick * max_value:.2f}", 5.5, (0.18, 0.18, 0.18)))
+    for index, row in enumerate(bars):
+        label = str(row.get("label", ""))[:36]
+        value = float(row.get("value", 0) or 0)
+        y = margin_b + plot_h - (index + 0.7) * row_h
+        bar_h = max(7, row_h * 0.42)
+        bar_w = max(1, (abs(value) / max_value) * plot_w)
+        content.append(text_cmd(10, y + 1, label, 6.4, (0.05, 0.05, 0.05)))
+        content.append(rect_cmd(margin_l, y, bar_w, bar_h, colors[index % len(colors)]))
+        content.append(text_cmd(margin_l + bar_w + 3, y + 1, f"{value:.4f}", 6.2, (0.05, 0.05, 0.05)))
+    stream = "".join(content).encode("latin-1", "replace")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 288 176] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"endstream",
+    ]
+    out = [b"%PDF-1.4\n"]
+    offsets = [0]
+    for i, obj in enumerate(objects, 1):
+        offsets.append(sum(len(part) for part in out))
+        out.append(f"{i} 0 obj\n".encode("ascii") + obj + b"\nendobj\n")
+    xref = sum(len(part) for part in out)
+    out.append(f"xref\n0 {len(objects)+1}\n0000000000 65535 f \n".encode("ascii"))
+    for offset in offsets[1:]:
+        out.append(f"{offset:010d} 00000 n \n".encode("ascii"))
+    out.append(f"trailer << /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode("ascii"))
+    return b"".join(out)
+
+payload = json.loads(Path("figure_payload.json").read_text(encoding="utf-8"))
+for figure in payload.get("figures", []):
+    Path(figure["output_pdf"]).write_bytes(render_figure(figure))
+`;
+}
+
 function buildConceptualDiagramPrompt(input: {
   runTitle: string;
   topic: string;
@@ -4717,6 +5039,14 @@ function buildPaperRenderValidation(input: {
   if (!input.parsedTemplate) {
     failOrWarn("missing_template", "Strict paper output requires an explicit manuscript template file.");
   }
+  const templatePreservation = checkFinalTexPreservesTemplate(input.tex, input.parsedTemplate);
+  if (input.parsedTemplate && !templatePreservation.ok) {
+    failOrWarn(
+      "template_not_preserved",
+      `Final rendered TeX no longer preserves the requested template surface: ${templatePreservation.missing.join(", ")}.`,
+      false
+    );
+  }
   if (input.citationReport.status === "fail") {
     failOrWarn(
       "citation_rendering_failed",
@@ -4741,8 +5071,26 @@ function buildPaperRenderValidation(input: {
   const mainBodyTableCount = (input.manuscript.tables || []).length;
   const resultChartCount = input.figureManifest.figures.filter((figure) => figure.kind === "result_chart" && figure.included_in_main_body).length;
   const conceptualDiagramCount = input.figureManifest.figures.filter((figure) => figure.kind !== "result_chart" && figure.included_in_main_body).length;
+  const renderedFigureAssetCount = input.figureManifest.figures.filter(
+    (figure) => figure.kind === "result_chart" && figure.included_in_main_body && figure.render_status === "pass" && figure.path
+  ).length;
   if (mainBodyTableCount > 0 && mainBodyFigureCount === 0) {
     failOrWarn("missing_main_body_figure", "A quantitative paper with main result tables must include at least one audited main-body figure or chart.");
+  }
+  const requiresRenderedFigureAssets = input.compileResult.enabled && mainBodyFigureCount > 0;
+  if (requiresRenderedFigureAssets && renderedFigureAssetCount < mainBodyFigureCount) {
+    failOrWarn(
+      "missing_python_rendered_figure",
+      "Main-body result figures must be rendered as Python-generated vector PDF assets and included with \\includegraphics.",
+      false
+    );
+  }
+  if (requiresRenderedFigureAssets && renderedFigureAssetCount > 0 && !/\\includegraphics(?:\[[^\]]*\])?\{figures\/main-result-figure-\d+\.pdf\}/u.test(input.tex)) {
+    failOrWarn(
+      "python_rendered_figure_not_included",
+      "Python-rendered result figure assets exist but the final TeX does not include them with \\includegraphics.",
+      false
+    );
   }
 
   const rawLeak = extractRawPaperTextLeak(input.tex);
@@ -4772,7 +5120,9 @@ function buildPaperRenderValidation(input: {
       overfull_hbox_count: overfull.length,
       max_overfull_hbox_pt: Number(maxOverfull.toFixed(2)),
       main_body_pdf_page_count: input.compiledPageValidation.main_body_pdf_page_count ?? input.compiledPageValidation.compiled_pdf_page_count,
-      target_main_pages: input.compiledPageValidation.target_main_pages
+      target_main_pages: input.compiledPageValidation.target_main_pages,
+      rendered_figure_asset_count: renderedFigureAssetCount,
+      final_tex_preserves_template: templatePreservation.ok
     },
     summary:
       issues.length === 0
@@ -4793,6 +5143,28 @@ function collectCompileLogText(compileResult: PaperCompileResult): string {
       ...attempt.commands.flatMap((command) => [command.stdout || "", command.stderr || ""])
     ])
   ].join("\n");
+}
+
+function checkFinalTexPreservesTemplate(
+  tex: string,
+  parsedTemplate: ParsedLatexTemplate | null
+): { ok: boolean; missing: string[] } {
+  if (!parsedTemplate) {
+    return { ok: true, missing: [] };
+  }
+  const missing: string[] = [];
+  if (parsedTemplate.preDocumentPreamble && !tex.includes(parsedTemplate.preDocumentPreamble)) {
+    missing.push(parsedTemplate.preDocumentPreamble);
+  }
+  if (parsedTemplate.documentClass && !tex.includes(parsedTemplate.documentClass)) {
+    missing.push(parsedTemplate.documentClass);
+  }
+  for (const packageLine of parsedTemplate.packages) {
+    if (packageLine && !tex.includes(packageLine)) {
+      missing.push(packageLine);
+    }
+  }
+  return { ok: missing.length === 0, missing };
 }
 
 function extractOverfullHBoxPoints(text: string): number[] {

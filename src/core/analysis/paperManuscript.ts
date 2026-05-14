@@ -1521,6 +1521,8 @@ export function renderSubmissionPaperTex(input: {
   paperProfile?: PaperProfileConfig;
   parsedTemplate?: ParsedLatexTemplate | null;
   authorMetadata?: PaperAuthorMetadata | null;
+  includeKeywords?: boolean;
+  figureRenderMode?: "latex_bars" | "external_pdf";
 }): string {
   const sectionCitationMap = new Map<string, string[]>();
   for (const item of input.traceability.paragraphs) {
@@ -1537,6 +1539,7 @@ export function renderSubmissionPaperTex(input: {
 
   const lines = input.parsedTemplate
     ? [
+        ...(input.parsedTemplate.preDocumentPreamble ? [input.parsedTemplate.preDocumentPreamble] : []),
         input.parsedTemplate.documentClass || resolveDocumentClass(input.template).replace("{article}", `${docClassOptions}{article}`),
         input.parsedTemplate.preamble,
         ...supportPackages,
@@ -1567,7 +1570,7 @@ export function renderSubmissionPaperTex(input: {
         "\\end{abstract}"
       ];
 
-  if (input.manuscript.keywords.length > 0) {
+  if (input.includeKeywords !== false && input.manuscript.keywords.length > 0) {
     lines.push(`\\noindent\\textbf{Keywords:} ${latexEscape(input.manuscript.keywords.join(", "))}`);
     lines.push("");
   }
@@ -1585,13 +1588,13 @@ export function renderSubmissionPaperTex(input: {
     }
 
     if (!visualsRendered && normalizeHeadingKey(section.heading) === "results") {
-      lines.push(...renderSubmissionVisuals(input.manuscript));
+      lines.push(...renderSubmissionVisuals(input.manuscript, input.figureRenderMode));
       visualsRendered = true;
     }
   }
 
   if (!visualsRendered) {
-    lines.push(...renderSubmissionVisuals(input.manuscript));
+    lines.push(...renderSubmissionVisuals(input.manuscript, input.figureRenderMode));
   }
 
   lines.push("\\bibliographystyle{plain}");
@@ -2251,13 +2254,17 @@ function renderSubmissionParagraph(
   return `${latexEscape(paragraph)}${citationSuffix}${unresolvedSuffix}`;
 }
 
-function renderSubmissionVisuals(manuscript: PaperManuscript): string[] {
-  return renderVisualCollection(manuscript.tables || [], manuscript.figures || []);
+function renderSubmissionVisuals(
+  manuscript: PaperManuscript,
+  figureRenderMode: "latex_bars" | "external_pdf" = "latex_bars"
+): string[] {
+  return renderVisualCollection(manuscript.tables || [], manuscript.figures || [], figureRenderMode);
 }
 
 function renderVisualCollection(
   tables: PaperManuscriptTable[],
-  figures: PaperManuscriptFigure[]
+  figures: PaperManuscriptFigure[],
+  figureRenderMode: "latex_bars" | "external_pdf" = "latex_bars"
 ): string[] {
   const lines: string[] = [];
   for (const table of tables) {
@@ -2278,7 +2285,17 @@ function renderVisualCollection(
     lines.push("");
   }
 
-  for (const figure of figures) {
+  for (let index = 0; index < figures.length; index += 1) {
+    const figure = figures[index];
+    if (figureRenderMode === "external_pdf") {
+      lines.push("\\begin{figure}[t]");
+      lines.push("\\centering");
+      lines.push(`\\includegraphics[width=\\columnwidth]{figures/main-result-figure-${index + 1}.pdf}`);
+      lines.push(`\\caption{${latexEscape(figure.caption)}}`);
+      lines.push("\\end{figure}");
+      lines.push("");
+      continue;
+    }
     const maxValue = Math.max(...figure.bars.map((row) => Math.abs(row.value)), 1);
     lines.push("\\begin{figure}[t]");
     lines.push("\\centering");
@@ -2300,6 +2317,7 @@ function renderVisualCollection(
 function buildSubmissionSupportPackages(parsedTemplate?: ParsedLatexTemplate | null): string[] {
   const preamble = parsedTemplate?.preamble || "";
   const packages = [
+    "\\usepackage{graphicx}",
     "\\usepackage{booktabs}",
     "\\usepackage{array}",
     "\\usepackage{tabularx}"

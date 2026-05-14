@@ -55,5 +55,6 @@ Always report:
 - Do not break canonical runtime paths while cleaning structure.
 - Distinguish between "artifact exists" and "artifact is correctly wired and usable".
 - Do not treat a fallback built-in preamble as equivalent to the requested submission template.
+- Do not treat `template_applied=true` as sufficient if the final rendered `main.tex` no longer preserves the requested template package/class (for example `\usepackage[review]{ACL2023}`) or if required sibling `.sty`/`.bst` files were not copied into the paper build directory.
 - If the template package name and available `.sty` filename differ by case, call it out as a build-risk and fix it in the workspace before rerunning.
 - Do not mark paper-generation complete until rendered inspection has checked the concrete complaints or quality criteria the user raised.

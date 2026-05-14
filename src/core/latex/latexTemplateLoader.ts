@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 
 export type ParsedLatexTemplate = {
   sourcePath: string;
+  preDocumentPreamble: string;
   preamble: string;
   documentClass: string;
   columnLayout: 1 | 2 | null;
@@ -133,6 +134,17 @@ function extractPreamble(raw: string, documentClass: string): string {
   return preamble.trim();
 }
 
+function extractPreDocumentPreamble(raw: string, documentClass: string): string {
+  if (!documentClass) {
+    return "";
+  }
+  const docClassIndex = raw.indexOf(documentClass);
+  if (docClassIndex <= 0) {
+    return "";
+  }
+  return raw.slice(0, docClassIndex).trim();
+}
+
 export async function loadLatexTemplate(templatePath: string): Promise<ParsedLatexTemplate> {
   const sourcePath = path.resolve(templatePath);
   try {
@@ -147,6 +159,7 @@ export async function loadLatexTemplate(templatePath: string): Promise<ParsedLat
 
   return {
     sourcePath,
+    preDocumentPreamble: extractPreDocumentPreamble(raw, documentClass),
     preamble,
     documentClass,
     columnLayout: detectColumnLayout(documentClass),

@@ -16,6 +16,54 @@ import {
 } from "../src/core/analysis/paperManuscript.js";
 
 describe("paper submission sanitization", () => {
+  it("preserves ACL template surface while using Python-rendered figure assets and omitting non-template keywords", () => {
+    const manuscript = {
+      title: "Template-faithful paper",
+      abstract: "A concise abstract.",
+      keywords: ["should not render"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We introduce the question."] },
+        { heading: "Results", paragraphs: ["The comparison is shown in Figure 1."] }
+      ],
+      tables: [
+        {
+          caption: "Condition-level accuracy.",
+          rows: [{ label: "baseline", value: 0.3333 }]
+        }
+      ],
+      figures: [
+        {
+          caption: "Python-rendered task-level accuracy split.",
+          bars: [{ label: "baseline", value: 0.3333 }]
+        }
+      ]
+    };
+    const tex = renderSubmissionPaperTex({
+      manuscript,
+      traceability: { paragraphs: [] },
+      citationKeysByPaperId: new Map(),
+      parsedTemplate: {
+        sourcePath: "/workspace/template.tex",
+        preDocumentPreamble: "\\pdfoutput=1",
+        documentClass: "\\documentclass[11pt]{article}",
+        preamble: "\\usepackage[review]{ACL2023}",
+        columnLayout: 1,
+        packages: ["\\usepackage[review]{ACL2023}"],
+        sectionOrder: ["Introduction", "Results"],
+        customCommands: [],
+        bibliographyStyle: null
+      },
+      includeKeywords: false,
+      figureRenderMode: "external_pdf"
+    });
+
+    expect(tex).toContain("\\pdfoutput=1");
+    expect(tex).toContain("\\usepackage[review]{ACL2023}");
+    expect(tex).not.toContain("\\textbf{Keywords:}");
+    expect(tex).toContain("\\includegraphics[width=\\columnwidth]{figures/main-result-figure-1.pdf}");
+    expect(tex).not.toContain("\\makebox[4.2em][l]");
+  });
+
   it("removes internal run paths from fallback paper drafting before submission validation", () => {
     const bundle: PaperWritingBundle = {
       runTitle: "Budget-aware run",
