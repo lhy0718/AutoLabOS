@@ -3193,7 +3193,9 @@ function buildStructuredNumericFact(input: {
         : undefined;
   const semantics = inferMetricSemantics(metricKey);
   const comparisonTarget =
-    input.comparisonTarget || inferConditionComparisonTarget(input.rawText) || semantics.comparisonTarget;
+    input.comparisonTarget
+    || (isConditionClusterStatement(rawText) ? undefined : inferConditionComparisonTarget(input.rawText))
+    || semantics.comparisonTarget;
   const location = cleanString(input.location);
   return {
     fact_id: [
@@ -3363,6 +3365,9 @@ function inferDatasetScope(
   source: NumericFactSource
 ): string | "aggregate" | "unknown" {
   const cleaned = cleanString(text).toLowerCase();
+  if (/\bmean accuracy\b[^.!?]{0,120}\bdriven entirely by\b/iu.test(cleaned)) {
+    return "aggregate";
+  }
   const mentionsArcChallenge = /\barc[-_\s]?challenge\b/iu.test(cleaned);
   const mentionsHellaSwag = /\bhella\s*swag\b|\bhellaswag\b/iu.test(cleaned);
   if (
@@ -3398,7 +3403,7 @@ function inferDatasetScope(
   ) {
     return "aggregate";
   }
-  return ["abstract", "results", "conclusion", "appendix_section"].includes(source) ? "aggregate" : "unknown";
+  return ["abstract", "results", "discussion", "conclusion", "appendix_section"].includes(source) ? "aggregate" : "unknown";
 }
 
 function inferAggregationLevel(text: string, datasetScope: string | "aggregate" | "unknown"): NumericFactAggregation {
@@ -3408,8 +3413,8 @@ function inferAggregationLevel(text: string, datasetScope: string | "aggregate" 
   }
   if (
     /\bcondition[-\s]?level\b|\brank\/dropout grid\b|\brank[-\s]?dropout grid\b/iu.test(cleaned)
-    || (/\brank\s+\d+(?:\.\d+)?\b/iu.test(cleaned) && /\bdropout\b/iu.test(cleaned))
-    || /\brank\s+\d+(?:\.\d+)?\b[^.!?]{0,80}\bdropout\s+\d+(?:\.\d+)?\b/iu.test(cleaned)
+    || (/\brank[-\s]+\d+(?:\.\d+)?\b/iu.test(cleaned) && /\bdropout\b/iu.test(cleaned))
+    || /\brank[-\s]+\d+(?:\.\d+)?\b[^.!?]{0,80}\bdropout[-\s]+\d+(?:\.\d+)?\b/iu.test(cleaned)
     || /\b(?:best|leading)\s+(?:reported\s+)?(?:accuracy\s+)?cell\b/iu.test(cleaned)
     || /\b(?:locked\s+)?baseline\b[^.!?]{0,80}\b(?:condition|cell|reports?)\b/iu.test(cleaned)
     || /\b(?:average\s+)?accuracy\b[^!?]{0,100}\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^!?]{0,100}\bfrom\b[^!?]{0,100}\bto\b/iu.test(cleaned)
@@ -3865,6 +3870,9 @@ function inferConditionComparisonTarget(text: string, rawIndex?: number): string
   if (!cleaned || !/\branks?\b|\bdropout\b/iu.test(cleaned)) {
     return undefined;
   }
+  if (typeof rawIndex === "number" && isConditionClusterMetricValue(cleaned, rawIndex)) {
+    return undefined;
+  }
   const explicitBaselineTarget = inferBaselineComparisonTarget(cleaned, rawIndex);
   if (explicitBaselineTarget) {
     return explicitBaselineTarget;
@@ -3896,6 +3904,28 @@ function inferConditionComparisonTarget(text: string, rawIndex?: number): string
     }
   }
   return candidates.sort((left, right) => left.distance - right.distance)[0]?.target;
+}
+
+function isConditionClusterMetricValue(text: string, rawIndex: number): boolean {
+  const patterns = [
+    /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:clustered|sat|were|remained)\s+at\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
+    /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:clustered|sat|were|remained)\s+at\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const value = match[1] || "";
+      const valueIndex = (match.index || 0) + match[0].indexOf(value);
+      if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function isConditionClusterStatement(text: string): boolean {
+  return /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
+    || /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text);
 }
 
 function inferExplicitConditionValueTarget(text: string, rawIndex: number | undefined): string | undefined {
@@ -4140,7 +4170,10 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
   if (/^\s*tokens?\b/iu.test(nextWindow)) {
     return true;
   }
-  if (/^\s*(?:optimizer\s+)?steps?\b/iu.test(nextWindow) || /^\s*-?\s*seconds?\s+timeout\b/iu.test(nextWindow)) {
+  if (
+    /^\s*(?:optimizer\s+)?steps?\b/iu.test(nextWindow)
+    || /^\s*-?\s*(?:s|sec|secs|second|seconds)\s+timeout\b/iu.test(nextWindow)
+  ) {
     return true;
   }
   if (/\b(?:max(?:imum)?\s+sequence\s+length|sequence\s+length|max[_\s-]?seq(?:uence)?[_\s-]?length)\s*$/iu.test(previousWindow)) {

@@ -1793,6 +1793,7 @@ describe("scientificWriting", () => {
                 "The best observed cell improved mean accuracy from 0.333 to 0.417, with training loss 1.524 versus 1.462 for the baseline and a cost profile of 45.687 s wall-clock time and about 4.28 GB peak CUDA memory.",
                 "Average accuracy rises from 0.333334 to 0.416666, an absolute gain of 0.083332, which is equivalent to 8.33 percentage points.",
                 "For the leading rank-32/dropout-0.05 condition, mean accuracy was 0.4167 versus 0.3333 for the locked baseline, a gain of 0.0833.",
+                "Read directly, it shows that seven conditions clustered at 0.3333 mean accuracy and that only rank 32 / dropout 0.05 exceeded the baseline, reaching 0.4167.",
                 "The rank-16 rows are useful mainly as a calibration point, while the rank-32 rows carry the strongest follow-up signal.",
                 "The primary sweep completed all eight planned conditions in 45.687 seconds of wall-clock runtime, with a peak CUDA allocation of 4,278,951,936 bytes, or roughly 4.28 GB."
               ]
@@ -1801,15 +1802,30 @@ describe("scientificWriting", () => {
                   ...section.paragraphs.map((paragraph) => paragraph.text),
                   "The executed metadata specify a maximum sequence length of 256 tokens, 4 optimizer steps, and an 1800-second timeout budget."
                 ]
+            : section.heading === "Discussion"
+              ? [
+                  ...section.paragraphs.map((paragraph) => paragraph.text),
+                  "The rank-32 dropout-0.05 cell improved accuracy delta versus the locked baseline by 0.0833 in the reported comparison."
+                ]
+            : section.heading === "Conclusion"
+              ? [
+                  ...section.paragraphs.map((paragraph) => paragraph.text),
+                  "In the main verified run, rank 32 with dropout 0.05 outperformed the locked baseline by 0.0833 mean accuracy, with the improvement driven entirely by HellaSwag and not accompanied by lower training loss."
+                ]
             : section.paragraphs.map((paragraph) => paragraph.text)
       })),
       tables: [
         {
-          caption: "Condition-level mean accuracy interval for the rank-32 dropout-0.05 cell.",
+          caption: "Condition-level mean accuracy across the executed rank/dropout grid; labels identify the locked baseline row.",
           rows: [
-            { label: "Mean Accuracy", value: 0.416666 },
-            { label: "Lower 95% Bound", value: 0.193 },
-            { label: "Upper 95% Bound", value: 0.68 }
+            { label: "rank 8 / dropout 0 (baseline)", value: 0.333334 },
+            { label: "rank 4 / dropout 0", value: 0.333334 },
+            { label: "rank 4 / dropout 0.05", value: 0.333334 },
+            { label: "rank 8 / dropout 0.05", value: 0.333334 },
+            { label: "rank 16 / dropout 0", value: 0.333334 },
+            { label: "rank 16 / dropout 0.05", value: 0.333334 },
+            { label: "rank 32 / dropout 0", value: 0.333334 },
+            { label: "rank 32 / dropout 0.05", value: 0.416666 }
           ]
         }
       ]
@@ -1837,7 +1853,7 @@ describe("scientificWriting", () => {
       .filter(
         (issue) =>
           ["numeric_inconsistency", "numeric_unverifiable", "count_unverifiable"].includes(issue.kind)
-          && /train loss|training loss|45\.687|4\.28|4278951936|0\.3333|0\.4167|rank-16|rank-32|16 as a samples|32 as a samples|256|1800|peak memory mb/i.test(issue.message)
+          && /train loss|training loss|45\.687|4\.28|4278951936|0\.3333|0\.4167|0\.0833|rank-16|rank-32|16 as a samples|32 as a samples|256|1800|peak memory mb|conflicting aggregate accuracy/i.test(issue.message)
       )
       .map((issue) => issue.message);
     expect(problematicMessages).toEqual([]);
