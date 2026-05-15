@@ -5987,6 +5987,14 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "The preserved pilot record exposes learning rate, per-device batch size, gradient accumulation, optimizer-step count, sequence length, timeout, seed, and training-example counts; optimizer choice and LoRA target-module placement remain insufficiently exposed for a fully conventional implementation appendix."
     )
     .replace(
+      /\bSeveral training details that would normally be expected in a publication-grade methods section,\s*including optimizer,\s*learning rate,\s*batch structure,\s*and checkpoint schedule,\s*are not recoverable from the available evidence\./giu,
+      "Several implementation details that would normally be expected in a publication-grade methods section, including optimizer identity, learning-rate schedule beyond the reported scalar rate, LoRA target-module placement, prompt formatting, and checkpoint schedule, are not recoverable from the available evidence."
+    )
+    .replace(
+      /\bThe missing items include optimizer configuration,\s*learning-rate schedule,\s*batch structure,\s*and checkpoint policy\./giu,
+      "The missing items include optimizer configuration, learning-rate schedule beyond the reported scalar rate, LoRA target-module placement, prompt formatting, and checkpoint policy."
+    )
+    .replace(
       /\bcondition summaries\s*\/\s*rank\s+16\s+dropout\s+0\s+0\s*\/\s*accuracy delta vs baseline 95% CI \[([^\]]+)\] over n=(\d+)\./giu,
       "For the rank-16, dropout-0.0 condition, the reported 95% interval for accuracy delta versus baseline is [$1] over $2 seeds."
     )

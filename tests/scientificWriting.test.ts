@@ -3501,7 +3501,9 @@ describe("scientificWriting", () => {
         {
           heading: "Limitations",
           paragraphs: [
-            "condition summaries / rank 16 dropout 0 0 / accuracy delta vs baseline 95% CI [-0.0591, 0.1091] over n=5."
+            "condition summaries / rank 16 dropout 0 0 / accuracy delta vs baseline 95% CI [-0.0591, 0.1091] over n=5.",
+            "Several training details that would normally be expected in a publication-grade methods section, including optimizer, learning rate, batch structure, and checkpoint schedule, are not recoverable from the available evidence.",
+            "The missing items include optimizer configuration, learning-rate schedule, batch structure, and checkpoint policy."
           ]
         },
         {
@@ -3542,11 +3544,15 @@ describe("scientificWriting", () => {
     expect(text).toContain("condition-level values in Table 1 provide the main numeric support");
     expect(text).toContain("One inspected seed-level record reports 32 training examples");
     expect(text).toContain("Future extensions should re-check that alignment");
+    expect(text).toContain("learning-rate schedule beyond the reported scalar rate");
+    expect(text).toContain("LoRA target-module placement");
     expect((text.match(/cautious benchmark note/g) || [])).toHaveLength(1);
     expect(text).not.toMatch(/manuscript bundle|manuscript-facing bundle|condition summaries \//i);
     expect(text).not.toMatch(/can be competitive under a strict local instruction-tuning budget/i);
     expect(text).not.toMatch(/\[(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|ARC-Challenge|HellaSwag)/i);
     expect(text).not.toMatch(/Objective metric met|includes LoRA target modules were|for the inspected seed-level record|paper-ready claim/i);
+    expect(text).not.toMatch(/including optimizer, learning rate, batch structure/i);
+    expect(text).not.toMatch(/learning-rate schedule, batch structure/i);
     expect(text).not.toMatch(/P6 run|review gating|paper-readiness audit|raw result study summary|routed to the appendix/i);
   });
 
