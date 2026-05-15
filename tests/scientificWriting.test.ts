@@ -1790,8 +1790,17 @@ describe("scientificWriting", () => {
         paragraphs:
           section.heading === "Results"
             ? [
-                "The best observed cell improved mean accuracy from 0.333 to 0.417, with training loss 1.524 versus 1.462 for the baseline and a cost profile of 45.687 s wall-clock time and about 4.28 GB peak CUDA memory."
+                "The best observed cell improved mean accuracy from 0.333 to 0.417, with training loss 1.524 versus 1.462 for the baseline and a cost profile of 45.687 s wall-clock time and about 4.28 GB peak CUDA memory.",
+                "Average accuracy rises from 0.333334 to 0.416666, an absolute gain of 0.083332, which is equivalent to 8.33 percentage points.",
+                "For the leading rank-32/dropout-0.05 condition, mean accuracy was 0.4167 versus 0.3333 for the locked baseline, a gain of 0.0833.",
+                "The rank-16 rows are useful mainly as a calibration point, while the rank-32 rows carry the strongest follow-up signal.",
+                "The primary sweep completed all eight planned conditions in 45.687 seconds of wall-clock runtime, with a peak CUDA allocation of 4,278,951,936 bytes, or roughly 4.28 GB."
               ]
+            : section.heading === "Method"
+              ? [
+                  ...section.paragraphs.map((paragraph) => paragraph.text),
+                  "The executed metadata specify a maximum sequence length of 256 tokens, 4 optimizer steps, and an 1800-second timeout budget."
+                ]
             : section.paragraphs.map((paragraph) => paragraph.text)
       })),
       tables: [
@@ -1827,8 +1836,8 @@ describe("scientificWriting", () => {
     const problematicMessages = result.consistency_lint.issues
       .filter(
         (issue) =>
-          ["numeric_inconsistency", "numeric_unverifiable"].includes(issue.kind)
-          && /train loss|training loss|45\.687|4\.28|4278951936|256|1800|peak memory mb/i.test(issue.message)
+          ["numeric_inconsistency", "numeric_unverifiable", "count_unverifiable"].includes(issue.kind)
+          && /train loss|training loss|45\.687|4\.28|4278951936|0\.3333|0\.4167|rank-16|rank-32|16 as a samples|32 as a samples|256|1800|peak memory mb/i.test(issue.message)
       )
       .map((issue) => issue.message);
     expect(problematicMessages).toEqual([]);

@@ -2844,8 +2844,10 @@ function extractCountFactsFromText(input: {
   ];
   return dedupeNumericFacts(
     patternEntries.flatMap(({ kind, pattern }) =>
-      [...cleaned.matchAll(pattern)].map((match) =>
-        buildStructuredNumericFact({
+      [...cleaned.matchAll(pattern)]
+        .filter((match) => !shouldSkipCountFactMatch(cleaned, match, kind))
+        .map((match) =>
+          buildStructuredNumericFact({
           factKind: "count",
           source: input.source,
           location: input.location,
@@ -2861,9 +2863,19 @@ function extractCountFactsFromText(input: {
           unit: "count",
           sourceRefs: input.sourceRefs
         })
-      )
+        )
     )
   );
+}
+
+function shouldSkipCountFactMatch(text: string, match: RegExpMatchArray, kind: CountFactKind): boolean {
+  if (kind !== "sample_count") {
+    return false;
+  }
+  const index = match.index || 0;
+  const raw = match[0] || "";
+  const window = text.slice(Math.max(0, index - 32), Math.min(text.length, index + raw.length + 32));
+  return /\brank[-\s]*\d+(?:\.\d+)?\s+rows?\b/iu.test(window);
 }
 
 function extractMetricFactsFromText(input: {
@@ -3308,11 +3320,11 @@ function areApproxEqual(left: number, right: number, unit: NumericFactUnit | und
 }
 
 function normalizeObservedMetricValue(value: number, unit: NumericFactUnit | undefined, rawText: string): number {
-  if (unit === "mb" && /\b(?:gb|gib)\b/iu.test(rawText) && !/\b(?:mb|mib)\b/iu.test(rawText)) {
-    return value * 1000;
-  }
   if (unit === "mb" && /\bbytes?\b/iu.test(normalizeMetricText(rawText)) && Math.abs(value) > 1_000_000) {
     return value / 1_000_000;
+  }
+  if (unit === "mb" && /\b(?:gb|gib)\b/iu.test(rawText) && !/\b(?:mb|mib)\b/iu.test(rawText)) {
+    return value * 1000;
   }
   return value;
 }
@@ -3398,6 +3410,10 @@ function inferAggregationLevel(text: string, datasetScope: string | "aggregate" 
     /\bcondition[-\s]?level\b|\brank\/dropout grid\b|\brank[-\s]?dropout grid\b/iu.test(cleaned)
     || (/\brank\s+\d+(?:\.\d+)?\b/iu.test(cleaned) && /\bdropout\b/iu.test(cleaned))
     || /\brank\s+\d+(?:\.\d+)?\b[^.!?]{0,80}\bdropout\s+\d+(?:\.\d+)?\b/iu.test(cleaned)
+    || /\b(?:best|leading)\s+(?:reported\s+)?(?:accuracy\s+)?cell\b/iu.test(cleaned)
+    || /\b(?:locked\s+)?baseline\b[^.!?]{0,80}\b(?:condition|cell|reports?)\b/iu.test(cleaned)
+    || /\b(?:average\s+)?accuracy\b[^!?]{0,100}\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^!?]{0,100}\bfrom\b[^!?]{0,100}\bto\b/iu.test(cleaned)
+    || /\b(?:mean\s+)?(?:average\s+)?accuracy\s+(?:was|is|=)\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:versus|vs\.?|compared with)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
   ) {
     return "repeat";
   }
@@ -3422,6 +3438,16 @@ function inferMetricUnit(
   const searchText = normalizeMetricSearchText(text);
   if (metricKey === "train_loss") {
     return "score";
+  }
+  const tokenWindow =
+    typeof rawIndex === "number"
+      ? cleanString(text.slice(Math.max(0, rawIndex - 12), Math.min(text.length, rawIndex + 32))).toLowerCase()
+      : "";
+  if (tokenWindow && /\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:s|sec|secs|second|seconds)\b/iu.test(tokenWindow)) {
+    return "seconds";
+  }
+  if (tokenWindow && /\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:gb|gib|mb|mib)\b/iu.test(tokenWindow)) {
+    return "mb";
   }
   const memoryDistance =
     typeof rawIndex === "number"
@@ -3453,7 +3479,7 @@ function inferMetricUnit(
   if (
     (metricKey === "accuracy" || metricKey === "accuracy_delta_vs_baseline")
     && typeof rawIndex === "number"
-    && isFromToAccuracyScoreValue(text, rawIndex)
+    && (isFromToAccuracyScoreValue(text, rawIndex) || isVersusAccuracyScoreValue(text, rawIndex))
   ) {
     return "score";
   }
@@ -3466,8 +3492,8 @@ function inferMetricUnit(
 function isFromToAccuracyScoreValue(text: string, rawIndex: number): boolean {
   const cleaned = cleanString(text);
   const patterns = [
-    /\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improved|increased|rose|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
-    /\b(?:improved|increased|rose|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
+    /\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
+    /\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
     /\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,80}\b(?:average\s+)?accuracy\b/giu
   ];
   for (const pattern of patterns) {
@@ -3487,10 +3513,30 @@ function isFromToAccuracyScoreValue(text: string, rawIndex: number): boolean {
 function isFromToAccuracyScoreFragment(text: string): boolean {
   const cleaned = cleanString(text);
   return (
-    /\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improved|increased|rose|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
-    || /\b(?:improved|increased|rose|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
+    /\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
+    || /\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
     || /\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?[^.!?]{0,80}\b(?:average\s+)?accuracy\b/iu.test(cleaned)
   );
+}
+
+function isVersusAccuracyScoreValue(text: string, rawIndex: number): boolean {
+  const cleaned = cleanString(text);
+  const patterns = [
+    /\b(?:mean\s+)?(?:average\s+)?accuracy\s+(?:was|is|=)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?/giu,
+    /\b(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?[^.!?]{0,80}\b(?:mean\s+)?(?:average\s+)?accuracy\b/giu
+  ];
+  for (const pattern of patterns) {
+    for (const match of cleaned.matchAll(pattern)) {
+      const values = [match[1], match[2]].filter(Boolean);
+      for (const value of values) {
+        const valueIndex = (match.index || 0) + match[0].indexOf(value);
+        if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 function isFromToTrainLossValue(text: string, rawIndex: number): boolean {
@@ -3526,7 +3572,7 @@ function inferMetricKeyNearNumber(
   rawIndex: number,
   paragraphMetricKey: string | undefined
 ): string | undefined {
-  if (isFromToAccuracyScoreValue(fragment, rawIndex)) {
+  if (isFromToAccuracyScoreValue(fragment, rawIndex) || isVersusAccuracyScoreValue(fragment, rawIndex)) {
     return "accuracy";
   }
   if (isFromToTrainLossValue(fragment, rawIndex)) {
@@ -3718,7 +3764,7 @@ function areComparisonTargetsCompatible(
   right: string | undefined,
   unit: NumericFactUnit
 ): boolean {
-  return !left || !right || left === right;
+  return !left || !right || left === right || left === "baseline" || right === "baseline";
 }
 
 function normalizeMetricIdentifierForUnit(unit: NumericFactUnit): string | undefined {
@@ -3779,7 +3825,11 @@ function specializeMetricKeyForNumber(
   unit: NumericFactUnit,
   rawIndex: number
 ): string | undefined {
-  if (metricKey === "accuracy_delta_vs_baseline" && unit === "score" && isFromToAccuracyScoreValue(fragment, rawIndex)) {
+  if (
+    metricKey === "accuracy_delta_vs_baseline"
+    && unit === "score"
+    && (isFromToAccuracyScoreValue(fragment, rawIndex) || isVersusAccuracyScoreValue(fragment, rawIndex))
+  ) {
     return "accuracy";
   }
   if (!metricKey || unit !== "delta" || metricKey !== "accuracy_delta") {
@@ -4085,6 +4135,12 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
     return true;
   }
   if (/^\s*(?:training\s+)?examples?\b|^\s*train\s+dataset\s+tokens?\b/iu.test(nextWindow)) {
+    return true;
+  }
+  if (/^\s*tokens?\b/iu.test(nextWindow)) {
+    return true;
+  }
+  if (/^\s*(?:optimizer\s+)?steps?\b/iu.test(nextWindow) || /^\s*-?\s*seconds?\s+timeout\b/iu.test(nextWindow)) {
     return true;
   }
   if (/\b(?:max(?:imum)?\s+sequence\s+length|sequence\s+length|max[_\s-]?seq(?:uence)?[_\s-]?length)\s*$/iu.test(previousWindow)) {
@@ -5636,6 +5692,18 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     return text;
   }
   return rewriteReaderFacingProvenancePhrases(stripLimitedEvidenceBoilerplate(stripRawCitationTokens(cleaned)))
+    .replace(
+      /\bwall clock runtime sec\s*=\s*([0-9.]+)\.\s*device cuda max memory allocated bytes\s*=\s*(\d+)\.?/giu,
+      "wall-clock runtime was $1 seconds, with peak CUDA allocation recorded as a secondary resource diagnostic."
+    )
+    .replace(
+      /\bwall clock runtime sec\s*=\s*([0-9.]+)\.?/giu,
+      "wall-clock runtime was $1 seconds."
+    )
+    .replace(
+      /\bdevice cuda max memory allocated bytes\s*=\s*(\d+)\.?/giu,
+      "peak CUDA allocation was recorded as a secondary resource diagnostic."
+    )
     .replace(/\s*\[(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|ARC-Challenge|HellaSwag)(?:\s*;\s*(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|ARC-Challenge|HellaSwag))*\]/giu, "")
     .replace(
       /\bThe (?:preserved manuscript bundle|reported run records) identif(?:ies|y) the executed study only as a small-backbone local preflight and does not cleanly disambiguate whether the as-run model was the planned Qwen\/Qwen2\.5-1\.5B backbone or the TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0 fallback\./giu,
