@@ -3169,11 +3169,49 @@ describe("scientificWriting", () => {
 
   it("keeps resource values separate from nearby sequence length and dataset names", () => {
     const bundle = makeRichBundle();
+    bundle.runTitle = "LoRA rank-dropout preflight";
+    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.resultAnalysis = {
       ...(bundle.resultAnalysis as any),
       metric_table: [
-        { key: "device.cuda_max_memory_allocated_bytes", value: 4278.951936 },
-        { key: "wall_clock_seconds", value: 45.687 }
+        { key: "device.cuda_max_memory_allocated_bytes", value: 4278951936 },
+        { key: "wall_clock_seconds", value: 45.687 },
+        { key: "accuracy_delta_vs_baseline", value: 0.0833 },
+        { key: "train_loss", value: 1.5242 }
+      ]
+    } as any;
+    bundle.latestResults = {
+      protocol: {
+        datasets: ["ARC-Challenge", "HellaSwag"],
+        condition_count: 8,
+        executed_condition_count: 8
+      },
+      condition_summaries: [
+        {
+          condition_marker: "rank_8_dropout_0_0",
+          label: "rank 8 / dropout 0 (baseline)",
+          lora_rank: 8,
+          lora_dropout: 0,
+          is_baseline: true,
+          completed_seed_count: 1,
+          average_accuracy_mean: 0.3333,
+          accuracy_delta_vs_baseline_mean: 0,
+          train_loss_mean: 1.462,
+          runtime_seconds_mean: 5.339
+        },
+        {
+          condition_marker: "rank_32_dropout_0_05",
+          label: "rank 32 / dropout 0.05",
+          lora_rank: 32,
+          lora_dropout: 0.05,
+          is_baseline: false,
+          completed_seed_count: 1,
+          average_accuracy_mean: 0.4167,
+          accuracy_delta_vs_baseline_mean: 0.0833,
+          train_loss_mean: 1.5242,
+          runtime_seconds_mean: 5.339
+        }
       ]
     } as any;
     const scientific = applyScientificWritingPolicy({
@@ -3183,15 +3221,29 @@ describe("scientificWriting", () => {
     });
     const candidate: PaperManuscript = {
       title: "LoRA Rank-Dropout Preflight",
-      abstract: "The sweep required 45.7 seconds and about 4.28 GB of peak GPU memory.",
+      abstract:
+        "The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation.",
       keywords: ["LoRA"],
       sections: [
-        { heading: "Introduction", paragraphs: ["We study a fixed-budget LoRA rank/dropout preflight."] },
-        { heading: "Method", paragraphs: ["Maximum sequence length was 256 for the retained pilot."] },
+        {
+          heading: "Introduction",
+          paragraphs: [
+            "We study a fixed-budget LoRA rank/dropout preflight. In a related low-budget study, LoRA-based reasoning training was executed on a single 48 GB GPU within 24 hours."
+          ]
+        },
+        {
+          heading: "Method",
+          paragraphs: [
+            "Maximum sequence length was 256 for the retained pilot, and the timeout budget was 1,800 s."
+          ]
+        },
         {
           heading: "Results",
           paragraphs: [
-            "The retained sweep completed in 45.7 seconds, used about 4.28 GB of peak allocated GPU memory, ran with a maximum sequence length of 256, and stayed within the 1,800 s timeout budget."
+            "The best recorded condition was rank 32 with dropout 0.05, which improved average accuracy from 0.3333 in the locked baseline to 0.4167.",
+            "Reported training loss did not improve in parallel: the baseline loss was 1.4620, whereas the best-accuracy condition reported 1.5242.",
+            "The artifact reports 8 requested and 8 completed conditions, 45.687 s wall-clock runtime, and peak CUDA allocation of approximately 4.28 GB.",
+            "For most conditions, the reported 95% intervals for average accuracy span approximately 0.138 to 0.609 over 12 predictions, and the best observed cell spans approximately 0.193 to 0.680."
           ]
         },
         {
@@ -3201,7 +3253,7 @@ describe("scientificWriting", () => {
         {
           heading: "Conclusion",
           paragraphs: [
-            "The gain was concentrated in HellaSwag, and the full eight-cell sweep remained cheap to execute at under a minute and roughly 4.28 GB of peak GPU memory."
+            "The gain was concentrated in HellaSwag, and the full eight-cell sweep remained cheap to execute at under a minute, roughly 4.28 GB of peak GPU memory, and an accuracy delta of 0.0833 over the baseline."
           ]
         }
       ]
@@ -3219,20 +3271,23 @@ describe("scientificWriting", () => {
     expect(
       result.consistency_lint.issues
         .filter((issue) =>
-          issue.kind === "numeric_inconsistency"
-          && (
-            /Abstract and Results report conflicting aggregate peak memory mb values/iu.test(issue.message)
-            || /Results cites 256, but the comparable structured results support .* for peak_memory_mb/iu.test(issue.message)
-          )
+          /conflicting aggregate peak memory mb values/iu.test(issue.message)
+          || /conflicting aggregate accuracy delta vs baseline values/iu.test(issue.message)
+          || /cites 0\.3333, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
+          || /cites 0\.4167, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
+          || /cites 1\.462, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
+          || /cites (?:8|45\.687), but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
+          || /cites (?:24|48|256), but the comparable structured results support .*peak_memory_mb/iu.test(issue.message)
+          || /cites 1,?800, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
+          || /cites 0\.138, but the comparable structured results support .*accuracy/iu.test(issue.message)
         )
         .map((issue) => issue.message)
     ).toEqual([]);
-    expect(
-      result.consistency_lint.issues.filter((issue) =>
+    const conclusionMemoryIssues = result.consistency_lint.issues.filter((issue) =>
         issue.kind === "numeric_unverifiable"
         && /Conclusion cites 4\.28, but the current artifacts do not expose a comparable structured numeric fact for peak_memory_mb/iu.test(issue.message)
-      )
-    ).toHaveLength(0);
+      );
+    expect(conclusionMemoryIssues).toHaveLength(0);
   });
 
   it("does not treat condition-cluster table prose as a conflicting single aggregate accuracy", () => {

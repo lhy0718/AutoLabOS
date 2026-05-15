@@ -1935,7 +1935,17 @@ function lintNumericConsistency(input: {
     if (isObjectiveThresholdFact(observedFact)) {
       continue;
     }
-    const comparableFacts = expectedFacts.filter((candidate) => areComparableNumericFacts(observedFact, candidate));
+    if (isUncertaintyIntervalMetricFact(observedFact)) {
+      continue;
+    }
+    if (isRuntimeBudgetFact(observedFact)) {
+      continue;
+    }
+    const comparableFacts = expectedFacts.filter(
+      (candidate) =>
+        areComparableNumericFacts(observedFact, candidate)
+        && !(observedFact.metric_key === "runtime_seconds" && isRuntimeBudgetFact(candidate))
+    );
     if (comparableFacts.length === 0) {
       if (isCitationSupportedIntervalBound(observedFact)) {
         continue;
@@ -2037,6 +2047,18 @@ function isBenignFromToStructuredComparison(
     && candidate.unit === observedFact.unit
     && rawTextContainsApproxValue(observedFact.raw_text, candidate.normalized_value, observedFact.unit)
   );
+}
+
+function isRuntimeBudgetFact(fact: NormalizedNumericFact): boolean {
+  return fact.fact_kind === "metric"
+    && fact.metric_key === "runtime_seconds"
+    && /\b(?:timeout|budget|time\s+budget|runtime\s+limit)\b/iu.test(fact.raw_text);
+}
+
+function isUncertaintyIntervalMetricFact(fact: NormalizedNumericFact): boolean {
+  return fact.fact_kind === "metric"
+    && /\b(?:95\\?%|ci|confidence intervals?|intervals?)\b|\bspans?\b[^.!?]{0,80}\b(?:to|and)\b/iu.test(fact.raw_text)
+    && /\b(?:accuracy|macro[-\s]?f1|score|loss|metric)\b/iu.test(fact.raw_text);
 }
 
 function lintStrongClaimWording(input: {
@@ -2746,6 +2768,9 @@ function buildObservedFactDriftIssues(
     if (fact.unit === "ci_lower" || fact.unit === "ci_upper") {
       continue;
     }
+    if (fact.fact_kind === "metric" && isUncertaintyIntervalMetricFact(fact)) {
+      continue;
+    }
     if (fact.fact_kind === "metric" && isConditionClusterStatement(fact.raw_text)) {
       continue;
     }
@@ -3429,7 +3454,22 @@ function inferDatasetScope(
   }
   const mentionsArcChallenge = /\barc[-_\s]?challenge\b/iu.test(cleaned);
   const mentionsHellaSwag = /\bhella\s*swag\b|\bhellaswag\b/iu.test(cleaned);
-  if (/\b(?:peak\s+)?(?:gpu\s+|cuda\s+)?memory\b|\bvram\b|\bgb\b|\bmb\b|\bruntime\b|\bwall[-\s]?clock\b|\bseconds?\b|\btimeout\b/iu.test(cleaned)) {
+  const matchedDatasets = datasetNames.filter((dataset) => cleaned.includes(cleanString(dataset).toLowerCase()));
+  const mentionsResourceMetric = /\b(?:peak\s+)?(?:gpu\s+|cuda\s+)?memory\b|\bvram\b|\bgb\b|\bmb\b|\bruntime\b|\bwall[-\s]?clock\b|\bseconds?\b|\btimeout\b/iu.test(cleaned);
+  if (
+    mentionsResourceMetric
+    && matchedDatasets.length > 0
+    && /\b(?:full\s+)?(?:sweep|run|benchmark|experiment|study|grid)\b|\boverall\b|\baggregate\b|\bexecute(?:d|s)?\b/iu.test(cleaned)
+  ) {
+    return "aggregate";
+  }
+  if (mentionsResourceMetric && matchedDatasets.length === 1) {
+    return matchedDatasets[0] || "unknown";
+  }
+  if (mentionsResourceMetric && matchedDatasets.length > 1) {
+    return "aggregate";
+  }
+  if (mentionsResourceMetric) {
     return "aggregate";
   }
   if (
@@ -3445,7 +3485,6 @@ function inferDatasetScope(
   if (mentionsHellaSwag) {
     return "HellaSwag";
   }
-  const matchedDatasets = datasetNames.filter((dataset) => cleaned.includes(cleanString(dataset).toLowerCase()));
   if (
     matchedDatasets.length > 1
     && /\bacross\b|\baverage\b|\bmean\b|\bunweighted\b|\boverall\b|\baggregate\b/iu.test(cleaned)
@@ -3484,6 +3523,9 @@ function inferAggregationLevel(text: string, datasetScope: string | "aggregate" 
   ) {
     return "repeat";
   }
+  if (/\bwall[-\s]?clock\b|\bpeak\s+(?:cuda|gpu)?\s*allocation\b|\brequested\b[^.!?]{0,60}\bcompleted conditions?\b|\bcompleted conditions?\b/iu.test(cleaned)) {
+    return "aggregate";
+  }
   if (/\brepeat|run\b/iu.test(cleaned)) {
     return "repeat";
   }
@@ -3508,13 +3550,23 @@ function inferMetricUnit(
   }
   const tokenWindow =
     typeof rawIndex === "number"
-      ? cleanString(text.slice(Math.max(0, rawIndex - 12), Math.min(text.length, rawIndex + 32))).toLowerCase()
+      ? cleanString(text.slice(rawIndex, Math.min(text.length, rawIndex + 32))).toLowerCase()
       : "";
   if (tokenWindow && /\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:s|sec|secs|second|seconds)\b/iu.test(tokenWindow)) {
     return "seconds";
   }
   if (tokenWindow && /\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:gb|gib|mb|mib)\b/iu.test(tokenWindow)) {
     return "mb";
+  }
+  if (
+    (metricKey === "accuracy" || metricKey === "accuracy_delta_vs_baseline")
+    && typeof rawIndex === "number"
+    && (isFromToAccuracyScoreValue(text, rawIndex) || isVersusAccuracyScoreValue(text, rawIndex))
+  ) {
+    return "score";
+  }
+  if (metricKey?.includes("delta")) {
+    return "delta";
   }
   const memoryDistance =
     typeof rawIndex === "number"
@@ -3558,10 +3610,11 @@ function inferMetricUnit(
 
 function isFromToAccuracyScoreValue(text: string, rawIndex: number): boolean {
   const cleaned = cleanString(text);
+  const betweenScores = String.raw`\s+(?:[^0-9.!?]{0,48}\s+)?(?:to|up to)\s+`;
   const patterns = [
-    /\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
-    /\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
-    /\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,80}\b(?:average\s+)?accuracy\b/giu
+    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|improving|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
+    new RegExp(String.raw`\b(?:improve[sd]?|improving|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
+    new RegExp(String.raw`\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,80}\b(?:average\s+)?accuracy\b`, "giu")
   ];
   for (const pattern of patterns) {
     for (const match of cleaned.matchAll(pattern)) {
@@ -3579,10 +3632,11 @@ function isFromToAccuracyScoreValue(text: string, rawIndex: number): boolean {
 
 function isFromToAccuracyScoreFragment(text: string): boolean {
   const cleaned = cleanString(text);
+  const numberPair = String.raw`-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:[^0-9.!?]{0,48}\s+)?(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?`;
   return (
-    /\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
-    || /\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
-    || /\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?[^.!?]{0,80}\b(?:average\s+)?accuracy\b/iu.test(cleaned)
+    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|improving|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
+    || new RegExp(String.raw`\b(?:improve[sd]?|improving|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
+    || new RegExp(String.raw`\bfrom\s+${numberPair}[^.!?]{0,80}\b(?:average\s+)?accuracy\b`, "iu").test(cleaned)
   );
 }
 
@@ -3648,6 +3702,10 @@ function inferMetricKeyNearNumber(
   if (isFromToTrainLossValue(fragment, rawIndex)) {
     return "train_loss";
   }
+  const localMetricWindow = normalizeMetricText(fragment.slice(Math.max(0, rawIndex - 56), Math.min(fragment.length, rawIndex + 56)));
+  if (/\baccuracy\s+delta\b|\bdelta\b[^.!?]{0,40}\bbaseline\b|\bbaseline\b[^.!?]{0,40}\bdelta\b/iu.test(localMetricWindow)) {
+    return "accuracy_delta_vs_baseline";
+  }
   const nearestMetricKey = inferMetricKeyByDistance(fragment, rawIndex);
   if (nearestMetricKey) {
     return nearestMetricKey;
@@ -3693,7 +3751,7 @@ function inferMetricKeyByDistance(text: string, rawIndex: number): string | unde
     { key: "macro_f1", patterns: ["macro f1"] },
     { key: "pairwise_ranking_agreement", patterns: ["pairwise ranking agreement", "ranking agreement"] },
     { key: "winner_consistency", patterns: ["winner consistency"] },
-    { key: "train_loss", patterns: ["train loss", "training loss"] },
+    { key: "train_loss", patterns: ["train loss", "training loss", "baseline loss", "reported loss"] },
     { key: "runtime_seconds", patterns: ["runtime", "latency", "wall clock", "wall-clock", "seconds", "second", "sec"] },
     { key: "peak_memory_mb", patterns: ["peak memory", "cuda memory", "memory", "ram", "mb", "gb", "gib"] },
     { key: "top1_accuracy", patterns: ["top 1 accuracy", "top-1 accuracy"] },
@@ -3854,6 +3912,12 @@ function normalizeMetricIdentifierForUnit(unit: NumericFactUnit): string | undef
 }
 
 function normalizeMetricKeyForUnit(metricKey: string | undefined, unit: NumericFactUnit): string | undefined {
+  if (unit === "seconds") {
+    return "runtime_seconds";
+  }
+  if (unit === "mb") {
+    return "peak_memory_mb";
+  }
   if (!metricKey || unit !== "delta") {
     return metricKey;
   }
@@ -4216,6 +4280,18 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
   }
   const nextWindow = fragment.slice(tokenEnd, Math.min(fragment.length, tokenEnd + 32));
   if (
+    /^\s*(?:of\s+\d+(?:,\d{3})*(?:\.\d+)?\s+)?(?:requested|completed)\s+conditions?\b/iu.test(nextWindow)
+    || /^\s*(?:requested|completed)\s+conditions?\b/iu.test(nextWindow)
+  ) {
+    return true;
+  }
+  if (/^\s*(?:hours?|hrs?)\b/iu.test(nextWindow)) {
+    return true;
+  }
+  if (/^\s*(?:gb|gib)\s+gpu\b/iu.test(nextWindow)) {
+    return true;
+  }
+  if (
     /\b(?:random\s+)?seeds?\s*$/iu.test(previousWindow)
     || /^\s*(?:random\s+)?seeds?\b/iu.test(nextWindow)
     || (
@@ -4339,6 +4415,18 @@ function shouldSkipAmbiguousMetricFact(
   if (
     metricKey === "peak_memory_mb"
     && /\brank[-\s]?by[-\s]?dropout\b|\brank\s+in\b|\bdropout values\b|\brank\s+\d+(?:\.\d+)?\b.*\bdropout\b|\bdropout\b.*\brank\s+\d+(?:\.\d+)?\b/iu.test(fragment)
+  ) {
+    return true;
+  }
+  if (
+    metricKey === "peak_memory_mb"
+    && /\b(?:related|prior|previous|external)\b[^.!?]{0,80}\b(?:study|work|paper|authors?)\b|\bwithin\s+\d+(?:,\d{3})*(?:\.\d+)?\s+hours?\b|\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:gb|gib)\s+gpu\b/iu.test(fragment)
+  ) {
+    return true;
+  }
+  if (
+    metricKey === "runtime_seconds"
+    && /\b\d+(?:,\d{3})*(?:\.\d+)?\s+of\s+\d+(?:,\d{3})*(?:\.\d+)?\s+requested\s+conditions?\b|\b\d+(?:,\d{3})*(?:\.\d+)?\s+(?:requested|completed)\s+conditions?\b/iu.test(fragment)
   ) {
     return true;
   }
