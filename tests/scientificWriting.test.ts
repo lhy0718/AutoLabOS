@@ -3294,6 +3294,7 @@ describe("scientificWriting", () => {
           || /cites 1\.462, but the comparable structured results support .*accuracy/iu.test(issue.message)
           || /cites 1,?800, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
           || /cites 0\.138, but the comparable structured results support .*accuracy/iu.test(issue.message)
+          || /cites 0\.5, but the current artifacts do not expose a comparable structured numeric fact for accuracy_delta/iu.test(issue.message)
           || /Results and Figure 1 report conflicting ARC-Challenge accuracy values/iu.test(issue.message)
         )
         .map((issue) => issue.message)
@@ -3356,7 +3357,8 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "Table 1 shows seven cells tied at 0.3333 mean accuracy and one cell, rank 32 with dropout 0.05, at 0.4167."
+            "Table 1 shows seven cells tied at 0.3333 mean accuracy and one cell, rank 32 with dropout 0.05, at 0.4167.",
+            "Seven of the eight cells reported the same mean average accuracy, 0.333334, and only rank 32 / dropout 0.05 reached 0.416666."
           ]
         },
         { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
@@ -3397,6 +3399,11 @@ describe("scientificWriting", () => {
     expect(
       result.consistency_lint.issues.filter((issue) =>
         /Results cites 0\.3333, but the comparable structured results support/iu.test(issue.message)
+      )
+    ).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.filter((issue) =>
+        /Results and Table 1 report conflicting aggregate accuracy values/iu.test(issue.message)
       )
     ).toHaveLength(0);
     expect(

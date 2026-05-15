@@ -3616,6 +3616,13 @@ function inferMetricUnit(
   ) {
     return "score";
   }
+  if (
+    (metricKey === "accuracy" || metricKey === "accuracy_delta" || metricKey === "accuracy_delta_vs_baseline")
+    && typeof rawIndex === "number"
+    && isAbsoluteAccuracyScoreValue(text, rawIndex)
+  ) {
+    return "score";
+  }
   if (metricKey?.includes("delta")) {
     return "delta";
   }
@@ -3675,6 +3682,24 @@ function isFromToAccuracyScoreValue(text: string, rawIndex: number): boolean {
         if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
           return true;
         }
+      }
+    }
+  }
+  return false;
+}
+
+function isAbsoluteAccuracyScoreValue(text: string, rawIndex: number): boolean {
+  const cleaned = cleanString(text);
+  const patterns = [
+    /\b(?:[A-Z][A-Za-z-]*\s+)?accuracy\b[^.!?]{0,60}\b(?:remained|stayed|was|is|=|unchanged(?:\s+at)?)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
+    /\b(?:[A-Z][A-Za-z-]*\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,40}\b(?:in both|for both)\b/giu
+  ];
+  for (const pattern of patterns) {
+    for (const match of cleaned.matchAll(pattern)) {
+      const value = match[1] || "";
+      const valueIndex = (match.index || 0) + match[0].indexOf(value);
+      if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
+        return true;
       }
     }
   }
@@ -4117,7 +4142,8 @@ function isConditionClusterStatement(text: string): boolean {
   return /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
     || /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
     || /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:tied|clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
-    || /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:tied|clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text);
+    || /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:tied|clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
+    || /\b(?:seven|7)\s+of\s+the\s+(?:eight|8)\s+(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:same|shared|reported)\b[^.!?]{0,80}\b(?:mean\s+)?(?:average\s+)?accuracy\b[^.!?]{0,40}\b-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text);
 }
 
 function inferExplicitConditionValueTarget(text: string, rawIndex: number | undefined): string | undefined {
