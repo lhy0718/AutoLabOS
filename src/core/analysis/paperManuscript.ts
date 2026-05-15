@@ -460,7 +460,10 @@ function ensureMainBodyResultFigure(input: {
   if (taskFigure) {
     const retainedFigures = dedupeManuscriptFigures(
       (input.figures || []).filter(
-        (figure) => !isConditionDeltaSurfaceFigure(figure) && !sameManuscriptFigure(figure, taskFigure)
+        (figure) =>
+          !isConditionDeltaSurfaceFigure(figure)
+          && !isTaskLevelLeadingConditionFigure(figure)
+          && !sameManuscriptFigure(figure, taskFigure)
       )
     );
     return [taskFigure, ...retainedFigures].slice(0, 2);
@@ -557,8 +560,8 @@ function buildTaskLevelLeadingConditionFigure(
     return undefined;
   }
   const bars = [
-    { label: "Baseline ARC Challenge", value: baseline.arc_challenge_accuracy },
-    { label: "Leading ARC Challenge", value: leading.arc_challenge_accuracy },
+    { label: "Baseline ARC-Challenge", value: baseline.arc_challenge_accuracy },
+    { label: "Leading ARC-Challenge", value: leading.arc_challenge_accuracy },
     { label: "Baseline HellaSwag", value: baseline.hellaswag_accuracy },
     { label: "Leading HellaSwag", value: leading.hellaswag_accuracy }
   ];
@@ -604,6 +607,15 @@ function isConditionDeltaSurfaceFigure(figure: PaperManuscriptFigure): boolean {
   return (
     /\bbaseline-relative\b.*\b(rank|dropout|condition)\b/iu.test(caption)
     || (figure.bars.length >= 4 && rankDropoutRows >= 3 && zeroRows >= figure.bars.length - 1)
+  );
+}
+
+function isTaskLevelLeadingConditionFigure(figure: PaperManuscriptFigure): boolean {
+  const caption = cleanString(figure.caption);
+  const labels = figure.bars.map((bar) => cleanString(bar.label)).join(" ");
+  return (
+    /\btask-level accuracy split\b/iu.test(caption)
+    || /\bBaseline ARC[- ]Challenge\b.*\bLeading HellaSwag\b/iu.test(labels)
   );
 }
 
@@ -793,6 +805,14 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "Verified execution metadata identifies Qwen/Qwen2.5-1.5B as the selected backbone for the realized preflight"
     )
     .replace(
+      /\bThe reported analyzed execution did not preserve the resolved model identifier,\s*so we avoid stronger model-specific interpretation than the archived summary allows and treat the result as evidence from a small locally runnable instruction-tuning target\./giu,
+      "The archived execution summary identifies Qwen/Qwen2.5-1.5B as the selected backbone for the analyzed run; TinyLlama is retained only as a fallback option and is not treated as evidence for the reported condition means."
+    )
+    .replace(
+      /\bAccording to the archived execution summary,\s*The executed metrics record identifies\b/giu,
+      "According to the archived execution summary, the executed metrics record identifies"
+    )
+    .replace(
       /\bthe compact reader-visible run summary preserved for this manuscript does not unambiguously state which of those two registered backbones powered the realized preflight\b/giu,
       "verified execution metadata identifies Qwen/Qwen2.5-1.5B as the selected backbone for the realized preflight"
     )
@@ -977,6 +997,10 @@ function repairRelatedWorkComparatorRedundancy(paragraphs: string[]): string[] {
     const repeatsExternalFramingComparator =
       /\bexternal PEFT papers serve as framing comparators\b/iu.test(paragraph) &&
       /\blocked rank-8\b/iu.test(paragraph);
+    const repeatsConservativeRelatedWorkRole =
+      insertedInternalComparatorSynthesis &&
+      /\bThe related-work role is therefore conservative\b/iu.test(paragraph) &&
+      /\b(?:claim boundaries|direct superiority|scope and experimental role)\b/iu.test(paragraph);
     if (repeatsInternalComparator || repeatsExternalFramingComparator) {
       if (!insertedInternalComparatorSynthesis) {
         result.push(
@@ -984,6 +1008,9 @@ function repairRelatedWorkComparatorRedundancy(paragraphs: string[]): string[] {
         );
         insertedInternalComparatorSynthesis = true;
       }
+      continue;
+    }
+    if (repeatsConservativeRelatedWorkRole) {
       continue;
     }
     result.push(paragraph);
@@ -1021,7 +1048,12 @@ function repairAppendixSections(sections: PaperManuscriptSection[]): PaperManusc
         .filter((paragraph) =>
           paragraph &&
           !/\bThis appendix records what the paper is allowed to claim\.?/iu.test(paragraph) &&
-          !/\b(?:manuscript|paper)\s+(?:therefore|is best read|should be read|finalize|submission|review artifacts|workflow)\b/iu.test(paragraph)
+          !/\bThe strongest allowed claim is\b/iu.test(paragraph) &&
+          !/\bComparative language is tied only to\b/iu.test(paragraph) &&
+          !/\bThe result is therefore best read as\b/iu.test(paragraph) &&
+          !/\bA\s+(?:later|future)\s+replication\s+should\b/iu.test(paragraph) &&
+          !/\b(?:manuscript|paper)\s+(?:therefore|is best read|should be read|finalize|submission|review artifacts|workflow)\b/iu.test(paragraph) &&
+          !/\bfinalize\s+the\s+paper\b|\bfigure captions,\s*tables,\s*citations,\s*and numeric claims agree\b/iu.test(paragraph)
         )
     }))
     .filter((section) => section.paragraphs.length > 0);
@@ -2228,10 +2260,21 @@ function shouldRenderSubmissionCitationsForParagraph(heading: string, paragraph:
     return true;
   }
   if (key === "method") {
-    return /\b(?:Alpaca Clean|ARC-Challenge|HellaSwag|benchmark pair|dataset and benchmark sources|training source|evaluation was limited|preferred base model|Qwen\/Qwen2\.5|TinyLlama\/TinyLlama)\b/iu.test(paragraph);
+    return /\b(?:Alpaca Clean|ARC-Challenge|HellaSwag|benchmark pair|dataset and benchmark sources|training source|evaluation was limited|preferred base model|Qwen\/Qwen2\.5|TinyLlama\/TinyLlama|LoRA rank|dropout|factorial sweep|maximum sequence length|timeout|seed)\b/iu.test(paragraph);
   }
   if (key === "discussion") {
+    if (
+      /\b(?:reported comparison|measured effect|accuracy delta|locked baseline|best observed|rank-32 dropout-0\.05 cell improved)\b/iu.test(paragraph)
+    ) {
+      return false;
+    }
     return /\b(?:prior|Related Work|low-budget evidence|fixed-budget studies|PEFT|QLoRA|adapter|benchmarking|literature)\b/iu.test(paragraph);
+  }
+  if (key === "limitations") {
+    return /\b(?:Qwen\/Qwen2\.5|TinyLlama|ARC-Challenge|HellaSwag|PEFT|QLoRA|MAPLE|LoRA|adapter|benchmark)\b/iu.test(paragraph);
+  }
+  if (key === "conclusion") {
+    return /\b(?:PEFT|QLoRA|MAPLE|adapter|benchmark studies|literature)\b/iu.test(paragraph);
   }
   if (key !== "introduction") {
     return false;

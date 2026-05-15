@@ -4885,6 +4885,9 @@ describe("writePaper PDF build", () => {
     expect(tex).toContain("\\includegraphics[width=\\columnwidth]{figures/main-result-figure-1.pdf}");
     expect(await exists(path.join(runDir, "paper", "ACL2023.sty"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "figures", "main-result-figure-1.pdf"))).toBe(true);
+    const figureRenderer = await readFile(path.join(runDir, "paper", "figures", "render_paper_figures.py"), "utf8");
+    expect(figureRenderer).toContain("matplotlib");
+    expect(figureRenderer).toContain("Task-level accuracy");
     expect(await exists(path.join(buildPublicPaperDir(root, run), "figures", "main-result-figure-1.pdf"))).toBe(true);
     const renderValidation = JSON.parse(
       await readFile(path.join(runDir, "paper", "render_validation.json"), "utf8")

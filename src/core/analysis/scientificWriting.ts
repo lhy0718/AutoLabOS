@@ -2496,6 +2496,31 @@ function collectConditionMetricFacts(context: ExperimentArtifactContext): Normal
           );
         }
       }
+      const taskAccuracyFacts: Array<{ key: "arc_challenge_accuracy" | "hellaswag_accuracy"; label: string; datasetScope: string }> = [
+        { key: "arc_challenge_accuracy", label: "ARC-Challenge accuracy", datasetScope: "ARC-Challenge" },
+        { key: "hellaswag_accuracy", label: "HellaSwag accuracy", datasetScope: "HellaSwag" }
+      ];
+      for (const task of taskAccuracyFacts) {
+        const value = condition[task.key];
+        if (typeof value !== "number") {
+          continue;
+        }
+        facts.push(
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.${task.key}`,
+            rawText: `${condition.label} ${task.label} ${formatNumber(value)}`,
+            value,
+            metricKey: "accuracy",
+            metricLabel: task.label,
+            datasetScope: task.datasetScope,
+            aggregationLevel: "dataset",
+            unit: "score",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
+          })
+        );
+      }
       return facts;
     })
   );
@@ -3173,6 +3198,12 @@ function inferDatasetScope(
   source: NumericFactSource
 ): string | "aggregate" | "unknown" {
   const cleaned = cleanString(text).toLowerCase();
+  if (/\barc[-_\s]?challenge\b/iu.test(cleaned)) {
+    return "ARC-Challenge";
+  }
+  if (/\bhella\s*swag\b|\bhellaswag\b/iu.test(cleaned)) {
+    return "HellaSwag";
+  }
   const matchedDatasets = datasetNames.filter((dataset) => cleaned.includes(cleanString(dataset).toLowerCase()));
   if (
     matchedDatasets.length > 1

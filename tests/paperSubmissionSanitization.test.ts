@@ -964,6 +964,18 @@ describe("paper submission sanitization", () => {
               hellaswag_accuracy_mean: 0.166667
             },
             {
+              label: "rank 4 dropout 0",
+              average_accuracy_mean: 0.333334,
+              arc_challenge_accuracy_mean: 0.5,
+              hellaswag_accuracy_mean: 0.166667
+            },
+            {
+              label: "rank 16 dropout 0",
+              average_accuracy_mean: 0.333334,
+              arc_challenge_accuracy_mean: 0.5,
+              hellaswag_accuracy_mean: 0.166667
+            },
+            {
               label: "rank 32 dropout 0.05",
               average_accuracy_mean: 0.416666,
               accuracy_delta_vs_baseline_mean: 0.083332,
@@ -979,8 +991,8 @@ describe("paper submission sanitization", () => {
     expect(manuscript.figures).toHaveLength(1);
     expect(manuscript.figures?.[0]?.caption).toContain("Task-level accuracy split");
     expect(manuscript.figures?.[0]?.bars).toEqual([
-      { label: "Baseline ARC Challenge", value: 0.5 },
-      { label: "Leading ARC Challenge", value: 0.5 },
+      { label: "Baseline ARC-Challenge", value: 0.5 },
+      { label: "Leading ARC-Challenge", value: 0.5 },
       { label: "Baseline HellaSwag", value: 0.1667 },
       { label: "Leading HellaSwag", value: 0.3333 }
     ]);
@@ -1049,6 +1061,18 @@ describe("paper submission sanitization", () => {
             hellaswag_accuracy: 0.166667
           },
           {
+            label: "rank 4 dropout 0",
+            average_accuracy_mean: 0.333334,
+            arc_challenge_accuracy: 0.5,
+            hellaswag_accuracy: 0.166667
+          },
+          {
+            label: "rank 16 dropout 0",
+            average_accuracy_mean: 0.333334,
+            arc_challenge_accuracy: 0.5,
+            hellaswag_accuracy: 0.166667
+          },
+          {
             label: "rank 32 dropout 0.05",
             average_accuracy_mean: 0.416666,
             accuracy_delta_vs_baseline_mean: 0.083332,
@@ -1062,8 +1086,8 @@ describe("paper submission sanitization", () => {
     expect(stabilized.figures).toHaveLength(1);
     expect(stabilized.figures?.[0]?.caption).toContain("Task-level accuracy split");
     expect(stabilized.figures?.[0]?.bars).toEqual([
-      { label: "Baseline ARC Challenge", value: 0.5 },
-      { label: "Leading ARC Challenge", value: 0.5 },
+      { label: "Baseline ARC-Challenge", value: 0.5 },
+      { label: "Leading ARC-Challenge", value: 0.5 },
       { label: "Baseline HellaSwag", value: 0.1667 },
       { label: "Leading HellaSwag", value: 0.3333 }
     ]);

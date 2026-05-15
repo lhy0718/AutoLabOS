@@ -1468,7 +1468,7 @@ function buildAnchorlessSectionRepairTargets(
   manuscript: PaperManuscript,
   issue: ManuscriptReviewIssue
 ): ManuscriptRepairTarget[] {
-  if (issue.severity !== "fail" || issue.code !== "citation_hygiene") {
+  if (issue.code !== "citation_hygiene") {
     return [];
   }
   return splitReviewSectionNames(issue.section)
