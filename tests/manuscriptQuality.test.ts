@@ -164,7 +164,7 @@ describe("manuscriptQuality style lint", () => {
     expect(prompt).toContain("judge citation_hygiene from reader_visible_manuscript");
   });
 
-  it("shows reader-visible citations for Method protocol and dataset claims", () => {
+  it("keeps Method protocol and dataset claims free of reader-visible literature callouts", () => {
     const manuscript = makeCleanManuscript();
     manuscript.sections = manuscript.sections.map((section) =>
       section.heading === "Method"
@@ -182,7 +182,7 @@ describe("manuscriptQuality style lint", () => {
       citationKeysByPaperId: new Map([["paper_1", "smith2024threaded"]])
     });
 
-    expect(readerVisible.sections.find((section) => section.heading === "Method")?.paragraphs[0]?.text).toContain(
+    expect(readerVisible.sections.find((section) => section.heading === "Method")?.paragraphs[0]?.text).not.toContain(
       "(Smith et al., 2024)"
     );
   });
@@ -623,6 +623,66 @@ describe("manuscriptQuality style lint", () => {
     );
   });
 
+  it("builds section-bounded targets for anchorless related-work quality failures", () => {
+    const manuscript = makeCleanManuscript();
+    const review = normalizeManuscriptReview(
+      {
+        overall_decision: "repair",
+        summary: "Related Work needs section-level comparative depth.",
+        issues: [
+          {
+            code: "related_work_quality",
+            severity: "fail",
+            section: "Related Work",
+            repairable: true,
+            message: "The Related Work section identifies high-level axes but does not position the study against prior work.",
+            fix_recommendation:
+              "Compare prior work and this study along concrete axes such as model scale, PEFT setup, rank/dropout variation, and evaluation scope.",
+            supporting_spans: []
+          }
+        ]
+      },
+      manuscript
+    );
+    const validated = validateManuscriptReviewArtifact({
+      review,
+      manuscript,
+      traceability: makeTraceability(manuscript)
+    });
+
+    const repairPlan = buildManuscriptRepairPlan({
+      passIndex: 1,
+      manuscript,
+      review: validated.review,
+      lint: buildManuscriptStyleLint({ manuscript, traceability: makeTraceability(manuscript) }),
+      mustImproveIssues: [
+        {
+          source: "review",
+          code: "related_work_quality",
+          severity: "fail",
+          section: "Related Work",
+          repairable: true,
+          message: "The Related Work section identifies high-level axes but does not position the study against prior work."
+        }
+      ]
+    });
+
+    expect(repairPlan.blocked_targets).toHaveLength(0);
+    expect(repairPlan.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issue_code: "related_work_quality",
+          section: "Related Work",
+          scope_downgraded: true,
+          allowed_location_keys: [
+            "paragraph:related_work:0",
+            "paragraph:related_work:1"
+          ]
+        })
+      ])
+    );
+  });
+
   it("keeps appendix traceability anchors in appendix-local repair scope", () => {
     const manuscript = makeCleanManuscript();
     manuscript.appendix_sections = [
@@ -1037,6 +1097,67 @@ describe("manuscriptQuality style lint", () => {
     expect(verification.scope_respected).toBe(false);
     expect(verification.out_of_scope_changes).toContain("paragraph:introduction:0");
     expect(verification.unexpected_changed_sections).toContain("introduction");
+  });
+
+  it("does not treat adjacent repair compaction as an out-of-scope trailing paragraph edit", () => {
+    const before = makeCleanManuscript();
+    before.sections[3] = {
+      heading: "Results",
+      paragraphs: [
+        "The first results paragraph reports the primary comparison.",
+        "The second results paragraph reports the task-level pattern.",
+        "The third results paragraph reports uncertainty.",
+        "The fourth results paragraph repeats the table interpretation.",
+        "The fifth results paragraph repeats the table interpretation in adjacent prose.",
+        "The sixth results paragraph is a trailing paragraph removed by the local compaction."
+      ]
+    };
+    const after = structuredClone(before);
+    after.sections[3] = {
+      heading: "Results",
+      paragraphs: [
+        before.sections[3]!.paragraphs[0]!,
+        before.sections[3]!.paragraphs[1]!,
+        before.sections[3]!.paragraphs[2]!,
+        "The fourth results paragraph now gives a concise table interpretation.",
+        "The fifth results paragraph now gives a scoped screening interpretation."
+      ]
+    };
+
+    const verification = buildManuscriptRepairVerificationArtifact({
+      passIndex: 1,
+      before,
+      after,
+      repairPlan: {
+        pass_index: 1,
+        repair_scope: "bounded_local",
+        targets: [
+          {
+            source: "review",
+            issue_code: "paragraph_redundancy",
+            severity: "warning",
+            kind: "paragraph",
+            section: "Results",
+            location_key: "paragraph:results:3",
+            paragraph_index: 3,
+            excerpt: before.sections[3]!.paragraphs[3]!,
+            source_refs: [],
+            edit_scope: "adjacent_two_paragraphs",
+            allowed_location_keys: ["paragraph:results:3", "paragraph:results:4"],
+            scope_reason:
+              "Paragraph-redundancy repair may revise one adjacent paragraph pair because the validated issue spans point to neighboring paragraphs."
+          }
+        ],
+        blocked_targets: [],
+        preservation_rules: [],
+        summary: "One adjacent results paragraph pair should be compacted."
+      },
+      reviewAfter: buildFallbackManuscriptReview(after)
+    });
+
+    expect(verification.changed_location_keys).toContain("paragraph:results:5");
+    expect(verification.out_of_scope_changes).not.toContain("paragraph:results:5");
+    expect(verification.locality_ok).toBe(true);
   });
 
   it("flags overclaiming changed visual captions in repair verification artifacts", () => {

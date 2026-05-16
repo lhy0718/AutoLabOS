@@ -241,6 +241,63 @@ describe("paper submission sanitization", () => {
     expect(tex).toContain("Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
   });
 
+  it("does not attach literature citations to Method execution and protocol records", () => {
+    const manuscript = {
+      title: "Citation hygiene paper",
+      abstract: "A concise abstract.",
+      keywords: [],
+      sections: [
+        {
+          heading: "Method",
+          paragraphs: [
+            "The experiment used a 4x2 factorial design crossing LoRA rank with dropout.",
+            "The realized data and evaluation settings were training data from Alpaca Clean, evaluation on ARC-Challenge and HellaSwag, and seed 17."
+          ]
+        },
+        {
+          heading: "Related Work",
+          paragraphs: ["Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation."]
+        }
+      ]
+    };
+    const tex = renderSubmissionPaperTex({
+      manuscript,
+      traceability: {
+        paragraphs: [
+          {
+            manuscript_section: "Method",
+            paragraph_index: 0,
+            source_draft_section: "Method",
+            evidence_ids: [],
+            citation_paper_ids: ["paper_a"]
+          },
+          {
+            manuscript_section: "Method",
+            paragraph_index: 1,
+            source_draft_section: "Method",
+            evidence_ids: [],
+            citation_paper_ids: ["paper_b"]
+          },
+          {
+            manuscript_section: "Related Work",
+            paragraph_index: 0,
+            source_draft_section: "Related Work",
+            evidence_ids: [],
+            citation_paper_ids: ["paper_a"]
+          }
+        ]
+      },
+      citationKeysByPaperId: new Map([
+        ["paper_a", "paperA"],
+        ["paper_b", "paperB"]
+      ])
+    });
+
+    expect(tex).not.toContain("factorial design crossing LoRA rank with dropout. \\cite{paperA}");
+    expect(tex).not.toContain("ARC-Challenge and HellaSwag, and seed 17. \\cite{paperB}");
+    expect(tex).toContain("Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
+  });
+
   it("removes internal run paths from fallback paper drafting before submission validation", () => {
     const bundle: PaperWritingBundle = {
       runTitle: "Budget-aware run",
@@ -534,6 +591,7 @@ describe("paper submission sanitization", () => {
             heading: "Results",
             paragraphs: [
               "The available summary does not expose a full eight-cell accuracy table, so this manuscript does not attempt to infer a detailed ordering among all configurations beyond the reported best-versus-baseline comparison.",
+              "However, because the compact writing record does not expose the full per-cell table, we describe this as the best reported comparison in the available artifact rather than a definitive ordering of all eight cells.",
               "Although all eight planned configurations were completed, the reported summary does not expose a full per-condition performance table sufficient for estimating rank main effects, dropout main effects, or their interaction across the whole grid. It supports a best-versus-baseline comparison, but it does not support a strong factorial interpretation of how performance changes over the entire rank-by-dropout design space.",
               "In addition, supplemental confirmatory profiles included in the payload did not reproduce the main gain."
             ]
@@ -584,6 +642,7 @@ describe("paper submission sanitization", () => {
     const text = JSON.stringify(manuscript);
     expect(text).toContain("Table 1 reports all eight condition mean accuracies");
     expect(text).toContain("Table 1 provides a mean-performance row for every factorial cell");
+    expect(text).toContain("visible table reports condition-level mean accuracies without complete per-cell uncertainty");
     expect(text).toContain("complete per-cell uncertainty and auxiliary-metric tables");
     expect(text).toContain("Table 1 reports the condition-level mean accuracies");
     expect(text).toContain("the reported analyses do not report optimizer choice, LoRA target modules");
@@ -593,6 +652,7 @@ describe("paper submission sanitization", () => {
     expect(text).toContain("The fixed search space held LoRA rank and dropout as the manipulated factors");
     expect(text).toContain("Relative to memory-efficient finetuning work");
     expect(text).not.toContain("does not expose a full eight-cell accuracy table");
+    expect(text).not.toContain("compact writing record does not expose the full per-cell table");
     expect(text).not.toContain("does not expose a full cell-by-cell mean table");
     expect(text).not.toContain("does not expose a full per-condition performance table");
     expect(text).not.toContain("does not provide a complete table of mean performance");
@@ -738,7 +798,7 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("A No broader replication");
   });
 
-  it("renders reader-visible citations for method resource paragraphs and related discussion claims", () => {
+  it("renders reader-visible citations for related discussion claims but not Method execution records", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "LoRA benchmark",
       topic: "LoRA rank/dropout benchmark",
@@ -820,8 +880,9 @@ describe("paper submission sanitization", () => {
     });
 
     const citedParagraphs = tex.split("\\cite{doe_2025_peft}").length - 1;
-    expect(citedParagraphs).toBeGreaterThanOrEqual(3);
+    expect(citedParagraphs).toBe(2);
     expect(tex).toContain("Qwen/Qwen2.5-1.5B");
+    expect(tex).not.toContain("run seed of 17. \\cite{doe_2025_peft}");
     expect(tex).toContain("\\cite{doe_2025_peft}");
   });
 
@@ -972,7 +1033,7 @@ describe("paper submission sanitization", () => {
     const text = JSON.stringify(manuscript);
     expect(text).toContain("Verified execution metadata identifies Qwen/Qwen2.5-1.5B");
     expect(text).toContain("visible manuscript reports the eight condition-level mean accuracies");
-    expect(text).toContain("task split described in the Results prose");
+    expect(text).toContain("auditable screening result");
     expect(text).toContain("related-work comparison remains narrower than a full survey");
     expect(text).not.toContain("does not unambiguously state");
     expect(text).not.toContain("does not identify the realized backbone");
@@ -980,6 +1041,7 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("learning-rate, batch-size");
     expect(text).not.toContain("abstract-level or timeout-limited extraction");
     expect(text).not.toContain("Specification may be underspecified");
+    expect(text).not.toContain("The paper therefore keeps execution coverage");
     expect(text).not.toContain("presented table and figure");
     expect(manuscript.appendix_sections?.map((section) => section.heading)).toEqual([
       "Supplementary Experimental Details"

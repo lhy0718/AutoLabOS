@@ -1947,6 +1947,9 @@ function lintNumericConsistency(input: {
     if (isRuntimeBudgetFact(observedFact)) {
       continue;
     }
+    if (isAccuracyScoreValueMiskeyedAsDelta(observedFact)) {
+      continue;
+    }
     const comparableFacts = expectedFacts.filter(
       (candidate) =>
         areComparableNumericFacts(observedFact, candidate)
@@ -2078,6 +2081,33 @@ function isRuntimeBudgetFact(fact: NormalizedNumericFact): boolean {
   return fact.fact_kind === "metric"
     && fact.metric_key === "runtime_seconds"
     && /\b(?:timeout|budget|time\s+budget|runtime\s+limit)\b/iu.test(fact.raw_text);
+}
+
+function isAccuracyScoreValueMiskeyedAsDelta(fact: NormalizedNumericFact): boolean {
+  if (
+    fact.fact_kind !== "metric"
+    || fact.metric_key !== "accuracy_delta_vs_baseline"
+    || fact.unit !== "delta"
+  ) {
+    return false;
+  }
+  const cleaned = cleanString(fact.raw_text);
+  const numberPattern = String.raw`(-?\d+(?:,\d{3})*(?:\.\d+)?)`;
+  const scorePairPatterns = [
+    new RegExp(String.raw`\b(?:achieved|reached|reported|had)\s+${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b[^.!?]{0,80}\b(?:versus|vs\.?|compared with)\s+${numberPattern}`, "giu"),
+    new RegExp(String.raw`\b(?:mean\s+|average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+${numberPattern}\s+(?:to|up to)\s+${numberPattern}`, "giu")
+  ];
+  for (const pattern of scorePairPatterns) {
+    for (const match of cleaned.matchAll(pattern)) {
+      const scoreValues = match.slice(1, 3)
+        .map((value) => Number(String(value).replace(/,/gu, "")))
+        .filter((value) => Number.isFinite(value));
+      if (scoreValues.some((value) => areApproxEqual(value, fact.normalized_value, "score"))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function isUncertaintyIntervalMetricFact(fact: NormalizedNumericFact): boolean {
@@ -2802,6 +2832,12 @@ function buildObservedFactDriftIssues(
     if (fact.fact_kind === "metric" && isConditionClusterStatement(fact.raw_text)) {
       continue;
     }
+    if (fact.fact_kind === "metric" && isRuntimeBudgetFact(fact)) {
+      continue;
+    }
+    if (fact.fact_kind === "metric" && isAccuracyScoreValueMiskeyedAsDelta(fact)) {
+      continue;
+    }
     if (!fact.metric_key && !fact.count_kind) {
       continue;
     }
@@ -2833,6 +2869,9 @@ function buildObservedFactDriftIssues(
     if (isBenignBaselineLeadingVisualDrift(mainSectionFacts, distinctValues)) {
       continue;
     }
+    if (isBenignTaskAccuracyVisualComparison(mainSectionFacts, distinctValues)) {
+      continue;
+    }
     if (isBenignApproximateMemoryDrift(mainSectionFacts)) {
       continue;
     }
@@ -2861,9 +2900,6 @@ function isBenignFromToMetricScoreDrift(
   facts: NormalizedNumericFact[],
   distinctValues: number[]
 ): boolean {
-  if (distinctValues.length !== 2) {
-    return false;
-  }
   const fromToFacts = facts.filter(
     (fact) =>
       fact.fact_kind === "metric"
@@ -2874,6 +2910,20 @@ function isBenignFromToMetricScoreDrift(
         || (fact.metric_key === "train_loss" && isFromToTrainLossFragment(fact.raw_text))
       )
   );
+  if (
+    fromToFacts.length > 0
+    && distinctValues.every((value) =>
+      fromToFacts.some((fact) =>
+        rawTextContainsApproxValue(fact.raw_text, value, fact.unit)
+        || rawTextContainsRoundedValue(fact.raw_text, value)
+      )
+    )
+  ) {
+    return true;
+  }
+  if (distinctValues.length !== 2) {
+    return false;
+  }
   if (fromToFacts.length < 2) {
     const fromToTextFacts = facts.filter(
       (fact) =>
@@ -2905,6 +2955,17 @@ function rawTextContainsApproxValue(text: string, value: number, unit: NumericFa
   return false;
 }
 
+function rawTextContainsRoundedValue(text: string, value: number): boolean {
+  const numericMatches = cleanString(text).matchAll(/-?\d+(?:,\d{3})*(?:\.\d+)?/gu);
+  for (const match of numericMatches) {
+    const parsed = Number(match[0].replace(/,/gu, ""));
+    if (Number.isFinite(parsed) && Math.abs(parsed - value) <= 0.001) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isBenignBaselineLeadingVisualDrift(
   facts: NormalizedNumericFact[],
   distinctValues: number[]
@@ -2930,6 +2991,36 @@ function isBenignBaselineLeadingVisualDrift(
       && /\b(?:from\s+-?\d|versus|vs\.?|compared with|relative to)\b/iu.test(fact.raw_text)
   );
   return hasFigurePair && hasComparativeResultText;
+}
+
+function isBenignTaskAccuracyVisualComparison(
+  facts: NormalizedNumericFact[],
+  distinctValues: number[]
+): boolean {
+  if (distinctValues.length < 2 || distinctValues.length > 3) {
+    return false;
+  }
+  if (
+    !facts.every(
+      (fact) =>
+        fact.fact_kind === "metric"
+        && fact.metric_key === "accuracy"
+        && fact.unit === "score"
+        && fact.dataset_scope !== "aggregate"
+        && fact.dataset_scope !== "unknown"
+    )
+  ) {
+    return false;
+  }
+  const hasFigurePair = facts.some((fact) =>
+    fact.source === "figure" && /\b(?:baseline|leading|best|reference)\b/iu.test(fact.raw_text)
+  );
+  const hasFromToTaskText = facts.some(
+    (fact) =>
+      ["abstract", "results", "discussion", "conclusion"].includes(fact.source)
+      && isFromToAccuracyScoreFragment(fact.raw_text)
+  );
+  return hasFigurePair && hasFromToTaskText;
 }
 
 function isBenignApproximateMemoryPair(left: NormalizedNumericFact, right: NormalizedNumericFact): boolean {
@@ -3024,12 +3115,15 @@ function extractCountFactsFromText(input: {
 }
 
 function shouldSkipCountFactMatch(text: string, match: RegExpMatchArray, kind: CountFactKind): boolean {
-  if (kind !== "sample_count") {
-    return false;
-  }
   const index = match.index || 0;
   const raw = match[0] || "";
   const window = text.slice(Math.max(0, index - 32), Math.min(text.length, index + raw.length + 32));
+  if ((kind === "run_count" || kind === "repeat_count") && /\bseed[-\s]*\d+(?:\s+runs?)?\b/iu.test(window)) {
+    return true;
+  }
+  if (kind !== "sample_count") {
+    return false;
+  }
   return /\brank[-\s]*\d+(?:\.\d+)?\s+rows?\b/iu.test(window);
 }
 
@@ -3590,6 +3684,10 @@ function inferDatasetScopeNearNumber(
   rawIndex: number,
   fallback: string | "aggregate" | "unknown"
 ): string | "aggregate" | "unknown" {
+  const explicitTaskScope = inferExplicitTaskAccuracyScopeNearNumber(text, rawIndex);
+  if (explicitTaskScope) {
+    return explicitTaskScope;
+  }
   const searchText = normalizeMetricSearchText(text);
   const arcDistance = nearestKeywordDistance(searchText, rawIndex, ["arc challenge", "arc-challenge", "arc_challenge"]);
   const hellaswagDistance = nearestKeywordDistance(searchText, rawIndex, ["hellaswag", "hella swag"]);
@@ -3605,10 +3703,60 @@ function inferDatasetScopeNearNumber(
   return fallback;
 }
 
+function inferExplicitTaskAccuracyScopeNearNumber(
+  text: string,
+  rawIndex: number
+): "ARC-Challenge" | "HellaSwag" | undefined {
+  const cleaned = cleanString(text);
+  const numberPattern = String.raw`(-?\d+(?:,\d{3})*(?:\.\d+)?)`;
+  const specs: Array<{ scope: "ARC-Challenge" | "HellaSwag"; patterns: RegExp[] }> = [
+    {
+      scope: "ARC-Challenge",
+      patterns: [
+        new RegExp(String.raw`\bARC[-_\s]?Challenge\s+accuracy\b[^.!?]{0,80}\b(?:remained|stayed|was|is|=|unchanged)\s+(?:at\s+)?${numberPattern}`, "giu"),
+        new RegExp(String.raw`\b${numberPattern}[^.!?]{0,80}\bARC[-_\s]?Challenge\s+accuracy\b`, "giu")
+      ]
+    },
+    {
+      scope: "HellaSwag",
+      patterns: [
+        new RegExp(String.raw`\bHella\s*Swag\s+accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|increased|rose|rises|changed|was|is|=|from)\b[^.!?]{0,80}\b(?:from\s+)?${numberPattern}(?:\s+(?:to|up to)\s+${numberPattern})?`, "giu"),
+        new RegExp(String.raw`\bHella\s*Swag\b[^.!?]{0,80}\b(?:improve[sd]?|increased|rose|rises|changed)\b[^.!?]{0,80}\bfrom\s+${numberPattern}\s+(?:to|up to)\s+${numberPattern}`, "giu"),
+        new RegExp(String.raw`\b${numberPattern}[^.!?]{0,80}\bHella\s*Swag\s+accuracy\b`, "giu")
+      ]
+    }
+  ];
+  for (const spec of specs) {
+    for (const pattern of spec.patterns) {
+      for (const match of cleaned.matchAll(pattern)) {
+        const values = match.slice(1).filter(Boolean);
+        for (const value of values) {
+          const valueIndex = (match.index || 0) + match[0].indexOf(value);
+          if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
+            return spec.scope;
+          }
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 function inferAggregationLevel(text: string, datasetScope: string | "aggregate" | "unknown"): NumericFactAggregation {
   const cleaned = cleanString(text).toLowerCase();
   if (datasetScope !== "aggregate" && datasetScope !== "unknown") {
     return "dataset";
+  }
+  if (
+    /\b(?:wall[-\s]?clock|runtime|seconds?)\b/iu.test(cleaned)
+    && (
+      /\b(?:full\s+)?(?:sweep|run|benchmark|experiment|study|grid)\b|\boverall\b|\baggregate\b/iu.test(cleaned)
+      || /\b(?:full|total)\s+(?:run|sweep)\s+(?:finished|completed|took|lasted|runtime)\b/iu.test(cleaned)
+      || /\ball\s+eight\s+planned\s+conditions\b/iu.test(cleaned)
+      || /\bdo(?:es)?\s+not\s+expose\b[^.!?]{0,120}\bper[-\s]?condition\s+efficiency\b/iu.test(cleaned)
+    )
+  ) {
+    return "aggregate";
   }
   if (
     /\bcondition[-\s]?level\b|\brank\/dropout grid\b|\brank[-\s]?dropout grid\b/iu.test(cleaned)
@@ -3666,7 +3814,21 @@ function inferMetricUnit(
   if (
     (metricKey === "accuracy" || metricKey === "accuracy_delta" || metricKey === "accuracy_delta_vs_baseline")
     && typeof rawIndex === "number"
+    && isExplicitAccuracyDeltaValue(text, rawIndex)
+  ) {
+    return "delta";
+  }
+  if (
+    (metricKey === "accuracy" || metricKey === "accuracy_delta" || metricKey === "accuracy_delta_vs_baseline")
+    && typeof rawIndex === "number"
     && isAbsoluteAccuracyScoreValue(text, rawIndex)
+  ) {
+    return "score";
+  }
+  if (
+    (metricKey === "accuracy" || metricKey === "accuracy_delta" || metricKey === "accuracy_delta_vs_baseline")
+    && typeof rawIndex === "number"
+    && isExplicitAccuracyScoreValue(text, rawIndex)
   ) {
     return "score";
   }
@@ -3738,8 +3900,54 @@ function isFromToAccuracyScoreValue(text: string, rawIndex: number): boolean {
 function isAbsoluteAccuracyScoreValue(text: string, rawIndex: number): boolean {
   const cleaned = cleanString(text);
   const patterns = [
-    /\b(?:[A-Z][A-Za-z-]*\s+)?accuracy\b[^.!?]{0,60}\b(?:remained|stayed|was|is|=|unchanged(?:\s+at)?)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
+    /\b(?:[A-Z][A-Za-z-]*\s+)?accuracy\b[^.!?]{0,60}\b(?:remained|stayed|was|is|=|unchanged(?:\s+at)?|(?:is|was)\s+reported\s+as)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
     /\b(?:[A-Z][A-Za-z-]*\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,40}\b(?:in both|for both)\b/giu
+  ];
+  for (const pattern of patterns) {
+    for (const match of cleaned.matchAll(pattern)) {
+      const values = match.slice(1).filter(Boolean);
+      for (const value of values) {
+        const valueIndex = (match.index || 0) + match[0].indexOf(value);
+        if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function isExplicitAccuracyScoreValue(text: string, rawIndex: number): boolean {
+  const cleaned = cleanString(text);
+  const numberPattern = String.raw`(-?\d+(?:,\d{3})*(?:\.\d+)?)`;
+  const patterns = [
+    new RegExp(String.raw`\b(?:baseline|locked baseline|reference)?\s*(?:average\s+)?accuracy\s+(?:of|at|=|was|is)\s+${numberPattern}`, "giu"),
+    new RegExp(String.raw`\b(?:achieved|reached|reported|had)\s+(?:mean\s+|average\s+)?accuracy\s+${numberPattern}`, "giu"),
+    new RegExp(String.raw`\b(?:achieved|reached|reported|had)\s+${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b`, "giu"),
+    new RegExp(String.raw`\b(?:mean\s+|average\s+)?accuracy\s+${numberPattern}\s+(?:versus|vs\.?|compared with)\s+${numberPattern}`, "giu"),
+    new RegExp(String.raw`\b${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\s+(?:versus|vs\.?|compared with)\s+${numberPattern}`, "giu"),
+    new RegExp(String.raw`\b(?:best|leading|strongest|recorded)\s+(?:recorded\s+|reported\s+)?(?:condition|cell)?\s*(?:reach(?:es|ed)?|achiev(?:es|ed)?|reported|had)\s+${numberPattern}`, "giu"),
+    new RegExp(String.raw`\b(?:baseline|reference)\b[^.!?]{0,48}\b(?:average\s+)?accuracy\b[^.!?]{0,24}\b(?:was|is|at|of|=)\s+${numberPattern}`, "giu")
+  ];
+  for (const pattern of patterns) {
+    for (const match of cleaned.matchAll(pattern)) {
+      const value = match[1] || "";
+      const valueIndex = (match.index || 0) + match[0].indexOf(value);
+      if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function isExplicitAccuracyDeltaValue(text: string, rawIndex: number): boolean {
+  const cleaned = cleanString(text);
+  const numberPattern = String.raw`(-?\d+(?:,\d{3})*(?:\.\d+)?)`;
+  const patterns = [
+    new RegExp(String.raw`\b(?:absolute\s+)?gain\s+(?:of|=|was|is)\s+${numberPattern}`, "giu"),
+    new RegExp(String.raw`\b(?:improv(?:e|ed|es|ement)|outperform(?:ed|s)?|gain(?:ed|s)?)\b[^.!?]{0,80}\b(?:baseline|reference)\b[^.!?]{0,40}\bby\s+${numberPattern}`, "giu"),
+    new RegExp(String.raw`\bby\s+${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b`, "giu")
   ];
   for (const pattern of patterns) {
     for (const match of cleaned.matchAll(pattern)) {
@@ -3767,6 +3975,7 @@ function isVersusAccuracyScoreValue(text: string, rawIndex: number): boolean {
   const cleaned = cleanString(text);
   const patterns = [
     /\b(?:mean\s+)?(?:average\s+)?accuracy\s+(?:was|is|=)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?/giu,
+    /\b(?:mean\s+)?(?:average\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?/giu,
     /\b(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?[^.!?]{0,80}\b(?:mean\s+)?(?:average\s+)?accuracy\b/giu
   ];
   for (const pattern of patterns) {
@@ -3819,15 +4028,21 @@ function inferMetricKeyNearNumber(
   if (isSequenceLengthValue(fragment, rawIndex)) {
     return undefined;
   }
-  if (isFromToAccuracyScoreValue(fragment, rawIndex) || isVersusAccuracyScoreValue(fragment, rawIndex)) {
-    return "accuracy";
-  }
   if (isFromToTrainLossValue(fragment, rawIndex)) {
     return "train_loss";
   }
   const localMetricWindow = normalizeMetricText(fragment.slice(Math.max(0, rawIndex - 56), Math.min(fragment.length, rawIndex + 56)));
   if (/\btrain(?:ing)? loss\b/iu.test(localMetricWindow)) {
     return "train_loss";
+  }
+  if (isExplicitAccuracyScoreValue(fragment, rawIndex)) {
+    return "accuracy";
+  }
+  if (isFromToAccuracyScoreValue(fragment, rawIndex) || isVersusAccuracyScoreValue(fragment, rawIndex)) {
+    return "accuracy";
+  }
+  if (isExplicitAccuracyDeltaValue(fragment, rawIndex)) {
+    return "accuracy_delta_vs_baseline";
   }
   if (/\baccuracy\s+delta\b|\bdelta\b[^.!?]{0,40}\bbaseline\b|\bbaseline\b[^.!?]{0,40}\bdelta\b/iu.test(localMetricWindow)) {
     return "accuracy_delta_vs_baseline";
@@ -4446,13 +4661,16 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
   if (/^\s*(?:percentage\s+)?points?\b/iu.test(nextWindow)) {
     return true;
   }
-  if (/^\s*(?:training\s+)?examples?\b|^\s*train\s+dataset\s+tokens?\b/iu.test(nextWindow)) {
+  if (/^\s*-?\s*(?:training\s+)?examples?\b|^\s*train\s+dataset\s+tokens?\b/iu.test(nextWindow)) {
     return true;
   }
   if (/^\s*(?:prediction|predictions|records?|samples?)\b/iu.test(nextWindow)) {
     return true;
   }
   if (/\b(?:n\s*=\s*)?$/iu.test(previousWindow) && /^\s*(?:prediction|predictions|records?|samples?)\b/iu.test(nextWindow)) {
+    return true;
+  }
+  if (/\bpredictions?\s+per\s+condition\s*:?\s*$/iu.test(previousWindow)) {
     return true;
   }
   if (/^\s*tokens?\b/iu.test(nextWindow)) {
@@ -4481,6 +4699,10 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
     return true;
   }
   const widerWindow = fragment.slice(Math.max(0, index - 20), Math.min(fragment.length, index + rawToken.length + 20));
+  const thresholdBoundaryWindow = fragment.slice(
+    Math.max(0, index - 96),
+    Math.min(fragment.length, index + rawToken.length + 48)
+  );
   if (/\brank\s+\d+(?:\.\d+)?\s+with\s*$/iu.test(previousWindow) && /^\s*dropout\b/iu.test(nextWindow)) {
     return true;
   }
@@ -4521,14 +4743,25 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
   if (/\b(?:target|threshold|objective|goal|constraint|minimum|at least|at most)\b/iu.test(widerWindow)) {
     return true;
   }
+  if (
+    /\b(?:no[-\s]?signal|threshold|boundary|rule|minimum|maximum|spread)\b/iu.test(thresholdBoundaryWindow)
+    && /\b(?:below|under|less than|at least|at most|exceed(?:s|ed)?|clear(?:s|ed)?|stayed below|remained below)\b/iu.test(
+      thresholdBoundaryWindow
+    )
+  ) {
+    return true;
+  }
   return false;
 }
 
 function isObjectiveThresholdFragment(fragment: string): boolean {
   const normalized = normalizeMetricText(fragment);
   return (
-    /(?:>=|<=|>|<)/u.test(fragment)
-    && /\bobjective\b|\bconstraint\b|\btarget\b|\bthreshold\b|\baround\b|\bposition(?:s|ed|ing)?\b|\bscope(?:d)?\b/iu.test(normalized)
+    (
+      /(?:>=|<=|>|<)/u.test(fragment)
+      || /\b(?:below|under|less than|at least|at most|exceed(?:s|ed)?|clear(?:s|ed)?|stayed below|remained below)\b/iu.test(normalized)
+    )
+    && /\bobjective\b|\bconstraint\b|\btarget\b|\bthreshold\b|\bno[-\s]?signal\b|\bboundary\b|\brule\b|\baround\b|\bposition(?:s|ed|ing)?\b|\bscope(?:d)?\b/iu.test(normalized)
   );
 }
 
@@ -5087,13 +5320,20 @@ export function enforceManuscriptPageBudgetFloor(input: {
   draft: PaperDraft;
   pageBudget: PageBudgetManagerReport;
 }): ManuscriptPageBudgetFloorReport {
-  const minimumMainWords = Math.max(1, Math.round(input.pageBudget.minimum_main_words || 0));
+  const configuredMinimumMainWords = Math.max(1, Math.round(input.pageBudget.minimum_main_words || 0));
+  const estimatedWordsPerPage = Math.max(1, Math.round(input.pageBudget.estimated_words_per_page || 650));
+  const renderSafetyBufferWords = Math.round(estimatedWordsPerPage * 0.75);
+  const maximumMainWords = Math.max(
+    configuredMinimumMainWords,
+    Math.round(input.pageBudget.maximum_main_words || configuredMinimumMainWords + renderSafetyBufferWords)
+  );
+  const minimumMainWords = Math.min(maximumMainWords, configuredMinimumMainWords + renderSafetyBufferWords);
   const estimatedBefore = estimateManuscriptMainWords(input.manuscript);
   if (estimatedBefore >= minimumMainWords) {
     return {
       manuscript: input.manuscript,
       applied: false,
-      minimum_main_words: minimumMainWords,
+      minimum_main_words: configuredMinimumMainWords,
       estimated_main_words_before: estimatedBefore,
       estimated_main_words_after: estimatedBefore,
       added_paragraph_count: 0,
@@ -5158,7 +5398,7 @@ export function enforceManuscriptPageBudgetFloor(input: {
   return {
     manuscript,
     applied: addedParagraphCount > 0,
-    minimum_main_words: minimumMainWords,
+    minimum_main_words: configuredMinimumMainWords,
     estimated_main_words_before: estimatedBefore,
     estimated_main_words_after: estimateManuscriptMainWords(manuscript),
     added_paragraph_count: addedParagraphCount,

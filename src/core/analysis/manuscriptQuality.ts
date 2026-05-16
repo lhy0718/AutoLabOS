@@ -423,13 +423,10 @@ function shouldShowReaderVisibleCitations(section: string, paragraph: string, pa
   if (key === "related_work") {
     return true;
   }
-  if (/\b(?:QLoRA|MAPLE|PEFT|prior work|literature|cited work|adapter-variant|benchmarking papers)\b/iu.test(paragraph)) {
-    return true;
+  if (key === "method") {
+    return false;
   }
-  if (
-    key === "method" &&
-    /\b(?:planned protocol|targeted|preferred|fallback|capped|dataset|model documentation|source|Qwen|TinyLlama|Alpaca|ARC-Challenge|HellaSwag)\b/iu.test(paragraph)
-  ) {
+  if (/\b(?:QLoRA|MAPLE|PEFT|prior work|literature|cited work|adapter-variant|benchmarking papers)\b/iu.test(paragraph)) {
     return true;
   }
   if (key !== "introduction") {
@@ -1204,6 +1201,13 @@ export function buildManuscriptRepairVerificationArtifact(input: {
     .map((check) => check.location_key);
   const outOfScopeChanges = changedLocationKeys.filter((locationKey) =>
     !allowedLocationKeys.includes(locationKey) &&
+    !isToleratedAdjacentRepairCompactionChange({
+      locationKey,
+      before: input.before,
+      after: input.after,
+      repairPlan: input.repairPlan,
+      allowedLocationKeys
+    }) &&
     !isToleratedConservativeVisualRedundancyChange({
       locationKey,
       repairPlan: input.repairPlan,
@@ -1238,6 +1242,72 @@ export function buildManuscriptRepairVerificationArtifact(input: {
         : `Repair verification ${input.passIndex} observed only allowed bounded-local changes, but changed visual surfaces at ${uniqueStrings([...overclaimingCaptionLocations, ...overclaimingLabelLocations]).join(", ")} still overstate the takeaway.`
       : `Repair verification ${input.passIndex} found out-of-scope changes in ${unexpectedChangedSections.join(", ") || "unknown sections"}.`
   };
+}
+
+function isToleratedAdjacentRepairCompactionChange(input: {
+  locationKey: string;
+  before: PaperManuscript;
+  after: PaperManuscript;
+  repairPlan: ManuscriptRepairPlanArtifact;
+  allowedLocationKeys: string[];
+}): boolean {
+  const changed = parseParagraphLocationKey(input.locationKey);
+  if (!changed || changed.kind !== "paragraph") {
+    return false;
+  }
+  const beforeSection = input.before.sections.find(
+    (section) => normalizeHeadingKeyForLocation(section.heading) === changed.section
+  );
+  const afterSection = input.after.sections.find(
+    (section) => normalizeHeadingKeyForLocation(section.heading) === changed.section
+  );
+  if (!beforeSection || !afterSection || beforeSection.paragraphs.length <= afterSection.paragraphs.length) {
+    return false;
+  }
+  if (changed.index < afterSection.paragraphs.length) {
+    return false;
+  }
+  return input.repairPlan.targets.some((target) => {
+    if (
+      target.kind !== "paragraph" ||
+      target.edit_scope !== "adjacent_two_paragraphs" ||
+      !["alignment", "paragraph_redundancy"].includes(target.issue_code)
+    ) {
+      return false;
+    }
+    const targetKeys = (target.allowed_location_keys.length > 0 ? target.allowed_location_keys : [target.location_key])
+      .filter((key) => input.allowedLocationKeys.includes(key))
+      .map(parseParagraphLocationKey)
+      .filter((key): key is NonNullable<ReturnType<typeof parseParagraphLocationKey>> =>
+        Boolean(key && key.kind === "paragraph" && key.section === changed.section)
+      );
+    if (targetKeys.length < 2) {
+      return false;
+    }
+    const indices = uniqueNumbers(targetKeys.map((key) => key.index));
+    const minIndex = Math.min(...indices);
+    const maxIndex = Math.max(...indices);
+    const coversAdjacentSpan = indices.length === maxIndex - minIndex + 1;
+    return coversAdjacentSpan && changed.index === maxIndex + 1;
+  });
+}
+
+function parseParagraphLocationKey(
+  locationKey: string
+): { kind: "paragraph" | "appendix_paragraph"; section: string; index: number } | null {
+  const match = /^(paragraph|appendix_paragraph):([^:]+):(\d+)$/u.exec(locationKey);
+  if (!match) {
+    return null;
+  }
+  return {
+    kind: match[1] as "paragraph" | "appendix_paragraph",
+    section: match[2] as string,
+    index: Number(match[3])
+  };
+}
+
+function normalizeHeadingKeyForLocation(section: string): string {
+  return section.replace(/\s+/gu, "_").toLowerCase();
 }
 
 function isToleratedConservativeVisualRedundancyChange(input: {
@@ -1476,7 +1546,7 @@ function buildAnchorlessSectionRepairTargets(
   manuscript: PaperManuscript,
   issue: ManuscriptReviewIssue
 ): ManuscriptRepairTarget[] {
-  if (issue.code !== "citation_hygiene") {
+  if (issue.code !== "citation_hygiene" && issue.code !== "related_work_quality") {
     return [];
   }
   return splitReviewSectionNames(issue.section)
@@ -1502,7 +1572,9 @@ function buildAnchorlessSectionRepairTargets(
         edit_scope: "adjacent_two_paragraphs" as const,
         allowed_location_keys: allowedLocationKeys,
         scope_reason:
-          "Citation-hygiene repair may revise paragraphs within the explicitly named section because the review identified section-level citation placement but did not provide a safe paragraph span.",
+          issue.code === "related_work_quality"
+            ? "Related-work-quality repair may revise paragraphs within the explicitly named Related Work section because the review identified section-level adequacy but did not provide a safe paragraph span."
+            : "Citation-hygiene repair may revise paragraphs within the explicitly named section because the review identified section-level citation placement but did not provide a safe paragraph span.",
         scope_downgraded: true
       }];
     });

@@ -2071,7 +2071,10 @@ describe("scientificWriting", () => {
         },
         {
           heading: "Method",
-          paragraphs: ["We evaluate 2 datasets with outer 5-fold CV and inner 3-fold tuning."]
+          paragraphs: [
+            "We evaluate 2 datasets with outer 5-fold CV and inner 3-fold tuning.",
+            "A separate no-signal rule was specified for cases in which the maximum condition spread stayed below 0.005 absolute accuracy or the available uncertainty evidence was inconclusive."
+          ]
         },
         {
           heading: "Results",
@@ -2140,7 +2143,7 @@ describe("scientificWriting", () => {
         {
           heading: "Limitations",
           paragraphs: [
-            "The design specification names seed 42, whereas the runtime summary reports seed 17; this is provenance context rather than a measured runtime value."
+            "The design specification names a seed-42 run, whereas the runtime summary reports seed 17; this is provenance context rather than a measured runtime value."
           ]
         },
         {
@@ -2181,6 +2184,13 @@ describe("scientificWriting", () => {
               && [0, 0.05, 4, 8, 16, 32].includes(fact.value)
               && /rank|dropout|grid|sweep/i.test(fact.raw_text)
           )
+      )
+    ).toHaveLength(0);
+    expect(
+      manuscript.consistency_lint.issues.filter(
+        (issue) =>
+          issue.kind === "count_unverifiable"
+          && /cites 42 as a runs/iu.test(issue.message)
       )
     ).toHaveLength(0);
   });
@@ -2855,6 +2865,13 @@ describe("scientificWriting", () => {
         (issue) => issue.kind === "numeric_inconsistency" && issue.severity === "error"
       )
     ).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.filter(
+        (issue) =>
+          issue.kind === "numeric_inconsistency"
+          && /cites 0\.3333, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
+      )
+    ).toHaveLength(0);
   });
 
   it("keeps anaphoric best-condition accuracy separate from a following baseline comparison", () => {
@@ -3229,7 +3246,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "LoRA Rank-Dropout Preflight",
       abstract:
-        "The intended sweep crossed ranks {4, 8, 16, 32} and dropout {0.0, 0.05}, with average accuracy as the endpoint. The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation. Condition-level 95% intervals overlap substantially, and each interval is based on only 12 predictions.",
+        "The intended sweep crossed ranks {4, 8, 16, 32} and dropout {0.0, 0.05}, with average accuracy as the endpoint. The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. In the main recorded sweep, the best reported condition, rank 32 with dropout 0.05, achieved 0.4167 average accuracy compared with 0.3333 for the baseline, a gain of 0.0833. The best reported comparison, rank 32 with dropout 0.05 versus the baseline, achieved average accuracy 0.416666 versus 0.333334, a gain of 0.083332 that exceeds the prespecified 0.01 improvement target. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation. Condition-level 95% intervals overlap substantially, and each interval is based on only 12 predictions.",
       keywords: ["LoRA"],
       sections: [
         {
@@ -3248,12 +3265,18 @@ describe("scientificWriting", () => {
           heading: "Results",
           paragraphs: [
             "The best recorded condition was rank 32 with dropout 0.05, which improved average accuracy from 0.3333 in the locked baseline to 0.4167.",
+            "The baseline average accuracy is 0.333334, while the best reported condition reaches 0.416666, giving a delta of 0.083332 over baseline.",
             "Reported training loss did not improve in parallel: the baseline loss was 1.4620, whereas the best-accuracy condition reported 1.5242.",
+            "The baseline train loss is 1.461996, whereas the best reported condition has a higher train loss of 1.524199 despite better evaluation accuracy.",
             "The higher-accuracy condition did not coincide with lower training loss: the baseline is reported at 1.4620, whereas the best-accuracy setting is reported at 1.5242.",
-            "ARC-Challenge accuracy remained unchanged at 0.50 in both the best condition and the baseline, while HellaSwag accuracy increased from 0.166667 to 0.333333.",
+            "Training loss moved in the opposite direction, rising from 1.462 to 1.524, so the favorable accuracy result was not accompanied by a lower reported loss.",
+            "In the best condition-to-baseline comparison, ARC-Challenge accuracy stayed at 0.50 for both settings, while HellaSwag increased from 0.1667 to 0.3333.",
+            "ARC-Challenge accuracy is reported as 0.500000 for both the baseline and the best condition, so there is no observed improvement on that benchmark.",
             "The artifact reports 8 requested and 8 completed conditions, 45.687 s wall-clock runtime, and peak CUDA allocation of approximately 4.28 GB.",
+            "Reported wall-clock time was 45.687 seconds, peak CUDA allocation was 4,278,951,936 bytes (about 4.28 GB), and the experiment remained well within the 1,800-second budget.",
             "At this preflight scale, the execution reports 45.687 seconds of wall-clock time and 4,278,951,936 bytes of peak allocated CUDA memory.",
             "The summarized run finished in 45.687 s, remained within the 1,800 s timeout, and reached a peak CUDA allocation of 4,278,951,936 bytes, or about 4.0 GiB.",
+            "They should not be read as a runtime or memory estimate for the originally planned 10000-example protocol.",
             "For most conditions, the reported 95% intervals for average accuracy span approximately 0.138 to 0.609 over 12 predictions, and the best observed cell spans approximately 0.193 to 0.680."
           ]
         },
@@ -3266,6 +3289,12 @@ describe("scientificWriting", () => {
           paragraphs: [
             "The gain was concentrated in HellaSwag, and the full eight-cell sweep remained cheap to execute at under a minute, roughly 4.28 GB of peak GPU memory, and an accuracy delta of 0.0833 over the baseline."
           ]
+        }
+      ],
+      appendix_tables: [
+        {
+          caption: "Supplementary uncertainty summary for average accuracy.",
+          rows: [{ label: "Predictions Per Condition", value: 12 }]
         }
       ]
     };
@@ -3286,10 +3315,15 @@ describe("scientificWriting", () => {
           || /conflicting aggregate accuracy delta vs baseline values/iu.test(issue.message)
           || /cites 0\.3333, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
           || /cites 0\.4167, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
+          || /cites 0\.333334, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
+          || /cites 0\.416666, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
+          || /cites 0\.3333, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
+          || /cites 0\.4167, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
           || /cites 1\.462, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
-          || /cites (?:8|45\.687), but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
+          || /cites (?:8|45\.687|45\.7), but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
           || /Abstract cites 12, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
           || /cites 4278951936, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
+          || /cites 10,?000, but the comparable structured results support .*peak_memory_mb/iu.test(issue.message)
           || /cites (?:24|48|256), but the comparable structured results support .*peak_memory_mb/iu.test(issue.message)
           || /Results cites (?:0\.138|0\.609|0\.1381|0\.6094), but the comparable structured results support .*peak_memory_mb/iu.test(issue.message)
           || /cites 1\.5242, but the current artifacts do not expose a comparable structured numeric fact for train_loss/iu.test(issue.message)
@@ -3299,8 +3333,13 @@ describe("scientificWriting", () => {
           || /cites 1,?800, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
           || /cites 0\.138, but the comparable structured results support .*accuracy/iu.test(issue.message)
           || /cites 0\.5, but the current artifacts do not expose a comparable structured numeric fact for accuracy_delta/iu.test(issue.message)
+          || /Results cites 0\.5, but the comparable structured results support .*accuracy/iu.test(issue.message)
           || /Abstract cites 0\.05, but the comparable structured results support .*accuracy/iu.test(issue.message)
           || /Results and Figure 1 report conflicting ARC-Challenge accuracy values/iu.test(issue.message)
+          || /Results and Figure 1 report conflicting HellaSwag accuracy values/iu.test(issue.message)
+          || /Appendix Table \d+ cites 12, but the comparable structured results support .*accuracy/iu.test(issue.message)
+          || /Supplementary Boundary Notes cites 45\.687, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
+          || /Abstract and Results report conflicting aggregate runtime seconds values/iu.test(issue.message)
         )
         .map((issue) => issue.message)
     ).toEqual([]);

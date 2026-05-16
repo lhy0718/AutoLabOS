@@ -3787,8 +3787,11 @@ function buildFollowupManuscriptRepairDecision(input: {
       input.passIndex < 2 &&
       !hasBlockingAuditIssue &&
       improvement &&
-      remainingFailCount > 0 &&
       input.issuesAfter.every((issue) => issue.repairable) &&
+      (
+        remainingFailCount > 0 ||
+        input.issuesAfter.every((issue) => issue.severity === "warning")
+      ) &&
       remainingFailCount <= 2 &&
       input.issuesAfter.length <= 6 &&
       uniqueStrings(input.issuesAfter.map((issue) => `${issue.source}:${issue.code}`)).length <= 6 &&

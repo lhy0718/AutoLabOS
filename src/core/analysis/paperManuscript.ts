@@ -801,6 +801,10 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "Table 1 reports all eight condition mean accuracies, so the manuscript uses the visible rows as the condition-level table while avoiding a fine-grained ranking beyond the reported best-versus-baseline comparison."
     )
     .replace(
+      /\bHowever,\s*because the compact writing record does not expose the full per-cell table,\s*we describe this as the best reported comparison in the available artifact rather than a definitive ordering of all eight cells\./giu,
+      "However, because the visible table reports condition-level mean accuracies without complete per-cell uncertainty and auxiliary metrics, we describe this as the best reported comparison rather than a definitive ordering of all eight cells."
+    )
+    .replace(
       /\bThe available summary does not expose a full eight-cell accuracy table\./giu,
       "Table 1 reports all eight condition mean accuracies."
     )
@@ -898,7 +902,11 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
     )
     .replace(
       /\bThe paper therefore keeps execution coverage and supplementary metrics secondary to the visible baseline-relative comparison\.\s*The main text interprets only the comparison and task split that are visible in the presented table and figure\./giu,
-      "The paper therefore keeps execution coverage and supplementary metrics secondary to the visible baseline-relative comparison. The main text interprets the condition means shown in Table 1 and the task split described in the Results prose."
+      "Overall, the run is most useful as an auditable screening result: it identifies a follow-up candidate while keeping the baseline comparison, task split, and supplemental caution visible."
+    )
+    .replace(
+      /\bThe paper therefore keeps execution coverage and supplementary metrics secondary to the visible baseline-relative comparison\.\s*The main text interprets the condition means shown in Table 1 and the task split described in the Results prose\./giu,
+      "Overall, the run is most useful as an auditable screening result: it identifies a follow-up candidate while keeping the baseline comparison, task split, and supplemental caution visible."
     )
     .replace(
       /\bThe main text interprets only the comparison and task split that are visible in the presented table and figure\./giu,
@@ -2547,7 +2555,7 @@ function shouldRenderSubmissionCitationsForParagraph(heading: string, paragraph:
     return true;
   }
   if (key === "method") {
-    return /\b(?:Alpaca Clean|ARC-Challenge|HellaSwag|benchmark pair|dataset and benchmark sources|training source|evaluation was limited|preferred base model|Qwen\/Qwen2\.5|TinyLlama\/TinyLlama|LoRA rank|dropout|factorial sweep|maximum sequence length|timeout|seed)\b/iu.test(paragraph);
+    return false;
   }
   if (key === "discussion") {
     if (

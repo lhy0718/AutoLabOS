@@ -4757,7 +4757,7 @@ describe("writePaper PDF build", () => {
     expect(round1Gate.stop_or_continue_reason).toMatch(/partially grounded|second and final manuscript repair/i);
   });
 
-  it("allows a warning-only partially grounded follow-up review when deterministic gates pass", async () => {
+  it("uses the second repair pass for warning-only partially grounded follow-up review issues", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-partially-grounded-warning-pass-"));
     process.chdir(root);
 
@@ -4784,7 +4784,7 @@ describe("writePaper PDF build", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("success");
-    expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(false);
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(true);
 
     const gate = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
@@ -4794,9 +4794,9 @@ describe("writePaper PDF build", () => {
       decision_digest: { stop_reason_category: string; review_reliability: string };
     };
     expect(gate.action).toBe("pass");
-    expect(gate.stop_or_continue_reason).toMatch(/non-blocking manuscript warnings/i);
+    expect(gate.stop_or_continue_reason).toMatch(/resolved|passed|non-blocking manuscript warnings/i);
     expect(gate.decision_digest.stop_reason_category).toBe("clean_pass");
-    expect(gate.decision_digest.review_reliability).toBe("partially_grounded");
+    expect(gate.decision_digest.review_reliability).toBe("grounded");
   });
 
   it("drops out-of-scope repair edits before manuscript-quality verification", async () => {
