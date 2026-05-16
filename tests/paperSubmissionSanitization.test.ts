@@ -1132,13 +1132,14 @@ describe("paper submission sanitization", () => {
   it("repairs reader-facing manuscript quality residues after LLM manuscript repair", () => {
     const stabilized = stabilizePaperManuscriptForSubmission({
       title: "A LoRA Benchmark",
-      abstract: "A cautious benchmark.",
+      abstract: "A cautious benchmark. The strongest contribution of the study is a reproducible and conservative protocol for comparing LoRA settings under explicit budget, reporting, and uncertainty constraints.",
       keywords: ["LoRA"],
       sections: [
         {
           heading: "Method",
           paragraphs: [
             "The run specification named Qwen/Qwen2.5-1.5B as the preferred base model and TinyLlama/TinyLlama-1.1B-Chat-v1.0 as fallback, but the manuscript-ready reported summary does not expose the executed model identifier, so the present paper reports the intended configuration without claiming model-level verification.",
+            "The execution summary used for manuscript preparation reports training data from the yahma/alpaca-cleaned train split, 48 training examples, evaluation on the allenai/ai2_arc ARC-Challenge validation split and the HellaSwag validation split, 6 examples per evaluation task, and execution seed 17. The configured backbone choices were Qwen/Qwen2.5-1.5B and TinyLlama/TinyLlama-1.1B-Chat-v1.0, but the summary materials used here do not identify unambiguously which of those two backbones produced the reported results. Fixed training settings were learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, 4 optimizer steps, maximum sequence length 256, and 1800 s timeout. Uncertainty summaries were reported as condition-level 95% intervals over n=12 prediction records; they are treated as screening intervals rather than significance tests.",
             "The compact artifact bundle provides only partial training detail. It reports command provenance, runtime, memory, completed-condition counts, and condition-level confidence intervals, but it does not surface optimizer settings, scheduler, batch size, target modules, epoch count, or stopping rule in manuscript-readable form. Rather than reconstructing missing configuration by inference, we treat the study as a transparent but incomplete preflight protocol."
           ]
         },
@@ -1169,17 +1170,39 @@ describe("paper submission sanitization", () => {
             "The compact record also omits several implementation details that would normally be standard in an empirical paper, including optimizer choice, learning-rate schedule, batch size, and an unambiguous statement of the executed base model. These omissions materially narrow reproducibility and interpretability."
           ]
         }
+      ],
+      appendix_sections: [
+        {
+          heading: "Supplementary Experimental Details",
+          paragraphs: [
+            "The study used a fixed 4x2 grid over ranks 4, 8, 16, and 32 and dropout values 0.0 and 0.05, with rank 8 and dropout 0.0 serving as the locked baseline. The run was designed for a dual-RTX-4090-class local workstation and used seed 42. The preferred backbone in the protocol was Qwen/Qwen2.5-1.5B, with TinyLlama/TinyLlama-1.1B-Chat-v1.0 reserved as a fallback. The training source was Alpaca Clean under a cap of 10000 examples, although the summarized preflight reported here used 48 examples."
+          ]
+        },
+        {
+          heading: "Uncertainty and Reporting Notes",
+          paragraphs: [
+            "The summary materials report 95% intervals over 12 predictions per condition. Because the manuscript source used for writing does not expose the full interval-construction procedure, these intervals are treated descriptively.",
+            "Additional confirmatory checks included in the supporting materials did not reproduce the main gain. The available summaries also present execution counts at different granularities, and the full numeric table for all eight rank-dropout conditions is not completely exposed in the manuscript source."
+          ]
+        }
       ]
     });
 
     const text = JSON.stringify(stabilized);
     expect(text).toContain("documented gain remains a single-run preflight observation");
+    expect(text).toContain("conservative, auditable pilot protocol");
     expect(text).toContain("scheduler details beyond the scalar learning rate");
     expect(text).toContain("executed metrics identify Qwen/Qwen2.5-1.5B");
     expect(text).toContain("learning rate 0.0002");
+    expect(text).toContain("reports seed 17 with 48 yahma/alpaca-cleaned training examples");
+    expect(text).toContain("Table 1 exposes the eight condition means");
     expect(text).not.toContain("supplementary No broader replication");
     expect(text).not.toContain("does not expose the executed model identifier");
+    expect(text).not.toContain("do not identify unambiguously which of those two backbones");
     expect(text).not.toContain("does not surface optimizer settings");
+    expect(text).not.toContain("used seed 42");
+    expect(text).not.toContain("manuscript source used for writing");
+    expect(text).not.toContain("not completely exposed in the manuscript source");
     expect(text).not.toContain("The best nonbaseline row should");
     expect(text).not.toContain("The rank-32 rows carry");
     expect(text).not.toContain("The baseline row also changes");

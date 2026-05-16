@@ -3791,8 +3791,9 @@ function buildFollowupManuscriptRepairDecision(input: {
       improvement &&
       remainingFailCount > 0 &&
       input.issuesAfter.every((issue) => issue.repairable) &&
-      input.issuesAfter.length <= 4 &&
-      uniqueStrings(input.issuesAfter.map((issue) => `${issue.source}:${issue.code}`)).length <= 4 &&
+      remainingFailCount <= 2 &&
+      input.issuesAfter.length <= 6 &&
+      uniqueStrings(input.issuesAfter.map((issue) => `${issue.source}:${issue.code}`)).length <= 6 &&
       input.gateDecision.status !== "fail" &&
       input.submissionValidation.ok &&
       input.reviewValidation.ok &&
