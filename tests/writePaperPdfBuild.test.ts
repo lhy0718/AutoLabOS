@@ -2928,6 +2928,87 @@ describe("writePaper PDF build", () => {
     );
   });
 
+  it("rejects automatic LaTeX repair output that removes an explicit ACL template", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-pdf-template-repair-reject-"));
+    process.chdir(root);
+
+    await writeFile(
+      path.join(root, "template.tex"),
+      [
+        "\\pdfoutput=1",
+        "\\documentclass[11pt]{article}",
+        "\\usepackage[review]{ACL2023}",
+        "\\begin{document}",
+        "\\section{Introduction}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(path.join(root, "ACL2023.sty"), "% mock ACL style\n", "utf8");
+
+    const run = makeRun("run-paper-pdf-template-repair-reject");
+    const runDir = await seedRun(root, run);
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put(
+      "run_brief.raw",
+      [
+        "# Research Brief",
+        "",
+        "## Topic",
+        "Template-faithful paper writing",
+        "",
+        "## Manuscript Template",
+        "template.tex",
+        "",
+        "## Manuscript Authors",
+        "- authors: AutoLabOS Validation Team"
+      ].join("\n")
+    );
+
+    const aci = createPdfBuildAci({ failFirstCompile: true });
+    const llm = new SequencedLLMClient([
+      ...buildSessionResponses(),
+      "\\documentclass{article}\n\\begin{document}\nTemplate-stripped repair.\n\\end{document}\n"
+    ]);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: true,
+          latex_engine: "auto_install"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: aci.api as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
+    expect(tex).toContain("\\usepackage[review]{ACL2023}");
+    expect(tex).not.toContain("Template-stripped repair.");
+    expect(await readFile(path.join(runDir, "paper", "latex_repair.tex"), "utf8")).toContain(
+      "Template-stripped repair."
+    );
+    const report = JSON.parse(await readFile(path.join(runDir, "paper", "compile_report.json"), "utf8")) as {
+      status: string;
+      repaired: boolean;
+      repair_error?: string;
+      warnings: string[];
+    };
+    expect(report.status).toBe("failed");
+    expect(report.repaired).toBe(false);
+    expect(report.repair_error).toContain("latex repair would remove requested template surface");
+    expect(report.warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining("\\usepackage[review]{ACL2023}")])
+    );
+  });
+
   it("warns in default mode when the compiled PDF remains below main_page_limit", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-pdf-short-default-"));
     process.chdir(root);

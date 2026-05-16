@@ -2227,41 +2227,49 @@ async function maybeBuildPaperPdf(input: {
     abortSignal: input.abortSignal
   });
   if (repair.tex) {
-    repaired = true;
-    await fs.writeFile(texPath, repair.tex, "utf8");
-    await fs.writeFile(path.join(input.publicPaperDir, "main.tex"), repair.tex, "utf8");
-    input.emitLog("Applied one automatic LaTeX repair pass and retrying PDF compilation.");
-    const secondAttempt = await runLatexCompileAttempt({
-      deps: input.deps,
-      runId: input.run.id,
-      paperDir: runPaperDir,
-      attempt: 2,
-      repaired: true,
-      abortSignal: input.abortSignal,
-      emitLog: input.emitLog
-    });
-    attempts.push(secondAttempt.attempt);
-    compileWarnings.push(...secondAttempt.attempt.warnings);
-    toolCallsUsed += secondAttempt.toolCallsUsed;
-    finalAttempt = secondAttempt.attempt;
-    if (secondAttempt.ok) {
-      await finalizeCompiledArtifacts(runPaperDir, input.publicPaperDir, finalAttempt);
-      const pdfPath = path.join(runPaperDir, "main.pdf");
-      const buildLogPath = path.join(runPaperDir, "build.log");
-      const report: PaperCompileResult = {
-        enabled: true,
-        status: "repaired_success",
+    const templatePreservation = checkFinalTexPreservesTemplate(repair.tex, input.parsedTemplate || null);
+    if (!templatePreservation.ok) {
+      repairError =
+        `latex repair would remove requested template surface: ${templatePreservation.missing.join(", ")}`;
+      compileWarnings.push(repairError);
+      input.emitLog(`Automatic LaTeX repair rejected: ${repairError}`);
+    } else {
+      repaired = true;
+      await fs.writeFile(texPath, repair.tex, "utf8");
+      await fs.writeFile(path.join(input.publicPaperDir, "main.tex"), repair.tex, "utf8");
+      input.emitLog("Applied one automatic LaTeX repair pass and retrying PDF compilation.");
+      const secondAttempt = await runLatexCompileAttempt({
+        deps: input.deps,
+        runId: input.run.id,
+        paperDir: runPaperDir,
+        attempt: 2,
         repaired: true,
-        toolCallsUsed,
-        attempts,
-        warnings: compileWarnings,
-        pdf_path: pdfPath,
-        build_log_path: buildLogPath
-      };
-      await writeRunArtifact(input.run, "paper/compile_report.json", `${JSON.stringify(report, null, 2)}\n`);
-      return report;
+        abortSignal: input.abortSignal,
+        emitLog: input.emitLog
+      });
+      attempts.push(secondAttempt.attempt);
+      compileWarnings.push(...secondAttempt.attempt.warnings);
+      toolCallsUsed += secondAttempt.toolCallsUsed;
+      finalAttempt = secondAttempt.attempt;
+      if (secondAttempt.ok) {
+        await finalizeCompiledArtifacts(runPaperDir, input.publicPaperDir, finalAttempt);
+        const pdfPath = path.join(runPaperDir, "main.pdf");
+        const buildLogPath = path.join(runPaperDir, "build.log");
+        const report: PaperCompileResult = {
+          enabled: true,
+          status: "repaired_success",
+          repaired: true,
+          toolCallsUsed,
+          attempts,
+          warnings: compileWarnings,
+          pdf_path: pdfPath,
+          build_log_path: buildLogPath
+        };
+        await writeRunArtifact(input.run, "paper/compile_report.json", `${JSON.stringify(report, null, 2)}\n`);
+        return report;
+      }
+      repairError = secondAttempt.attempt.error;
     }
-    repairError = secondAttempt.attempt.error;
   } else {
     repairError = repair.error || "latex repair produced no replacement source";
     input.emitLog(`Automatic LaTeX repair failed: ${repairError}`);

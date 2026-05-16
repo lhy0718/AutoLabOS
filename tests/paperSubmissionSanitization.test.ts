@@ -151,6 +151,36 @@ describe("paper submission sanitization", () => {
     expect(tex).not.toContain("\\makebox[4.2em][l]");
   });
 
+  it("omits keywords by default when rendering through an explicit LaTeX template", () => {
+    const manuscript = {
+      title: "Template keyword policy",
+      abstract: "A concise abstract.",
+      keywords: ["should not render"],
+      sections: [{ heading: "Introduction", paragraphs: ["We introduce the question."] }],
+      tables: [],
+      figures: []
+    };
+    const tex = renderSubmissionPaperTex({
+      manuscript,
+      traceability: { paragraphs: [] },
+      citationKeysByPaperId: new Map(),
+      parsedTemplate: {
+        sourcePath: "/workspace/template.tex",
+        preDocumentPreamble: "\\pdfoutput=1",
+        documentClass: "\\documentclass[11pt]{article}",
+        preamble: "\\usepackage[review]{ACL2023}",
+        columnLayout: 1,
+        packages: ["\\usepackage[review]{ACL2023}"],
+        sectionOrder: ["Introduction"],
+        customCommands: [],
+        bibliographyStyle: null
+      }
+    });
+
+    expect(tex).toContain("\\usepackage[review]{ACL2023}");
+    expect(tex).not.toContain("\\textbf{Keywords:}");
+  });
+
   it("does not attach literature citations to paper-specific Introduction framing", () => {
     const manuscript = {
       title: "Citation hygiene paper",

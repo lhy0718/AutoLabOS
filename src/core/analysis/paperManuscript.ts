@@ -1689,7 +1689,8 @@ export function renderSubmissionPaperTex(input: {
         "\\end{abstract}"
       ];
 
-  if (input.includeKeywords !== false && input.manuscript.keywords.length > 0) {
+  const shouldIncludeKeywords = input.includeKeywords ?? !input.parsedTemplate;
+  if (shouldIncludeKeywords && input.manuscript.keywords.length > 0) {
     lines.push(`\\noindent\\textbf{Keywords:} ${latexEscape(input.manuscript.keywords.join(", "))}`);
     lines.push("");
   }
