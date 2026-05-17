@@ -732,6 +732,8 @@ describe("scientificWriting", () => {
                   text:
                     index === 0 && section.heading === "Results"
                       ? "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01. rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), arc_challenge_accuracy: 0.5 vs 0.5 (delta 0), hellaswag_accuracy: 0.3333 vs 0.1667 (delta 0.1667)."
+                      : index === 1 && section.heading === "Method"
+                        ? "The first P6 run uses a cached target so the validation focuses on real training, result-table integrity, review gating, and paper-readiness audit rather than on new model access."
                       : `Restoration note ${index + 1} for ${section.heading}: ${budgetParagraph}`,
                   evidence_ids: section.evidence_ids,
                   citation_paper_ids: section.citation_paper_ids
@@ -782,6 +784,8 @@ describe("scientificWriting", () => {
     expect(restoredText).not.toContain("average_accuracy");
     expect(restoredText).not.toContain("arc_challenge_accuracy");
     expect(restoredText).not.toContain("hellaswag_accuracy");
+    expect(restoredText).not.toContain("P6");
+    expect(restoredText).not.toMatch(/review gating|paper-readiness audit|result-table integrity/i);
   });
 
   it("refreshes page-budget validation from the repaired manuscript before strict gating", () => {

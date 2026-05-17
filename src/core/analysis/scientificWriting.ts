@@ -6467,7 +6467,31 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
   if (/^\s*\[(?:warning|error|fail|failed|pass|passed)\]\s*[^:]{0,80}:/iu.test(cleaned)) {
     return "";
   }
+  if (
+    /\b(?:workflow audit|generated manuscript|artifact directory|submission validation|scientific validation|quality failure)\b/iu.test(cleaned)
+    || /\bThe main gap is that current artifacts\b/iu.test(cleaned)
+    || /\bThe current workflow provides\b/iu.test(cleaned)
+  ) {
+    return "";
+  }
   return rewriteReaderFacingProvenancePhrases(stripLimitedEvidenceBoilerplate(stripRawCitationTokens(cleaned)))
+    .replace(
+      /\bIt synthesizes\s+\d+\s+analyzed paper summaries and\s+\d+\s+extracted evidence items\.\s+The writing is scoped by these constraints:[\s\S]*?Forbidden shortcuts:\s*do not fabricate missing metrics,\s*impute failed conditions,\s*hide failed runs,\s*treat fallback or smoke output as training evidence,\s*or claim statistical significance without uncertainty evidence\.?/giu,
+      "The manuscript uses collected literature for positioning and the executed local run for numerical claims. It reports the declared compute budget, selected backbone, data cap, evaluation tasks, rank/dropout grid, locked baseline, and uncertainty limits without treating the pilot as a statistically definitive result."
+    )
+    .replace(
+      /\bThe (?:first\s+P6|local preflight) run uses a cached(?:,\s*locally runnable small LLM)? target so the validation focuses on real training,\s*result-table integrity,\s*review gating,\s*and paper-readiness audit rather than on new model access\./giu,
+      "The study is framed as a local small-model preflight so that the evidence rests on executed training runs and a bounded claim ceiling rather than on access to a larger target model."
+    )
+    .replace(
+      /\bThe (?:first\s+P6|local preflight) run uses a cached,\s*locally runnable small LLM target so the validation focuses on real training,\s*result-table integrity,\s*review gating,\s*and paper-readiness audit rather than on new model access\./giu,
+      "The study is framed as a local small-model preflight so that the evidence rests on executed training runs and a bounded claim ceiling rather than on access to a larger target model."
+    )
+    .replace(/\b(?:first\s+)?(?:full\s+)?P6\s+run\b/giu, "local preflight run")
+    .replace(/\bP6\b/gu, "preflight")
+    .replace(/`([^`]+)`/gu, "$1")
+    .replace(/\.autolabos\/(?:[^\s,.;)`]+)?/giu, "the governed run artifact directory")
+    .replace(/\boutputs\/(?:[^\s,.;)`]+)?/giu, "the public output bundle")
     .replace(
       /\bObjective metric met:\s*accuracy_delta_vs_baseline\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*>=\s*([0-9]+(?:\.[0-9]+)?)\.?/giu,
       "The prespecified baseline-relative accuracy target was met (observed gain $1 versus threshold $2); condition-level values in Table 1 provide the main numeric support."

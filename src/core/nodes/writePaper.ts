@@ -861,6 +861,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           };
       if (finalFloor.applied) {
         manuscript = finalFloor.manuscript;
+        manuscript = compactReaderFacingRepairedManuscript(manuscript);
         emitLog(
           `Restored ${finalFloor.added_paragraph_count} final manuscript paragraph(s) after render cleanup compressed the main body ` +
           `from ${finalFloor.estimated_main_words_before} to ${finalFloor.estimated_main_words_after} words ` +
@@ -3081,6 +3082,8 @@ function isReaderHostileFinalPaperParagraph(paragraph: string): boolean {
   return (
     /\b(result-table consistency|bounded claim ceiling|claim-downgrade|pre-registered result-gating|paper-readiness audit|review gating|reader-facing prose|submission quality|local cleanup pass|final checklist before submission|manuscript-process|workflow intervention)\b/iu.test(paragraph)
     || /\bThe main gap is that current artifacts\b/iu.test(paragraph)
+    || /\bThe current workflow provides\b/iu.test(paragraph)
+    || /\bP6\b/u.test(paragraph)
     || /\bThe wording is deliberately scoped so that a reader can separate completed evidence from future work\b/iu.test(paragraph)
   );
 }

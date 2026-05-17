@@ -2666,11 +2666,28 @@ export function sanitizePaperNarrativeText(value: unknown): string {
   }
 
   return rewriteReaderFacingProvenancePhrases(cleaned)
+    .replace(
+      /\bIt synthesizes\s+\d+\s+analyzed paper summaries and\s+\d+\s+extracted evidence items\.\s+The writing is scoped by these constraints:[\s\S]*?Forbidden shortcuts:\s*do not fabricate missing metrics,\s*impute failed conditions,\s*hide failed runs,\s*treat fallback or smoke output as training evidence,\s*or claim statistical significance without uncertainty evidence\.?/giu,
+      "The manuscript uses the collected literature for positioning and the executed local run for numerical claims. It reports the declared compute budget, selected backbone, data cap, evaluation tasks, rank/dropout grid, locked baseline, and uncertainty limits without treating the pilot as a statistically definitive result."
+    )
     .replace(/\bThis study addresses\s+Study\s+how\b/giu, "This study addresses how")
     .replace(/\bThis paper studies\s+Study\s+how\b/giu, "This paper studies how")
     .replace(/\bfor\s+Study\s+how\b/giu, "for how")
     .replace(/\babout\s+Study\s+how\b/giu, "about how")
     .replace(/\bStudy\s+how\b/gu, "how")
+    .replace(
+      /\bThe (?:first\s+P6|local preflight) run uses a cached(?:,\s*locally runnable small LLM)? target so the validation focuses on real training,\s*result-table integrity,\s*review gating,\s*and paper-readiness audit rather than on new model access\./giu,
+      "The study is framed as a local small-model preflight so that the evidence rests on executed training runs and a bounded claim ceiling rather than on access to a larger target model."
+    )
+    .replace(
+      /\bThe (?:first\s+P6|local preflight) run uses a cached,\s*locally runnable small LLM target so the validation focuses on real training,\s*result-table integrity,\s*review gating,\s*and paper-readiness audit rather than on new model access\./giu,
+      "The study is framed as a local small-model preflight so that the evidence rests on executed training runs and a bounded claim ceiling rather than on access to a larger target model."
+    )
+    .replace(/\b(?:first\s+)?(?:full\s+)?P6\s+run\b/giu, "local preflight run")
+    .replace(/\bP6\b/gu, "preflight")
+    .replace(/`([^`]+)`/gu, "$1")
+    .replace(/\.autolabos\/(?:[^\s,.;)`]+)?/giu, "the governed run artifact directory")
+    .replace(/\boutputs\/(?:[^\s,.;)`]+)?/giu, "the public output bundle")
     .replace(/\.\s+under an explicitly bounded evidence ceiling\b/giu, " under an explicitly bounded evidence ceiling")
     .replace(/`[^`]*\.autolabos\/[^`]*`/giu, "the governed run artifact directory")
     .replace(/`[^`]*test\/outputs?\/[^`]*`/giu, "the public output directory")
