@@ -226,6 +226,10 @@ interface PaperRenderValidationReport {
     target_main_pages: number;
     rendered_figure_asset_count: number;
     final_tex_preserves_template: boolean;
+    final_tex_bibliography_style: string | null;
+    expected_bibliography_style: string | null;
+    repeated_citation_bundle_count: number;
+    max_repeated_citation_bundle_count: number;
   };
   summary: string[];
 }
@@ -5962,10 +5966,33 @@ function buildPaperRenderValidation(input: {
       false
     );
   }
+  const bibliographyStylePolicy = checkFinalTexBibliographyStyle(input.tex, input.parsedTemplate);
+  if (!bibliographyStylePolicy.ok) {
+    failOrWarn(
+      "bibliography_style_mismatch",
+      bibliographyStylePolicy.message,
+      false
+    );
+  }
   if (input.citationReport.status === "fail") {
     failOrWarn(
       "citation_rendering_failed",
       "Rendered manuscript citations do not match the bibliography or no citations were rendered for available bibliography/evidence support."
+    );
+  }
+  const repeatedCitationBundles = detectRepeatedCitationBundles(input.tex);
+  const maxRepeatedCitationBundleCount = repeatedCitationBundles[0]?.count ?? 0;
+  const repeatedCitationBundleCount = repeatedCitationBundles.filter((item) => item.count > 1).length;
+  if (maxRepeatedCitationBundleCount >= 3) {
+    failOrWarn(
+      "repeated_citation_bundle",
+      `The same citation bundle is rendered ${maxRepeatedCitationBundleCount} times in ${repeatedCitationBundles[0].section} (${repeatedCitationBundles[0].bundle}), which makes references look mechanically repeated.`,
+      false
+    );
+  } else if (maxRepeatedCitationBundleCount > 1) {
+    failOrWarn(
+      "repeated_citation_bundle",
+      `The same citation bundle is rendered more than once in ${repeatedCitationBundles[0].section} (${repeatedCitationBundles[0].bundle}); review whether repeated citations are necessary.`
     );
   }
 
@@ -6037,7 +6064,11 @@ function buildPaperRenderValidation(input: {
       main_body_pdf_page_count: input.compiledPageValidation.main_body_pdf_page_count ?? input.compiledPageValidation.compiled_pdf_page_count,
       target_main_pages: input.compiledPageValidation.target_main_pages,
       rendered_figure_asset_count: renderedFigureAssetCount,
-      final_tex_preserves_template: templatePreservation.ok
+      final_tex_preserves_template: templatePreservation.ok,
+      final_tex_bibliography_style: bibliographyStylePolicy.actualStyle,
+      expected_bibliography_style: bibliographyStylePolicy.expectedStyle,
+      repeated_citation_bundle_count: repeatedCitationBundleCount,
+      max_repeated_citation_bundle_count: maxRepeatedCitationBundleCount
     },
     summary:
       issues.length === 0
@@ -6080,6 +6111,94 @@ function checkFinalTexPreservesTemplate(
     }
   }
   return { ok: missing.length === 0, missing };
+}
+
+function checkFinalTexBibliographyStyle(
+  tex: string,
+  parsedTemplate: ParsedLatexTemplate | null
+): { ok: boolean; actualStyle: string | null; expectedStyle: string | null; message: string } {
+  const actualStyle = tex.match(/\\bibliographystyle\{([^}]+)\}/u)?.[1]?.trim() || null;
+  const expectedStyle = expectedBibliographyStyleForTemplate(parsedTemplate);
+  if (!expectedStyle) {
+    if (actualStyle === "plain") {
+      return {
+        ok: false,
+        actualStyle,
+        expectedStyle: "unsrt",
+        message: "Final rendered TeX uses plain bibliography style, so numeric references may be ordered alphabetically instead of by first citation."
+      };
+    }
+    return { ok: true, actualStyle, expectedStyle: null, message: "" };
+  }
+  if (actualStyle === expectedStyle) {
+    return { ok: true, actualStyle, expectedStyle, message: "" };
+  }
+  return {
+    ok: false,
+    actualStyle,
+    expectedStyle,
+    message: `Final rendered TeX uses bibliography style ${actualStyle || "none"} but the template expects ${expectedStyle}.`
+  };
+}
+
+function expectedBibliographyStyleForTemplate(parsedTemplate: ParsedLatexTemplate | null): string | null {
+  const explicitStyle = parsedTemplate?.bibliographyStyle?.trim();
+  if (explicitStyle) {
+    return explicitStyle;
+  }
+  const templateSurface = [
+    parsedTemplate?.preDocumentPreamble || "",
+    parsedTemplate?.documentClass || "",
+    parsedTemplate?.preamble || "",
+    ...(parsedTemplate?.packages || [])
+  ].join("\n");
+  if (/\\usepackage(?:\[[^\]]*\])?\{ACL2023\}/iu.test(templateSurface)) {
+    return "acl_natbib";
+  }
+  return null;
+}
+
+function detectRepeatedCitationBundles(tex: string): Array<{ bundle: string; count: number; section: string }> {
+  const chunks = tex.split(/(?=\\section(?:\[[^\]]*\])?\{[^}]+\})/u);
+  const effectiveChunks = chunks.length > 1 ? chunks : [tex];
+  const repeated: Array<{ bundle: string; count: number; section: string }> = [];
+  for (const chunk of effectiveChunks) {
+    const section = chunk.match(/\\section(?:\[[^\]]*\])?\{([^}]+)\}/u)?.[1]?.trim() || "the rendered manuscript";
+    const counts = new Map<string, number>();
+    for (const match of chunk.matchAll(/\\cite[a-zA-Z*]*(?:\[[^\]]*\]){0,2}\{([^}]+)\}/gu)) {
+      const bundle = normalizeCitationBundle(match[1]);
+      if (!bundle) {
+        continue;
+      }
+      counts.set(bundle, (counts.get(bundle) || 0) + 1);
+    }
+    repeated.push(
+      ...Array.from(counts.entries())
+        .map(([bundle, count]) => ({ bundle, count, section }))
+        .filter((item) => {
+          const keyCount = item.bundle.split(",").filter(Boolean).length;
+          return keyCount > 1 ? item.count > 1 : item.count > 2;
+        })
+    );
+  }
+  return repeated
+    .filter((item) => {
+      const keyCount = item.bundle.split(",").filter(Boolean).length;
+      return keyCount > 1 ? item.count > 1 : item.count > 2;
+    })
+    .sort((a, b) => b.count - a.count || a.section.localeCompare(b.section) || a.bundle.localeCompare(b.bundle));
+}
+
+function normalizeCitationBundle(raw: string): string {
+  const keys = Array.from(
+    new Set(
+      raw
+        .split(",")
+        .map((key) => key.trim())
+        .filter(Boolean)
+    )
+  ).sort();
+  return keys.join(",");
 }
 
 function extractOverfullHBoxPoints(text: string): number[] {

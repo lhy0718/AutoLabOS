@@ -16,3 +16,7 @@ Return JSON only.
 Use only facts explicitly present in the payload.
 Do not invent metrics, thresholds, failure causes, or comparisons.
 If a failure cause is uncertain, label it as a risk or remaining uncertainty.
+Report raw denominators and correct-count changes whenever accuracy deltas are used.
+If a headline gain is explainable by one changed evaluation example, classify it as a pilot/screening signal rather than a stable effect.
+Flag missing repeated seeds, tiny evaluation samples, and smoke-scale optimizer steps as evidence-ceiling blockers for paper-scale claims.
+Keep runtime/VRAM as diagnostics unless repeated condition-level resource aggregates support an efficiency claim.

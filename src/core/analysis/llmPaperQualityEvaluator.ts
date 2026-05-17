@@ -129,7 +129,15 @@ function buildEvaluatorPrompt(input: LLMEvaluatorInput): string {
     minimum_gate: {
       passed: input.minimumGate.passed,
       ceiling_type: input.minimumGate.ceiling_type,
-      blockers: input.minimumGate.blockers
+      blockers: input.minimumGate.blockers,
+      paper_scale_diagnostics: (input.minimumGate.paper_scale_diagnostics || []).map((diagnostic) => ({
+        id: diagnostic.id,
+        severity: diagnostic.severity,
+        category: diagnostic.category,
+        summary: diagnostic.summary,
+        evidence: diagnostic.evidence,
+        target_node: diagnostic.target_node
+      }))
     },
     // Existing review panel scores (if available)
     review_scorecard: input.reviewScorecard ?? null
@@ -165,6 +173,9 @@ function buildEvaluatorPrompt(input: LLMEvaluatorInput): string {
     "Rules:",
     "- If minimum_gate.passed is false, paper_worthiness must be 'not_ready' or 'research_memo'.",
     `- If no executed result exists, overall_score must be ≤ ${GATE_THRESHOLDS.llmNoExecutedResultScoreCeiling}.`,
+    "- Treat tiny evaluation samples, one-example headline gains, missing repeated seeds, thin optimizer budgets, and missing canonical method citations as real paper-quality gaps.",
+    "- If a positive result is explainable as one changed evaluation example, do not call it a stable interaction or tuning rule.",
+    "- If paper_scale_diagnostics contains blocking items, recommend the target_node from those diagnostics unless a stronger upstream design problem is explicit.",
     "- Negative results are fine if framed honestly. Do not hide them.",
     `- evidence_gaps: list only gaps actually observed, max ${GATE_THRESHOLDS.llmMaxEvidenceGaps}.`,
     `- upgrade_actions: ordered by priority (${GATE_THRESHOLDS.llmHighestPriorityActionRank} = highest), max ${GATE_THRESHOLDS.llmMaxUpgradeActions}.`,
@@ -317,6 +328,17 @@ export function buildFallbackEvaluation(input: LLMEvaluatorInput): PaperQualityE
   const gate = input.minimumGate;
   const hasResults = input.presence.metricsPresent;
   const hasBaseline = input.presence.baselineSummaryPresent;
+  const diagnostics = gate.paper_scale_diagnostics || [];
+  const minimumGateGaps: EvidenceGap[] = gate.blockers.map(b => ({
+    gap: b,
+    severity: "critical",
+    suggested_action: "Address minimum gate requirement"
+  }));
+  const diagnosticGaps: EvidenceGap[] = diagnostics.map((diagnostic) => ({
+    gap: diagnostic.summary,
+    severity: diagnostic.severity === "blocking" ? "critical" : "important",
+    suggested_action: diagnostic.recommended_action
+  }));
 
   let worthiness: PaperQualityEvaluation["paper_worthiness"] = "not_ready";
   if (gate.passed && hasResults && hasBaseline) {
@@ -369,17 +391,18 @@ export function buildFallbackEvaluation(input: LLMEvaluatorInput): PaperQualityE
       },
       { dimension: "limitations_honesty", score_1_to_5: GATE_THRESHOLDS.llmFallbackNeutralDimensionScore, assessment: "Fallback." }
     ],
-    evidence_gaps: gate.blockers.map(b => ({
-      gap: b, severity: "critical" as const, suggested_action: "Address minimum gate requirement"
-    })),
-    upgrade_actions: gate.blockers.length > 0 ? [{
+    evidence_gaps: minimumGateGaps.concat(diagnosticGaps).slice(0, GATE_THRESHOLDS.llmMaxEvidenceGaps),
+    upgrade_actions: gate.blockers.length > 0 || diagnostics.length > 0 ? [{
       priority: GATE_THRESHOLDS.llmHighestPriorityActionRank,
-      action: "Address minimum gate blockers first",
-      rationale: gate.summary,
-      target_node: "design_experiments"
+      action: diagnostics[0]?.recommended_action || "Address minimum gate blockers first",
+      rationale: diagnostics[0]?.evidence || gate.summary,
+      target_node: diagnostics[0]?.target_node || "design_experiments"
     }] : [],
     strengths: [],
-    weaknesses: gate.blockers.length > 0 ? ["Minimum gate not passed"] : [],
+    weaknesses: [
+      ...(gate.blockers.length > 0 ? ["Minimum gate not passed"] : []),
+      ...diagnostics.map((diagnostic) => diagnostic.summary)
+    ].slice(0, GATE_THRESHOLDS.llmMaxWeaknesses),
     critique_summary: `LLM evaluation unavailable. Fallback: ${gate.summary}`,
     recommended_action: gate.passed ? "consolidate_evidence" : "backtrack_to_experiments",
     action_rationale: "Fallback evaluation — LLM was unavailable or timed out.",

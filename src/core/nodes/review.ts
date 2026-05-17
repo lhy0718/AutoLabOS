@@ -24,6 +24,7 @@ import { loadAttemptDecisions } from "../experiments/attemptDecision.js";
 import { loadExperimentContract } from "../experiments/experimentContract.js";
 import { FailureMemory } from "../experiments/failureMemory.js";
 import { evaluateMinimumGate } from "../analysis/paperMinimumGate.js";
+import type { PaperScaleDiagnostic } from "../analysis/paperScaleDiagnostics.js";
 import { runLLMPaperQualityEvaluation } from "../analysis/llmPaperQualityEvaluator.js";
 import { checkReviewDecision } from "../analysis/reviewDecision.js";
 import type { RiskSignal } from "../analysis/riskSignals.js";
@@ -118,6 +119,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       const completionDecision = checkReviewDecision(packet);
       const briefEvidenceAssessment =
         (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined;
+      const bibliographyText = [
+        await safeRead(path.join(runDir, "bibtex.bib")),
+        await safeRead(path.join(runDir, "paper", "references.bib"))
+      ].filter(Boolean).join("\n");
 
       // --- Layer 1: Deterministic minimum gate ---
       const minimumGate = evaluateMinimumGate({
@@ -128,12 +133,32 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         briefEvidenceAssessment,
         evidenceLinksArtifact: await safeReadJson(path.join(runDir, "paper", "evidence_links.json")),
         claimEvidenceTableArtifact: await safeReadJson(path.join(runDir, "paper", "claim_evidence_table.json")),
-        figureAuditSummaryArtifact: figureAuditSummary
+        figureAuditSummaryArtifact: figureAuditSummary,
+        bibliographyText
       });
       await writeRunArtifact(
         run,
         "review/minimum_gate.json",
         `${JSON.stringify(minimumGate, null, 2)}\n`
+      );
+      const paperScaleDiagnostics = {
+        generated_at: minimumGate.evaluated_at,
+        diagnostics: minimumGate.paper_scale_diagnostics ?? [],
+        blocking_count: (minimumGate.paper_scale_diagnostics ?? []).filter((diagnostic) => diagnostic.severity === "blocking").length,
+        warning_count: (minimumGate.paper_scale_diagnostics ?? []).filter((diagnostic) => diagnostic.severity === "warning").length
+      };
+      const nodeStrengtheningRecommendations = buildNodeStrengtheningRecommendations(
+        minimumGate.paper_scale_diagnostics ?? []
+      );
+      const paperScaleDiagnosticsPath = await writeRunArtifact(
+        run,
+        "review/paper_scale_diagnostics.json",
+        `${JSON.stringify(paperScaleDiagnostics, null, 2)}\n`
+      );
+      const nodeStrengtheningPath = await writeRunArtifact(
+        run,
+        "review/node_strengthening_recommendations.json",
+        `${JSON.stringify(nodeStrengtheningRecommendations, null, 2)}\n`
       );
 
       // Build structured pre-draft critique artifact
@@ -197,6 +222,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         critique: preDraftCritique,
         minimumGate,
         briefEvidenceAssessment,
+        paperScaleDiagnostics: minimumGate.paper_scale_diagnostics ?? [],
         config: deps.config
       });
 
@@ -256,6 +282,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           { label: "Paper critique", path: "review/paper_critique.json" },
           { label: "Review decision", path: "review/decision.json" },
           { label: "Minimum gate", path: "review/minimum_gate.json" },
+          { label: "Paper-scale diagnostics", path: "review/paper_scale_diagnostics.json" },
+          { label: "Node strengthening", path: "review/node_strengthening_recommendations.json" },
           { label: "Readiness risks", path: "review/readiness_risks.json" },
           { label: "Figure audit summary", path: "figure_audit/figure_audit_summary.json" }
         ]
@@ -324,6 +352,14 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           {
             sourcePath: readinessRiskPath,
             targetRelativePath: "readiness_risks.json"
+          },
+          {
+            sourcePath: paperScaleDiagnosticsPath,
+            targetRelativePath: "paper_scale_diagnostics.json"
+          },
+          {
+            sourcePath: nodeStrengtheningPath,
+            targetRelativePath: "node_strengthening_recommendations.json"
           }
         ]
       });
@@ -381,6 +417,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.minimum_gate", minimumGate);
       await runContextMemory.put("review.paper_quality_evaluation", llmEvalResult.evaluation);
       await runContextMemory.put("review.readiness_risks", readinessRisks);
+      await runContextMemory.put("review.paper_scale_diagnostics", paperScaleDiagnostics);
+      await runContextMemory.put("review.node_strengthening_recommendations", nodeStrengtheningRecommendations);
 
       deps.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -442,6 +480,7 @@ function buildReviewReadinessRiskArtifact(input: {
   critique: PaperCritique;
   minimumGate: ReturnType<typeof evaluateMinimumGate>;
   briefEvidenceAssessment?: BriefEvidenceAssessment;
+  paperScaleDiagnostics?: PaperScaleDiagnostic[];
   config: NodeExecutionDeps["config"];
 }): ReadinessRiskArtifact {
   const risks: ReadinessRisk[] = buildNetworkDependencyReadinessRisks({
@@ -506,6 +545,26 @@ function buildReviewReadinessRiskArtifact(input: {
     }
   }
 
+  for (const diagnostic of input.paperScaleDiagnostics ?? []) {
+    risks.push({
+      risk_code: `review_paper_scale_${diagnostic.id}`,
+      severity: diagnostic.severity === "blocking" ? "blocked" : "warning",
+      category:
+        diagnostic.category === "related_work_depth"
+          ? "claim_evidence"
+          : diagnostic.category === "resource_claim"
+            ? "paper_scale"
+            : "paper_scale",
+      status: diagnostic.severity === "blocking" ? "blocked" : "unverified",
+      message: diagnostic.summary,
+      triggered_by: ["paper_scale_diagnostics", diagnostic.source_node],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: diagnostic.recommended_action,
+      recheck_condition: diagnostic.recheck_condition
+    });
+  }
+
   if (input.critique.manuscript_type !== "paper_ready") {
     const blocked =
       input.critique.manuscript_type === "blocked_for_paper_scale"
@@ -534,6 +593,66 @@ function buildReviewReadinessRiskArtifact(input: {
     readinessState: paperReady ? "paper_ready" : input.critique.manuscript_type,
     risks
   });
+}
+
+interface NodeStrengtheningRecommendation {
+  node: string;
+  priority: "high" | "medium";
+  diagnostic_ids: string[];
+  problem_summary: string;
+  recommended_prompt_focus: string;
+  recheck_condition: string;
+}
+
+function buildNodeStrengtheningRecommendations(
+  diagnostics: PaperScaleDiagnostic[]
+): {
+  generated_at: string;
+  recommendations: NodeStrengtheningRecommendation[];
+} {
+  const byTarget = new Map<string, PaperScaleDiagnostic[]>();
+  for (const diagnostic of diagnostics) {
+    const target = diagnostic.target_node || diagnostic.source_node;
+    byTarget.set(target, [...(byTarget.get(target) ?? []), diagnostic]);
+  }
+
+  const recommendations = Array.from(byTarget.entries()).map(([node, nodeDiagnostics]) => {
+    const blocking = nodeDiagnostics.some((diagnostic) => diagnostic.severity === "blocking");
+    const summaries = nodeDiagnostics.map((diagnostic) => diagnostic.summary);
+    return {
+      node,
+      priority: blocking ? "high" as const : "medium" as const,
+      diagnostic_ids: nodeDiagnostics.map((diagnostic) => diagnostic.id),
+      problem_summary: summaries.join(" "),
+      recommended_prompt_focus: buildPromptFocus(node, nodeDiagnostics),
+      recheck_condition: nodeDiagnostics.map((diagnostic) => diagnostic.recheck_condition).join(" ")
+    };
+  });
+
+  return {
+    generated_at: new Date().toISOString(),
+    recommendations
+  };
+}
+
+function buildPromptFocus(node: string, diagnostics: PaperScaleDiagnostic[]): string {
+  const ids = new Set(diagnostics.map((diagnostic) => diagnostic.id));
+  if (node === "collect_papers" || ids.has("canonical_lora_qlora_references_missing")) {
+    return "Require canonical-method coverage for the topic before downstream hypothesis/design work; for LoRA/QLoRA topics, include original LoRA and QLoRA sources.";
+  }
+  if (node === "design_experiments") {
+    return "Force the design to declare sample-size, seed, baseline/comparator, and interaction-test requirements before implementation.";
+  }
+  if (node === "implement_experiments") {
+    return "Implement enough train/eval budget and artifact fields to distinguish smoke validation from tuning evidence.";
+  }
+  if (node === "run_experiments") {
+    return "Execute the planned sample/seed floor and persist per-task counts, per-seed rows, raw correct totals, and failure visibility.";
+  }
+  if (node === "analyze_results") {
+    return "Translate raw counts into evidence-ceiling judgments, including one-example gains, confidence granularity, and unsupported resource claims.";
+  }
+  return "Strengthen the node prompt so generated artifacts surface the diagnostic as a blocker or downgrade condition.";
 }
 
 function buildReviewTransitionRecommendation(
@@ -626,7 +745,14 @@ function buildReviewTransitionRecommendation(
   // But enforce a cycle cap: after 2 backtrack cycles, if the minimum gate passed
   // and the panel recommends advance, stop backtracking to avoid infinite loops.
   const currentCycle = researchCycle || 0;
-  const cycleCappedAdvance = currentCycle >= 2 && minimumGate?.passed && action === "advance";
+  const hardBlockedManuscriptType =
+    critique.manuscript_type === "blocked_for_paper_scale" ||
+    critique.manuscript_type === "system_validation_note";
+  const cycleCappedAdvance =
+    currentCycle >= 2 &&
+    minimumGate?.passed &&
+    action === "advance" &&
+    !hardBlockedManuscriptType;
   if (
     !cycleCappedAdvance &&
     critique.overall_decision !== "advance" &&

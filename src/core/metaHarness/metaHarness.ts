@@ -200,17 +200,39 @@ async function buildMetaHarnessContext(input: {
         "utf8"
       );
 
-      const nodeArtifactPath = node === "analyze_results"
-        ? path.join(runRoot, "result_analysis.json")
-        : path.join(runRoot, "review", "decision.json");
-      if (await fileExists(nodeArtifactPath)) {
-        await copyFileToContext(nodeArtifactPath, path.join(runContextDir, path.basename(nodeArtifactPath)));
+      const nodeArtifactPaths = node === "analyze_results"
+        ? [path.join(runRoot, "result_analysis.json")]
+        : [
+            path.join(runRoot, "review", "decision.json"),
+            path.join(runRoot, "review", "minimum_gate.json"),
+            path.join(runRoot, "review", "paper_quality_evaluation.json"),
+            path.join(runRoot, "review", "paper_scale_diagnostics.json"),
+            path.join(runRoot, "review", "node_strengthening_recommendations.json"),
+            path.join(runRoot, "review", "readiness_risks.json"),
+            path.join(runRoot, "review", "paper_critique.json")
+          ];
+      for (const nodeArtifactPath of nodeArtifactPaths) {
+        if (await fileExists(nodeArtifactPath)) {
+          await copyFileToContext(nodeArtifactPath, path.join(runContextDir, path.basename(nodeArtifactPath)));
+        }
       }
     }
 
-    const paperReadinessPath = path.join(runRoot, "paper", "paper_readiness.json");
-    if (await fileExists(paperReadinessPath)) {
-      await copyFileToContext(paperReadinessPath, path.join(runContextDir, "paper_readiness.json"));
+    const paperArtifactPaths = [
+      path.join(runRoot, "paper", "paper_readiness.json"),
+      path.join(runRoot, "paper", "paper_critique.json"),
+      path.join(runRoot, "paper", "readiness_risks.json"),
+      path.join(runRoot, "paper", "render_validation.json"),
+      path.join(runRoot, "paper", "compiled_page_validation.json"),
+      path.join(runRoot, "paper", "submission_validation.json"),
+      path.join(runRoot, "paper", "gate_decision.json"),
+      path.join(runRoot, "paper", "citation_consistency.json"),
+      path.join(runRoot, "paper", "claim_evidence_table.json")
+    ];
+    for (const paperArtifactPath of paperArtifactPaths) {
+      if (await fileExists(paperArtifactPath)) {
+        await copyFileToContext(paperArtifactPath, path.join(runContextDir, path.basename(paperArtifactPath)));
+      }
     }
   }
 
@@ -224,6 +246,9 @@ async function writeTaskFile(contextDir: string): Promise<void> {
   const body = [
     "당신은 harness 엔지니어입니다. 위의 소스 코드, 실행 traces, 점수를 모두 읽으세요.",
     "paper_readiness.overall_score를 높일 수 있는 노드 프롬프트 파일의 개선안을 하나 제안하세요.",
+    "review/node_strengthening_recommendations.json 또는 review/paper_scale_diagnostics.json이 있으면, 그 artifact가 지목한 target_node와 recheck_condition을 우선 반영하세요.",
+    "paper/render_validation.json, paper/submission_validation.json, paper/gate_decision.json이 있으면 템플릿, 인용, 표/그림, page-budget 결함도 원인 노드로 되돌려 분석하세요.",
+    "샘플 수 부족, seed 반복 부재, 한 문제 차이의 headline gain, smoke-test 수준 train budget, 핵심 문헌 누락은 polish가 아니라 upstream node 강화 대상으로 다루세요.",
     "반드시 다음 형식으로만 출력하세요:",
     "TARGET_FILE: node-prompts/<node>.md",
     "--- a/node-prompts/<node>.md",
@@ -335,8 +360,20 @@ const EXTERNAL_CONTEXT_ARTIFACTS = [
   path.join("review", "decision.json"),
   path.join("review", "review_packet.json"),
   path.join("review", "paper_critique.json"),
+  path.join("review", "minimum_gate.json"),
+  path.join("review", "paper_quality_evaluation.json"),
+  path.join("review", "paper_scale_diagnostics.json"),
+  path.join("review", "node_strengthening_recommendations.json"),
+  path.join("review", "readiness_risks.json"),
   path.join("paper", "paper_readiness.json"),
-  path.join("paper", "paper_critique.json")
+  path.join("paper", "paper_critique.json"),
+  path.join("paper", "readiness_risks.json"),
+  path.join("paper", "render_validation.json"),
+  path.join("paper", "compiled_page_validation.json"),
+  path.join("paper", "submission_validation.json"),
+  path.join("paper", "gate_decision.json"),
+  path.join("paper", "citation_consistency.json"),
+  path.join("paper", "claim_evidence_table.json")
 ] as const;
 
 function formatExternalRunLines(externalRunRoots: string[]): string[] {

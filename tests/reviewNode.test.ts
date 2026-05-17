@@ -1367,4 +1367,152 @@ describe("review node", () => {
     };
     expect(critique.blocking_issues.map((issue) => issue.summary)).not.toContain("Single-run methodology coverage");
   });
+
+  it("does not recommend write_paper when cycle cap meets a blocked_for_paper_scale critique", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-node-blocked-cycle-cap-"));
+    process.chdir(root);
+
+    const run = makeRun("run-review-blocked-cycle-cap");
+    run.graph.researchCycle = 37;
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(path.join(runDir, "figures"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy_delta_vs_baseline: 0.0625 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>\n", "utf8");
+    await writeFile(path.join(runDir, "corpus.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
+    await writeFile(path.join(runDir, "paper_summaries.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
+    await writeFile(path.join(runDir, "evidence_store.jsonl"), `${JSON.stringify({ evidence_id: "ev_1" })}\n`, "utf8");
+    await writeFile(path.join(runDir, "hypotheses.jsonl"), `${JSON.stringify({ hypothesis_id: "h_1" })}\n`, "utf8");
+    await writeFile(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "selected_design:",
+        "  title: Single-run LoRA validation",
+        "  baselines:",
+        "    - rank_8_dropout_0_0",
+        "  evaluation_steps:",
+        "    - run one bounded local trial"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "rank_8_dropout_0_0" }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "result_table.json"), JSON.stringify([
+      { metric: "accuracy_delta_vs_baseline", baseline: 0, comparator: 0.0625, delta: 0.0625, direction: "higher_better" }
+    ], null, 2), "utf8");
+    await writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({
+      analysis_version: 1,
+      generated_at: new Date().toISOString(),
+      mean_score: 25,
+      metrics: { accuracy_delta_vs_baseline: 0.0625, completed_condition_count: 8 },
+      objective_metric: {
+        raw: "accuracy_delta_vs_baseline >= 0.01",
+        evaluation: { status: "met", summary: "Objective metric met." },
+        profile: { source: "default", preferred_metric_keys: ["accuracy_delta_vs_baseline"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
+      },
+      overview: { objective_status: "met", objective_summary: "Objective metric met.", execution_runs: 1 },
+      plan_context: {
+        selected_design: {
+          id: "p6-single",
+          title: "Single-run LoRA validation",
+          summary: "Validate a bounded local LoRA comparison.",
+          selected_hypothesis_ids: ["h_1"],
+          metrics: ["accuracy_delta_vs_baseline"],
+          baselines: ["rank_8_dropout_0_0"],
+          evaluation_steps: ["run one bounded local trial"],
+          risks: ["Specification may be underspecified and require narrower scope."],
+          resource_notes: []
+        },
+        shortlisted_designs: [],
+        design_notes: [],
+        implementation_notes: [],
+        evaluation_notes: [],
+        assumptions: []
+      },
+      metric_table: [{ key: "accuracy_delta_vs_baseline", value: 0.0625 }],
+      results_table: [
+        { metric: "accuracy_delta_vs_baseline", baseline: 0, comparator: 0.0625, delta: 0.0625, direction: "higher_better" }
+      ],
+      condition_comparisons: [{
+        id: "rank_4_dropout_0_0_vs_rank_8_dropout_0_0",
+        label: "rank 4 dropout 0 0 vs rank 8 dropout 0 0",
+        source: "metrics.condition_results",
+        metrics: [{ key: "accuracy_delta_vs_baseline", value: 0.0625, primary_value: 0.0625, baseline_value: 0 }],
+        hypothesis_supported: true,
+        summary: "rank4 improves delta by 0.0625."
+      }],
+      execution_summary: { observation_count: 1, commands: [], sources: [], stderr_excerpts: [] },
+      primary_findings: ["Selected design was analyzed with 1 executed trial."],
+      limitations: ["Only one observed execution was recorded."],
+      warnings: [],
+      paper_claims: [{ claim: "The strongest condition improved mean accuracy over baseline.", evidence: ["result_table.json"] }],
+      figure_specs: [{ id: "perf", title: "Performance overview", path: "figures/performance.svg", metric_keys: ["accuracy_delta_vs_baseline"], summary: "Delta." }],
+      supplemental_runs: [],
+      external_comparisons: [],
+      statistical_summary: {
+        total_trials: 1,
+        executed_trials: 1,
+        cached_trials: 0,
+        confidence_intervals: [{ metric_key: "condition_results.rank_4_dropout_0_0.average_accuracy", label: "delta", lower: 0.28, upper: 0.72, level: 0.95, sample_size: 16, source: "condition_metrics", summary: "95% CI." }],
+        stability_metrics: [],
+        effect_estimates: [{ comparison_id: "rank_4_dropout_0_0_vs_rank_8_dropout_0_0", metric_key: "accuracy_delta_vs_baseline", delta: 0.0625, direction: "positive", summary: "delta 0.0625." }],
+        notes: []
+      },
+      failure_taxonomy: [{
+        id: "supplemental_coverage_gap",
+        category: "evidence_gap",
+        severity: "low",
+        status: "risk",
+        summary: "Supplemental confirmatory runs are missing.",
+        evidence: ["warnings"],
+        recommended_action: "Run confirmatory variants."
+      }],
+      transition_recommendation: {
+        action: "advance",
+        sourceNode: "analyze_results",
+        targetNode: "review",
+        reason: "Ready for review.",
+        confidence: 0.8,
+        autoExecutable: true,
+        evidence: ["objective met"],
+        suggestedCommands: ["/approve"],
+        generatedAt: new Date().toISOString()
+      }
+    }, null, 2), "utf8");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("analyze_results.brief_evidence_assessment", {
+      enabled: true,
+      status: "pass",
+      summary: "Brief evidence gate passed.",
+      ceiling_type: "unrestricted",
+      failures: [],
+      warnings: [],
+      actual: { executed_trials: 1, baseline_count: 1, executed_condition_count: 8, confidence_interval_count: 1, evidence_gap_count: 0, scope_limit_count: 0 },
+      requirements: { minimum_baseline_count: 1, requires_confidence_intervals: true },
+      checks: []
+    });
+
+    const node = createReviewNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new PromptCaptureReviewLlm(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: new LocalAciAdapter({ allowNetwork: false }),
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.targetNode).not.toBe("write_paper");
+    expect(result.transitionRecommendation?.action).toBe("backtrack_to_implement");
+
+    const critique = JSON.parse(await readFile(path.join(runDir, "review", "paper_critique.json"), "utf8")) as {
+      manuscript_type: string;
+    };
+    expect(critique.manuscript_type).toBe("blocked_for_paper_scale");
+  });
 });

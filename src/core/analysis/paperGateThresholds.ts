@@ -16,6 +16,12 @@ export interface PaperGateThresholds {
   minRobustnessStabilityMetricCount: number;
   /** docs/paper-quality-bar.md §5(11), §6 — minimum effect estimates needed to count as robustness support. */
   minRobustnessEffectEstimateCount: number;
+  /** docs/paper-quality-bar.md §5, §6 — minimum per-task evaluation examples before positive claims can exceed pilot-note status. */
+  minEvaluationExamplesPerTaskForPaperScale: number;
+  /** docs/paper-quality-bar.md §5, §6 — minimum distinct seeds required for positive paper-scale tuning claims. */
+  minDistinctSeedsForPaperScale: number;
+  /** docs/paper-quality-bar.md §5, §6 — minimum optimizer steps before tuning-effect claims exceed smoke/preflight status. */
+  minOptimizerStepsForTuningClaim: number;
   /** docs/paper-quality-bar.md §2, §3, §5, §12 — minimum evidence-link claim entries required once the artifact is emitted. */
   minEvidenceLinksClaimCount: number;
   /** docs/paper-quality-bar.md §2, §3, §5, §12 — minimum claim-evidence rows required once the artifact is emitted. */
@@ -84,6 +90,9 @@ export const GATE_THRESHOLDS: PaperGateThresholds = {
   minRobustnessConfidenceIntervalCount: 1,
   minRobustnessStabilityMetricCount: 1,
   minRobustnessEffectEstimateCount: 1,
+  minEvaluationExamplesPerTaskForPaperScale: 30,
+  minDistinctSeedsForPaperScale: 2,
+  minOptimizerStepsForTuningClaim: 20,
   minEvidenceLinksClaimCount: 1,
   minClaimEvidenceRows: 1,
   minClaimEvidenceRefsPerClaim: 1,

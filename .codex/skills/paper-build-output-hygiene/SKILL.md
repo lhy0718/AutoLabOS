@@ -24,6 +24,7 @@ Use this skill when the user asks to:
 - determine whether TeX→PDF is wired correctly
 - ensure the canonical output path is coherent
 - verify that a live validation run used the intended brief, template, and workspace-local paper inputs
+- investigate citation/reference ordering, repeated citations, bibliography style, or template-surface regressions in generated papers
 
 ## Required validations
 Always report:
@@ -37,6 +38,8 @@ Always report:
 8. wiring/path changes needed
 9. active brief/template/source workspace used for the generated paper
 10. rendered-page inspection status for layout, table overflow, figure presence, references, author metadata, font/template consistency, and text alignment
+11. bibliography-style status, including whether ACL templates use the expected ACL-compatible style and whether numeric references follow first-citation order
+12. repeated-citation-bundle status, especially whether the same `\cite{...}` bundle is mechanically repeated across many paragraphs
 
 ## Required principles
 - AutoLabOS should generate the canonical paper artifacts itself.
@@ -51,6 +54,7 @@ Always report:
 
 ## Guardrails
 - Do not manually author TeX/PDF as a substitute for system output.
+- Do not hand-patch generated `main.tex`, `.bib`, or PDF as the final fix for output-quality defects. Fix the AutoLabOS generator, validator, review gate, or harness handoff, then rerun generation.
 - Do not multiply output folders unless the contract explicitly requires it.
 - Do not break canonical runtime paths while cleaning structure.
 - Distinguish between "artifact exists" and "artifact is correctly wired and usable".
@@ -59,3 +63,19 @@ Always report:
 - Do not inject template-absent front-matter elements such as an explicit `Keywords:` line when a concrete manuscript template is supplied, unless the template itself asks for that surface.
 - If the template package name and available `.sty` filename differ by case, call it out as a build-risk and fix it in the workspace before rerunning.
 - Do not mark paper-generation complete until rendered inspection has checked the concrete complaints or quality criteria the user raised.
+
+## Citation and Reference Hygiene
+- Treat hardcoded `\bibliographystyle{plain}` as a defect for submission-template output unless the template explicitly asks for it; plain can make numeric references appear alphabetically instead of in first-citation order.
+- For ACL-style templates preserving `\usepackage[review]{ACL2023}`, the generated TeX should preserve or infer an ACL-compatible bibliography style such as `acl_natbib`, and the build directory should include the sibling `.bst` file when available.
+- If a concrete template contains `\bibliographystyle{...}`, preserve that exact style in the generated paper unless the user explicitly requests a different one.
+- Repeated citation bundles are a render-quality issue: the same `\cite{a,b,c}` should not be appended to many paragraphs in the same section as a traceability fallback.
+- `paper/render_validation.json`, `paper/citation_consistency.json`, and review artifacts should expose bibliography-style mismatches and repeated citation bundles so meta-harness can route the problem back to the responsible node instead of treating it as cosmetic paper polish.
+
+## AutoLabOS-Owned Fix Loop
+When the problem is in generated output:
+1. Reproduce or inspect the generated artifact that shows the defect.
+2. Identify the AutoLabOS source path that emitted or failed to validate it.
+3. Add the smallest generator/validator/review-gate change that prevents recurrence.
+4. Add or update a targeted test around the system behavior.
+5. Rerun the relevant generation, harness, or render validation path when practical.
+6. Report any remaining gap explicitly; do not present manual artifact edits as completion.

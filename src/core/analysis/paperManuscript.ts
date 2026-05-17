@@ -2207,11 +2207,22 @@ export function renderSubmissionPaperTex(input: {
   for (const section of input.manuscript.sections) {
     lines.push(`\\section{${latexEscape(section.heading)}}`);
     const renderedSectionParagraphs = new Set<string>();
+    const renderedSectionCitationBundles = new Map<string, number>();
     for (let index = 0; index < section.paragraphs.length; index += 1) {
       const paragraph = section.paragraphs[index];
-      const citationPaperIds = shouldRenderSubmissionCitationsForParagraph(section.heading, paragraph, index)
+      let citationPaperIds = shouldRenderSubmissionCitationsForParagraph(section.heading, paragraph, index)
         ? sectionCitationMap.get(buildTraceabilityKey(section.heading, index)) || []
         : [];
+      const citationBundleKey = buildSubmissionCitationBundleKey(citationPaperIds, input.citationKeysByPaperId);
+      if (citationBundleKey) {
+        const previousCount = renderedSectionCitationBundles.get(citationBundleKey) || 0;
+        const maxSectionRenders = citationBundleKey.includes(",") ? 1 : 2;
+        if (previousCount >= maxSectionRenders) {
+          citationPaperIds = [];
+        } else {
+          renderedSectionCitationBundles.set(citationBundleKey, previousCount + 1);
+        }
+      }
       const renderedParagraph = sanitizeSubmissionSurfaceText(paragraph, { sectionHeading: section.heading });
       if (!renderedParagraph) {
         continue;
@@ -2235,7 +2246,7 @@ export function renderSubmissionPaperTex(input: {
     lines.push(...renderSubmissionVisuals(input.manuscript, input.figureRenderMode));
   }
 
-  lines.push("\\bibliographystyle{plain}");
+  lines.push(`\\bibliographystyle{${resolveSubmissionBibliographyStyle(input)}}`);
   lines.push("\\bibliography{references}");
   if (
     (input.manuscript.appendix_sections || []).length > 0 ||
@@ -2902,13 +2913,49 @@ function renderSubmissionParagraph(
   citationPaperIds: string[],
   citationKeysByPaperId: Map<string, string>
 ): string {
-  const resolvedKeys = citationPaperIds
-    .map((paperId) => citationKeysByPaperId.get(paperId))
-    .filter((key): key is string => Boolean(key));
+  const resolvedKeys = uniqueStrings(
+    citationPaperIds
+      .map((paperId) => citationKeysByPaperId.get(paperId))
+      .filter((key): key is string => Boolean(key))
+  );
   const unresolvedCount = citationPaperIds.length - resolvedKeys.length;
   const citationSuffix = resolvedKeys.length > 0 ? ` \\cite{${resolvedKeys.join(",")}}` : "";
   const unresolvedSuffix = unresolvedCount > 0 ? " [?]" : "";
   return `${latexEscape(paragraph)}${citationSuffix}${unresolvedSuffix}`;
+}
+
+function buildSubmissionCitationBundleKey(
+  citationPaperIds: string[],
+  citationKeysByPaperId: Map<string, string>
+): string {
+  const resolvedKeys = uniqueStrings(
+    citationPaperIds
+      .map((paperId) => citationKeysByPaperId.get(paperId) || paperId)
+      .map((key) => key.trim())
+      .filter(Boolean)
+  );
+  return resolvedKeys.length > 0 ? resolvedKeys.slice().sort().join(",") : "";
+}
+
+function resolveSubmissionBibliographyStyle(input: {
+  template?: string;
+  parsedTemplate?: ParsedLatexTemplate | null;
+}): string {
+  const templateStyle = input.parsedTemplate?.bibliographyStyle?.trim();
+  if (templateStyle) {
+    return templateStyle;
+  }
+  const templateSurface = [
+    input.template || "",
+    input.parsedTemplate?.preDocumentPreamble || "",
+    input.parsedTemplate?.documentClass || "",
+    input.parsedTemplate?.preamble || "",
+    ...(input.parsedTemplate?.packages || [])
+  ].join("\n");
+  if (/\\usepackage(?:\[[^\]]*\])?\{ACL2023\}/iu.test(templateSurface)) {
+    return "acl_natbib";
+  }
+  return "unsrt";
 }
 
 function renderSubmissionVisuals(

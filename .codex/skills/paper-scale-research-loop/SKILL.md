@@ -39,6 +39,7 @@ Always evaluate:
 - claim-to-evidence linkage
 - limitations and failure cases
 - strongest-branch selection
+- reviewer-grade evidence scale: sample size, one-example gains, seed replication, train-budget depth, and whether claimed interactions exceed the observed grid evidence
 
 ## Hard gate
 Downgrade the output if any of the following are missing:
@@ -51,6 +52,12 @@ Downgrade the output if any of the following are missing:
 - claim-to-evidence linkage
 - limitations/failure cases
 
+Also downgrade or block paper-scale progression when:
+- the headline gain can be explained by a single changed evaluation example
+- positive tuning claims have no repeated-seed support
+- evaluation sets or optimizer steps are only smoke/preflight scale
+- a method-centered paper misses canonical method references needed for related-work grounding
+
 ## Review-gate continuation rule
 When a review gate blocks paper-scale progression, treat the block as a governed outcome, not as a writing problem.
 
@@ -59,6 +66,7 @@ When a review gate blocks paper-scale progression, treat the block as a governed
 - If the objective metric is not met, preserve the negative result and lower the claim ceiling instead of polishing around it.
 - If implementation executes fewer conditions, seeds, baselines, or comparisons than the approved design required, treat that as an evidence-scope blocker until rerun or explicitly downgraded.
 - Require the next hypothesis/design pass to state what evidence gap it is repairing.
+- When review emits node-strengthening recommendations, feed them into the meta-harness or the named upstream node rather than trying to repair the problem only in `write_paper`.
 
 ## Output format
 1. Current artifact status

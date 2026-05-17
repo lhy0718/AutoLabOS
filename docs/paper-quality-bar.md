@@ -102,6 +102,8 @@ the review stage should block paper-ready status.
 Before drafting, review output should be structurally complete:
 - review packet has core sections (`readiness`, `checks`, `suggested_actions`)
 - decision and revision artifacts are present when decisioning is active
+- `review/minimum_gate.json` includes reviewer-grade paper-scale diagnostics when evidence is underpowered
+- `review/node_strengthening_recommendations.json` maps those diagnostics to the upstream node that should be strengthened
 - readiness state explicitly distinguishes:
   - `system_validation_note`
   - `research_memo`
@@ -123,6 +125,9 @@ For a manuscript to be marked `paper_ready=true`, all of the following should ho
 9. The paper does not center internal workflow validation as the main scientific contribution.
 10. Any brief-governed minimum evidence requirement (for example repeated runs, baseline count, or uncertainty reporting) has been satisfied.
 11. The experiment evidence is not just a single thin run; it includes repeated trials or explicit robustness/uncertainty reporting.
+12. Positive headline gains are not explainable by a single changed evaluation example.
+13. Positive tuning claims have repeated-seed support or are explicitly downgraded.
+14. Evaluation sample sizes are large enough for the claimed genre, not merely enough for a smoke or preflight run.
 
 ## 6) Automatic downgrade / block conditions
 The manuscript must not be labeled `paper_ready` when any of the following is true:
@@ -133,6 +138,9 @@ The manuscript must not be labeled `paper_ready` when any of the following is tr
 - related work is too shallow to support positioning
 - the main contribution is really pipeline validation rather than research on an external task
 - the evidence is only a single thin run with no repeated-trial or robustness support
+- the headline result is a one-example gain on a tiny evaluation set
+- repeated-seed support is missing for a positive tuning claim
+- optimizer steps or training examples are only sufficient for pipeline validation, while the manuscript claims a tuning effect
 - the manuscript is mostly generated filler around weak artifacts
 - a governed brief explicitly required stronger evidence than the run actually produced
 
@@ -156,6 +164,7 @@ At minimum:
 - the paper should position the proposed experiment against concrete prior approaches
 - related work should not be purely metadata-level when stronger evidence is available
 - if full-text grounding is limited, the manuscript should say so explicitly
+- for method-centered LoRA/QLoRA/PEFT papers, canonical method papers must be collected or the review gate should record a related-work gap
 
 ## 9) Method/result consistency
 The method and result sections must agree on what was actually run.

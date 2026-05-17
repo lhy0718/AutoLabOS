@@ -293,6 +293,36 @@ describe("paper submission sanitization", () => {
 
     expect(tex).toContain("\\usepackage[review]{ACL2023}");
     expect(tex).not.toContain("\\textbf{Keywords:}");
+    expect(tex).toContain("\\bibliographystyle{acl_natbib}");
+    expect(tex).not.toContain("\\bibliographystyle{plain}");
+  });
+
+  it("preserves an explicit template bibliography style when one is supplied", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: {
+        title: "Template bibliography policy",
+        abstract: "A concise abstract.",
+        keywords: [],
+        sections: [{ heading: "Introduction", paragraphs: ["We introduce the question."] }],
+        tables: [],
+        figures: []
+      },
+      traceability: { paragraphs: [] },
+      citationKeysByPaperId: new Map(),
+      parsedTemplate: {
+        sourcePath: "/workspace/template.tex",
+        preDocumentPreamble: "",
+        documentClass: "\\documentclass[11pt]{article}",
+        preamble: "\\usepackage{natbib}",
+        columnLayout: 1,
+        packages: ["\\usepackage{natbib}"],
+        sectionOrder: ["Introduction"],
+        customCommands: [],
+        bibliographyStyle: "plainnat"
+      }
+    });
+
+    expect(tex).toContain("\\bibliographystyle{plainnat}");
   });
 
   it("does not attach literature citations to paper-specific Introduction framing", () => {
@@ -410,6 +440,96 @@ describe("paper submission sanitization", () => {
     expect(tex).not.toContain("factorial design crossing LoRA rank with dropout. \\cite{paperA}");
     expect(tex).not.toContain("ARC-Challenge and HellaSwag, and seed 17. \\cite{paperB}");
     expect(tex).toContain("Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
+  });
+
+  it("does not repeat the same citation bundle across multiple paragraphs in one section", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: {
+        title: "Citation bundle hygiene paper",
+        abstract: "A concise abstract.",
+        keywords: [],
+        sections: [
+          {
+            heading: "Related Work",
+            paragraphs: [
+              "Prior PEFT literature motivates memory-aware finetuning.",
+              "Adapter literature also motivates small-budget model adaptation.",
+              "Benchmarking literature motivates cautious interpretation."
+            ]
+          }
+        ],
+        tables: [],
+        figures: []
+      },
+      traceability: {
+        paragraphs: [
+          {
+            manuscript_section: "Related Work",
+            paragraph_index: 0,
+            source_draft_section: "Related Work",
+            evidence_ids: [],
+            citation_paper_ids: ["paper_a", "paper_b"]
+          },
+          {
+            manuscript_section: "Related Work",
+            paragraph_index: 1,
+            source_draft_section: "Related Work",
+            evidence_ids: [],
+            citation_paper_ids: ["paper_b", "paper_a"]
+          },
+          {
+            manuscript_section: "Related Work",
+            paragraph_index: 2,
+            source_draft_section: "Related Work",
+            evidence_ids: [],
+            citation_paper_ids: ["paper_c"]
+          }
+        ]
+      },
+      citationKeysByPaperId: new Map([
+        ["paper_a", "paperA"],
+        ["paper_b", "paperB"],
+        ["paper_c", "paperC"]
+      ])
+    });
+
+    expect((tex.match(/\\cite\{paperA,paperB\}/g) || []).length).toBe(1);
+    expect(tex).toContain("Benchmarking literature motivates cautious interpretation. \\cite{paperC}");
+  });
+
+  it("caps repeated single-paper citations within a section while allowing a second use", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: {
+        title: "Single citation hygiene paper",
+        abstract: "A concise abstract.",
+        keywords: [],
+        sections: [
+          {
+            heading: "Related Work",
+            paragraphs: [
+              "The first related-work claim uses the anchor paper.",
+              "The second related-work claim also needs the same anchor.",
+              "The third related-work claim should not mechanically repeat it.",
+              "The fourth related-work claim should stay readable."
+            ]
+          }
+        ],
+        tables: [],
+        figures: []
+      },
+      traceability: {
+        paragraphs: [0, 1, 2, 3].map((paragraph_index) => ({
+          manuscript_section: "Related Work",
+          paragraph_index,
+          source_draft_section: "Related Work",
+          evidence_ids: [],
+          citation_paper_ids: ["paper_a"]
+        }))
+      },
+      citationKeysByPaperId: new Map([["paper_a", "paperA"]])
+    });
+
+    expect((tex.match(/\\cite\{paperA\}/g) || []).length).toBe(2);
   });
 
   it("removes internal run paths from fallback paper drafting before submission validation", () => {

@@ -18,6 +18,7 @@ import type { AnalysisReport } from "../resultAnalysis.js";
 import type { FigureAuditSummary } from "../exploration/types.js";
 import type { BriefEvidenceAssessment, BriefEvidenceCeiling } from "./briefEvidenceValidator.js";
 import { GATE_THRESHOLDS } from "./paperGateThresholds.js";
+import { evaluatePaperScaleDiagnostics, type PaperScaleDiagnostic } from "./paperScaleDiagnostics.js";
 import { hasAtLeastOneCompleteResultsTableRow } from "./resultsTableSchema.js";
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,8 @@ export interface MinimumGateResult {
   ceiling_type: MinimumGateCeiling;
   /** Warning-only signal from figure_audit; review decides whether to block. */
   figure_audit_severe_mismatch?: boolean;
+  /** Reviewer-grade paper-scale diagnostics used by review and meta-harness. */
+  paper_scale_diagnostics?: PaperScaleDiagnostic[];
   /** Short human-readable summary */
   summary: string;
 }
@@ -66,6 +69,7 @@ export interface MinimumGateInput {
   evidenceLinksArtifact?: unknown;
   claimEvidenceTableArtifact?: unknown;
   figureAuditSummaryArtifact?: FigureAuditSummary | unknown;
+  bibliographyText?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +148,56 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     detail: evidenceDepth.detail,
     measured_value: evidenceDepth.measuredValue,
     threshold_value: evidenceDepth.thresholdValue,
+    threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
+  });
+
+  const paperScaleDiagnostics = evaluatePaperScaleDiagnostics({
+    report: input.report,
+    topic: input.topic,
+    bibliographyText: input.bibliographyText
+  });
+
+  const tinyEvalDiagnostic = paperScaleDiagnostics.diagnostics.find((diagnostic) => diagnostic.id === "tiny_eval_sample");
+  checks.push({
+    id: "evaluation_sample_size",
+    label: "Evaluation sample size supports paper-scale claims",
+    passed: !tinyEvalDiagnostic,
+    detail: tinyEvalDiagnostic?.evidence || "Evaluation sample size did not trigger tiny-sample diagnostics.",
+    measured_value: tinyEvalDiagnostic ? "tiny_sample_detected" : "no_tiny_sample_detected",
+    threshold_value: `primary_task_eval_examples>=${GATE_THRESHOLDS.minEvaluationExamplesPerTaskForPaperScale}`,
+    threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
+  });
+
+  const seedDiagnostic = paperScaleDiagnostics.diagnostics.find((diagnostic) => diagnostic.id === "missing_seed_replication");
+  checks.push({
+    id: "seed_replication",
+    label: "Positive results have repeated-seed support",
+    passed: !seedDiagnostic,
+    detail: seedDiagnostic?.evidence || "No missing repeated-seed diagnostic was triggered.",
+    measured_value: seedDiagnostic ? "missing_repeated_seed_support" : "seed_support_not_flagged",
+    threshold_value: `distinct_seeds>=${GATE_THRESHOLDS.minDistinctSeedsForPaperScale}`,
+    threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
+  });
+
+  const oneItemDiagnostic = paperScaleDiagnostics.diagnostics.find((diagnostic) => diagnostic.id === "single_item_gain");
+  checks.push({
+    id: "effect_granularity",
+    label: "Headline effect exceeds one-example granularity",
+    passed: !oneItemDiagnostic,
+    detail: oneItemDiagnostic?.evidence || "No one-example headline-gain diagnostic was triggered.",
+    measured_value: oneItemDiagnostic ? "one_example_gain_detected" : "no_one_example_gain_detected",
+    threshold_value: "headline_delta_supported_by_more_than_one_example_or_robust_statistics",
+    threshold_source: "docs/paper-quality-bar.md#claim-evidence-table-expectation"
+  });
+
+  const thinTrainingDiagnostic = paperScaleDiagnostics.diagnostics.find((diagnostic) => diagnostic.id === "thin_training_budget");
+  checks.push({
+    id: "training_budget_depth",
+    label: "Training budget supports tuning-effect claims",
+    passed: !thinTrainingDiagnostic,
+    detail: thinTrainingDiagnostic?.evidence || "Training budget did not trigger a smoke-test diagnostic.",
+    measured_value: thinTrainingDiagnostic ? "thin_training_budget" : "training_budget_not_flagged",
+    threshold_value: `optimizer_steps>=${GATE_THRESHOLDS.minOptimizerStepsForTuningClaim}`,
     threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
   });
 
@@ -281,6 +335,7 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     failed_checks: failedChecks,
     ceiling_type: ceiling,
     ...(figureAuditSevereMismatch ? { figure_audit_severe_mismatch: true } : {}),
+    paper_scale_diagnostics: paperScaleDiagnostics.diagnostics,
     summary
   };
 }

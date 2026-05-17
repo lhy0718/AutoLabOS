@@ -34,6 +34,8 @@ describe("runMetaHarness", () => {
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "analyze_results_events.jsonl"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "result_analysis.json"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "decision.json"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "node_strengthening_recommendations.json"))).resolves.toBeTruthy();
+    expect(task).toContain("node_strengthening_recommendations.json");
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "paper_readiness.json"))).resolves.toBeTruthy();
   });
 
@@ -296,6 +298,20 @@ async function createWorkspaceWithCompletedRun(): Promise<string> {
   );
   await fs.writeFile(path.join(runRoot, "result_analysis.json"), JSON.stringify({ summary: "analysis" }, null, 2), "utf8");
   await fs.writeFile(path.join(runRoot, "review", "decision.json"), JSON.stringify({ outcome: "revise" }, null, 2), "utf8");
+  await fs.writeFile(path.join(runRoot, "review", "minimum_gate.json"), JSON.stringify({ passed: false }, null, 2), "utf8");
+  await fs.writeFile(
+    path.join(runRoot, "review", "paper_scale_diagnostics.json"),
+    JSON.stringify({ diagnostics: [{ id: "tiny_eval_sample", target_node: "run_experiments" }] }, null, 2),
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(runRoot, "review", "node_strengthening_recommendations.json"),
+    JSON.stringify({ recommendations: [{ node: "run_experiments", priority: "high" }] }, null, 2),
+    "utf8"
+  );
+  await fs.writeFile(path.join(runRoot, "review", "readiness_risks.json"), JSON.stringify({ risks: [] }, null, 2), "utf8");
+  await fs.writeFile(path.join(runRoot, "review", "paper_quality_evaluation.json"), JSON.stringify({ overall_score_1_to_10: 2 }, null, 2), "utf8");
+  await fs.writeFile(path.join(runRoot, "review", "paper_critique.json"), JSON.stringify({ manuscript_type: "research_memo" }, null, 2), "utf8");
   await fs.writeFile(
     path.join(runRoot, "paper", "paper_readiness.json"),
     JSON.stringify({ paper_ready: false, overall_score: 6.5 }, null, 2),

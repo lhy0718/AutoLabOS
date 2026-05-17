@@ -2946,6 +2946,7 @@ describe("writePaper PDF build", () => {
       "utf8"
     );
     await writeFile(path.join(root, "ACL2023.sty"), "% mock ACL style\n", "utf8");
+    await writeFile(path.join(root, "acl_natbib.bst"), "ENTRY{}{}{} FUNCTION{default.type}{} READ\n", "utf8");
 
     const run = makeRun("run-paper-pdf-template-repair-reject");
     const runDir = await seedRun(root, run);
@@ -5060,6 +5061,7 @@ describe("writePaper PDF build", () => {
       "utf8"
     );
     await writeFile(path.join(root, "ACL2023.sty"), "% mock ACL style\n", "utf8");
+    await writeFile(path.join(root, "acl_natbib.bst"), "ENTRY{}{}{} FUNCTION{default.type}{} READ\n", "utf8");
     await seedMediumScientificRun(run);
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     await memory.put(
@@ -5123,9 +5125,11 @@ describe("writePaper PDF build", () => {
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\pdfoutput=1");
     expect(tex).toContain("\\usepackage[review]{ACL2023}");
+    expect(tex).toContain("\\bibliographystyle{acl_natbib}");
     expect(tex).not.toContain("\\textbf{Keywords:}");
     expect(tex).toContain("\\includegraphics[width=\\columnwidth]{figures/main-result-figure-1.pdf}");
     expect(await exists(path.join(runDir, "paper", "ACL2023.sty"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "acl_natbib.bst"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "figures", "main-result-figure-1.pdf"))).toBe(true);
     const figureRenderer = await readFile(path.join(runDir, "paper", "figures", "render_paper_figures.py"), "utf8");
     expect(figureRenderer).toContain("matplotlib");
@@ -5139,11 +5143,18 @@ describe("writePaper PDF build", () => {
       await readFile(path.join(runDir, "paper", "render_validation.json"), "utf8")
     ) as {
       status: string;
-      metrics: { final_tex_preserves_template: boolean; rendered_figure_asset_count: number };
+      metrics: {
+        final_tex_preserves_template: boolean;
+        rendered_figure_asset_count: number;
+        final_tex_bibliography_style: string | null;
+        repeated_citation_bundle_count: number;
+      };
     };
     expect(renderValidation.status).toBe("pass");
     expect(renderValidation.metrics.final_tex_preserves_template).toBe(true);
     expect(renderValidation.metrics.rendered_figure_asset_count).toBeGreaterThan(0);
+    expect(renderValidation.metrics.final_tex_bibliography_style).toBe("acl_natbib");
+    expect(renderValidation.metrics.repeated_citation_bundle_count).toBe(0);
   });
 
   it("does not fall back to inline LaTeX bars when Python figure rendering fails for a compiled template paper", async () => {
@@ -5166,6 +5177,7 @@ describe("writePaper PDF build", () => {
       "utf8"
     );
     await writeFile(path.join(root, "ACL2023.sty"), "% mock ACL style\n", "utf8");
+    await writeFile(path.join(root, "acl_natbib.bst"), "ENTRY{}{}{} FUNCTION{default.type}{} READ\n", "utf8");
     await seedMediumScientificRun(run);
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     await memory.put(

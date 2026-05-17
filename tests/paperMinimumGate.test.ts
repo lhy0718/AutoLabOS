@@ -118,15 +118,19 @@ describe("paperMinimumGate", () => {
     }
   });
 
-  it("has exactly 9 checks", () => {
+  it("has the expected deterministic checks", () => {
     const result = evaluateMinimumGate(fullInput());
-    expect(result.checks).toHaveLength(10);
+    expect(result.checks).toHaveLength(14);
     const checkIds = result.checks.map(c => c.id);
     expect(checkIds).toContain("objective_metric");
     expect(checkIds).toContain("experiment_plan");
     expect(checkIds).toContain("baseline_or_comparator");
     expect(checkIds).toContain("executed_result");
     expect(checkIds).toContain("evidence_depth");
+    expect(checkIds).toContain("evaluation_sample_size");
+    expect(checkIds).toContain("seed_replication");
+    expect(checkIds).toContain("effect_granularity");
+    expect(checkIds).toContain("training_budget_depth");
     expect(checkIds).toContain("result_artifacts");
     expect(checkIds).toContain("claim_evidence_linkage");
     expect(checkIds).toContain("claim_evidence_missing");
@@ -331,6 +335,69 @@ describe("paperMinimumGate", () => {
     expect(result.passed).toBe(false);
     expect(result.blockers).toContain("Evidence goes beyond a single thin run");
     expect(result.ceiling_type).toBe("research_memo");
+  });
+
+  it("blocks paper-scale promotion for tiny one-example gains without repeated seeds", () => {
+    const input = fullInput();
+    input.topic = "LoRA rank/dropout tuning";
+    input.report.metrics = {
+      accuracy_delta_vs_baseline: 0.083332,
+      summary: {
+        baseline_condition_marker: "rank_8_dropout_0_0",
+        best_condition_marker: "rank_32_dropout_0_05",
+        best_accuracy_delta_vs_baseline: 0.083332
+      },
+      run_config: {
+        seed: 17,
+        max_steps: 4
+      },
+      data: {
+        eval: {
+          arc_challenge: { count: 6 },
+          hellaswag: { count: 6 }
+        }
+      },
+      conditions: [
+        {
+          marker: "rank_8_dropout_0_0",
+          rank: 8,
+          dropout: 0,
+          steps_completed: 4,
+          per_task_metrics: {
+            arc_challenge: { correct: 3, total: 6 },
+            hellaswag: { correct: 1, total: 6 }
+          },
+          accuracy_delta_vs_baseline: 0
+        },
+        {
+          marker: "rank_32_dropout_0_05",
+          rank: 32,
+          dropout: 0.05,
+          steps_completed: 4,
+          per_task_metrics: {
+            arc_challenge: { correct: 3, total: 6 },
+            hellaswag: { correct: 2, total: 6 }
+          },
+          accuracy_delta_vs_baseline: 0.083332
+        }
+      ]
+    };
+
+    const result = evaluateMinimumGate(input);
+
+    expect(result.passed).toBe(false);
+    expect(result.failed_checks).toEqual(
+      expect.arrayContaining([
+        "evaluation_sample_size",
+        "seed_replication",
+        "effect_granularity",
+        "training_budget_depth"
+      ])
+    );
+    expect(result.ceiling_type).toBe("blocked_for_paper_scale");
+    expect(result.paper_scale_diagnostics?.map((diagnostic) => diagnostic.id)).toEqual(
+      expect.arrayContaining(["tiny_eval_sample", "missing_seed_replication", "single_item_gain", "thin_training_budget"])
+    );
   });
 
   it("includes ISO timestamp in evaluated_at", () => {
