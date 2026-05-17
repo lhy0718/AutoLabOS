@@ -6407,6 +6407,96 @@ export class ImplementSessionManager {
       }
     }
 
+    const rankDropoutMarkerParserCollisionRepair =
+      await repairPythonRankDropoutMarkerParserCollisionSurface(executionScriptPath);
+    if (rankDropoutMarkerParserCollisionRepair.repaired) {
+      onProgress?.(
+        rankDropoutMarkerParserCollisionRepair.message ||
+          "Repaired rank/dropout condition marker parser compatibility before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            rankDropoutMarkerParserCollisionRepair.message ||
+            "Repaired rank/dropout condition marker parser compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const importedHelperRunnerResolverRepair =
+      await repairPythonImportedHelperRunnerResolverSurface(executionScriptPath);
+    if (importedHelperRunnerResolverRepair.repaired) {
+      onProgress?.(
+        importedHelperRunnerResolverRepair.message ||
+          "Repaired callable resolver so imported helper functions are not selected as study runners.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            importedHelperRunnerResolverRepair.message ||
+            "Repaired callable resolver so imported helper functions are not selected as study runners."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const outputDirArgparseRepair = await repairPythonOutputDirArgparseAlias(
       executionScriptPath,
       attempt.runCommand
@@ -34941,6 +35031,109 @@ export async function repairPythonNamespaceGetNoneDefaultSurface(scriptPath?: st
   };
 }
 
+export async function repairPythonRankDropoutMarkerParserCollisionSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_rank_dropout_marker_parser_collision_marker";
+  const parserDefinitions = source.match(/\ndef\s+_parse_condition_marker\s*\(/gu) || [];
+  if (
+    source.includes(marker) ||
+    parserDefinitions.length < 2 ||
+    !source.includes("def build_condition_spec(") ||
+    !source.includes("rank, dropout = _parse_condition_marker(marker)")
+  ) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(
+    /^(\s*)rank,\s*dropout\s*=\s*_parse_condition_marker\(marker\)\s*$/mu,
+    (_match, indent: string) =>
+      [
+        `${indent}parsed_marker = _parse_condition_marker(marker)`,
+        `${indent}# ${marker}`,
+        `${indent}if hasattr(parsed_marker, "get"):`,
+        `${indent}    rank = parsed_marker.get("rank")`,
+        `${indent}    dropout = parsed_marker.get("lora_dropout")`,
+        `${indent}    if dropout is None:`,
+        `${indent}        dropout = parsed_marker.get("dropout")`,
+        `${indent}else:`,
+        `${indent}    rank, dropout = parsed_marker`
+      ].join("\n")
+  );
+
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Made rank/dropout condition marker parsing robust to duplicate tuple/dict helper definitions in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonImportedHelperRunnerResolverSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_find_callable_local_module_only_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _find_callable(") ||
+    !source.includes("raw_result = _invoke_signature_aware(") ||
+    !/include_tokens\s*=\s*\(\s*\)/u.test(source) ||
+    !/from dataclasses import .*asdict/u.test(source)
+  ) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(
+    /^(\s*)if not callable\(candidate\):\n\1    continue\n/mu,
+    (_match, indent: string) =>
+      `${[
+        `${indent}if not callable(candidate):`,
+        `${indent}    continue`,
+        `${indent}# ${marker}`,
+        `${indent}candidate_module = getattr(candidate, "__module__", None)`,
+        `${indent}if candidate_module and candidate_module not in ("__main__", "__mp_main__"):`,
+        `${indent}    continue`
+      ].join("\n")}\n`
+  );
+
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Constrained _find_callable to local module callables in ${path.basename(scriptPath)} so imported helpers are not run as study entrypoints.`
+  };
+}
+
 async function detectPythonRunCommandArgparseMismatch(
   scriptPath?: string,
   runCommand?: string
@@ -35232,6 +35425,10 @@ async function repairPythonRunCommandArgparseAliases(
   const commandFlags = new Set(extractLongOptionFlags(runCommand));
   const aliasPairs = [
     {
+      commandFlag: "--budget-timeout-sec",
+      parserFlag: "--timeout-sec"
+    },
+    {
       commandFlag: "--metrics-out",
       parserFlag: "--metrics-path"
     },
@@ -35296,8 +35493,14 @@ async function repairPythonRunCommandArgparseAliases(
       parserFlag: "--baseline"
     }
   ].filter((pair) => commandFlags.has(pair.commandFlag));
+  const runtimeOptions = [
+    {
+      commandFlag: "--budget-timeout-sec",
+      line: "parser.add_argument('--budget-timeout-sec', dest='timeout_sec', type=float, default=None, help='AutoLabOS execution budget in seconds for runner compatibility.')"
+    }
+  ].filter((option) => commandFlags.has(option.commandFlag));
 
-  if (aliasPairs.length === 0) {
+  if (aliasPairs.length === 0 && runtimeOptions.length === 0) {
     return { repaired: false };
   }
 
@@ -35345,14 +35548,36 @@ async function repairPythonRunCommandArgparseAliases(
     }
   }
 
-  if (nextSource === source || addedAliases.length === 0) {
+  const addedRuntimeOptions: string[] = [];
+  for (const { commandFlag, line } of runtimeOptions) {
+    if (extractPythonArgparseLongFlags(nextSource).has(commandFlag)) {
+      continue;
+    }
+    const returnParserPattern = /^(\s*)return\s+parser\s*$/mu;
+    if (!returnParserPattern.test(nextSource)) {
+      continue;
+    }
+    nextSource = nextSource.replace(
+      returnParserPattern,
+      (_match, indent: string) => [`${indent}${line}`, `${indent}return parser`].join("\n")
+    );
+    addedRuntimeOptions.push(commandFlag);
+  }
+
+  if (nextSource === source || (addedAliases.length === 0 && addedRuntimeOptions.length === 0)) {
     return { repaired: false };
   }
 
   await fs.writeFile(scriptPath, nextSource, "utf8");
+  const repairSummary = [
+    addedAliases.length > 0 ? `alias(es) ${addedAliases.join(", ")}` : "",
+    addedRuntimeOptions.length > 0 ? `runtime option(s) ${addedRuntimeOptions.join(", ")}` : ""
+  ]
+    .filter(Boolean)
+    .join("; ");
   return {
     repaired: true,
-    message: `Added run_command argparse alias(es) ${addedAliases.join(", ")} to ${path.basename(scriptPath)} before handoff.`
+    message: `Added run_command argparse ${repairSummary} to ${path.basename(scriptPath)} before handoff.`
   };
 }
 

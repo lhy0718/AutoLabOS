@@ -182,6 +182,8 @@ import {
   repairPythonCommandTokensNamespaceSurface,
   repairPythonOptionalPathArgDefaultsSurface,
   repairPythonNamespaceGetNoneDefaultSurface,
+  repairPythonRankDropoutMarkerParserCollisionSurface,
+  repairPythonImportedHelperRunnerResolverSurface,
   repairPythonStudyInvokeContractKwargSurface,
   repairPythonEntrypointStudyResultKwargAliasSurface,
   repairPythonNestedRunRecordsProjectionSurface,
@@ -11089,6 +11091,141 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_namespace_get_none_default_marker = True");
     const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
     expect(JSON.parse(output)).toEqual({ schedule_path: "public/execution_schedule.json" });
+  });
+
+  it("repairs duplicate rank/dropout marker parsers that mix tuple and dict return contracts", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-rank-dropout-marker-parser-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import json",
+        "from typing import Any, Dict, Tuple",
+        "",
+        "BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
+        "",
+        "def _parse_condition_marker(marker: str) -> Tuple[int, float]:",
+        "    parts = marker.split('_')",
+        "    rank = int(parts[1])",
+        "    dropout = float(f\"{parts[3]}.{''.join(parts[4:])}\")",
+        "    return rank, dropout",
+        "",
+        "def build_condition_spec(marker: str) -> Dict[str, Any]:",
+        "    rank, dropout = _parse_condition_marker(marker)",
+        "    return {'marker': marker, 'rank': rank, 'lora_dropout': dropout}",
+        "",
+        "def _parse_condition_marker(marker: str) -> Dict[str, Any]:",
+        "    return {",
+        "        'marker': marker,",
+        "        'rank': 8,",
+        "        'lora_dropout': 0.05,",
+        "        'is_baseline': marker == BASELINE_CONDITION_MARKER,",
+        "    }",
+        "",
+        "if __name__ == '__main__':",
+        "    print(json.dumps(build_condition_spec('rank_8_dropout_0_05'), sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/too many values to unpack/);
+
+    const repair = await repairPythonRankDropoutMarkerParserCollisionSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_rank_dropout_marker_parser_collision_marker");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(JSON.parse(output)).toMatchObject({
+      marker: "rank_8_dropout_0_05",
+      rank: 8,
+      lora_dropout: 0.05
+    });
+  });
+
+  it("repairs callable resolver fallbacks that select imported dataclass helpers as runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-imported-helper-runner-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import inspect",
+        "import json",
+        "from dataclasses import asdict, dataclass, field",
+        "from typing import Any, Sequence",
+        "",
+        "def _invoke_signature_aware(func: Any, **available_kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    kwargs = {key: value for key, value in available_kwargs.items() if key in signature.parameters}",
+        "    return func(**kwargs)",
+        "",
+        "def _find_callable(",
+        "    exact_names: Sequence[str],",
+        "    include_tokens: Sequence[str] = (),",
+        "    exclude_tokens: Sequence[str] = (),",
+        ") -> Any:",
+        "    for name in exact_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    for name, candidate in globals().items():",
+        "        lowered = str(name).lower()",
+        "        if not callable(candidate):",
+        "            continue",
+        "        if lowered in {",
+        "            '_find_callable',",
+        "            '_invoke_signature_aware',",
+        "            'main',",
+        "        }:",
+        "            continue",
+        "        if include_tokens and not all(token in lowered for token in include_tokens):",
+        "            continue",
+        "        if any(token in lowered for token in exclude_tokens):",
+        "            continue",
+        "        return candidate",
+        "    return None",
+        "",
+        "def locked_lora_study(args: Any = None) -> dict[str, Any]:",
+        "    return {'status': 'ok', 'runner': 'locked_lora_study'}",
+        "",
+        "def main() -> int:",
+        "    runner = _find_callable(",
+        "        exact_names=('run_lora_rank_dropout_study',),",
+        "        include_tokens=(),",
+        "        exclude_tokens=('parse', 'build', 'write', 'payload', 'metric', 'artifact', 'main', 'entry', 'preflight'),",
+        "    )",
+        "    raw_result = _invoke_signature_aware(runner, args=None)",
+        "    print(json.dumps(raw_result, sort_keys=True))",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /asdict\(\) should be called on dataclass instances|missing .*required .*argument/
+    );
+
+    const repair = await repairPythonImportedHelperRunnerResolverSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_find_callable_local_module_only_marker");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(JSON.parse(output)).toEqual({
+      runner: "locked_lora_study",
+      status: "ok"
+    });
   });
 
   it("repairs generated linear scheduler calls for get_linear_schedule_with_warmup", async () => {
@@ -25025,6 +25162,7 @@ describe("ImplementSessionManager", () => {
         "        'fallback_base_model': args.fallback_base_model,",
         "        'base_model_id': args.base_model_id,",
         "        'baseline_condition_marker': args.baseline_condition_marker,",
+        "        'timeout_sec': args.timeout_sec,",
         "    }), encoding='utf-8')",
         "    return 0",
         "",
@@ -25057,7 +25195,7 @@ describe("ImplementSessionManager", () => {
       {
         verifyReport: { status: "not_run" },
         testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
-        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)} --disable-progress-bars --fallback-model TinyLlama/TinyLlama-1.1B --base-model Qwen/Qwen2.5-0.5B --baseline-condition rank_8_dropout_0_0`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)} --disable-progress-bars --fallback-model TinyLlama/TinyLlama-1.1B --base-model Qwen/Qwen2.5-0.5B --baseline-condition rank_8_dropout_0_0 --budget-timeout-sec 1800`,
         scriptPath,
         workingDir: publicDir,
         workspaceRoot: workspace,
@@ -25077,6 +25215,7 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("parser.add_argument('--fallback-base-model', \"--fallback-model\"");
     expect(repairedSource).toContain("parser.add_argument('--base-model-id', \"--base-model\"");
     expect(repairedSource).toContain("parser.add_argument('--baseline-condition-marker', \"--baseline-condition\"");
+    expect(repairedSource).toContain("parser.add_argument('--budget-timeout-sec', dest='timeout_sec'");
 
     execFileSync(
       "python3",
@@ -25092,7 +25231,9 @@ describe("ImplementSessionManager", () => {
         "--base-model",
         "Qwen/Qwen2.5-0.5B",
         "--baseline-condition",
-        "rank_8_dropout_0_0"
+        "rank_8_dropout_0_0",
+        "--budget-timeout-sec",
+        "1800"
       ],
       { cwd: publicDir }
     );
@@ -25100,7 +25241,8 @@ describe("ImplementSessionManager", () => {
       disable_progress_bar: true,
       fallback_base_model: "TinyLlama/TinyLlama-1.1B",
       base_model_id: "Qwen/Qwen2.5-0.5B",
-      baseline_condition_marker: "rank_8_dropout_0_0"
+      baseline_condition_marker: "rank_8_dropout_0_0",
+      timeout_sec: 1800
     });
   });
 
