@@ -454,6 +454,13 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       );
       await runContextMemory.put("write_paper.eligibility", writeEligibility);
       if (!writeEligibility.allowed) {
+        await persistBlockedWritePaperReadiness({
+          run,
+          reason: writeEligibility.reason,
+          manuscriptType: writeEligibility.manuscript_type ?? "blocked_for_paper_scale",
+          config: deps.config,
+          runContextMemory
+        });
         emitLog(writeEligibility.reason);
         await runContextMemory.put("write_paper.last_error", writeEligibility.reason);
         await runContextMemory.put("write_paper.compile_status", null);
@@ -1781,6 +1788,84 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       };
   }
 };
+}
+
+async function persistBlockedWritePaperReadiness(input: {
+  run: Parameters<GraphNodeHandler["execute"]>[0]["run"];
+  reason: string;
+  manuscriptType: ManuscriptType;
+  config: NodeExecutionDeps["config"];
+  runContextMemory: RunContextMemory;
+}): Promise<void> {
+  const generatedAt = new Date().toISOString();
+  const paperReadiness: PaperReadinessArtifact = {
+    generated_at: generatedAt,
+    paper_ready: false,
+    readiness_state: input.manuscriptType,
+    pre_draft_manuscript_type: input.manuscriptType,
+    claim_ceiling_applied: input.manuscriptType !== "paper_ready",
+    reason: input.reason,
+    citation_check: "pass",
+    triggered_by: ["write_paper_eligibility"],
+    evidence_gate_status: "fail",
+    scientific_validation_status: "fail",
+    submission_validation_ok: false,
+    manuscript_quality_action: "stop",
+    claim_status_counts: {
+      verified: 0,
+      inferred: 0,
+      unverified: 0,
+      blocked: 1
+    }
+  };
+  const risks = buildReadinessRiskArtifact({
+    paperReady: false,
+    readinessState: input.manuscriptType,
+    risks: [
+      ...buildNetworkDependencyReadinessRisks({
+        source: "paper",
+        networkPolicy: input.config.experiments?.network_policy,
+        networkPurpose: input.config.experiments?.network_purpose,
+        executionApprovalMode: input.config.workflow?.execution_approval_mode
+      }),
+      {
+        risk_code: "write_paper_eligibility_blocked",
+        severity: "blocked",
+        category: "paper_scale",
+        status: "blocked",
+        message: input.reason,
+        triggered_by: ["write_paper_eligibility"],
+        affected_claim_ids: [],
+        affected_citation_ids: [],
+        recommended_action: "Follow the review/backtrack recommendation instead of preserving stale paper-ready artifacts.",
+        recheck_condition: "write_paper_eligibility.json reports allowed=true after upstream evidence is strengthened."
+      }
+    ]
+  });
+  await writeRunArtifact(
+    input.run,
+    "paper/paper_readiness.json",
+    `${JSON.stringify(paperReadiness, null, 2)}\n`
+  );
+  await writeRunArtifact(
+    input.run,
+    "paper/readiness_risks.json",
+    `${JSON.stringify(risks, null, 2)}\n`
+  );
+  const publicPaperDir = buildPublicPaperDir(process.cwd(), input.run);
+  await ensureDir(publicPaperDir);
+  await fs.writeFile(
+    path.join(publicPaperDir, "paper_readiness.json"),
+    `${JSON.stringify(paperReadiness, null, 2)}\n`,
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(publicPaperDir, "readiness_risks.json"),
+    `${JSON.stringify(risks, null, 2)}\n`,
+    "utf8"
+  );
+  await input.runContextMemory.put("write_paper.paper_readiness", paperReadiness);
+  await input.runContextMemory.put("write_paper.readiness_risks", risks);
 }
 
 function mergeBundleCorpus(existing: PaperWritingBundle["corpus"], additions: PaperWritingBundle["corpus"]): PaperWritingBundle["corpus"] {

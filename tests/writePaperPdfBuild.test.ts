@@ -3654,6 +3654,19 @@ describe("writePaper PDF build", () => {
     expect(eligibility.allowed).toBe(false);
     expect(eligibility.brief_evidence_status).toBe("fail");
     expect(eligibility.manuscript_type).toBe("research_memo");
+    const runReadiness = JSON.parse(await readFile(path.join(runDir, "paper", "paper_readiness.json"), "utf8")) as {
+      paper_ready: boolean;
+      readiness_state: string;
+      triggered_by: string[];
+    };
+    expect(runReadiness.paper_ready).toBe(false);
+    expect(runReadiness.readiness_state).toBe("research_memo");
+    expect(runReadiness.triggered_by).toContain("write_paper_eligibility");
+    const publicReadiness = JSON.parse(
+      await readFile(path.join(buildPublicPaperDir(root, run), "paper_readiness.json"), "utf8")
+    ) as { paper_ready: boolean; readiness_state: string };
+    expect(publicReadiness.paper_ready).toBe(false);
+    expect(publicReadiness.readiness_state).toBe("research_memo");
   });
 
   it("runs manuscript review after polish and records manuscript-quality artifacts for a clean manuscript", async () => {
