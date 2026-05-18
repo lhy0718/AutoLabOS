@@ -612,7 +612,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           const policyBlock = extractPolicyBlock(obs);
           const metricsFailureSummary = policyBlock.blocked
             ? undefined
-            : await loadFailedMetricsSummary(resolved.metricsPath);
+            : await loadFailedMetricsSummary(resolved.metricsPath, resolved.cwd);
           const failureStage = metricsFailureSummary ? "metrics" : policyBlock.blocked ? "policy" : "command";
           const triageStage = failureStage === "metrics" ? "metrics" : "command";
           const failureSummary = metricsFailureSummary || obs.stderr || "Experiment command failed";
@@ -821,7 +821,10 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             });
           }
           watchdog = setMetricsState(watchdog, "valid", logFile);
-          const failedMetricsMessage = detectFailedMetricsPayload(parsedMetrics);
+          const failedMetricsMessage = appendExperimentFailureArtifactEvidence(
+            detectFailedMetricsPayload(parsedMetrics),
+            await loadExperimentFailureArtifactSummary(resolved.cwd)
+          );
           if (failedMetricsMessage) {
             const failedMetricsSuggestedNextAction = failedMetricsMessage.includes("Experiment dependency blocker:")
               ? "Prewarm or make the required experiment dependency available, or revise the governed experiment design to use an available model before rerunning."
@@ -1431,7 +1434,10 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
   return null;
 }
 
-async function loadFailedMetricsSummary(metricsPath: string | undefined): Promise<string | undefined> {
+async function loadFailedMetricsSummary(
+  metricsPath: string | undefined,
+  artifactDir?: string
+): Promise<string | undefined> {
   if (!metricsPath || !(await fileExists(metricsPath))) {
     return undefined;
   }
@@ -1440,10 +1446,104 @@ async function loadFailedMetricsSummary(metricsPath: string | undefined): Promis
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return undefined;
     }
-    return detectFailedMetricsPayload(parsed as Record<string, unknown>) || undefined;
+    return appendExperimentFailureArtifactEvidence(
+      detectFailedMetricsPayload(parsed as Record<string, unknown>) || undefined,
+      await loadExperimentFailureArtifactSummary(artifactDir)
+    );
   } catch {
     return undefined;
   }
+}
+
+function appendExperimentFailureArtifactEvidence(
+  message: string | null | undefined,
+  artifactSummary: string | undefined
+): string | undefined {
+  if (!message) {
+    return undefined;
+  }
+  return artifactSummary ? `${message} ${artifactSummary}` : message;
+}
+
+async function loadExperimentFailureArtifactSummary(artifactDir: string | undefined): Promise<string | undefined> {
+  if (!artifactDir) {
+    return undefined;
+  }
+  const summaries: string[] = [];
+  const studyFailurePath = path.join(artifactDir, "study_failure.json");
+  const studyFailuresPath = path.join(artifactDir, "study_failures.json");
+  const studyFailure = await readJsonRecordIfExists(studyFailurePath);
+  if (studyFailure) {
+    const summary = summarizeFailureRecord("study_failure.json", studyFailure);
+    if (summary) {
+      summaries.push(summary);
+    }
+  }
+  const studyFailures = await readJsonArrayIfExists(studyFailuresPath);
+  for (const failure of studyFailures.slice(0, 2)) {
+    const summary = summarizeFailureRecord("study_failures.json", failure);
+    if (summary) {
+      summaries.push(summary);
+    }
+  }
+  return summaries.length > 0 ? `Failure artifact evidence: ${summaries.join(" | ")}.` : undefined;
+}
+
+async function readJsonRecordIfExists(filePath: string): Promise<Record<string, unknown> | undefined> {
+  if (!(await fileExists(filePath))) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readJsonArrayIfExists(filePath: string): Promise<Record<string, unknown>[]> {
+  if (!(await fileExists(filePath))) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function summarizeFailureRecord(label: string, failure: Record<string, unknown>): string | undefined {
+  const error = asString(failure.error) || asString(failure.message);
+  const type = asString(failure.type);
+  const tracebackTail = tracebackLastLine(asString(failure.traceback));
+  const parts = [
+    `${label}`,
+    type ? `type=${trimShort(type, 80)}` : undefined,
+    error ? `error=${trimShort(error, 220)}` : undefined,
+    tracebackTail && tracebackTail !== error ? `traceback_tail=${trimShort(tracebackTail, 220)}` : undefined
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 1 ? parts.join("; ") : undefined;
+}
+
+function trimShort(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/gu, " ").trim();
+  return compact.length > maxLength ? `${compact.slice(0, Math.max(0, maxLength - 1))}...` : compact;
+}
+
+function tracebackLastLine(traceback: string | undefined): string | undefined {
+  if (!traceback) {
+    return undefined;
+  }
+  const lines = traceback
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.at(-1);
 }
 
 function appendMetricsFailureEvidence(message: string, metrics: Record<string, unknown>): string {

@@ -539,6 +539,22 @@ describe("run_experiments execution profile behavior", () => {
       aci: {
         runCommand: async () => {
           await writeFile(
+            path.join(root, "study_failure.json"),
+            JSON.stringify(
+              {
+                error: "TypeError: _build_model_load_kwargs() missing 1 required positional argument: 'local_files_only'",
+                traceback: [
+                  "Traceback (most recent call last):",
+                  "  File \"experiment.py\", line 1, in <module>",
+                  "TypeError: _build_model_load_kwargs() missing 1 required positional argument: 'local_files_only'"
+                ].join("\n")
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          await writeFile(
             path.join(runDir, "metrics.json"),
             JSON.stringify(
               {
@@ -583,6 +599,8 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.error).toContain("Experiment metrics payload reports failed status");
     expect(result.error).toContain("completed_condition_count=0/8");
     expect(result.error).toContain("missing_required_condition_markers=rank_8_dropout_0_0,rank_4_dropout_0_0");
+    expect(result.error).toContain("_build_model_load_kwargs()");
+    expect(result.error).toContain("local_files_only");
 
     const verifierReport = JSON.parse(
       await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
@@ -601,6 +619,7 @@ describe("run_experiments execution profile behavior", () => {
       stage: "metrics"
     });
     expect(feedback?.summary).toContain("observed_condition_count=31");
+    expect(feedback?.summary).toContain("_build_model_load_kwargs()");
   });
 
   it("repairs runtime-resolved metrics payload builders before run_experiments execution", async () => {
