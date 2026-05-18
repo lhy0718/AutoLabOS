@@ -3168,15 +3168,22 @@ function validateRunMetricsContract(input: {
   const requiredRunCount = [
     asNumber(input.metrics.required_run_count),
     asNumber(studySummary.required_run_count),
-    asNumber(study.required_run_count)
+    asNumber(study.required_run_count),
+    deriveRequiredPlannedRunCount(input)
   ].find((value): value is number => typeof value === "number");
   const completedRunCount = [
     asNumber(input.metrics.completed_run_count),
     asNumber(studySummary.completed_run_count),
     asNumber(study.completed_run_count)
   ].find((value): value is number => typeof value === "number");
-  if (requiredRunCount !== undefined && requiredRunCount > 0 && completedRunCount === 0) {
-    issues.push(`No required experiment runs completed successfully (${completedRunCount}/${requiredRunCount}).`);
+  if (requiredRunCount !== undefined && requiredRunCount > 0) {
+    if (completedRunCount === undefined) {
+      issues.push(`Experiment metrics omitted completed_run_count for required ${requiredRunCount} run(s).`);
+    } else if (completedRunCount === 0) {
+      issues.push(`No required experiment runs completed successfully (${completedRunCount}/${requiredRunCount}).`);
+    } else if (completedRunCount < requiredRunCount) {
+      issues.push(`Experiment run coverage incomplete: completed_run_count=${completedRunCount}/${requiredRunCount}.`);
+    }
   }
   const requiredConditionCount = [
     asNumber(input.metrics.required_condition_count),
@@ -3225,6 +3232,53 @@ function validateRunMetricsContract(input: {
   }
 
   return [...new Set(issues.map((issue) => issue.trim()).filter(Boolean))];
+}
+
+function deriveRequiredPlannedRunCount(input: {
+  metrics: Record<string, unknown>;
+  comparisonContract?: Awaited<ReturnType<typeof loadExperimentComparisonContract>>;
+  experimentPortfolio?: ExperimentPortfolio;
+}): number | undefined {
+  const directCandidates = [
+    asNumber(input.comparisonContract?.budget_profile.total_trials),
+    asNumber(input.experimentPortfolio?.total_expected_trials),
+    ...((input.experimentPortfolio?.trial_groups ?? []).map((group) => asNumber(group.expected_trials)))
+  ].filter((value): value is number => typeof value === "number" && value > 0);
+  if (directCandidates.length > 0) {
+    return Math.max(...directCandidates);
+  }
+
+  const text = [
+    ...(input.experimentPortfolio?.trial_groups ?? []).flatMap((group) => [
+      group.label,
+      ...(group.metrics ?? []),
+      ...(group.notes ?? [])
+    ])
+  ]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join("\n");
+  return parseRequiredRunCountFromText(text);
+}
+
+function parseRequiredRunCountFromText(text: string): number | undefined {
+  if (!text.trim()) {
+    return undefined;
+  }
+
+  const explicitTotalMatches = [
+    ...text.matchAll(/\b(\d+)\s+(?:fine[-\s]?tune\s+|experiment\s+)?(?:runs?|trials?)\s+total\b/giu),
+    ...text.matchAll(/\btotal\s+(?:of\s+)?(\d+)\s+(?:fine[-\s]?tune\s+|experiment\s+)?(?:runs?|trials?)\b/giu)
+  ]
+    .map((match) => Number.parseInt(match[1], 10))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (explicitTotalMatches.length > 0) {
+    return Math.max(...explicitTotalMatches);
+  }
+
+  const factoredMatches = [...text.matchAll(/\b(\d+)\s*(?:x|×)\s*(\d+)\s+seeds?\s*=\s*(\d+)[^.\n;]*(?:plus|\+)\s*(\d+)\b/giu)]
+    .map((match) => Number.parseInt(match[3], 10) + Number.parseInt(match[4], 10))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return factoredMatches.length > 0 ? Math.max(...factoredMatches) : undefined;
 }
 
 function subtractNumbers(left: number | undefined, right: number | undefined): number | undefined {

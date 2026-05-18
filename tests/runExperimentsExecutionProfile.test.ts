@@ -1275,4 +1275,117 @@ describe("run_experiments execution profile behavior", () => {
     });
     expect(verifierReport.summary).toContain("No required experiment runs completed successfully");
   });
+
+  it("fails verification when planned run coverage is contracted below the portfolio evidence floor", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-contracted-coverage-"));
+    process.chdir(root);
+    const run = makeRun("run-contracted-coverage");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "experiment_portfolio.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: run.id,
+          created_at: new Date().toISOString(),
+          execution_model: "single_run",
+          comparison_axes: ["rank"],
+          primary_trial_group_id: "primary",
+          trial_groups: [
+            {
+              id: "primary",
+              label: "Primary repeated-seed rank sweep",
+              role: "primary",
+              group_kind: "aggregate",
+              dataset_scope: ["ARC-Challenge", "HellaSwag"],
+              metrics: ["accuracy_delta_vs_baseline"],
+              baselines: ["Locked rank=8 dropout=0.0 baseline"],
+              notes: [
+                "Paper-scale evidence floor: 4 ranks x 5 seeds = 20 fine-tune runs, plus 2 exact baseline reruns.",
+                "Training budget is 22 runs total including exact baseline repeats."
+              ]
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "success",
+                accuracy: 0.95,
+                accuracy_delta_vs_baseline: 0,
+                completed_run_count: 4,
+                completed_condition_count: 4,
+                condition_summaries: [
+                  { condition_marker: "rank_8_dropout_0_0", completed_runs: 1 },
+                  { condition_marker: "rank_4_dropout_0_0", completed_runs: 1 },
+                  { condition_marker: "rank_16_dropout_0_0", completed_runs: 1 },
+                  { condition_marker: "rank_32_dropout_0_0", completed_runs: 1 }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner exited zero with a smoke-scale contracted run",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment run coverage incomplete: completed_run_count=4/22");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("completed_run_count=4/22");
+  });
 });
