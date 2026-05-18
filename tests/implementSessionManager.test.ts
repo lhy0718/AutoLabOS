@@ -7666,6 +7666,125 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).not.toContain('"required_condition_count": 2');
   });
 
+  it("prioritizes redesigned experiment-plan condition contracts over stale brief grids", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-redesign-contract-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    writeFileSync(
+      path.join(workspace, "Brief.md"),
+      [
+        "# Original Brief",
+        "",
+        "LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`.",
+        "Baseline condition: rank=8, dropout=0.0."
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Redesigned LoRA Contract Run",
+      topic: "LoRA rank dropout fixed budget",
+      constraints: ["Original brief used a full rank/dropout grid."],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "retry_context:",
+        '  previous_objective_status: "not_met"',
+        "constraints:",
+        "  raw:",
+        '    - "LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."',
+        '    - "Baseline condition: rank=8, dropout=0.0."',
+        "selected_design:",
+        '  id: "plan_2"',
+        '  title: "5-seed rank-only fixed-dropout confirmatory sweep"',
+        '  summary: "Run a narrower rank sweep at dropout 0.0; this design cannot support a dropout interaction claim."',
+        "  implementation_notes:",
+        '    - "Run ranks {4,8,16,32} with dropout 0.0 for seeds {42,43,44,45,46}."',
+        '    - "Paper-scale evidence floor for the narrowed claim: 4 ranks x 5 seeds = 20 fine-tune runs, plus 2 exact baseline reruns."',
+        "  evaluation_steps:",
+        '    - "Run ranks {4,8,16,32} with dropout 0.0 for seeds {42,43,44,45,46}, then rerun the baseline rank=8 dropout=0.0 two additional times."',
+        "  resource_notes:",
+        '    - "22 runs total including exact baseline repeats."'
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(path.join(runDir, "hypotheses.jsonl"), "", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let capturedPrompt = "";
+    const codex = {
+      runTurnStream: async () => {
+        throw new Error("Codex should not be used when llm_mode=openai_api");
+      }
+    } as unknown as CodexNativeClient;
+    const llm = {
+      complete: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return {
+          text: JSON.stringify({
+            summary: "Implemented the redesigned rank-only contract runner.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [publicScriptPath],
+            artifacts: [publicScriptPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution",
+            file_edits: [
+              {
+                path: publicScriptPath,
+                content: [
+                  "PLANNED_CONDITIONS = ['rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_16_dropout_0_0', 'rank_32_dropout_0_0']",
+                  "REQUIRED_CONDITION_COUNT = 4",
+                  "REQUIRED_RUN_COUNT = 22",
+                  "SEED_SCHEDULE = [42, 43, 44, 45, 46]",
+                  MINIMAL_METRICS_RUNNER_SOURCE
+                ].join("\n\n")
+              }
+            ]
+          })
+        };
+      }
+    };
+
+    const config = createTestConfig();
+    config.providers.llm_mode = "openai_api";
+    const manager = new ImplementSessionManager({
+      config,
+      codex,
+      llm: llm as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await manager.run(run);
+
+    expect(capturedPrompt).toContain('"planned_condition_contract":');
+    expect(capturedPrompt).toContain('"required_condition_count": 4');
+    expect(capturedPrompt).toContain('"required_run_count": 22');
+    expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 5');
+    expect(capturedPrompt).toContain('"rank_4_dropout_0_0"');
+    expect(capturedPrompt).toContain('"rank_8_dropout_0_0"');
+    expect(capturedPrompt).toContain('"rank_16_dropout_0_0"');
+    expect(capturedPrompt).toContain('"rank_32_dropout_0_0"');
+    expect(capturedPrompt).not.toContain('"required_condition_count": 8');
+    expect(capturedPrompt).not.toContain('"rank_4_dropout_0_05"');
+    expect(capturedPrompt).not.toContain('"rank_32_dropout_0_05"');
+  });
+
   it("preserves full-grid LoRA condition and seed contracts from P6 plan prose", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-p6-grid-contract-"));
     tempDirs.push(workspace);
@@ -25961,6 +26080,161 @@ describe("ImplementSessionManager", () => {
       plan_path: planPath,
       schedule_path: "public/execution_schedule.json",
       unknown: []
+    });
+  });
+
+  it("repairs standard AutoLabOS runtime CLI flags before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-standard-runtime-flags-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Standard Runtime Flags",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--eval-examples-per', type=int, default=6)",
+        "    return parser",
+        "",
+        "def main(argv=None):",
+        "    args = build_arg_parser().parse_args(argv)",
+        "    metrics_path = Path(args.metrics_path)",
+        "    metrics_path.parent.mkdir(parents=True, exist_ok=True)",
+        "    metrics_path.write_text(json.dumps({",
+        "        'status': 'completed',",
+        "        'base_model': args.base_model,",
+        "        'fallback_base_model': args.fallback_base_model,",
+        "        'condition_markers': args.condition_markers,",
+        "        'timeout_sec': args.timeout_sec,",
+        "        'public_dir': args.public_dir,",
+        "        'run_artifact_dir': args.run_artifact_dir,",
+        "    }), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const runCommand = [
+      "python3",
+      JSON.stringify(scriptPath),
+      "--public-dir",
+      JSON.stringify(publicDir),
+      "--metrics-path",
+      JSON.stringify(metricsPath),
+      "--run-artifact-dir",
+      JSON.stringify(runDir),
+      "--base-model",
+      JSON.stringify("Qwen/Qwen2.5-1.5B"),
+      "--fallback-base-model",
+      JSON.stringify("TinyLlama/TinyLlama-1.1B-Chat-v1.0"),
+      "--condition-markers",
+      JSON.stringify("rank_8_dropout_0_0,rank_4_dropout_0_0"),
+      "--locked-budget-timeout-sec",
+      "1800"
+    ].join(" ");
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        runCommand,
+        scriptPath,
+        workingDir: workspace,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain("parser.add_argument('--public-dir'");
+    expect(repairedSource).toContain("parser.add_argument('--run-artifact-dir'");
+    expect(repairedSource).toContain("parser.add_argument('--base-model'");
+    expect(repairedSource).toContain("parser.add_argument('--fallback-base-model'");
+    expect(repairedSource).toContain("parser.add_argument('--condition-markers'");
+    expect(repairedSource).toContain("parser.add_argument('--locked-budget-timeout-sec'");
+
+    execFileSync(
+      "python3",
+      [
+        scriptPath,
+        "--public-dir",
+        publicDir,
+        "--metrics-path",
+        metricsPath,
+        "--run-artifact-dir",
+        runDir,
+        "--base-model",
+        "Qwen/Qwen2.5-1.5B",
+        "--fallback-base-model",
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "--condition-markers",
+        "rank_8_dropout_0_0,rank_4_dropout_0_0",
+        "--locked-budget-timeout-sec",
+        "1800"
+      ],
+      { cwd: workspace }
+    );
+
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics).toMatchObject({
+      status: "completed",
+      base_model: "Qwen/Qwen2.5-1.5B",
+      fallback_base_model: "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      condition_markers: "rank_8_dropout_0_0,rank_4_dropout_0_0",
+      timeout_sec: 1800,
+      public_dir: publicDir,
+      run_artifact_dir: runDir
     });
   });
 

@@ -11644,7 +11644,18 @@ function derivePlannedConditionContract(input: {
   brief?: string;
   objectiveMetric: string;
 }): PlannedConditionContract | undefined {
-  const text = [input.plan, input.brief, input.objectiveMetric].filter(Boolean).join("\n");
+  const planContractText = extractSelectedDesignContractText(input.plan) || input.plan;
+  const planText = [planContractText, input.objectiveMetric].filter(Boolean).join("\n");
+  const planHasSpecificContract = Boolean(
+    input.plan?.trim() &&
+      (extractRankDropoutConditionMarkers(planText).length > 0 ||
+        parseRepeatedSeedRunContract(planText) ||
+        extractSeedSchedule(planText).length > 1 ||
+        parsePlannedConditionContractCount(planText))
+  );
+  const text = planHasSpecificContract
+    ? planText
+    : [input.plan, input.brief, input.objectiveMetric].filter(Boolean).join("\n");
   if (!text.trim()) {
     return undefined;
   }
@@ -11712,6 +11723,21 @@ function derivePlannedConditionContract(input: {
     primary_metric_key: primaryMetricKey,
     notes
   };
+}
+
+function extractSelectedDesignContractText(plan?: string): string | undefined {
+  if (!plan?.trim()) {
+    return undefined;
+  }
+  const selectedMatch = /(?:^|\n)selected_design:\s*(?:\n|$)/iu.exec(plan);
+  if (!selectedMatch || selectedMatch.index === undefined) {
+    return undefined;
+  }
+  const start = selectedMatch.index + (selectedMatch[0].startsWith("\n") ? 1 : 0);
+  const rest = plan.slice(start);
+  const stopMatch = /\n(?:shortlisted_designs|execution|dropped_hypotheses|hypothesis_filter):\s*(?:\n|$)/iu.exec(rest);
+  const selectedBlock = stopMatch?.index !== undefined ? rest.slice(0, stopMatch.index) : rest;
+  return selectedBlock.trim() || undefined;
 }
 
 function extractPlannedConditionSegments(text: string): string[] {
@@ -11787,6 +11813,7 @@ function parseRepeatedSeedRunContract(
 ): { cellCount?: number; seedsPerCell?: number; runCount?: number } | undefined {
   const explicitRuns =
     text.match(/\bexecute\s+(\d+)\s+(?:train[-\s]?plus[-\s]?eval|train[-\s]?and[-\s]?eval|training[-\s]?and[-\s]?evaluation)?\s*runs?\s+total\b/iu) ||
+    text.match(/\b(\d+)\s+runs?\s+total\b/iu) ||
     text.match(/\btotal\s+planned\s+(?:train\/eval|train[-\s]?eval|train[-\s]?and[-\s]?eval|training[-\s]?and[-\s]?evaluation)\s+jobs?\s*[:=]\s*(\d+)\b/iu) ||
     text.match(/\b(?:train\/eval|train[-\s]?eval|train[-\s]?and[-\s]?eval|training[-\s]?and[-\s]?evaluation)\s+(?:jobs?|runs?)\s+total\s*[:=]?\s*(\d+)\b/iu);
   const conditionsPerSeedMatch =
@@ -11794,6 +11821,7 @@ function parseRepeatedSeedRunContract(
     text.match(/\bconditions?\s+per\s+seed\s*[:=]\s*(\d+)\b/iu);
   const cellSeedMatch =
     text.match(/\b(\d+)\s+repeated\s+cells?\s*[x×]\s*(\d+)\s+seeds?\b/iu) ||
+    text.match(/\b(\d+)\s+ranks?\s*[x×]\s*(\d+)\s+seeds?\b/iu) ||
     text.match(/\b(\d+)\s+cells?\s*[x×]\s*(\d+)\s+seeds?\b/iu);
   const cellCount = cellSeedMatch
     ? Number.parseInt(cellSeedMatch[1] || "", 10)
@@ -11900,6 +11928,21 @@ function extractRankDropoutGridMarkers(text: string): string[] {
       for (const dropout of dropouts) {
         markers.add(rankDropoutMarker(rank, dropout));
       }
+    }
+  }
+  for (const match of text.matchAll(
+    /\branks?(?:\s+in)?\s+`?\{([^}]+)\}`?[^\n.]{0,80}?\b(?:fixed\s+)?(?:lora\s+)?dropout\s*(?:=|at|fixed\s+at|of)?\s*`?([0-9]+(?:[._][0-9]+)?)`?/giu
+  )) {
+    const ranks = parseNumericList(match[1] || "").map((value) => Math.trunc(value));
+    const dropout = parseDropoutNumber(match[2] || "");
+    if (dropout === undefined) {
+      continue;
+    }
+    for (const rank of ranks) {
+      if (!Number.isFinite(rank) || rank <= 0) {
+        continue;
+      }
+      markers.add(rankDropoutMarker(rank, dropout));
     }
   }
   return [...markers].sort(rankDropoutMarkerSort);
@@ -35933,8 +35976,36 @@ async function repairPythonRunCommandArgparseAliases(
   ].filter((pair) => commandFlags.has(pair.commandFlag));
   const runtimeOptions = [
     {
+      commandFlag: "--metrics-path",
+      line: "parser.add_argument('--metrics-path', default='metrics.json', help='AutoLabOS metrics JSON output path.')"
+    },
+    {
+      commandFlag: "--public-dir",
+      line: "parser.add_argument('--public-dir', default='.', help='Public AutoLabOS experiment artifact directory.')"
+    },
+    {
+      commandFlag: "--run-artifact-dir",
+      line: "parser.add_argument('--run-artifact-dir', default='.', help='Private AutoLabOS run artifact directory.')"
+    },
+    {
+      commandFlag: "--base-model",
+      line: "parser.add_argument('--base-model', default=None, help='Base model identifier supplied by AutoLabOS.')"
+    },
+    {
+      commandFlag: "--fallback-base-model",
+      line: "parser.add_argument('--fallback-base-model', default=None, help='Fallback model identifier supplied by AutoLabOS.')"
+    },
+    {
+      commandFlag: "--condition-markers",
+      line: "parser.add_argument('--condition-markers', default=None, help='Comma-separated planned condition markers supplied by AutoLabOS.')"
+    },
+    {
       commandFlag: "--budget-timeout-sec",
       line: "parser.add_argument('--budget-timeout-sec', dest='timeout_sec', type=float, default=None, help='AutoLabOS execution budget in seconds for runner compatibility.')"
+    },
+    {
+      commandFlag: "--locked-budget-timeout-sec",
+      line: "parser.add_argument('--locked-budget-timeout-sec', dest='timeout_sec', type=float, default=None, help='Locked AutoLabOS execution budget in seconds for runner compatibility.')"
     }
   ].filter((option) => commandFlags.has(option.commandFlag));
 
