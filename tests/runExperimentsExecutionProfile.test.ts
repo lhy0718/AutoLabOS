@@ -629,6 +629,65 @@ describe("run_experiments execution profile behavior", () => {
     expect(feedback?.summary).toContain("baseline_run");
   });
 
+  it("surfaces string metrics error before stale failure artifact evidence", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-string-metrics-error-"));
+    process.chdir(root);
+    const run = makeRun("run-string-metrics-error");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(root, "study_failure.json"),
+            JSON.stringify({ error: "old stale failure" }, null, 2),
+            "utf8"
+          );
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                error: "write_experiment_artifacts() missing 4 required positional arguments"
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "", exit_code: 1, duration_ms: 5 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("write_experiment_artifacts()");
+    expect(result.error).toContain("metrics_error=write_experiment_artifacts()");
+    expect(result.error).toContain("old stale failure");
+  });
+
   it("repairs runtime-resolved metrics payload builders before run_experiments execution", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-runtime-metrics-repair-"));
     process.chdir(root);

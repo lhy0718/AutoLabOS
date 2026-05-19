@@ -59,7 +59,12 @@ export async function validateDesignImplementationAlignment(input: {
   if (input.attempt.scriptPath) {
     checkedItems.push("script_path_binding");
     const referencedScript = allCommandPaths.find((candidate) => isRunnableScript(candidate));
-    if (referencedScript && !samePath(referencedScript, input.attempt.scriptPath)) {
+    const runCommandTargetsScriptPath =
+      referencedScript &&
+      (samePath(referencedScript, input.attempt.scriptPath) ||
+        (await missingSameNamedScriptReference(referencedScript, input.attempt.scriptPath)) ||
+        (await shellWrapperReferencesScriptPath(referencedScript, input.attempt.scriptPath)));
+    if (referencedScript && !runCommandTargetsScriptPath) {
       findings.push({
         code: "RUN_COMMAND_SCRIPT_MISMATCH",
         severity: "block",
@@ -454,6 +459,39 @@ function looksLikePath(value: string): boolean {
 
 function isRunnableScript(filePath: string): boolean {
   return /\.(py|js|mjs|cjs|sh)$/iu.test(filePath);
+}
+
+async function shellWrapperReferencesScriptPath(wrapperPath: string, scriptPath: string): Promise<boolean> {
+  if (!/\.sh$/iu.test(wrapperPath)) {
+    return false;
+  }
+  const wrapperText = await safeReadText(wrapperPath);
+  if (!wrapperText) {
+    return false;
+  }
+  const wrapperDir = path.dirname(wrapperPath);
+  const referencedPaths = extractCommandPaths(wrapperText, wrapperDir).filter((candidate) => !samePath(candidate, wrapperPath));
+  return referencedPaths.some((candidate) => samePath(candidate, scriptPath));
+}
+
+async function missingSameNamedScriptReference(referencedPath: string, scriptPath: string): Promise<boolean> {
+  if (path.basename(referencedPath) !== path.basename(scriptPath)) {
+    return false;
+  }
+  if (samePath(referencedPath, scriptPath)) {
+    return true;
+  }
+  const [referencedExists, scriptExists] = await Promise.all([pathExists(referencedPath), pathExists(scriptPath)]);
+  return !referencedExists && scriptExists;
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function findMetricsPathReference(paths: string[]): string | undefined {

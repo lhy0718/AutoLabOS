@@ -109,6 +109,50 @@ describe("validateDesignImplementationAlignment", () => {
     expect(report.findings.filter((finding) => finding.severity === "block")).toEqual([]);
   });
 
+  it("allows a shell run_command wrapper that launches script_path", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-wrapper-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const wrapperPath = path.join(publicDir, "run_command.sh");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-wrapper", "metrics.json");
+    writeFileSync(scriptPath, "print('baseline and adaptive evaluation')\n", "utf8");
+    writeFileSync(
+      wrapperPath,
+      `#!/usr/bin/env bash\npython3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}\n`,
+      "utf8"
+    );
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-wrapper", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "design-wrapper",
+        hypothesis_ids: ["h1"],
+        baselines: ["greedy_direct"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = await validateDesignImplementationAlignment({
+      comparisonContract: contract,
+      attempt: {
+        runCommand: `bash ${JSON.stringify(wrapperPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath, wrapperPath],
+        publicArtifacts: [scriptPath, wrapperPath]
+      }
+    });
+
+    expect(report.verdict).toBe("allow");
+    expect(report.findings.filter((finding) => finding.severity === "block")).toEqual([]);
+  });
+
   it("blocks when a runner compresses the planned full-grid condition and seed contract", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-planned-contract-"));
     tempDirs.push(workspace);

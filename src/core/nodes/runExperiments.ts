@@ -1397,6 +1397,9 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
   const failure = metrics.failure && typeof metrics.failure === "object" && !Array.isArray(metrics.failure)
     ? metrics.failure as Record<string, unknown>
     : undefined;
+  const directErrorMessage = typeof metrics.error === "string" && metrics.error.trim()
+    ? metrics.error.trim()
+    : undefined;
   const errorRecord = asRecord(metrics.error);
   const nestedErrorMessage = asString(errorRecord.message) || asString(errorRecord.error);
   const nestedErrorType = asString(errorRecord.type);
@@ -1405,9 +1408,10 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
       ? failure.message.trim()
       : typeof metrics.error_message === "string" && metrics.error_message.trim()
         ? metrics.error_message.trim()
-        : nestedErrorMessage
-          ? `${nestedErrorType ? `${nestedErrorType}: ` : ""}${nestedErrorMessage}`
-          : undefined;
+        : directErrorMessage ||
+          (nestedErrorMessage
+            ? `${nestedErrorType ? `${nestedErrorType}: ` : ""}${nestedErrorMessage}`
+            : undefined);
 
   if (["failed", "failure", "error", "errored"].includes(status)) {
     return appendMetricsFailureEvidence(
@@ -1581,11 +1585,15 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
     parts.push(`failure_count=${failureCount}`);
   }
 
+  const directErrorMessage = typeof metrics.error === "string" && metrics.error.trim()
+    ? metrics.error.trim()
+    : undefined;
   const errorRecord = asRecord(metrics.error);
   const nestedErrorMessage = asString(errorRecord.message) || asString(errorRecord.error);
-  if (nestedErrorMessage) {
+  if (directErrorMessage || nestedErrorMessage) {
     const nestedErrorType = asString(errorRecord.type);
-    parts.push(`metrics_error=${trimShort(`${nestedErrorType ? `${nestedErrorType}: ` : ""}${nestedErrorMessage}`, 220)}`);
+    const errorText = directErrorMessage || `${nestedErrorType ? `${nestedErrorType}: ` : ""}${nestedErrorMessage}`;
+    parts.push(`metrics_error=${trimShort(errorText, 220)}`);
   }
 
   const seedFailureMessages = summarizeSeedFailureMessages(metrics);
@@ -3376,24 +3384,27 @@ function validateRunMetricsContract(input: {
   if (studySummaryStatus && ["failed", "failure", "error", "errored"].includes(studySummaryStatus)) {
     issues.push(`Study summary reports failed status: ${studySummaryStatus}.`);
   }
-  const requiredRunCount = [
+  const explicitRequiredRunCount = [
     asNumber(input.metrics.required_run_count),
     asNumber(studySummary.required_run_count),
-    asNumber(study.required_run_count),
-    deriveRequiredPlannedRunCount(input)
+    asNumber(study.required_run_count)
   ].find((value): value is number => typeof value === "number");
+  const derivedRequiredRunCount = deriveRequiredPlannedRunCount(input);
+  const requiredRunCount = explicitRequiredRunCount ?? derivedRequiredRunCount;
   const completedRunCount = [
     asNumber(input.metrics.completed_run_count),
     asNumber(studySummary.completed_run_count),
     asNumber(study.completed_run_count)
   ].find((value): value is number => typeof value === "number");
   if (requiredRunCount !== undefined && requiredRunCount > 0) {
-    if (completedRunCount === undefined) {
+    if (completedRunCount === undefined && explicitRequiredRunCount !== undefined) {
       issues.push(`Experiment metrics omitted completed_run_count for required ${requiredRunCount} run(s).`);
-    } else if (completedRunCount === 0) {
-      issues.push(`No required experiment runs completed successfully (${completedRunCount}/${requiredRunCount}).`);
-    } else if (completedRunCount < requiredRunCount) {
-      issues.push(`Experiment run coverage incomplete: completed_run_count=${completedRunCount}/${requiredRunCount}.`);
+    } else if (completedRunCount !== undefined) {
+      if (completedRunCount === 0) {
+        issues.push(`No required experiment runs completed successfully (${completedRunCount}/${requiredRunCount}).`);
+      } else if (completedRunCount < requiredRunCount) {
+        issues.push(`Experiment run coverage incomplete: completed_run_count=${completedRunCount}/${requiredRunCount}.`);
+      }
     }
   }
   const requiredConditionCount = [

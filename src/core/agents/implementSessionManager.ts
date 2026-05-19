@@ -1974,10 +1974,24 @@ export class ImplementSessionManager {
     if (!runnerFeedback) {
       return undefined;
     }
+    const feedbackRecordedAt = Date.parse(runnerFeedback.recorded_at || "");
+    const implementUpdatedAt = Date.parse(run.graph.nodeStates.implement_experiments?.updatedAt || "");
+    const implementStatus = run.graph.nodeStates.implement_experiments?.status;
+    const implementAlreadySucceeded =
+      implementStatus === "completed" || implementStatus === "needs_approval";
+    if (
+      Number.isFinite(feedbackRecordedAt) &&
+      Number.isFinite(implementUpdatedAt) &&
+      implementUpdatedAt > feedbackRecordedAt &&
+      implementAlreadySucceeded
+    ) {
+      await runContext.put("implement_experiments.runner_feedback", null);
+      await runContext.put("run_experiments.feedback_for_implementer", null);
+      return undefined;
+    }
     if (run.graph.nodeStates.run_experiments?.status === "failed") {
       return runnerFeedback;
     }
-    const feedbackRecordedAt = Date.parse(runnerFeedback.recorded_at || "");
     const designUpdatedAt = Date.parse(run.graph.nodeStates.design_experiments?.updatedAt || "");
     if (
       Number.isFinite(feedbackRecordedAt) &&
