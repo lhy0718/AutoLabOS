@@ -1089,7 +1089,13 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         experimentPortfolio
       });
       if (metricsContractIssues.length > 0) {
-        const contractMessage = `Experiment metrics contract failed: ${metricsContractIssues.join(" ")}`;
+        const contractMessage = appendExperimentFailureArtifactEvidence(
+          appendMetricsFailureEvidence(
+            `Experiment metrics contract failed: ${metricsContractIssues.join(" ")}`,
+            parsedMetrics
+          ),
+          await loadExperimentFailureArtifactSummary(resolved.cwd)
+        ) || `Experiment metrics contract failed: ${metricsContractIssues.join(" ")}`;
         await persistPanelState();
         const report = buildRunVerifierReport({
           status: "fail",
@@ -1553,10 +1559,26 @@ function appendMetricsFailureEvidence(message: string, metrics: Record<string, u
 
 function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): string {
   const parts: string[] = [];
+  const requiredRunCount = asNumber(metrics.required_run_count);
+  const completedRunCount = asNumber(metrics.completed_run_count);
+  if (requiredRunCount !== undefined && completedRunCount !== undefined) {
+    parts.push(`completed_run_count=${completedRunCount}/${requiredRunCount}`);
+  }
+
   const requiredConditionCount = asNumber(metrics.required_condition_count);
   const completedConditionCount = asNumber(metrics.completed_condition_count);
   if (requiredConditionCount !== undefined && completedConditionCount !== undefined) {
     parts.push(`completed_condition_count=${completedConditionCount}/${requiredConditionCount}`);
+  }
+
+  const failureCount = asNumber(metrics.failure_count) ?? asNumber(metrics.failed_run_count);
+  if (failureCount !== undefined) {
+    parts.push(`failure_count=${failureCount}`);
+  }
+
+  const seedFailureMessages = summarizeSeedFailureMessages(metrics);
+  if (seedFailureMessages.length > 0) {
+    parts.push(`seed_failure_messages=${seedFailureMessages.join(" | ")}`);
   }
 
   const observedConditionCount = asNumber(metrics.observed_condition_count);
@@ -1577,6 +1599,44 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
   }
 
   return parts.length > 0 ? `Metrics evidence: ${parts.join("; ")}.` : "";
+}
+
+function summarizeSeedFailureMessages(metrics: Record<string, unknown>): string[] {
+  const study = asRecord(metrics.study);
+  const studySummary = asRecord(metrics.study_summary);
+  const seedRows = [
+    ...collectConditionRows(metrics.seed_results),
+    ...collectConditionRows(metrics.per_seed_results),
+    ...collectConditionRows(study.seed_results),
+    ...collectConditionRows(studySummary.seed_results)
+  ];
+  const counts = new Map<string, number>();
+  for (const row of seedRows) {
+    const status = asString(row.status)?.toLowerCase();
+    if (status && !["failed", "failure", "error", "errored"].includes(status)) {
+      continue;
+    }
+    const message =
+      asString(row.error_message) ||
+      asString(row.error) ||
+      asString(row.message) ||
+      asString(row.failure_reason);
+    if (!message) {
+      continue;
+    }
+    const type = asString(row.error_type);
+    const stage = asString(row.error_stage);
+    const signature = [
+      type ? `${type}` : undefined,
+      stage ? `stage=${stage}` : undefined,
+      trimShort(message, 180)
+    ].filter((part): part is string => Boolean(part)).join(": ");
+    counts.set(signature, (counts.get(signature) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 3)
+    .map(([message, count]) => `${message}${count > 1 ? ` (${count}x)` : ""}`);
 }
 
 function detectConditionDependencyBlocker(metrics: Record<string, unknown>): string | null {

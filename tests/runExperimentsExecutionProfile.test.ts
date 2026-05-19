@@ -1246,6 +1246,21 @@ describe("run_experiments execution profile behavior", () => {
                 completed_condition_count: 0,
                 required_run_count: 25,
                 completed_run_count: 0,
+                failure_count: 2,
+                seed_results: [
+                  {
+                    status: "failed",
+                    error_type: "RuntimeError",
+                    error_stage: "execution",
+                    error_message: "No seed execution helper was found in the current runner module."
+                  },
+                  {
+                    status: "failed",
+                    error_type: "RuntimeError",
+                    error_stage: "execution",
+                    error_message: "No seed execution helper was found in the current runner module."
+                  }
+                ],
                 study_summary: {
                   status: "failed",
                   required_run_count: 25,
@@ -1284,6 +1299,7 @@ describe("run_experiments execution profile behavior", () => {
 
     expect(result.status).toBe("failure");
     expect(result.error).toContain("No required experiment runs completed successfully");
+    expect(result.error).toContain("No seed execution helper was found in the current runner module");
 
     const verifierReport = JSON.parse(
       await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
@@ -1293,6 +1309,7 @@ describe("run_experiments execution profile behavior", () => {
       stage: "metrics"
     });
     expect(verifierReport.summary).toContain("No required experiment runs completed successfully");
+    expect(verifierReport.summary).toContain("seed_failure_messages=RuntimeError: stage=execution");
   });
 
   it("fails verification when planned run coverage is contracted below the portfolio evidence floor", async () => {
