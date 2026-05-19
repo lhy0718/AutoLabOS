@@ -1397,12 +1397,17 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
   const failure = metrics.failure && typeof metrics.failure === "object" && !Array.isArray(metrics.failure)
     ? metrics.failure as Record<string, unknown>
     : undefined;
+  const errorRecord = asRecord(metrics.error);
+  const nestedErrorMessage = asString(errorRecord.message) || asString(errorRecord.error);
+  const nestedErrorType = asString(errorRecord.type);
   const failureMessage =
     typeof failure?.message === "string" && failure.message.trim()
       ? failure.message.trim()
       : typeof metrics.error_message === "string" && metrics.error_message.trim()
         ? metrics.error_message.trim()
-        : undefined;
+        : nestedErrorMessage
+          ? `${nestedErrorType ? `${nestedErrorType}: ` : ""}${nestedErrorMessage}`
+          : undefined;
 
   if (["failed", "failure", "error", "errored"].includes(status)) {
     return appendMetricsFailureEvidence(
@@ -1574,6 +1579,13 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
   const failureCount = asNumber(metrics.failure_count) ?? asNumber(metrics.failed_run_count);
   if (failureCount !== undefined) {
     parts.push(`failure_count=${failureCount}`);
+  }
+
+  const errorRecord = asRecord(metrics.error);
+  const nestedErrorMessage = asString(errorRecord.message) || asString(errorRecord.error);
+  if (nestedErrorMessage) {
+    const nestedErrorType = asString(errorRecord.type);
+    parts.push(`metrics_error=${trimShort(`${nestedErrorType ? `${nestedErrorType}: ` : ""}${nestedErrorMessage}`, 220)}`);
   }
 
   const seedFailureMessages = summarizeSeedFailureMessages(metrics);

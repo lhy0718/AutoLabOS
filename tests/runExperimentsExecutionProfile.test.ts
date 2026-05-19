@@ -563,7 +563,11 @@ describe("run_experiments execution profile behavior", () => {
                 required_condition_count: 8,
                 observed_condition_count: 31,
                 missing_required_condition_markers: ["rank_8_dropout_0_0", "rank_4_dropout_0_0"],
-                condition_results_path: path.join(root, "condition_results.json")
+                condition_results_path: path.join(root, "condition_results.json"),
+                error: {
+                  type: "AttributeError",
+                  message: "'dict' object has no attribute 'baseline_run'"
+                }
               },
               null,
               2
@@ -601,6 +605,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.error).toContain("missing_required_condition_markers=rank_8_dropout_0_0,rank_4_dropout_0_0");
     expect(result.error).toContain("_build_model_load_kwargs()");
     expect(result.error).toContain("local_files_only");
+    expect(result.error).toContain("'dict' object has no attribute 'baseline_run'");
 
     const verifierReport = JSON.parse(
       await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
@@ -610,6 +615,7 @@ describe("run_experiments execution profile behavior", () => {
       stage: "metrics"
     });
     expect(verifierReport.summary).toContain("completed_condition_count=0/8");
+    expect(verifierReport.summary).toContain("metrics_error=AttributeError");
 
     const feedback = await runContext.get<{ status: string; stage: string; summary: string }>(
       "implement_experiments.runner_feedback"
@@ -620,6 +626,7 @@ describe("run_experiments execution profile behavior", () => {
     });
     expect(feedback?.summary).toContain("observed_condition_count=31");
     expect(feedback?.summary).toContain("_build_model_load_kwargs()");
+    expect(feedback?.summary).toContain("baseline_run");
   });
 
   it("repairs runtime-resolved metrics payload builders before run_experiments execution", async () => {
