@@ -37065,4 +37065,120 @@ describe("ImplementSessionManager", () => {
     expect(await memory.get("implement_experiments.thread_id")).toBe("thread-fresh-after-feedback");
     expect(progressText).toContain("Runner feedback changed the repair target");
   });
+
+  it("starts a fresh implement thread from implementation contract feedback before stale runner feedback", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-fresh-thread-contract-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Fresh Thread After Contract Feedback",
+      topic: "repair condition grid",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      path.join(runDir, "experiment_plan.yaml"),
+      "ranks: [4, 8, 16, 32]\ndropouts: [0.0, 0.05]\nseeds: [1, 2, 3]\n",
+      "utf8"
+    );
+
+    const scriptPath = path.join(runDir, "experiment.py");
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.thread_id", "thread-stale-contract");
+    await memory.put("implement_experiments.verify_report", {
+      status: "fail",
+      failure_type: "spec",
+      next_action: "retry_patch",
+      summary:
+        "Design-to-implementation contract validation failed: PLANNED_CONDITION_COUNT_CONTRACTED: The implementation declares fewer conditions than the approved design contract. (declared=1; required=8); PLANNED_RUN_COUNT_CONTRACTED: The implementation exposes fewer condition-by-seed runs than the approved design contract. (visible=3; required=24)",
+      stderr_excerpt:
+        "PLANNED_CONDITION_COUNT_CONTRACTED: declared=1; required=8; PLANNED_RUN_COUNT_CONTRACTED: visible=3; required=24"
+    });
+    await memory.put("implement_experiments.design_implementation_validation", {
+      version: 1,
+      generated_at: "2026-05-19T00:00:00.000Z",
+      verdict: "block",
+      summary: "Design-to-implementation validation blocked handoff with 2 blocking finding(s).",
+      checked_items: ["planned_condition_contract_alignment"],
+      findings: [
+        {
+          code: "PLANNED_CONDITION_COUNT_CONTRACTED",
+          severity: "block",
+          message: "The implementation declares fewer conditions than the approved design contract.",
+          evidence: "declared=1; required=8"
+        },
+        {
+          code: "PLANNED_RUN_COUNT_CONTRACTED",
+          severity: "block",
+          message: "The implementation exposes fewer condition-by-seed runs than the approved design contract.",
+          evidence: "visible=3; required=24"
+        }
+      ]
+    });
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "metrics",
+      summary: "Older runtime traceback should not be the primary fresh-thread reason.",
+      command: `python3 ${JSON.stringify(scriptPath)}`,
+      metrics_path: path.join(runDir, "metrics.json"),
+      recorded_at: "2026-05-18T00:00:00.000Z"
+    });
+    const seededRun = (await runStore.getRun(run.id)) || run;
+    seededRun.nodeThreads.implement_experiments = "thread-stale-contract";
+    await runStore.updateRun(seededRun);
+
+    const seenThreadIds: Array<string | undefined> = [];
+    let capturedPrompt = "";
+    const codex = {
+      runTurnStream: async ({ prompt, threadId }: { prompt?: string; threadId?: string }) => {
+        seenThreadIds.push(threadId);
+        capturedPrompt = prompt || "";
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
+        return {
+          threadId: "thread-fresh-after-contract",
+          finalText: JSON.stringify({
+            summary: "Reimplemented the condition-grid runner from contract feedback.",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow("PLANNED_SEED_SCHEDULE_MISSING");
+    const progressText = readFileSync(path.join(runDir, "implement_experiments", "progress.jsonl"), "utf8");
+
+    expect(seenThreadIds[0]).toBeUndefined();
+    expect(capturedPrompt).toContain("Implementation contract feedback from implement_experiments:");
+    expect(capturedPrompt).toContain("PLANNED_CONDITION_COUNT_CONTRACTED");
+    expect(capturedPrompt).toContain("visible=3; required=24");
+    expect(progressText).toContain("Loaded implementation contract feedback");
+    expect(progressText).toContain("Implementation contract feedback changed the repair target");
+  });
 });

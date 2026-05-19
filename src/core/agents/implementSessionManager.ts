@@ -269,6 +269,7 @@ interface ImplementTaskSpec {
     };
     environment_snapshot?: EnvironmentSnapshot;
     long_term_memory: LongTermMemorySnapshot;
+    implementation_contract_feedback?: ImplementationContractFeedback;
     runner_feedback?: RunVerifierReport;
     paper_critique_feedback?: {
       overall_decision?: string;
@@ -327,6 +328,21 @@ interface VerifyReport {
   stdout_excerpt?: string;
   stderr_excerpt?: string;
   summary: string;
+}
+
+interface ImplementationContractFeedback {
+  source: "implement_experiments";
+  status: "fail";
+  stage: "design_implementation_validation";
+  summary: string;
+  stderr_excerpt?: string;
+  blocking_findings: Array<{
+    code: string;
+    message: string;
+    evidence?: string;
+  }>;
+  suggested_next_action: string;
+  recorded_at: string;
 }
 
 type ImplementProgressStage = "preflight" | "attempt" | "localize" | "codex" | "verify" | "publish" | "completed" | "failed";
@@ -590,6 +606,13 @@ export class ImplementSessionManager {
         { publicDir: defaultPublicDir }
       );
     }
+    if (taskSpec.context.implementation_contract_feedback) {
+      emitImplementObservation(
+        "preflight",
+        `Loaded implementation contract feedback: ${taskSpec.context.implementation_contract_feedback.summary}`,
+        { publicDir: defaultPublicDir }
+      );
+    }
     if (taskSpec.context.paper_critique_feedback) {
       emitImplementObservation(
         "preflight",
@@ -603,6 +626,7 @@ export class ImplementSessionManager {
       activeThreadId &&
       (
         taskSpec.context.plan_changed ||
+        taskSpec.context.implementation_contract_feedback ||
         taskSpec.context.runner_feedback ||
         taskSpec.context.paper_critique_feedback
       )
@@ -618,9 +642,11 @@ export class ImplementSessionManager {
         "preflight",
         taskSpec.context.plan_changed
           ? "Experiment plan changed since the last implement cycle; starting a fresh implementation thread."
-          : taskSpec.context.runner_feedback
-            ? "Runner feedback changed the repair target; starting a fresh implementation thread."
-            : "Paper critique requested additional implementation evidence; starting a fresh implementation thread.",
+          : taskSpec.context.implementation_contract_feedback
+            ? "Implementation contract feedback changed the repair target; starting a fresh implementation thread."
+            : taskSpec.context.runner_feedback
+              ? "Runner feedback changed the repair target; starting a fresh implementation thread."
+              : "Paper critique requested additional implementation evidence; starting a fresh implementation thread.",
         { publicDir: defaultPublicDir }
       );
     }
@@ -1799,6 +1825,7 @@ export class ImplementSessionManager {
     const promptPreviousRunCommand = stalePreviousImplementation ? undefined : previousRunCommand;
     const promptPreviousScript = stalePreviousImplementation ? undefined : previousScript;
     const runnerFeedback = await this.loadApplicableRunnerFeedback(run, runContext);
+    const implementationContractFeedback = await this.loadApplicableImplementationContractFeedback(runContext);
     const paperCritique = await runContext.get<{
       overall_decision?: string;
       manuscript_type?: string;
@@ -1878,6 +1905,10 @@ export class ImplementSessionManager {
         ),
         environment_snapshot: rewriteWorkspacePathsForSandbox(environmentSnapshot, this.deps.workspaceRoot),
         long_term_memory: rewriteWorkspacePathsForSandbox(longTermMemory, this.deps.workspaceRoot),
+        implementation_contract_feedback: rewriteWorkspacePathsForSandbox(
+          implementationContractFeedback,
+          this.deps.workspaceRoot
+        ),
         runner_feedback: rewriteWorkspacePathsForSandbox(runnerFeedback, this.deps.workspaceRoot),
         paper_critique_feedback: rewriteWorkspacePathsForSandbox(
           paperCritiqueFeedback,
@@ -1902,6 +1933,20 @@ export class ImplementSessionManager {
         plan_hash: planHash
       }
     };
+  }
+
+  private async loadApplicableImplementationContractFeedback(
+    runContext: RunContextMemory
+  ): Promise<ImplementationContractFeedback | undefined> {
+    const verifyReport = await runContext.get<VerifyReport>("implement_experiments.verify_report");
+    const validation =
+      (await runContext.get<ExperimentDesignImplementationValidationReport>(
+        "implement_experiments.design_implementation_validation"
+      )) ||
+      (await runContext.get<ExperimentDesignImplementationValidationReport>(
+        EXPERIMENT_GOVERNANCE_DESIGN_IMPLEMENTATION_VALIDATION_KEY
+      ));
+    return buildImplementationContractFeedback(verifyReport, validation);
   }
 
   private async loadApplicableRunnerFeedback(
@@ -1988,6 +2033,11 @@ export class ImplementSessionManager {
     const promptRunnerFeedback = useCompactApiPrompt
       ? compactRunnerFeedbackForStagedLlmPrompt(sandboxTaskSpec.context.runner_feedback)
       : sandboxTaskSpec.context.runner_feedback;
+    const promptImplementationContractFeedback = useCompactApiPrompt
+      ? compactImplementationContractFeedbackForStagedLlmPrompt(
+          sandboxTaskSpec.context.implementation_contract_feedback
+        )
+      : sandboxTaskSpec.context.implementation_contract_feedback;
     const promptPaperCritiqueFeedback = useCompactApiPrompt
       ? compactPaperCritiqueForStagedLlmPrompt(sandboxTaskSpec.context.paper_critique_feedback)
       : sandboxTaskSpec.context.paper_critique_feedback;
@@ -2052,6 +2102,16 @@ export class ImplementSessionManager {
         "",
         "Runner feedback from run_experiments:",
         JSON.stringify(promptRunnerFeedback, null, 2)
+      );
+    }
+    if (promptImplementationContractFeedback) {
+      lines.push(
+        "",
+        "Implementation contract feedback from implement_experiments:",
+        JSON.stringify(promptImplementationContractFeedback, null, 2),
+        "",
+        "This feedback is a first-stage handoff blocker. Fix it before addressing older runtime feedback.",
+        "The next implementation must expose the full planned condition grid and condition-by-seed run schedule in code and metrics."
       );
     }
     if (promptPaperCritiqueFeedback) {
@@ -12034,6 +12094,17 @@ function compactTaskSpecForStagedLlmPrompt(taskSpec: ImplementTaskSpec): Record<
       previous_summary: trimBlock(taskSpec.context.previous_summary || "", 120) || undefined,
       previous_run_command: trimBlock(taskSpec.context.previous_run_command || "", 120) || undefined,
       previous_script: taskSpec.context.previous_script,
+      implementation_contract_feedback: taskSpec.context.implementation_contract_feedback
+        ? {
+            summary: trimBlock(taskSpec.context.implementation_contract_feedback.summary, 360),
+            stderr_excerpt: trimBlock(taskSpec.context.implementation_contract_feedback.stderr_excerpt || "", 360) || undefined,
+            blocking_findings: taskSpec.context.implementation_contract_feedback.blocking_findings.slice(0, 6),
+            suggested_next_action: trimBlock(
+              taskSpec.context.implementation_contract_feedback.suggested_next_action,
+              240
+            )
+          }
+        : undefined,
       comparison_contract: taskSpec.context.comparison_contract
         ? {
             plan_id: taskSpec.context.comparison_contract.plan_id,
@@ -12066,6 +12137,12 @@ function compactTaskSpecForBootstrapPrompt(taskSpec: ImplementTaskSpec): Record<
       topic: trimBlock(taskSpec.context.topic, 120),
       objective_metric: trimBlock(taskSpec.context.objective_metric, 100),
       previous_script: taskSpec.context.previous_script,
+      implementation_contract_feedback: taskSpec.context.implementation_contract_feedback
+        ? {
+            summary: trimBlock(taskSpec.context.implementation_contract_feedback.summary, 240),
+            blocking_findings: taskSpec.context.implementation_contract_feedback.blocking_findings.slice(0, 4)
+          }
+        : undefined,
       comparison_contract: taskSpec.context.comparison_contract
         ? {
             comparison_mode: taskSpec.context.comparison_contract.comparison_mode,
@@ -12095,6 +12172,12 @@ function compactTaskSpecForChunkPrompt(taskSpec: ImplementTaskSpec): Record<stri
       objective_metric: trimBlock(taskSpec.context.objective_metric, 180),
       previous_script: taskSpec.context.previous_script,
       previous_run_command: trimBlock(taskSpec.context.previous_run_command || "", 160) || undefined,
+      implementation_contract_feedback: taskSpec.context.implementation_contract_feedback
+        ? {
+            summary: trimBlock(taskSpec.context.implementation_contract_feedback.summary, 320),
+            blocking_findings: taskSpec.context.implementation_contract_feedback.blocking_findings.slice(0, 6)
+          }
+        : undefined,
       comparison_contract: taskSpec.context.comparison_contract
         ? {
             plan_id: taskSpec.context.comparison_contract.plan_id,
@@ -12105,6 +12188,22 @@ function compactTaskSpecForChunkPrompt(taskSpec: ImplementTaskSpec): Record<stri
         : undefined,
       planned_condition_contract: taskSpec.context.planned_condition_contract
     }
+  };
+}
+
+function compactImplementationContractFeedbackForStagedLlmPrompt(
+  feedback: ImplementationContractFeedback | undefined
+): Record<string, unknown> | undefined {
+  if (!feedback) {
+    return undefined;
+  }
+  return {
+    source: feedback.source,
+    stage: feedback.stage,
+    summary: trimBlock(feedback.summary, 520),
+    stderr_excerpt: trimBlock(feedback.stderr_excerpt || "", 480) || undefined,
+    blocking_findings: feedback.blocking_findings.slice(0, 8),
+    suggested_next_action: trimBlock(feedback.suggested_next_action, 280)
   };
 }
 
@@ -14866,6 +14965,38 @@ function buildDesignImplementationValidationVerifyReport(
     summary: renderedFinding
       ? `Design-to-implementation contract validation failed: ${renderedFinding}`
       : report.summary
+  };
+}
+
+function buildImplementationContractFeedback(
+  verifyReport: VerifyReport | undefined,
+  validation: ExperimentDesignImplementationValidationReport | undefined
+): ImplementationContractFeedback | undefined {
+  const blockingFindings = (validation?.findings || [])
+    .filter((finding) => finding.severity === "block")
+    .map((finding) => ({
+      code: finding.code,
+      message: finding.message,
+      evidence: finding.evidence
+    }));
+  const isContractBlock =
+    validation?.verdict === "block" ||
+    (verifyReport?.status === "fail" &&
+      verifyReport.failure_type === "spec" &&
+      /design-to-implementation contract validation failed/iu.test(verifyReport.summary || ""));
+  if (!isContractBlock || !verifyReport) {
+    return undefined;
+  }
+  return {
+    source: "implement_experiments",
+    status: "fail",
+    stage: "design_implementation_validation",
+    summary: verifyReport.summary,
+    stderr_excerpt: verifyReport.stderr_excerpt,
+    blocking_findings: blockingFindings.slice(0, 12),
+    suggested_next_action:
+      "Regenerate the implementation so static validation can see every approved condition and every condition-by-seed run before run_experiments executes it.",
+    recorded_at: new Date().toISOString()
   };
 }
 
