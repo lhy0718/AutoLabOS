@@ -203,6 +203,7 @@ import {
   repairPublishedRunCommandWrapperBinding,
   selectRecoveredPublicBundleScriptPath,
   shouldApplyRecoveredBundleStaticPythonGuards,
+  shouldCheckRecoveredBundlePlanFreshness,
   shouldRequireFreshRecoveredBundlePlanAlignment
 } from "../src/core/agents/implementSessionManager.js";
 import { createImplementExperimentsNode } from "../src/core/nodes/implementExperiments.js";
@@ -2373,6 +2374,11 @@ describe("ImplementSessionManager", () => {
         commandRepairFeedback: false
       })
     ).toBe(true);
+  });
+
+  it("does not reject command-repair recovery only because plan artifacts are newer", () => {
+    expect(shouldCheckRecoveredBundlePlanFreshness(true)).toBe(false);
+    expect(shouldCheckRecoveredBundlePlanFreshness(false)).toBe(true);
   });
 
   it("pins implementation contract feedback to the canonical public runner before alternate scripts", () => {

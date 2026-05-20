@@ -12854,6 +12854,7 @@ async function recoverStructuredResultFromPublicBundle(params: {
   if (!scriptPath) {
     return undefined;
   }
+  const commandRepairFeedback = isRecoverableBundleCommandRepairFeedback(params.runnerFeedback);
   if (typeof params.materializedAfterMs === "number" && Number.isFinite(params.materializedAfterMs)) {
     const scriptStats = await fs.stat(scriptPath).catch(() => undefined);
     if (!scriptStats || scriptStats.mtimeMs + 1000 < params.materializedAfterMs) {
@@ -12870,6 +12871,7 @@ async function recoverStructuredResultFromPublicBundle(params: {
   const experimentPlanPath = path.join(params.publicDir, "experiment_plan.yaml");
   const wrapperPath = path.join(params.publicDir, "run_command.sh");
   if (
+    shouldCheckRecoveredBundlePlanFreshness(commandRepairFeedback) &&
     !(await recoveredBundleMatchesCurrentPlan({
       runDir: params.runDir,
       publicDir: params.publicDir,
@@ -12913,7 +12915,6 @@ async function recoverStructuredResultFromPublicBundle(params: {
     }),
     params.workspaceRoot
   );
-  const commandRepairFeedback = isRecoverableBundleCommandRepairFeedback(params.runnerFeedback);
   let runCommand = commandRepairFeedback
     ? wrapperRunCommand || readmeRunCommand || inferredRunCommand
     : readmeRunCommand || wrapperRunCommand || inferredRunCommand;
@@ -13335,6 +13336,10 @@ export function shouldRequireFreshRecoveredBundlePlanAlignment(params: {
     return false;
   }
   return params.hasRunnerFeedback || params.hasPaperCritiqueFeedback;
+}
+
+export function shouldCheckRecoveredBundlePlanFreshness(commandRepairFeedback: boolean): boolean {
+  return !commandRepairFeedback;
 }
 
 function normalizeExperimentMode(mode: string | undefined, summary: string | undefined): string {
