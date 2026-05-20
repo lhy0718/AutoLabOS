@@ -605,6 +605,56 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("allows verification through the same published run wrapper as run_command", () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-wrapper-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const wrapperPath = path.join(publicDir, "run_command.sh");
+    writeFileSync(scriptPath, "print('baseline evaluation ready')\n", "utf8");
+    writeFileSync(
+      wrapperPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+        'exec "${PYTHON_BIN:-python3}" "${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py" "$@"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-wrapper", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "design-wrapper",
+        hypothesis_ids: ["h1"],
+        baselines: ["greedy_direct"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = validateVerificationCommandSurface({
+      comparisonContract: contract,
+      verificationCommand: `bash ${JSON.stringify(wrapperPath)}`,
+      workingDir: publicDir,
+      scriptPath,
+      metricsPath: path.join(workspace, ".autolabos", "runs", "run-wrapper", "metrics.json"),
+      runCommand: `bash ${JSON.stringify(wrapperPath)}`
+    });
+
+    expect(report.verdict).toBe("allow");
+    expect(report.checked_items).toContain("verification_command_run_wrapper_binding");
+    expect(report.findings).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "VERIFY_COMMAND_SCRIPT_MISMATCH"
+        })
+      ])
+    );
+  });
+
   it("ignores shell assignment prefixes when a heredoc verification command references the script path", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-heredoc-"));
     tempDirs.push(workspace);

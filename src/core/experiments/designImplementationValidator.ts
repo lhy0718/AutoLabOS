@@ -207,7 +207,22 @@ export function validateVerificationCommandSurface(input: {
   const checkedItems = ["verification_command_script_binding", "verification_command_metrics_binding"];
   const verificationPaths = extractCommandPaths(input.verificationCommand, input.workingDir);
   const verificationScript = verificationPaths.find((candidate) => isRunnableScript(candidate));
-  if (input.scriptPath && verificationScript && !samePath(verificationScript, input.scriptPath)) {
+  const runCommandPaths = extractCommandPaths(input.runCommand, input.workingDir);
+  const runCommandScript = runCommandPaths.find((candidate) => isRunnableScript(candidate));
+  const verificationUsesPublishedRunWrapper =
+    verificationScript &&
+    runCommandScript &&
+    path.extname(verificationScript) === ".sh" &&
+    samePath(verificationScript, runCommandScript);
+  if (verificationUsesPublishedRunWrapper) {
+    checkedItems.push("verification_command_run_wrapper_binding");
+  }
+  if (
+    input.scriptPath &&
+    verificationScript &&
+    !samePath(verificationScript, input.scriptPath) &&
+    !verificationUsesPublishedRunWrapper
+  ) {
     findings.push({
       code: "VERIFY_COMMAND_SCRIPT_MISMATCH",
       severity: "block",
