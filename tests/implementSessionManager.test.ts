@@ -202,7 +202,8 @@ import {
   repairPythonLockedConditionCountSurface,
   repairPublishedRunCommandWrapperBinding,
   selectRecoveredPublicBundleScriptPath,
-  shouldApplyRecoveredBundleStaticPythonGuards
+  shouldApplyRecoveredBundleStaticPythonGuards,
+  shouldRequireFreshRecoveredBundlePlanAlignment
 } from "../src/core/agents/implementSessionManager.js";
 import { createImplementExperimentsNode } from "../src/core/nodes/implementExperiments.js";
 import {
@@ -2341,6 +2342,35 @@ describe("ImplementSessionManager", () => {
         summary: "Metrics writer did not produce the required output artifact.",
         suggested_next_action: "Repair the Python runner.",
         recorded_at: "2026-05-20T00:00:00.000Z"
+      })
+    ).toBe(true);
+  });
+
+  it("allows command-repair bundle recovery even when stale paper critique feedback exists", () => {
+    expect(
+      shouldRequireFreshRecoveredBundlePlanAlignment({
+        planChanged: false,
+        hasRunnerFeedback: true,
+        hasPaperCritiqueFeedback: true,
+        commandRepairFeedback: true
+      })
+    ).toBe(false);
+
+    expect(
+      shouldRequireFreshRecoveredBundlePlanAlignment({
+        planChanged: true,
+        hasRunnerFeedback: true,
+        hasPaperCritiqueFeedback: true,
+        commandRepairFeedback: true
+      })
+    ).toBe(true);
+
+    expect(
+      shouldRequireFreshRecoveredBundlePlanAlignment({
+        planChanged: false,
+        hasRunnerFeedback: false,
+        hasPaperCritiqueFeedback: true,
+        commandRepairFeedback: false
       })
     ).toBe(true);
   });

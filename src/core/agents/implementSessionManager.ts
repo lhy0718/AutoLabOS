@@ -791,7 +791,8 @@ export class ImplementSessionManager {
       );
 
       let result: RunTurnResult;
-      if (isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback)) {
+      const commandRepairFeedback = isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback);
+      if (commandRepairFeedback) {
         const previousScriptPath = await runContext.get<string>("implement_experiments.script");
         const previousRunCommand = await runContext.get<string>("implement_experiments.run_command");
         const preflightWrapperRepair = await repairPublishedRunCommandWrapperBinding({
@@ -818,11 +819,12 @@ export class ImplementSessionManager {
         metricsPath: isolation.metricsPath,
         workspaceRoot: isolation.workspaceRoot,
         errorMessage: "Recovered an already materialized governed experiment bundle before re-entering Codex.",
-        requireFreshPlanAlignment:
-          promptTaskSpec.context.plan_changed ||
-          (Boolean(promptTaskSpec.context.runner_feedback) &&
-            !isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback)) ||
-          Boolean(promptTaskSpec.context.paper_critique_feedback),
+        requireFreshPlanAlignment: shouldRequireFreshRecoveredBundlePlanAlignment({
+          planChanged: Boolean(promptTaskSpec.context.plan_changed),
+          hasRunnerFeedback: Boolean(promptTaskSpec.context.runner_feedback),
+          hasPaperCritiqueFeedback: Boolean(promptTaskSpec.context.paper_critique_feedback),
+          commandRepairFeedback
+        }),
         runnerFeedback: promptTaskSpec.context.runner_feedback
       });
       const commandRepairRecovery =
@@ -990,6 +992,7 @@ export class ImplementSessionManager {
           const allowCurrentAttemptBundleRecovery =
             isRetryableImplementStagedLlmMaterializationError(error) &&
             isProviderTerminatedStagedLlmError(error);
+          const commandRepairFeedback = isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback);
           const recovered = await recoverStructuredResultFromPublicBundle({
             publicDir: isolation.publicDir,
             runDir: isolation.runDir,
@@ -1001,10 +1004,12 @@ export class ImplementSessionManager {
               : undefined,
             requireFreshPlanAlignment:
               !allowCurrentAttemptBundleRecovery &&
-              (promptTaskSpec.context.plan_changed ||
-                Boolean(promptTaskSpec.context.paper_critique_feedback) ||
-                (Boolean(promptTaskSpec.context.runner_feedback) &&
-                  !isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback))),
+              shouldRequireFreshRecoveredBundlePlanAlignment({
+                planChanged: Boolean(promptTaskSpec.context.plan_changed),
+                hasRunnerFeedback: Boolean(promptTaskSpec.context.runner_feedback),
+                hasPaperCritiqueFeedback: Boolean(promptTaskSpec.context.paper_critique_feedback),
+                commandRepairFeedback
+              }),
             runnerFeedback: promptTaskSpec.context.runner_feedback
           });
           if (!recovered) {
@@ -13315,6 +13320,21 @@ export function shouldApplyRecoveredBundleStaticPythonGuards(
   report: RunVerifierReport | undefined
 ): boolean {
   return !isRecoverableBundleCommandRepairFeedback(report);
+}
+
+export function shouldRequireFreshRecoveredBundlePlanAlignment(params: {
+  planChanged: boolean;
+  hasRunnerFeedback: boolean;
+  hasPaperCritiqueFeedback: boolean;
+  commandRepairFeedback: boolean;
+}): boolean {
+  if (params.planChanged) {
+    return true;
+  }
+  if (params.commandRepairFeedback) {
+    return false;
+  }
+  return params.hasRunnerFeedback || params.hasPaperCritiqueFeedback;
 }
 
 function normalizeExperimentMode(mode: string | undefined, summary: string | undefined): string {
