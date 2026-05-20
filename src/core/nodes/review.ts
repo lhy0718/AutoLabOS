@@ -3,7 +3,12 @@ import path from "node:path";
 import { GraphNodeHandler } from "../stateGraph/types.js";
 import { AnalysisConditionComparison, AnalysisReport } from "../resultAnalysis.js";
 import { buildReviewPacket } from "../reviewPacket.js";
-import { ReviewArtifactPresence, runReviewPanel } from "../reviewSystem.js";
+import {
+  runReviewPanel,
+  type ReviewArtifactPresence,
+  type ReviewDecision,
+  type ReviewFinding
+} from "../reviewSystem.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
 import {
@@ -148,7 +153,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         warning_count: (minimumGate.paper_scale_diagnostics ?? []).filter((diagnostic) => diagnostic.severity === "warning").length
       };
       const nodeStrengtheningRecommendations = buildNodeStrengtheningRecommendations(
-        minimumGate.paper_scale_diagnostics ?? []
+        minimumGate.paper_scale_diagnostics ?? [],
+        effectivePanel.findings,
+        effectivePanel.decision
       );
       const paperScaleDiagnosticsPath = await writeRunArtifact(
         run,
@@ -604,28 +611,92 @@ interface NodeStrengtheningRecommendation {
   recheck_condition: string;
 }
 
-function buildNodeStrengtheningRecommendations(
-  diagnostics: PaperScaleDiagnostic[]
+export function buildNodeStrengtheningRecommendations(
+  diagnostics: PaperScaleDiagnostic[],
+  findings: ReviewFinding[] = [],
+  decision?: ReviewDecision
 ): {
   generated_at: string;
   recommendations: NodeStrengtheningRecommendation[];
 } {
-  const byTarget = new Map<string, PaperScaleDiagnostic[]>();
-  for (const diagnostic of diagnostics) {
-    const target = diagnostic.target_node || diagnostic.source_node;
-    byTarget.set(target, [...(byTarget.get(target) ?? []), diagnostic]);
+  type RecommendationSignal = {
+    id: string;
+    severity: "blocking" | "warning";
+    summary: string;
+    target_node: string;
+    source_node: string;
+    recommended_action: string;
+    recheck_condition: string;
+  };
+
+  const signals: RecommendationSignal[] = diagnostics.map((diagnostic) => ({
+    id: diagnostic.id,
+    severity: diagnostic.severity,
+    summary: diagnostic.summary,
+    target_node: diagnostic.target_node || diagnostic.source_node,
+    source_node: diagnostic.source_node,
+    recommended_action: diagnostic.recommended_action,
+    recheck_condition: diagnostic.recheck_condition
+  }));
+
+  for (const finding of findings) {
+    if (finding.severity === "low") {
+      continue;
+    }
+    signals.push({
+      id: `finding:${finding.id}`,
+      severity: finding.severity === "high" ? "blocking" : "warning",
+      summary: `${finding.title}: ${finding.detail}`,
+      target_node: targetNodeForReviewFinding(finding),
+      source_node: "review",
+      recommended_action: finding.fix_hint || "Repair the reviewed weakness before attempting paper drafting.",
+      recheck_condition: recheckConditionForReviewFinding(finding)
+    });
   }
 
-  const recommendations = Array.from(byTarget.entries()).map(([node, nodeDiagnostics]) => {
-    const blocking = nodeDiagnostics.some((diagnostic) => diagnostic.severity === "blocking");
-    const summaries = nodeDiagnostics.map((diagnostic) => diagnostic.summary);
+  const byTarget = new Map<string, RecommendationSignal[]>();
+  for (const signal of signals) {
+    const target = signal.target_node || signal.source_node;
+    byTarget.set(target, [...(byTarget.get(target) ?? []), signal]);
+  }
+
+  if (decision && decision.outcome !== "advance" && decision.required_actions.length > 0) {
+    const target = decision.recommended_transition === "backtrack_to_hypotheses"
+      ? "generate_hypotheses"
+      : decision.recommended_transition === "backtrack_to_design"
+        ? "design_experiments"
+        : decision.recommended_transition === "backtrack_to_implement"
+          ? "implement_experiments"
+          : "review";
+    byTarget.set(target, [
+      ...(byTarget.get(target) ?? []),
+      {
+        id: `decision:${decision.outcome}`,
+        severity: decision.blocking_finding_ids.length > 0 ? "blocking" : "warning",
+        summary: `${decision.summary} Required actions: ${decision.required_actions.join(" ")}`,
+        target_node: target,
+        source_node: "review",
+        recommended_action: decision.required_actions.join(" "),
+        recheck_condition: "The review decision advances without unresolved required actions or blocking findings."
+      }
+    ]);
+  }
+
+  for (const diagnostic of diagnostics) {
+    const target = diagnostic.target_node || diagnostic.source_node;
+    byTarget.set(target, byTarget.get(target) ?? []);
+  }
+
+  const recommendations = Array.from(byTarget.entries()).map(([node, nodeSignals]) => {
+    const blocking = nodeSignals.some((signal) => signal.severity === "blocking");
+    const summaries = nodeSignals.map((signal) => signal.summary);
     return {
       node,
       priority: blocking ? "high" as const : "medium" as const,
-      diagnostic_ids: nodeDiagnostics.map((diagnostic) => diagnostic.id),
+      diagnostic_ids: nodeSignals.map((signal) => signal.id),
       problem_summary: summaries.join(" "),
-      recommended_prompt_focus: buildPromptFocus(node, nodeDiagnostics),
-      recheck_condition: nodeDiagnostics.map((diagnostic) => diagnostic.recheck_condition).join(" ")
+      recommended_prompt_focus: buildPromptFocus(node, diagnostics, findings),
+      recheck_condition: nodeSignals.map((signal) => signal.recheck_condition).join(" ")
     };
   });
 
@@ -635,10 +706,62 @@ function buildNodeStrengtheningRecommendations(
   };
 }
 
-function buildPromptFocus(node: string, diagnostics: PaperScaleDiagnostic[]): string {
+function targetNodeForReviewFinding(finding: ReviewFinding): string {
+  const text = `${finding.id} ${finding.dimension} ${finding.title} ${finding.detail} ${finding.fix_hint ?? ""}`.toLowerCase();
+  if (text.includes("claim") && (text.includes("outpace") || text.includes("objective") || text.includes("success"))) {
+    return "generate_hypotheses";
+  }
+  if (text.includes("confidence interval") || text.includes("primary comparison") || text.includes("comparison")) {
+    return "analyze_results";
+  }
+  if (text.includes("seed") || text.includes("evaluation scope") || text.includes("method scope") || text.includes("single-run")) {
+    return "design_experiments";
+  }
+  if (text.includes("train") || text.includes("budget") || text.includes("optimizer")) {
+    return "implement_experiments";
+  }
+  if (text.includes("execute") || text.includes("rerun") || text.includes("run confirmatory")) {
+    return "run_experiments";
+  }
+  switch (finding.dimension) {
+    case "statistics":
+      return "analyze_results";
+    case "methodology":
+      return "design_experiments";
+    case "claim_verification":
+      return "generate_hypotheses";
+    case "writing_readiness":
+      return "write_paper";
+    case "integrity":
+      return "review";
+  }
+}
+
+function recheckConditionForReviewFinding(finding: ReviewFinding): string {
+  if (finding.dimension === "statistics") {
+    return "Review no longer reports missing confidence intervals, primary comparisons, or statistical support gaps.";
+  }
+  if (finding.dimension === "methodology") {
+    return "Review no longer reports narrow methodology, single-run coverage, or missing confirmatory variants.";
+  }
+  if (finding.dimension === "claim_verification") {
+    return "Review no longer reports claims that outpace measured outcomes or missing primary comparisons.";
+  }
+  return "The same review finding no longer appears in the review panel output.";
+}
+
+function buildPromptFocus(
+  node: string,
+  diagnostics: PaperScaleDiagnostic[],
+  findings: ReviewFinding[] = []
+): string {
   const ids = new Set(diagnostics.map((diagnostic) => diagnostic.id));
+  const findingText = findings.map((finding) => `${finding.id} ${finding.title} ${finding.detail} ${finding.fix_hint ?? ""}`).join(" ").toLowerCase();
   if (node === "collect_papers" || ids.has("canonical_lora_qlora_references_missing")) {
     return "Require canonical-method coverage for the topic before downstream hypothesis/design work; for LoRA/QLoRA topics, include original LoRA and QLoRA sources.";
+  }
+  if (node === "generate_hypotheses" && findingText.includes("claims outpace")) {
+    return "When objective metrics are not met, force the hypothesis and claim set to downgrade or reformulate; do not preserve success or interaction framing that the evidence did not support.";
   }
   if (node === "design_experiments") {
     return "Force the design to declare sample-size, seed, baseline/comparator, and interaction-test requirements before implementation.";
@@ -651,6 +774,9 @@ function buildPromptFocus(node: string, diagnostics: PaperScaleDiagnostic[]): st
   }
   if (node === "analyze_results") {
     return "Translate raw counts into evidence-ceiling judgments, including one-example gains, confidence granularity, and unsupported resource claims.";
+  }
+  if (node === "write_paper") {
+    return "Keep manuscript drafting under the review-approved claim ceiling and omit template-absent or unsupported paper-surface elements.";
   }
   return "Strengthen the node prompt so generated artifacts surface the diagnostic as a blocker or downgrade condition.";
 }

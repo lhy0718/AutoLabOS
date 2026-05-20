@@ -35,4 +35,17 @@ describe("LocalAciAdapter", () => {
     expect(obs.status).toBe("ok");
     expect(obs.stdout?.trim()).toBe("unset,unset,unset");
   });
+
+  it("settles after process exit even when a descendant keeps stdio open", async () => {
+    const adapter = new LocalAciAdapter();
+    const started = Date.now();
+
+    const obs = await adapter.runCommand(
+      "node -e \"const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setTimeout(() => {}, 4000)'],{detached:true,stdio:['ignore','inherit','inherit']}); child.unref(); console.log('parent done');\""
+    );
+
+    expect(obs.status).toBe("ok");
+    expect(obs.stdout).toContain("parent done");
+    expect(Date.now() - started).toBeLessThan(2500);
+  });
 });

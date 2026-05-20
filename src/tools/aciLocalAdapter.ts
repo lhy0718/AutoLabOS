@@ -271,6 +271,23 @@ function runShell(
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let exitFallbackTimer: NodeJS.Timeout | undefined;
+    const settle = (code: number | null, fallbackStderr?: string) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (exitFallbackTimer) {
+        clearTimeout(exitFallbackTimer);
+      }
+      resolve({
+        status: code === 0 ? "ok" : "error",
+        stdout,
+        stderr: fallbackStderr ? [stderr, fallbackStderr].filter(Boolean).join("\n") : stderr,
+        exit_code: code ?? 1,
+        duration_ms: Date.now() - started
+      });
+    };
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString("utf8");
     });
@@ -282,24 +299,28 @@ function runShell(
         return;
       }
       settled = true;
+      if (exitFallbackTimer) {
+        clearTimeout(exitFallbackTimer);
+      }
       resolve({
         status: "error",
         stderr: error instanceof Error ? error.message : String(error),
         duration_ms: Date.now() - started
       });
     });
+    child.on("exit", (code, signalName) => {
+      exitFallbackTimer = setTimeout(() => {
+        settle(
+          code,
+          signalName
+            ? `Command process exited after signal ${signalName}, but stdio close did not arrive.`
+            : undefined
+        );
+      }, 1_000);
+      exitFallbackTimer.unref?.();
+    });
     child.on("close", (code) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      resolve({
-        status: code === 0 ? "ok" : "error",
-        stdout,
-        stderr,
-        exit_code: code ?? 1,
-        duration_ms: Date.now() - started
-      });
+      settle(code);
     });
   });
 }
@@ -639,6 +660,24 @@ function runProcess(
 
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    let exitFallbackTimer: NodeJS.Timeout | undefined;
+    const settle = (code: number | null, fallbackStderr?: string) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (exitFallbackTimer) {
+        clearTimeout(exitFallbackTimer);
+      }
+      resolve({
+        status: code === 0 ? "ok" : "error",
+        stdout,
+        stderr: fallbackStderr ? [stderr, fallbackStderr].filter(Boolean).join("\n") : stderr,
+        exit_code: code ?? 1,
+        duration_ms: Date.now() - started
+      });
+    };
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString("utf8");
     });
@@ -646,20 +685,32 @@ function runProcess(
       stderr += chunk.toString("utf8");
     });
     child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (exitFallbackTimer) {
+        clearTimeout(exitFallbackTimer);
+      }
       resolve({
         status: "error",
         stderr: error instanceof Error ? error.message : String(error),
         duration_ms: Date.now() - started
       });
     });
+    child.on("exit", (code, signalName) => {
+      exitFallbackTimer = setTimeout(() => {
+        settle(
+          code,
+          signalName
+            ? `Command process exited after signal ${signalName}, but stdio close did not arrive.`
+            : undefined
+        );
+      }, 1_000);
+      exitFallbackTimer.unref?.();
+    });
     child.on("close", (code) => {
-      resolve({
-        status: code === 0 ? "ok" : "error",
-        stdout,
-        stderr,
-        exit_code: code ?? 1,
-        duration_ms: Date.now() - started
-      });
+      settle(code);
     });
   });
 }
