@@ -54,6 +54,7 @@ export async function validateDesignImplementationAlignment(input: {
   const commandPaths = extractCommandPaths(input.attempt.runCommand, input.attempt.workingDir);
   const testCommandPaths = extractCommandPaths(input.attempt.testCommand || "", input.attempt.workingDir);
   const allCommandPaths = dedupeStrings([...commandPaths, ...testCommandPaths]);
+  const scriptText = await safeReadText(input.attempt.scriptPath);
 
   checkedItems.push("run_command_paths");
   if (input.attempt.scriptPath) {
@@ -93,6 +94,15 @@ export async function validateDesignImplementationAlignment(input: {
           severity: "block",
           message: "A published run_command.sh exists but does not launch the reported script_path.",
           evidence: `script_path=${input.attempt.scriptPath}; public_run_command=${wrapperPath}`
+        });
+      }
+      const unsupportedWrapperFlags = await findUnsupportedWrapperScriptFlags(wrapperPath, scriptText);
+      if (unsupportedWrapperFlags.length > 0) {
+        findings.push({
+          code: "PUBLIC_RUN_COMMAND_WRAPPER_UNSUPPORTED_ARGS",
+          severity: "block",
+          message: "A published run_command.sh passes CLI options that the reported script_path does not accept.",
+          evidence: `script_path=${input.attempt.scriptPath}; public_run_command=${wrapperPath}; unsupported=${unsupportedWrapperFlags.join(", ")}`
         });
       }
     }
@@ -137,7 +147,6 @@ export async function validateDesignImplementationAlignment(input: {
   }
 
   checkedItems.push("baseline_contract_presence");
-  const scriptText = await safeReadText(input.attempt.scriptPath);
   if (input.comparisonContract?.baseline_first_required) {
     const baselineSignal = `${input.attempt.runCommand}\n${scriptText}`.toLowerCase();
     if (!/(baseline|control|comparator|greedy)/u.test(baselineSignal)) {
@@ -506,6 +515,46 @@ async function findPublicRunCommandWrappers(publicDir: string, publicArtifacts: 
     }
   }
   return existing;
+}
+
+async function findUnsupportedWrapperScriptFlags(wrapperPath: string, scriptText: string): Promise<string[]> {
+  if (!scriptText) {
+    return [];
+  }
+  const wrapperText = await safeReadText(wrapperPath);
+  if (!wrapperText) {
+    return [];
+  }
+  const wrapperFlags = extractLongOptionFlags(wrapperText);
+  if (wrapperFlags.length === 0) {
+    return [];
+  }
+  const acceptedFlags = extractArgparseLongOptionFlags(scriptText);
+  if (acceptedFlags.size === 0) {
+    return [];
+  }
+  return wrapperFlags.filter((flag) => !acceptedFlags.has(flag));
+}
+
+function extractArgparseLongOptionFlags(scriptText: string): Set<string> {
+  const flags = new Set<string>();
+  for (const match of scriptText.matchAll(/\badd_argument\s*\(([\s\S]*?)\)/gu)) {
+    for (const flagMatch of (match[1] || "").matchAll(/["'](--[A-Za-z0-9][A-Za-z0-9_-]*)["']/gu)) {
+      flags.add(flagMatch[1]);
+    }
+  }
+  return flags;
+}
+
+function extractLongOptionFlags(text: string): string[] {
+  const flags: string[] = [];
+  for (const match of text.matchAll(/(?:^|[\s"'`])(--[A-Za-z0-9][A-Za-z0-9_-]*)(?=$|[\s"'`=])/gu)) {
+    const flag = match[1];
+    if (flag && !flags.includes(flag)) {
+      flags.push(flag);
+    }
+  }
+  return flags;
 }
 
 async function shellWrapperReferencesScriptPath(wrapperPath: string, scriptPath: string): Promise<boolean> {

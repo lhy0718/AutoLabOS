@@ -261,6 +261,73 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("blocks when a published run_command.sh passes flags unsupported by script_path", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-public-wrapper-flags-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const wrapperPath = path.join(publicDir, "run_command.sh");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-public-wrapper-flags", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "parser = argparse.ArgumentParser()",
+        "parser.add_argument('--metrics-path')",
+        "parser.add_argument('--public-dir')",
+        "print('baseline and adaptive evaluation')"
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      wrapperPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+        'python "${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py" --experiment-dir "${SCRIPT_DIR}" --metrics-path "${PWD}/metrics.json"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-public-wrapper-flags", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "design-public-wrapper-flags",
+        hypothesis_ids: ["h1"],
+        baselines: ["greedy_direct"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = await validateDesignImplementationAlignment({
+      comparisonContract: contract,
+      attempt: {
+        runCommand: `bash ${JSON.stringify(wrapperPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath, wrapperPath],
+        publicArtifacts: [scriptPath, wrapperPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PUBLIC_RUN_COMMAND_WRAPPER_UNSUPPORTED_ARGS",
+          severity: "block",
+          evidence: expect.stringContaining("--experiment-dir")
+        })
+      ])
+    );
+  });
+
   it("blocks when a runner compresses the planned full-grid condition and seed contract", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-planned-contract-"));
     tempDirs.push(workspace);
