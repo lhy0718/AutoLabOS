@@ -201,7 +201,8 @@ import {
   repairLockedPeftStudyConfigSurface,
   repairPythonLockedConditionCountSurface,
   repairPublishedRunCommandWrapperBinding,
-  selectRecoveredPublicBundleScriptPath
+  selectRecoveredPublicBundleScriptPath,
+  shouldApplyRecoveredBundleStaticPythonGuards
 } from "../src/core/agents/implementSessionManager.js";
 import { createImplementExperimentsNode } from "../src/core/nodes/implementExperiments.js";
 import {
@@ -2312,6 +2313,36 @@ describe("ImplementSessionManager", () => {
     });
 
     expect(selected).toBe(path.join(publicDir, "run_lora_rank_dropout_experiment.py"));
+  });
+
+  it("bypasses recovered bundle static Python guards for command-only wrapper feedback", () => {
+    expect(
+      shouldApplyRecoveredBundleStaticPythonGuards({
+        source: "run_experiments",
+        status: "fail",
+        trigger: "auto_handoff",
+        stage: "command",
+        summary:
+          "Local verification failed because run_lora_rank_dropout_experiment.py reported unrecognized arguments: --experiment-dir.",
+        command: "bash run_command.sh",
+        stderr_excerpt:
+          "run_lora_rank_dropout_experiment.py: error: unrecognized arguments: --experiment-dir",
+        suggested_next_action: "Repair the experiment command before handing back to the runner.",
+        recorded_at: "2026-05-20T00:00:00.000Z"
+      })
+    ).toBe(false);
+
+    expect(
+      shouldApplyRecoveredBundleStaticPythonGuards({
+        source: "run_experiments",
+        status: "fail",
+        trigger: "auto_handoff",
+        stage: "policy",
+        summary: "Metrics writer did not produce the required output artifact.",
+        suggested_next_action: "Repair the Python runner.",
+        recorded_at: "2026-05-20T00:00:00.000Z"
+      })
+    ).toBe(true);
   });
 
   it("pins implementation contract feedback to the canonical public runner before alternate scripts", () => {

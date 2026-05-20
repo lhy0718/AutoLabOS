@@ -12934,56 +12934,58 @@ async function recoverStructuredResultFromPublicBundle(params: {
   ) {
     return undefined;
   }
-  if (await detectPythonBaselineFirstTunedBaselineMismatch(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonMissingRegisteredRecipeWorkflow(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonEmptyPeftRecipeRegistry(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonUnguardedOptionalHelperCall(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonMissingBenchmarkEvaluatorDispatch(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonBenchmarkLoaderDispatchMismatch(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonDeviceMetricsCallArityMismatch(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonInvokeHelperDispatchMismatch(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonMetricsWriterAdapterMismatch(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonAtomicWriteJsonCallOrderMismatch(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonEvaluationSampleDictAccessMismatch(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonDictRecipeAttributeAccess(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonRecipeSpecConstructorKeywordMismatch(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonUndefinedSlugifyReference(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonUndefinedRuntimeHelperReferences(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonGlobalsHelperCallArityMismatch(scriptPath)) {
-    return undefined;
-  }
-  if (await detectPythonNonExecutableRunnerSurface(scriptPath)) {
-    return undefined;
+  if (shouldApplyRecoveredBundleStaticPythonGuards(params.runnerFeedback)) {
+    if (await detectPythonBaselineFirstTunedBaselineMismatch(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonMissingRegisteredRecipeWorkflow(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonEmptyPeftRecipeRegistry(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonUnguardedOptionalHelperCall(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonMissingBenchmarkEvaluatorDispatch(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonBenchmarkLoaderDispatchMismatch(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonDeviceMetricsCallArityMismatch(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonInvokeHelperDispatchMismatch(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonMetricsWriterAdapterMismatch(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonAtomicWriteJsonCallOrderMismatch(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonEvaluationSampleDictAccessMismatch(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonDictRecipeAttributeAccess(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonRecipeSpecConstructorKeywordMismatch(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonUndefinedSlugifyReference(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonUndefinedRuntimeHelperReferences(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonGlobalsHelperCallArityMismatch(scriptPath)) {
+      return undefined;
+    }
+    if (await detectPythonNonExecutableRunnerSurface(scriptPath)) {
+      return undefined;
+    }
   }
 
   return {
@@ -13307,6 +13309,12 @@ function isRecoverableBundleCommandRepairFeedback(report: RunVerifierReport | un
     /unrecognized arguments?:\s+--[a-z0-9_-]+/u.test(summary) ||
     /unsupported (?:cli )?(?:argument|option|flag)/u.test(summary)
   );
+}
+
+export function shouldApplyRecoveredBundleStaticPythonGuards(
+  report: RunVerifierReport | undefined
+): boolean {
+  return !isRecoverableBundleCommandRepairFeedback(report);
 }
 
 function normalizeExperimentMode(mode: string | undefined, summary: string | undefined): string {
