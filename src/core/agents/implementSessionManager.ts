@@ -9251,6 +9251,10 @@ export class ImplementSessionManager {
       await repairPythonStudyInvokeContractKwargSurface(executionScriptPath);
     const lockedSweepRuntimeKwargBridgeRepair =
       await repairPythonLockedSweepRuntimeKwargBridgeSurface(executionScriptPath);
+    const conditionSeedPlanDispatchRepair =
+      await repairPythonConditionSeedPlanDispatchSurface(executionScriptPath);
+    const lockedBaselineFirstExecutionResolverRepair =
+      await repairPythonLockedBaselineFirstExecutionResolverSurface(executionScriptPath);
     const entrypointStudyResultKwargAliasRepair =
       await repairPythonEntrypointStudyResultKwargAliasSurface(executionScriptPath);
     const nestedRunRecordsProjectionRepair =
@@ -9369,6 +9373,8 @@ export class ImplementSessionManager {
         buildMetricsPayloadFromOptionsBridgeRepair,
         studyInvokeContractKwargRepair,
         lockedSweepRuntimeKwargBridgeRepair,
+        conditionSeedPlanDispatchRepair,
+        lockedBaselineFirstExecutionResolverRepair,
         entrypointStudyResultKwargAliasRepair,
         nestedRunRecordsProjectionRepair,
         aggregateNestedRawResultRowsRepair,
@@ -39116,6 +39122,152 @@ export async function repairPythonLockedSweepRuntimeKwargBridgeSurface(scriptPat
   return {
     repaired: true,
     message: `Bridged locked-sweep runtime data/model and metrics kwargs in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonConditionSeedPlanDispatchSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const executeNamesNeedle =
+    '            "_run_condition_seed_plan",\n' +
+    '            "run_condition_seed_plan",\n';
+  if (
+    nextSource.includes("def _execute_plan_bundle_any(") &&
+    nextSource.includes("def run_condition_seed_execution_loop(") &&
+    nextSource.includes("def _run_single_condition_seed(") &&
+    nextSource.includes('include_keywords=("condition", "seed")') &&
+    nextSource.includes(executeNamesNeedle) &&
+    !nextSource.includes('"run_condition_seed_execution_loop"')
+  ) {
+    nextSource = nextSource.replace(
+      executeNamesNeedle,
+      executeNamesNeedle +
+        '            "run_condition_seed_execution_loop",\n' +
+        '            "execute_condition_seed_loop",\n' +
+        '            "_run_condition_seed_execution_loop",\n' +
+        '            "_execute_condition_seed_loop",\n'
+    );
+    repaired = true;
+  }
+
+  const seedScheduleAnyNeedle =
+    "                return [int(seed) for seed in list(plan_bundle[key])]\n";
+  if (
+    nextSource.includes("def _resolve_seed_schedule_any(") &&
+    nextSource.includes(seedScheduleAnyNeedle) &&
+    !nextSource.includes("raw_plan_seeds.replace(\";\", \",\")")
+  ) {
+    nextSource = nextSource.replace(
+      seedScheduleAnyNeedle,
+      [
+        "                raw_plan_seeds = plan_bundle[key]",
+        "                if isinstance(raw_plan_seeds, str):",
+        "                    return [",
+        "                        int(seed.strip())",
+        "                        for seed in raw_plan_seeds.replace(\";\", \",\").split(\",\")",
+        "                        if seed.strip()",
+        "                    ]",
+        "                return [int(seed) for seed in list(raw_plan_seeds)]",
+        ""
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  const seedScheduleNeedle = "    seeds = [int(seed) for seed in list(raw_seeds)]\n";
+  if (
+    nextSource.includes("def _resolve_seed_schedule(") &&
+    nextSource.includes(seedScheduleNeedle) &&
+    !nextSource.includes("raw_seeds.replace(\";\", \",\")")
+  ) {
+    nextSource = nextSource.replace(
+      seedScheduleNeedle,
+      [
+        "    if isinstance(raw_seeds, str):",
+        "        seed_items = [",
+        "            item.strip()",
+        "            for item in raw_seeds.replace(\";\", \",\").split(\",\")",
+        "            if item.strip()",
+        "        ]",
+        "    else:",
+        "        seed_items = list(raw_seeds)",
+        "    seeds = [int(seed) for seed in seed_items]",
+        ""
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Preferred the generated condition/seed execution loop and hardened seed CSV parsing in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonLockedBaselineFirstExecutionResolverSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes('"execute_locked_baseline_first_plan"') ||
+    !source.includes("def execute_locked_baseline_first_plan(") ||
+    !source.includes("No locked study execution helper is available")
+  ) {
+    return { repaired: false };
+  }
+
+  const needle =
+    '            "_execute_baseline_first_plan",\n' +
+    '            "execute_baseline_first_plan",\n';
+  if (!source.includes(needle)) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(
+    needle,
+    needle +
+      '            "_execute_locked_baseline_first_plan",\n' +
+      '            "execute_locked_baseline_first_plan",\n'
+  );
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added locked baseline-first execution helper aliases in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

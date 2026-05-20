@@ -200,6 +200,8 @@ import {
   repairPythonWriteJsonMetricsAliasSurface,
   repairLockedPeftStudyConfigSurface,
   repairPythonLockedConditionCountSurface,
+  repairPythonConditionSeedPlanDispatchSurface,
+  repairPythonLockedBaselineFirstExecutionResolverSurface,
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
   selectRecoveredPublicBundleScriptPath,
@@ -14604,6 +14606,178 @@ describe("ImplementSessionManager", () => {
     expect(after.success).toBe(true);
     expect(after.aggregation_helper_error).toBeUndefined();
     expect(after.best_tuned_average_accuracy).toBe(0.5);
+  });
+
+  it("repairs condition/seed plan dispatch and CSV seed parsing before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-seed-plan-dispatch-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple",
+        "",
+        "def _get_config_value(config: Any, *names: str, default: Any = None) -> Any:",
+        "    for name in names:",
+        "        if hasattr(config, name):",
+        "            return getattr(config, name)",
+        "        if isinstance(config, Mapping) and name in config:",
+        "            return config[name]",
+        "    return default",
+        "",
+        "def _resolve_seed_schedule(config: Any = None) -> List[int]:",
+        "    raw_seeds = _get_config_value(config, 'seed_schedule', 'seeds', default=[42, 43, 44])",
+        "    seeds = [int(seed) for seed in list(raw_seeds)]",
+        "    return seeds",
+        "",
+        "def _resolve_seed_schedule_any(config: Any = None, plan_bundle: Any = None) -> List[int]:",
+        "    if isinstance(plan_bundle, Mapping):",
+        "        for key in ('seed_schedule', 'seeds', 'planned_seeds'):",
+        "            if key in plan_bundle and plan_bundle[key] is not None:",
+        "                return [int(seed) for seed in list(plan_bundle[key])]",
+        "    return _resolve_seed_schedule(config)",
+        "",
+        "def run_condition_seed_execution_loop(execution_plan: Any, config: Any = None) -> Dict[str, Any]:",
+        "    seeds = _resolve_seed_schedule(config)",
+        "    return {'seed_rows': [{'marker': 'rank_8_dropout_0_0', 'seed': seed, 'status': 'completed'} for seed in seeds]}",
+        "",
+        "def _run_single_condition_seed(*, condition, seed, selected_model_name, runtime_context, run_output_dir):",
+        "    return {'marker': condition, 'seed': seed}",
+        "",
+        "def _discover_callable(explicit_names: Sequence[str], include_keywords: Sequence[str] = (), exclude_keywords: Sequence[str] = ()) -> Optional[Any]:",
+        "    for name in explicit_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    scored_candidates: List[Tuple[int, str, Any]] = []",
+        "    for name, candidate in globals().items():",
+        "        if not callable(candidate):",
+        "            continue",
+        "        lowered = name.lower()",
+        "        if include_keywords and not all(keyword.lower() in lowered for keyword in include_keywords):",
+        "            continue",
+        "        if any(keyword.lower() in lowered for keyword in exclude_keywords):",
+        "            continue",
+        "        scored_candidates.append((0 if name.startswith('_') else 1, name, candidate))",
+        "    scored_candidates.sort(key=lambda item: (item[0], len(item[1]), item[1]))",
+        "    return scored_candidates[0][2] if scored_candidates else None",
+        "",
+        "def _invoke_callable_flexibly(func: Any, **candidates: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    keyword_args = {}",
+        "    aliases = {'config': {'config', 'args'}, 'plan': {'plan', 'execution_plan'}}",
+        "    for parameter in signature.parameters.values():",
+        "        for canonical_name, name_aliases in aliases.items():",
+        "            if parameter.name in name_aliases and canonical_name in candidates:",
+        "                keyword_args[parameter.name] = candidates[canonical_name]",
+        "                break",
+        "    return func(**keyword_args)",
+        "",
+        "def _execute_plan_bundle_any(config: Any, plan_bundle: Mapping[str, Any]) -> Dict[str, Any]:",
+        "    execute_fn = _discover_callable(",
+        "        explicit_names=(",
+        "            \"_execute_condition_seed_plan\",",
+        "            \"execute_condition_seed_plan\",",
+        "            \"_execute_condition_seed_runs\",",
+        "            \"execute_condition_seed_runs\",",
+        "            \"_run_condition_seed_plan\",",
+        "            \"run_condition_seed_plan\",",
+        "            \"_execute_experiment_plan\",",
+        "            \"execute_experiment_plan\",",
+        "        ),",
+        "        include_keywords=(\"condition\", \"seed\"),",
+        "        exclude_keywords=(\"aggregate\", \"summary\", \"write\", \"metrics\", \"main\"),",
+        "    )",
+        "    result = _invoke_callable_flexibly(execute_fn, config=config, plan=plan_bundle)",
+        "    return dict(result)",
+        "",
+        "def main():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--seeds', default='42,43,44')",
+        "    args = parser.parse_args()",
+        "    print(json.dumps(_execute_plan_bundle_any(args, {'seed_schedule': args.seeds}), sort_keys=True))",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /selected_model_name|invalid literal/u
+    );
+
+    const repair = await repairPythonConditionSeedPlanDispatchSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("\"run_condition_seed_execution_loop\"");
+    expect(repairedSource).toContain("raw_seeds.replace(\";\", \",\")");
+    const output = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(output.seed_rows.map((row: { seed: number }) => row.seed)).toEqual([42, 43, 44]);
+  });
+
+  it("repairs locked baseline-first execution resolver aliases before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-baseline-resolver-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "def _resolve_first_callable(names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def execute_locked_baseline_first_plan(**kwargs):",
+        "    return {'status': 'completed', 'completed_run_count': 24}",
+        "",
+        "def run_lora_rank_dropout_study():",
+        "    execution_loop = _resolve_first_callable(",
+        "        (",
+        "            \"_execute_locked_study_plan\",",
+        "            \"execute_locked_study_plan\",",
+        "            \"_execute_baseline_first_plan\",",
+        "            \"execute_baseline_first_plan\",",
+        "            \"_run_locked_study_execution_loop\",",
+        "            \"run_locked_study_execution_loop\",",
+        "        )",
+        "    )",
+        "    if execution_loop is None:",
+        "        raise RuntimeError(",
+        "            \"No locked study execution helper is available; expected chunk_2c2 execution loop definitions.\"",
+        "        )",
+        "    return execution_loop()",
+        "",
+        "if __name__ == '__main__':",
+        "    print(run_lora_rank_dropout_study()['status'])",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No locked study execution helper/u
+    );
+
+    const repair = await repairPythonLockedBaselineFirstExecutionResolverSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("\"execute_locked_baseline_first_plan\"");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("completed");
   });
 
   it("materializes runtime inputs for ordered condition collectors", async () => {
