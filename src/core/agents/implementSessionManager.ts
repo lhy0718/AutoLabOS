@@ -1154,6 +1154,19 @@ export class ImplementSessionManager {
         testCommand: prepared.testCommand
       });
 
+      const publicWrapperRepair = await repairPublishedRunCommandWrapperBinding(prepared);
+      if (publicWrapperRepair.repaired) {
+        prepared.changedFiles = dedupeStrings([...prepared.changedFiles, publicWrapperRepair.wrapperPath]);
+        prepared.publicArtifacts = dedupeStrings([...prepared.publicArtifacts, publicWrapperRepair.wrapperPath]);
+        emitImplementObservation("verify", publicWrapperRepair.message, {
+          attempt,
+          threadId: activeThreadId,
+          publicDir: prepared.publicDir,
+          scriptPath: prepared.scriptPath,
+          runCommand: prepared.runCommand
+        });
+      }
+
       const comparisonContract = await loadExperimentComparisonContract(run, runContext);
       const designImplementationValidation = enforceUnresolvedImplementationContractFeedback(
         await validateDesignImplementationAlignment({
@@ -13271,6 +13284,74 @@ function rewriteCommandScriptPath(
     rewritten = rewritten.split(from).join(to);
   }
   return rewritten;
+}
+
+export async function repairPublishedRunCommandWrapperBinding(
+  attempt: {
+    publicDir: string;
+    scriptPath?: string;
+    runCommand: string;
+  }
+): Promise<{ repaired: boolean; wrapperPath?: string; message: string }> {
+  if (!attempt.publicDir || !attempt.scriptPath || !attempt.runCommand) {
+    return {
+      repaired: false,
+      message: "No public run_command.sh repair was needed."
+    };
+  }
+  const wrapperPath = path.join(attempt.publicDir, "run_command.sh");
+  if (!(await fileExists(wrapperPath)) || path.normalize(wrapperPath) === path.normalize(attempt.scriptPath)) {
+    return {
+      repaired: false,
+      wrapperPath,
+      message: "No public run_command.sh repair was needed."
+    };
+  }
+
+  const scriptReference = `\${SCRIPT_DIR}/${path.basename(attempt.scriptPath)}`;
+  const wrapperRunCommand = rewriteCommandScriptPath(
+    attempt.runCommand,
+    attempt.scriptPath,
+    scriptReference
+  );
+  if (wrapperRunCommand === attempt.runCommand && !attempt.runCommand.includes(attempt.scriptPath)) {
+    return {
+      repaired: false,
+      wrapperPath,
+      message: "Public run_command.sh was not rewritten because run_command does not expose script_path."
+    };
+  }
+
+  const content = [
+    "#!/usr/bin/env bash",
+    "set -euo pipefail",
+    "",
+    'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+    "",
+    wrapperRunCommand,
+    ""
+  ].join("\n");
+
+  let current = "";
+  try {
+    current = await fs.readFile(wrapperPath, "utf8");
+  } catch {
+    current = "";
+  }
+  if (current === content) {
+    return {
+      repaired: false,
+      wrapperPath,
+      message: "Public run_command.sh already launches script_path."
+    };
+  }
+
+  await fs.writeFile(wrapperPath, content, "utf8");
+  return {
+    repaired: true,
+    wrapperPath,
+    message: `Rewrote public run_command.sh to launch ${path.basename(attempt.scriptPath)} before design handoff validation.`
+  };
 }
 
 function shouldTrackPatchEvent(payload: Record<string, unknown>): boolean {

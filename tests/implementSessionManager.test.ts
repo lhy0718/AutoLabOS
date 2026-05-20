@@ -199,7 +199,8 @@ import {
   repairPythonTupleReturningMainArgsSurface,
   repairPythonWriteJsonMetricsAliasSurface,
   repairLockedPeftStudyConfigSurface,
-  repairPythonLockedConditionCountSurface
+  repairPythonLockedConditionCountSurface,
+  repairPublishedRunCommandWrapperBinding
 } from "../src/core/agents/implementSessionManager.js";
 import { createImplementExperimentsNode } from "../src/core/nodes/implementExperiments.js";
 import {
@@ -2244,6 +2245,41 @@ describe("ImplementSessionManager", () => {
 
     expect(guarded.selected_files[0]).toBe(runner);
     expect(guarded.candidates[0]?.path).toBe(runner);
+  });
+
+  it("rewrites a stale published run_command.sh to launch the reported script_path", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-wrapper-repair-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "study", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const staleScriptPath = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const wrapperPath = path.join(publicDir, "run_command.sh");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-1", "metrics.json");
+    writeFileSync(scriptPath, "print('new runner')\n", "utf8");
+    writeFileSync(staleScriptPath, "print('old runner')\n", "utf8");
+    writeFileSync(
+      wrapperPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+        'python "${SCRIPT_DIR}/run_lora_rank_dropout_study.py" --metrics-path "${PWD}/metrics.json"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPublishedRunCommandWrapperBinding({
+      publicDir,
+      scriptPath,
+      runCommand: `python ${JSON.stringify(scriptPath)} --output-dir ${JSON.stringify(publicDir)} --metrics-path ${JSON.stringify(metricsPath)}`
+    });
+
+    expect(repair.repaired).toBe(true);
+    const repairedWrapper = readFileSync(wrapperPath, "utf8");
+    expect(repairedWrapper).toContain('python "${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py"');
+    expect(repairedWrapper).not.toContain("run_lora_rank_dropout_study.py");
+    expect(repairedWrapper).toContain(JSON.stringify(metricsPath));
   });
 
   it("pins implementation contract feedback to the canonical public runner before alternate scripts", () => {
