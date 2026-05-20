@@ -12788,6 +12788,45 @@ function inferRunCommand(scriptPath: string | undefined, workspaceRoot: string, 
   return `python3 ${JSON.stringify(fallback)}`;
 }
 
+export function selectRecoveredPublicBundleScriptPath(params: {
+  publicDir: string;
+  entries: string[];
+  runnerFeedback?: RunVerifierReport;
+}): string | undefined {
+  const candidatePaths = params.entries
+    .filter((entry) => /\.(py|js|sh|mjs|cjs)$/iu.test(entry))
+    .map((entry) => path.join(params.publicDir, entry));
+  if (candidatePaths.length === 0) {
+    return undefined;
+  }
+  const feedbackText = [
+    params.runnerFeedback?.command,
+    params.runnerFeedback?.summary,
+    params.runnerFeedback?.stderr_excerpt,
+    params.runnerFeedback?.stdout_excerpt,
+    params.runnerFeedback?.suggested_next_action
+  ].filter((value): value is string => Boolean(value)).join("\n");
+  return prioritizeImplementationContractFocus(candidatePaths, feedbackText)[0];
+}
+
+async function inferRecoveredBundleWrapperRunCommand(params: {
+  wrapperPath: string;
+  scriptPath: string;
+}): Promise<string | undefined> {
+  if (!(await fileExists(params.wrapperPath))) {
+    return undefined;
+  }
+  const wrapperText = await safeRead(params.wrapperPath);
+  if (!wrapperText) {
+    return undefined;
+  }
+  const scriptBase = path.basename(params.scriptPath);
+  if (!wrapperText.includes(scriptBase) && !wrapperText.includes(params.scriptPath)) {
+    return undefined;
+  }
+  return `bash ${JSON.stringify(params.wrapperPath)}`;
+}
+
 async function recoverStructuredResultFromPublicBundle(params: {
   publicDir: string;
   runDir: string;
@@ -12802,12 +12841,14 @@ async function recoverStructuredResultFromPublicBundle(params: {
     return undefined;
   }
   const entries = await fs.readdir(params.publicDir).catch(() => []);
-  const scriptName = entries.find((entry) => /\.(py|js|sh|mjs|cjs)$/i.test(entry));
-  if (!scriptName) {
+  const scriptPath = selectRecoveredPublicBundleScriptPath({
+    publicDir: params.publicDir,
+    entries,
+    runnerFeedback: params.runnerFeedback
+  });
+  if (!scriptPath) {
     return undefined;
   }
-
-  const scriptPath = path.join(params.publicDir, scriptName);
   if (typeof params.materializedAfterMs === "number" && Number.isFinite(params.materializedAfterMs)) {
     const scriptStats = await fs.stat(scriptPath).catch(() => undefined);
     if (!scriptStats || scriptStats.mtimeMs + 1000 < params.materializedAfterMs) {
@@ -12822,6 +12863,7 @@ async function recoverStructuredResultFromPublicBundle(params: {
   const frozenConfigPath = path.join(params.publicDir, "frozen_config.json");
   const baselineSummaryPath = path.join(params.publicDir, "baseline_summary.json");
   const experimentPlanPath = path.join(params.publicDir, "experiment_plan.yaml");
+  const wrapperPath = path.join(params.publicDir, "run_command.sh");
   if (
     !(await recoveredBundleMatchesCurrentPlan({
       runDir: params.runDir,
@@ -12835,6 +12877,7 @@ async function recoverStructuredResultFromPublicBundle(params: {
   }
   const publicArtifacts = await filterExistingFiles([
     scriptPath,
+    wrapperPath,
     readmePath,
     frozenConfigPath,
     baselineSummaryPath,
@@ -12858,7 +12901,17 @@ async function recoverStructuredResultFromPublicBundle(params: {
     await readRunnableCommandFromReadme(readmePath),
     params.workspaceRoot
   );
-  let runCommand = readmeRunCommand || inferredRunCommand;
+  const wrapperRunCommand = normalizeRecoveredBundleRunCommand(
+    await inferRecoveredBundleWrapperRunCommand({
+      wrapperPath,
+      scriptPath
+    }),
+    params.workspaceRoot
+  );
+  const commandRepairFeedback = isRecoverableBundleCommandRepairFeedback(params.runnerFeedback);
+  let runCommand = commandRepairFeedback
+    ? wrapperRunCommand || readmeRunCommand || inferredRunCommand
+    : readmeRunCommand || wrapperRunCommand || inferredRunCommand;
   if (!runCommand) {
     return undefined;
   }

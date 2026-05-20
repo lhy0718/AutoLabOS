@@ -200,7 +200,8 @@ import {
   repairPythonWriteJsonMetricsAliasSurface,
   repairLockedPeftStudyConfigSurface,
   repairPythonLockedConditionCountSurface,
-  repairPublishedRunCommandWrapperBinding
+  repairPublishedRunCommandWrapperBinding,
+  selectRecoveredPublicBundleScriptPath
 } from "../src/core/agents/implementSessionManager.js";
 import { createImplementExperimentsNode } from "../src/core/nodes/implementExperiments.js";
 import {
@@ -2282,6 +2283,35 @@ describe("ImplementSessionManager", () => {
     expect(repairedWrapper).toContain('exec "${PYTHON_BIN:-python3}" "$RUNNER" \\');
     expect(repairedWrapper).not.toContain("run_lora_rank_dropout_study.py");
     expect(repairedWrapper).toContain(JSON.stringify(metricsPath));
+  });
+
+  it("recovers the canonical public experiment runner before stale helpers and wrappers", () => {
+    const workspace = "/tmp/autolabos-recovered-public-script";
+    const publicDir = path.join(workspace, "outputs", "study", "experiment");
+    const selected = selectRecoveredPublicBundleScriptPath({
+      publicDir,
+      entries: [
+        "experiment.py",
+        "run_command.sh",
+        "run_lora_rank_dropout_study.py",
+        "run_lora_rank_dropout_experiment.py"
+      ],
+      runnerFeedback: {
+        source: "run_experiments",
+        status: "fail",
+        trigger: "auto_handoff",
+        stage: "command",
+        summary:
+          "Local verification failed because run_lora_rank_dropout_experiment.py reported unrecognized arguments: --experiment-dir.",
+        command: "bash run_command.sh --experiment-dir outputs/study/experiment",
+        stderr_excerpt:
+          "run_lora_rank_dropout_experiment.py: error: unrecognized arguments: --experiment-dir",
+        suggested_next_action: "Repair the public wrapper without replacing the canonical runner.",
+        recorded_at: "2026-05-20T00:00:00.000Z"
+      }
+    });
+
+    expect(selected).toBe(path.join(publicDir, "run_lora_rank_dropout_experiment.py"));
   });
 
   it("pins implementation contract feedback to the canonical public runner before alternate scripts", () => {
