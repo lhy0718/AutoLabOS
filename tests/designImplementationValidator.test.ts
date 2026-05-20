@@ -153,6 +153,114 @@ describe("validateDesignImplementationAlignment", () => {
     expect(report.findings.filter((finding) => finding.severity === "block")).toEqual([]);
   });
 
+  it("allows a published run_command.sh wrapper that launches script_path through SCRIPT_DIR", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-public-wrapper-pass-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const wrapperPath = path.join(publicDir, "run_command.sh");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-public-wrapper-pass", "metrics.json");
+    writeFileSync(scriptPath, "print('baseline and adaptive evaluation')\n", "utf8");
+    writeFileSync(
+      wrapperPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+        'python "${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py" --metrics-path "${PWD}/metrics.json"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-public-wrapper-pass", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "design-public-wrapper-pass",
+        hypothesis_ids: ["h1"],
+        baselines: ["greedy_direct"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = await validateDesignImplementationAlignment({
+      comparisonContract: contract,
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("allow");
+    expect(report.findings.filter((finding) => finding.severity === "block")).toEqual([]);
+    expect(report.checked_items).toContain("public_run_command_wrapper_binding");
+  });
+
+  it("blocks when a published run_command.sh still launches a stale runner", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-public-wrapper-stale-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const staleScriptPath = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const wrapperPath = path.join(publicDir, "run_command.sh");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-public-wrapper-stale", "metrics.json");
+    writeFileSync(scriptPath, "REQUIRED_CONDITION_COUNT = 8\nprint('baseline and adaptive evaluation')\n", "utf8");
+    writeFileSync(staleScriptPath, "REQUIRED_CONDITION_COUNT = 4\nprint('stale runner')\n", "utf8");
+    writeFileSync(
+      wrapperPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+        'python "${SCRIPT_DIR}/run_lora_rank_dropout_study.py" --metrics-path "${PWD}/metrics.json"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-public-wrapper-stale", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "design-public-wrapper-stale",
+        hypothesis_ids: ["h1"],
+        baselines: ["greedy_direct"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = await validateDesignImplementationAlignment({
+      comparisonContract: contract,
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PUBLIC_RUN_COMMAND_WRAPPER_SCRIPT_MISMATCH",
+          severity: "block"
+        })
+      ])
+    );
+  });
+
   it("blocks when a runner compresses the planned full-grid condition and seed contract", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-planned-contract-"));
     tempDirs.push(workspace);

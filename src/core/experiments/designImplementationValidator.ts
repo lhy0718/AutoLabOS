@@ -74,6 +74,30 @@ export async function validateDesignImplementationAlignment(input: {
     }
   }
 
+  if (input.attempt.scriptPath) {
+    const publicRunCommandWrappers = await findPublicRunCommandWrappers(
+      input.attempt.publicDir,
+      input.attempt.publicArtifacts
+    );
+    if (publicRunCommandWrappers.length > 0) {
+      checkedItems.push("public_run_command_wrapper_binding");
+    }
+    for (const wrapperPath of publicRunCommandWrappers) {
+      if (samePath(wrapperPath, input.attempt.scriptPath)) {
+        continue;
+      }
+      const wrapperTargetsScriptPath = await shellWrapperReferencesScriptPath(wrapperPath, input.attempt.scriptPath);
+      if (!wrapperTargetsScriptPath) {
+        findings.push({
+          code: "PUBLIC_RUN_COMMAND_WRAPPER_SCRIPT_MISMATCH",
+          severity: "block",
+          message: "A published run_command.sh exists but does not launch the reported script_path.",
+          evidence: `script_path=${input.attempt.scriptPath}; public_run_command=${wrapperPath}`
+        });
+      }
+    }
+  }
+
   checkedItems.push("public_artifact_binding");
   if (
     input.attempt.scriptPath &&
@@ -408,7 +432,7 @@ function extractCommandPaths(command: string, cwd: string): string[] {
   const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) || [];
   const paths = new Set<string>();
   for (const token of tokens) {
-    const value = normalizeShellPathToken(token);
+    const value = expandShellPathToken(normalizeShellPathToken(token), cwd);
     if (!value) {
       continue;
     }
@@ -418,6 +442,15 @@ function extractCommandPaths(command: string, cwd: string): string[] {
     paths.add(path.normalize(path.isAbsolute(value) ? value : path.resolve(cwd, value)));
   }
   return [...paths];
+}
+
+function expandShellPathToken(value: string | null, cwd: string): string | null {
+  if (!value) {
+    return null;
+  }
+  return value
+    .replace(/\$\{SCRIPT_DIR\}|\$SCRIPT_DIR/gu, cwd)
+    .replace(/\$\{PWD\}|\$PWD/gu, cwd);
 }
 
 function normalizeShellPathToken(token: string): string | null {
@@ -459,6 +492,20 @@ function looksLikePath(value: string): boolean {
 
 function isRunnableScript(filePath: string): boolean {
   return /\.(py|js|mjs|cjs|sh)$/iu.test(filePath);
+}
+
+async function findPublicRunCommandWrappers(publicDir: string, publicArtifacts: string[]): Promise<string[]> {
+  const candidates = dedupeStrings([
+    path.join(publicDir, "run_command.sh"),
+    ...publicArtifacts.filter((artifactPath) => path.basename(artifactPath) === "run_command.sh")
+  ]);
+  const existing: string[] = [];
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) {
+      existing.push(candidate);
+    }
+  }
+  return existing;
 }
 
 async function shellWrapperReferencesScriptPath(wrapperPath: string, scriptPath: string): Promise<boolean> {
