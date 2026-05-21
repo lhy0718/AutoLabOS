@@ -12170,9 +12170,9 @@ function parseRepeatedSeedRunContract(
     text.match(/\btotal\s+training\s+conditions?\s+per\s+seed\s*[:=]\s*(\d+)\b/iu) ||
     text.match(/\bconditions?\s+per\s+seed\s*[:=]\s*(\d+)\b/iu);
   const cellSeedMatch =
-    text.match(/\b(\d+)\s+repeated\s+cells?\s*[x×]\s*(\d+)\s+seeds?\b/iu) ||
-    text.match(/\b(\d+)\s+ranks?\s*[x×]\s*(\d+)\s+seeds?\b/iu) ||
-    text.match(/\b(\d+)\s+cells?\s*[x×]\s*(\d+)\s+seeds?\b/iu);
+    text.match(/\b(\d+)\s+repeated\s+cells?\s*[x×]\s*(\d+)[-\s]*seeds?\b/iu) ||
+    text.match(/\b(\d+)\s+ranks?\s*[x×]\s*(\d+)[-\s]*seeds?\b/iu) ||
+    text.match(/\b(\d+)[-\s]*cells?\s*[x×]\s*(\d+)[-\s]*seeds?\b/iu);
   const cellCount = cellSeedMatch
     ? Number.parseInt(cellSeedMatch[1] || "", 10)
     : conditionsPerSeedMatch
@@ -12200,6 +12200,15 @@ function parseRepeatedSeedRunContract(
 function extractSeedSchedule(text: string): number[] {
   const seeds = new Set<number>();
   for (const match of text.matchAll(/\bseeds?\s*(?:=|:)?\s*\[([0-9,\s]+)\]/giu)) {
+    const raw = match[1] || "";
+    for (const token of raw.split(",")) {
+      const parsed = Number.parseInt(token.trim(), 10);
+      if (Number.isFinite(parsed)) {
+        seeds.add(parsed);
+      }
+    }
+  }
+  for (const match of text.matchAll(/\bseeds?\s*(?:=|:)?\s*\{([0-9,\s]+)\}/giu)) {
     const raw = match[1] || "";
     for (const token of raw.split(",")) {
       const parsed = Number.parseInt(token.trim(), 10);

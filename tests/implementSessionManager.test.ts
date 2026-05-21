@@ -8499,16 +8499,16 @@ describe("ImplementSessionManager", () => {
       path.join(runDir, "experiment_plan.yaml"),
       [
         "selected_design:",
-        '  title: "Locked 8-condition full grid with 3-seed paired deltas"',
-        '  summary: "Run the full rank x dropout grid on the local target with seeds 42, 43, and 44."',
+        '  title: "Full-grid 8-cell x 4-seed confirmatory small-model factorial"',
+        '  summary: "Run the full rank x dropout grid on the local target with seeds {42,43,44,45}."',
         "  implementation_notes:",
         '    - "Baseline condition: rank=8, dropout=0.0."',
         '    - "Use LoRA ranks {4, 8, 16, 32} and dropouts {0.0, 0.05}; total training conditions per seed = 8"',
-        '    - "Use seeds 42, 43, and 44; do not alter condition order."',
+        '    - "Use seeds {42,43,44,45}; do not alter condition order."',
         "  evaluation_steps:",
         '    - "Evaluate every completed checkpoint on the full ARC-Challenge validation split (n=299) and full HellaSwag validation split (n=10042)."',
         "  resource_notes:",
-        '    - "Total planned train/eval jobs: 24"'
+        '    - "Total planned train/eval jobs: 32"'
       ].join("\n"),
       "utf8"
     );
@@ -8530,8 +8530,8 @@ describe("ImplementSessionManager", () => {
       "  'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
       "]",
       "REQUIRED_CONDITION_COUNT = 8",
-      "REQUIRED_RUN_COUNT = 24",
-      "SEED_SCHEDULE = [42, 43, 44]",
+      "REQUIRED_RUN_COUNT = 32",
+      "SEED_SCHEDULE = [42, 43, 44, 45]",
       MINIMAL_METRICS_RUNNER_SOURCE
     ].join("\n\n");
     const llm = {
@@ -8574,8 +8574,8 @@ describe("ImplementSessionManager", () => {
     await manager.run(run);
 
     expect(capturedPrompt).toContain('"required_condition_count": 8');
-    expect(capturedPrompt).toContain('"required_run_count": 24');
-    expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 3');
+    expect(capturedPrompt).toContain('"required_run_count": 32');
+    expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 4');
     expect(capturedPrompt).toContain('"baseline_condition_marker": "rank_8_dropout_0_0"');
     expect(capturedPrompt).toContain('"seed_schedule":');
     expect(capturedPrompt).toContain('"full_evaluation_required": true');
@@ -8585,6 +8585,7 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain("42");
     expect(capturedPrompt).toContain("43");
     expect(capturedPrompt).toContain("44");
+    expect(capturedPrompt).toContain("45");
     expect(capturedPrompt).toContain('"rank_4_dropout_0_0"');
     expect(capturedPrompt).toContain('"rank_4_dropout_0_05"');
     expect(capturedPrompt).toContain('"rank_32_dropout_0_05"');
