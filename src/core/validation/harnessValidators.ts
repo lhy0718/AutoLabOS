@@ -231,6 +231,12 @@ export async function validateRunArtifactStructure(
       runId,
       issues
     });
+    await validatePaperSurfaceContract({
+      runId,
+      runDir,
+      mainTexPath,
+      issues
+    });
     const evidenceLinks = await requireJsonObject({
       filePath: path.join(runDir, "paper", "evidence_links.json"),
       missingCode: "paper_evidence_links_missing",
@@ -1365,6 +1371,123 @@ async function validatePaperResultConsistency(input: {
       runId: input.runId
     });
   }
+}
+
+async function validatePaperSurfaceContract(input: {
+  runId: string;
+  runDir: string;
+  mainTexPath: string;
+  issues: HarnessValidationIssue[];
+}): Promise<void> {
+  const tex = await readFileIfExists(input.mainTexPath);
+  if (!tex) {
+    return;
+  }
+
+  const aclPackage = tex.match(/\\usepackage(?:\[[^\]]*\])?\{ACL20\d{2}\}/iu)?.[0] || "";
+  const usesAclTemplate = aclPackage.length > 0;
+  const bibliographyStyle = tex.match(/\\bibliographystyle\{([^}]+)\}/u)?.[1]?.trim() || "";
+
+  if (usesAclTemplate && bibliographyStyle !== "acl_natbib") {
+    input.issues.push({
+      code: "paper_acl_bibliography_style_mismatch",
+      message:
+        `paper/main.tex preserves ${aclPackage} but uses bibliography style ` +
+        `${bibliographyStyle || "(missing)"}, so ACL references may render in the wrong order/style.`,
+      filePath: input.mainTexPath,
+      runId: input.runId
+    });
+  } else if (!usesAclTemplate && bibliographyStyle === "plain" && /\\cite[a-zA-Z*]*(?:\[[^\]]*\]){0,2}\{[^}]+\}/u.test(tex)) {
+    input.issues.push({
+      code: "paper_plain_bibliography_style",
+      message:
+        "paper/main.tex uses plain bibliography style with rendered citations, so numeric references may be alphabetized instead of ordered by first citation.",
+      filePath: input.mainTexPath,
+      runId: input.runId
+    });
+  }
+
+  if (usesAclTemplate && /\\(?:noindent\s*)?textbf\{Keywords:\}|\\keywords\{/iu.test(tex)) {
+    input.issues.push({
+      code: "paper_acl_template_absent_keywords",
+      message:
+        "paper/main.tex renders a Keywords field even though the ACL template surface does not include one.",
+      filePath: input.mainTexPath,
+      runId: input.runId
+    });
+  }
+
+  const repeatedBundles = detectRepeatedCitationBundles(tex);
+  if (repeatedBundles.length > 0) {
+    const repeated = repeatedBundles[0];
+    input.issues.push({
+      code: "paper_repeated_citation_bundle",
+      message:
+        `paper/main.tex repeats citation bundle ${repeated.bundle} ${repeated.count} times in ${repeated.section}; ` +
+        "review should route this to write_paper citation placement instead of accepting the paper surface.",
+      filePath: input.mainTexPath,
+      runId: input.runId
+    });
+  }
+
+  const renderValidation = await readOptionalJsonObject({
+    filePath: path.join(input.runDir, "paper", "render_validation.json"),
+    malformedCode: "paper_render_validation_malformed",
+    runId: input.runId,
+    issues: input.issues
+  });
+  if (asString(renderValidation?.status) === "fail") {
+    const issueCodes = asObjectArray(renderValidation?.issues)
+      .map((issue) => asString(issue.code))
+      .filter(Boolean)
+      .slice(0, 5)
+      .join(", ");
+    input.issues.push({
+      code: "paper_render_validation_failed",
+      message:
+        `paper/render_validation.json reports failure${issueCodes ? ` (${issueCodes})` : ""}; ` +
+        "the meta harness must not treat this paper artifact as clean.",
+      filePath: path.join(input.runDir, "paper", "render_validation.json"),
+      runId: input.runId
+    });
+  }
+}
+
+function detectRepeatedCitationBundles(tex: string): Array<{ bundle: string; count: number; section: string }> {
+  const chunks = tex.split(/(?=\\section(?:\[[^\]]*\])?\{[^}]+\})/u);
+  const effectiveChunks = chunks.length > 1 ? chunks : [tex];
+  const repeated: Array<{ bundle: string; count: number; section: string }> = [];
+
+  for (const chunk of effectiveChunks) {
+    const section = chunk.match(/\\section(?:\[[^\]]*\])?\{([^}]+)\}/u)?.[1]?.trim() || "the rendered manuscript";
+    const counts = new Map<string, number>();
+    for (const match of chunk.matchAll(/\\cite[a-zA-Z*]*(?:\[[^\]]*\]){0,2}\{([^}]+)\}/gu)) {
+      const bundle = normalizeCitationBundle(match[1] || "");
+      if (!bundle) {
+        continue;
+      }
+      counts.set(bundle, (counts.get(bundle) || 0) + 1);
+    }
+    for (const [bundle, count] of counts) {
+      const keyCount = bundle.split(",").filter(Boolean).length;
+      if (keyCount > 1 ? count > 1 : count > 2) {
+        repeated.push({ bundle, count, section });
+      }
+    }
+  }
+
+  return repeated.sort((a, b) => b.count - a.count || a.section.localeCompare(b.section) || a.bundle.localeCompare(b.bundle));
+}
+
+function normalizeCitationBundle(raw: string): string {
+  return Array.from(
+    new Set(
+      raw
+        .split(",")
+        .map((key) => key.trim())
+        .filter(Boolean)
+    )
+  ).sort().join(",");
 }
 
 async function validateReviewAndPaperConsistency(input: {

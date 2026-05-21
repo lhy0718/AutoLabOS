@@ -73,6 +73,10 @@ describe("harnessValidationService", () => {
     expect(classifyHarnessIssueCode("paper_claim_source_path_placeholder")).toBe("broken_evidence_link");
   });
 
+  it("classifies bibliography surface failures as broken evidence links", () => {
+    expect(classifyHarnessIssueCode("paper_acl_bibliography_style_mismatch")).toBe("broken_evidence_link");
+  });
+
   it("classifies runtime contract metadata failures as contract metadata", () => {
     expect(classifyHarnessIssueCode("runtime_contract_gate_missing")).toBe("contract_metadata");
   });

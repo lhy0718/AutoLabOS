@@ -271,6 +271,7 @@ export function classifyHarnessIssueCode(code: string): HarnessIssueKind {
     || code.includes("citation")
     || code.includes("claim_linkage")
     || code.includes("source_path")
+    || code.includes("bibliography")
   ) {
     return "broken_evidence_link";
   }
@@ -305,6 +306,7 @@ export function defaultRemediationForIssueCode(code: string): string {
     || code.includes("citation")
     || code.includes("claim_linkage")
     || code.includes("source_path")
+    || code.includes("bibliography")
   ) {
     return "Regenerate paper evidence_links.json from grounded artifacts and ensure every claim maps to real evidence/citation IDs.";
   }
@@ -326,8 +328,14 @@ export function defaultRemediationForIssueCode(code: string): string {
   if (code.includes("metrics")) {
     return "Ensure run_experiments produces metrics.json and objective_evaluation.json before advancing.";
   }
-  if (code.includes("main_tex") || code.includes("references") || code.includes("paper_")) {
-    return "Regenerate write_paper outputs and confirm paper/main.tex, references.bib, and evidence_links.json exist.";
+  if (
+    code.includes("main_tex")
+    || code.includes("references")
+    || code.includes("paper_")
+    || code.includes("template")
+    || code.includes("bibliography")
+  ) {
+    return "Regenerate write_paper outputs and confirm paper/main.tex, references.bib, template surface, and evidence_links.json are consistent.";
   }
   if (code.includes("runs_json")) {
     return "Repair malformed runs.json records or regenerate the affected run metadata.";

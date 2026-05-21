@@ -418,6 +418,50 @@ describe("harness validators", () => {
     expect(codes).toContain("paper_readiness_missing");
   });
 
+  it("reports paper surface defects that review/meta harness must route back to write_paper", async () => {
+    const runDir = createTempRunDir("autolabos-harness-validator-paper-surface-");
+    await mkdir(path.join(runDir, "paper"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "paper", "main.tex"),
+      [
+        "\\documentclass[11pt]{article}",
+        "\\usepackage[review]{ACL2023}",
+        "\\begin{document}",
+        "\\noindent\\textbf{Keywords:} LoRA, dropout",
+        "\\section{Related Work}",
+        "LoRA work motivates this setting. \\cite{hu2021lora,dettmers2023qlora}",
+        "QLoRA work motivates this setting too. \\cite{dettmers2023qlora,hu2021lora}",
+        "\\bibliographystyle{plain}",
+        "\\bibliography{references}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "paper", "references.bib"),
+      "@article{hu2021lora, title={LoRA}}\n@article{dettmers2023qlora, title={QLoRA}}\n",
+      "utf8"
+    );
+    await writeJson(path.join(runDir, "paper", "render_validation.json"), {
+      status: "fail",
+      issues: [{ code: "template_not_preserved" }]
+    });
+
+    const result = await validateRunArtifactStructure({
+      runId: "run-paper-surface",
+      runDir,
+      nodeStates: makeNodeStates({
+        write_paper: "completed"
+      })
+    });
+
+    const codes = result.issues.map((item) => item.code);
+    expect(codes).toContain("paper_acl_bibliography_style_mismatch");
+    expect(codes).toContain("paper_acl_template_absent_keywords");
+    expect(codes).toContain("paper_repeated_citation_bundle");
+    expect(codes).toContain("paper_render_validation_failed");
+  });
+
   it("reports missing metrics/objective artifacts when later nodes are marked completed", async () => {
     const runDir = createTempRunDir("autolabos-harness-validator-run-");
     await writeJson(path.join(runDir, "run_experiments_verify_report.json"), { status: "pass" });
