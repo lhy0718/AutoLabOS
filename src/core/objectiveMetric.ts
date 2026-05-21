@@ -330,8 +330,8 @@ const SYNTHESIZE_METRIC_KEYS = [
   "average_accuracy",
   "mean_zero_shot_accuracy",
   "zero_shot_accuracy",
-  "arc_challenge_accuracy",
-  "hellaswag_accuracy"
+  "benchmark_task_a_accuracy",
+  "benchmark_task_b_accuracy"
 ];
 
 /**

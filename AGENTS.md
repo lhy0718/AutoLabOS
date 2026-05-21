@@ -59,6 +59,7 @@ If a relevant skill exists, follow it in addition to this file and the docs.
 - Do not claim a fix is complete until the same validation flow has been re-run.
 - Record live-validation issues in `ISSUES.md` with reproduction steps, expected behavior, actual behavior, session comparison, root-cause hypothesis, and regression status.
 - Lower the strength of any claim that is not backed by explicit evidence.
+- Do not hardcode one-off experiment identifiers, model names, benchmark names, or condition markers in public source or tests; use domain-neutral fixture names and keep `tests/publicCodeSanitization.test.ts` passing.
 - Do not present partial success as full completion.
 - Do not mark unverified improvements as done.
 - Treat `/doctor`, targeted smoke checks, and live validation as first-class diagnostic surfaces when applicable.

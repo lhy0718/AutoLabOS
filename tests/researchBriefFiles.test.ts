@@ -93,7 +93,7 @@ describe("researchBriefFiles", () => {
   it("builds a substantive guided brief draft from interview answers", () => {
     const markdown = buildGuidedResearchBriefMarkdown({
       topic: "Compare lightweight instruction-tuning recipe choices for compact language models.",
-      primaryMetric: "Mean zero-shot accuracy across ARC-Challenge and HellaSwag.",
+      primaryMetric: "Mean zero-shot accuracy across Benchmark Task A and Benchmark Task B.",
       secondaryMetrics: "Runtime; peak GPU memory.",
       meaningfulImprovement: "+1.0 point over the tuned baseline.",
       constraints: "2x RTX 4090 only; public datasets only; seed=42 everywhere.",

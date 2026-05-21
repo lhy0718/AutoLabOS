@@ -459,7 +459,7 @@ describe("ImplementSessionManager", () => {
   it("repairs the generated runner's locked-condition count for baseline-first studies", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-peft-runner-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -485,7 +485,7 @@ describe("ImplementSessionManager", () => {
   it("repairs generated condition-helper invocation kwargs for baseline-first PEFT runners", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-peft-helper-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -544,7 +544,7 @@ describe("ImplementSessionManager", () => {
   it("does not treat shell output redirection targets as required verification artifacts", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-redirection-paths-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "outputs", "experiment", "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "outputs", "experiment", "run_instruction_study.py");
     const stderrPath = path.join(workspace, "outputs", "experiment", "stderr.txt");
     const helpPath = path.join(workspace, "outputs", "experiment", "help.txt");
     mkdirSync(path.dirname(scriptPath), { recursive: true });
@@ -569,7 +569,7 @@ describe("ImplementSessionManager", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-shell-c-paths-"));
     tempDirs.push(workspace);
     const runnerPath = path.join(workspace, "outputs", "experiment", "run_lora_rank_dropout_experiment.py");
-    const wrapperPath = path.join(workspace, "outputs", "experiment", "run_lora_rank_dropout_study.py");
+    const wrapperPath = path.join(workspace, "outputs", "experiment", "run_condition_grid_study.py");
     const shellPath = path.join(workspace, "outputs", "experiment", "run_command.sh");
     mkdirSync(path.dirname(runnerPath), { recursive: true });
     writeFileSync(runnerPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
@@ -1344,9 +1344,9 @@ describe("ImplementSessionManager", () => {
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
-    const privateScriptPath = path.join(runDir, "run_peft_instruction_study.py");
+    const privateScriptPath = path.join(runDir, "run_instruction_study.py");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const publicScriptPath = path.join(publicDir, "run_peft_instruction_study.py");
+    const publicScriptPath = path.join(publicDir, "run_instruction_study.py");
     const deferredRootResultPath = path.join(publicDir, "peft_instruction_study_results.json");
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
@@ -2195,7 +2195,7 @@ describe("ImplementSessionManager", () => {
     const workspace = "/tmp/autolabos-localization-guard";
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     const paperEvidence = path.join(workspace, "outputs", "study", "paper", "evidence_links.json");
-    const runner = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const runner = path.join(publicDir, "run_condition_grid_study.py");
     const guarded = applyRunnerFeedbackLocalizationGuard(
       {
         context: {
@@ -2242,7 +2242,7 @@ describe("ImplementSessionManager", () => {
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     const helper = path.join(publicDir, "experiment.py");
     const command = path.join(publicDir, "run_command.sh");
-    const runner = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const runner = path.join(publicDir, "run_condition_grid_study.py");
     const guarded = applyRunnerFeedbackLocalizationGuard(
       {
         context: {
@@ -2291,7 +2291,7 @@ describe("ImplementSessionManager", () => {
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     mkdirSync(publicDir, { recursive: true });
     const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
-    const staleScriptPath = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const staleScriptPath = path.join(publicDir, "run_condition_grid_study.py");
     const wrapperPath = path.join(publicDir, "run_command.sh");
     const metricsPath = path.join(workspace, ".autolabos", "runs", "run-1", "metrics.json");
     writeFileSync(scriptPath, "print('new runner')\n", "utf8");
@@ -2302,7 +2302,7 @@ describe("ImplementSessionManager", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-        'python "${SCRIPT_DIR}/run_lora_rank_dropout_study.py" --metrics-path "${PWD}/metrics.json"'
+        'python "${SCRIPT_DIR}/run_condition_grid_study.py" --metrics-path "${PWD}/metrics.json"'
       ].join("\n"),
       "utf8"
     );
@@ -2318,7 +2318,7 @@ describe("ImplementSessionManager", () => {
     const repairedWrapper = readFileSync(wrapperPath, "utf8");
     expect(repairedWrapper).toContain('RUNNER="${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py"');
     expect(repairedWrapper).toContain('exec "${PYTHON_BIN:-python3}" "$RUNNER" \\');
-    expect(repairedWrapper).not.toContain("run_lora_rank_dropout_study.py");
+    expect(repairedWrapper).not.toContain("run_condition_grid_study.py");
     expect(repairedWrapper).toContain(JSON.stringify(metricsPath));
   });
 
@@ -2353,7 +2353,7 @@ describe("ImplementSessionManager", () => {
       entries: [
         "experiment.py",
         "run_command.sh",
-        "run_lora_rank_dropout_study.py",
+        "run_condition_grid_study.py",
         "run_lora_rank_dropout_experiment.py"
       ],
       runnerFeedback: {
@@ -2442,7 +2442,7 @@ describe("ImplementSessionManager", () => {
     const workspace = "/tmp/autolabos-contract-focus";
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     const helper = path.join(publicDir, "experiment.py");
-    const studyWrapper = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const studyWrapper = path.join(publicDir, "run_condition_grid_study.py");
     const canonicalRunner = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
     const guarded = applyImplementationContractLocalizationGuard(
       {
@@ -2511,16 +2511,16 @@ describe("ImplementSessionManager", () => {
             required_condition_count: 8,
             required_run_count: 24,
             seed_schedule: [42, 43, 44],
-            baseline_condition_marker: "rank_8_dropout_0_0",
+            baseline_condition_marker: "baseline_condition",
             required_condition_markers: [
-              "rank_8_dropout_0_0",
-              "rank_4_dropout_0_0",
-              "rank_4_dropout_0_05",
-              "rank_8_dropout_0_05",
-              "rank_16_dropout_0_0",
-              "rank_16_dropout_0_05",
-              "rank_32_dropout_0_0",
-              "rank_32_dropout_0_05"
+              "baseline_condition",
+              "candidate_condition_a",
+              "candidate_condition_a5",
+              "baseline_condition5",
+              "candidate_condition_d",
+              "candidate_condition_d5",
+              "candidate_condition_f",
+              "candidate_condition_f5"
             ]
           }
         },
@@ -5185,7 +5185,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    rows = [MultipleChoiceExample(prompt='Question?', choices=['A', 'B'], correct_index=0)]",
-        "    normalized = [_exec_normalize_choice_example('arc_challenge', row, idx) for idx, row in enumerate(_exec_to_plain_records(rows))]",
+        "    normalized = [_exec_normalize_choice_example('benchmark_task_a', row, idx) for idx, row in enumerate(_exec_to_plain_records(rows))]",
         "    assert normalized == [{'prompt': 'Question?', 'choices': ['A', 'B'], 'correct_index': 0, 'answer_index': 0}]",
         "    return 0",
         "",
@@ -5316,7 +5316,7 @@ describe("ImplementSessionManager", () => {
         "",
         "class FakeContext:",
         "    def as_dict(self):",
-        "        return {'output_dir': 'out', 'arc_eval_examples': 2, 'hellaswag_eval_examples': 2}",
+        "        return {'output_dir': 'out', 'arc_eval_examples': 2, 'benchmark_task_b_eval_examples': 2}",
         "",
         "def _condition_marker(spec: Any, *, default: Optional[str] = None) -> str:",
         "    if isinstance(spec, Mapping):",
@@ -5324,7 +5324,7 @@ describe("ImplementSessionManager", () => {
         "    return str(default or 'unknown')",
         "",
         "def prepare_dataset_bundle(runtime: Mapping[str, Any], *, logger: Optional[logging.Logger] = None) -> Dict[str, Any]:",
-        "    return {'train_records': [{'prompt': 'a'}], 'eval_tasks': {'arc_challenge': [{'answer_label': 'A'}]}}",
+        "    return {'train_records': [{'prompt': 'a'}], 'eval_tasks': {'benchmark_task_a': [{'answer_label': 'A'}]}}",
         "",
         "def load_tokenizer_and_model(model_id: str, runtime: Mapping[str, Any], condition_marker: str):",
         "    return object(), object(), 'cpu', {'condition_marker': condition_marker, 'model_id': model_id}",
@@ -5366,7 +5366,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    baseline = _execute_condition({'marker': 'baseline'}, 'baseline')",
-        "    tuned = _execute_condition({'marker': 'rank_8_dropout_0_0'}, 'tuned_condition')",
+        "    tuned = _execute_condition({'marker': 'baseline_condition'}, 'tuned_condition')",
         "    assert baseline['status'] == 'success'",
         "    assert tuned['status'] == 'success'",
         "    assert baseline['average_accuracy'] == 0.5",
@@ -5600,7 +5600,7 @@ describe("ImplementSessionManager", () => {
         "    return ['train-row']",
         "",
         "def load_benchmark_examples(args: argparse.Namespace) -> Dict[str, list[dict[str, str]]]:",
-        "    return {'arc_challenge': [{'answer': 'A'}]}",
+        "    return {'benchmark_task_a': [{'answer': 'A'}]}",
         "",
         "def run_baseline_first_recipe_loop(args, device, train_dataset, eval_examples):",
         "    return [{'recipe_id': 'lora', 'train_dataset': train_dataset, 'eval_examples': eval_examples}]",
@@ -5627,7 +5627,7 @@ describe("ImplementSessionManager", () => {
         "if __name__ == '__main__':",
         "    payload = assemble_experiment_metrics(argparse.Namespace(metrics_path='metrics.json'))",
         "    assert payload[0]['train_dataset'] == ['train-row']",
-        "    assert payload[0]['eval_examples']['arc_challenge'][0]['answer'] == 'A'",
+        "    assert payload[0]['eval_examples']['benchmark_task_a'][0]['answer'] == 'A'",
         ""
       ].join("\n"),
       "utf8"
@@ -5683,7 +5683,7 @@ describe("ImplementSessionManager", () => {
         "    return ([{'text': 'train', 'tokenizer': tokenizer, 'limit': max_train_examples}], {'seed': seed})",
         "",
         "def load_evaluation_examples(max_eval_examples, seed, **kwargs):",
-        "    return {'arc_challenge': [{'answer': 'A', 'limit': max_eval_examples, 'seed': seed}]}",
+        "    return {'benchmark_task_a': [{'answer': 'A', 'limit': max_eval_examples, 'seed': seed}]}",
         "",
         "def _call_with_supported_kwargs(function, **kwargs):",
         "    import inspect",
@@ -5754,7 +5754,7 @@ describe("ImplementSessionManager", () => {
         "    result = _execute_study_from_args(ns, Path('.'))",
         "    payload = _write_metrics_from_result(ns, result, Path('metrics.json'), Path('.'))",
         "    assert result['train_dataset'][0]['text'] == 'train'",
-        "    assert result['eval_datasets']['arc_challenge'][0]['answer'] == 'A'",
+        "    assert result['eval_datasets']['benchmark_task_a'][0]['answer'] == 'A'",
         "    assert result['device'] == 'cpu'",
         "    assert payload['raw_results']['device'] == 'cpu'",
         ""
@@ -6116,7 +6116,7 @@ describe("ImplementSessionManager", () => {
         "",
         "DEFAULT_COMPARISON_MODE = 'baseline_first_locked'",
         "DEFAULT_PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
-        "DEFAULT_PREFERRED_MODEL = 'Qwen/Qwen2.5-1.5B'",
+        "DEFAULT_PREFERRED_MODEL = 'the selected backbone'",
         "CLEANUP_COUNT = 0",
         "",
         "class TrainingResult:",
@@ -6203,7 +6203,7 @@ describe("ImplementSessionManager", () => {
         "def evaluate_bounded_benchmarks_for_run(trained_run, prepared_data, study_config):",
         "    if trained_run.model != 'held-model':",
         "        raise RuntimeError('model was cleaned before evaluation')",
-        "    return {'status': 'ok', 'task_results': {'arc_challenge': {'accuracy': 0.5}, 'hellaswag': {'accuracy': 1.0}}}",
+        "    return {'status': 'ok', 'task_results': {'benchmark_task_a': {'accuracy': 0.5}, 'benchmark_task_b': {'accuracy': 1.0}}}",
         "",
         "def assemble_run_metrics_row(condition, seed, train_result, eval_result, baseline_average_accuracy=None, comparison_mode=DEFAULT_COMPARISON_MODE, primary_metric_key=DEFAULT_PRIMARY_METRIC_KEY):",
         "    values = [item['accuracy'] for item in eval_result['task_results'].values()]",
@@ -6245,7 +6245,7 @@ describe("ImplementSessionManager", () => {
         "        return _build_failed_run_row(error_message=str(exc))",
         "",
         "if __name__ == '__main__':",
-        "    row = _execute_seed_condition_run({}, {}, {'condition_marker': 'rank_8_dropout_0_0'}, 42, Path('.'), {'device': 'cpu'}, {'model_id': 'model'})",
+        "    row = _execute_seed_condition_run({}, {}, {'condition_marker': 'baseline_condition'}, 42, Path('.'), {'device': 'cpu'}, {'model_id': 'model'})",
         "    print(f\"{row['status']}|{row.get('average_accuracy')}|{CLEANUP_COUNT}\")",
         ""
       ].join("\n"),
@@ -6586,7 +6586,7 @@ describe("ImplementSessionManager", () => {
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - tuned baseline\n", "utf8");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_peft_instruction_study.py");
+    const scriptPath = path.join(publicDir, "run_instruction_study.py");
     const readmePath = path.join(publicDir, "README.md");
     const metricsPath = path.join(runDir, "metrics.json");
     const artifactPath = path.join(publicDir, "artifacts", "pilot", "metrics.public.json");
@@ -7192,7 +7192,7 @@ describe("ImplementSessionManager", () => {
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_entrypoint_alias\n", "utf8");
 
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(publicDir, "run_condition_grid_study.py");
     const readmePath = path.join(publicDir, "README.md");
     const metricsPath = path.join(runDir, "metrics.json");
     mkdirSync(publicDir, { recursive: true });
@@ -7235,7 +7235,7 @@ describe("ImplementSessionManager", () => {
         "        'orchestrate_study_sweep',",
         "        'orchestrate_study',",
         "        'run_rank_dropout_study',",
-        "        'run_lora_rank_dropout_study',",
+        "        'run_condition_grid_study',",
         "        'execute_study',",
         "        'run_experiment',",
         "        'run_study',",
@@ -7278,7 +7278,7 @@ describe("ImplementSessionManager", () => {
       trigger: "auto_handoff",
       stage: "metrics",
       summary:
-        "Experiment metrics payload reports failed status: RuntimeError: No study sweep entrypoint was found. Expected one of: run_study_sweep, run_baseline_first_sweep, orchestrate_study_sweep, orchestrate_study, run_rank_dropout_study, run_lora_rank_dropout_study, execute_study, run_experiment, run_study",
+        "Experiment metrics payload reports failed status: RuntimeError: No study sweep entrypoint was found. Expected one of: run_study_sweep, run_baseline_first_sweep, orchestrate_study_sweep, orchestrate_study, run_rank_dropout_study, run_condition_grid_study, execute_study, run_experiment, run_study",
       command: `python ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
       metrics_path: metricsPath,
       suggested_next_action: "Expose the generated baseline-first condition sweep under the final study sweep entrypoint names.",
@@ -7344,7 +7344,7 @@ describe("ImplementSessionManager", () => {
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - restore_snapshot_entrypoint\n", "utf8");
 
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(publicDir, "run_condition_grid_study.py");
     const readmePath = path.join(publicDir, "README.md");
     const metricsPath = path.join(runDir, "metrics.json");
     mkdirSync(publicDir, { recursive: true });
@@ -7375,7 +7375,7 @@ describe("ImplementSessionManager", () => {
       "1"
     );
     mkdirSync(snapshotDir, { recursive: true });
-    const snapshotScriptPath = path.join(snapshotDir, "run_lora_rank_dropout_study.py");
+    const snapshotScriptPath = path.join(snapshotDir, "run_condition_grid_study.py");
     writeFileSync(
       snapshotScriptPath,
       [
@@ -7414,7 +7414,7 @@ describe("ImplementSessionManager", () => {
         "        'orchestrate_study_sweep',",
         "        'orchestrate_study',",
         "        'run_rank_dropout_study',",
-        "        'run_lora_rank_dropout_study',",
+        "        'run_condition_grid_study',",
         "        'execute_study',",
         "        'run_experiment',",
         "        'run_study',",
@@ -7454,7 +7454,7 @@ describe("ImplementSessionManager", () => {
       trigger: "auto_handoff",
       stage: "metrics",
       summary:
-        "Experiment metrics payload reports failed status: RuntimeError: No study sweep entrypoint was found. Expected one of: run_study_sweep, run_baseline_first_sweep, orchestrate_study_sweep, orchestrate_study, run_rank_dropout_study, run_lora_rank_dropout_study, execute_study, run_experiment, run_study",
+        "Experiment metrics payload reports failed status: RuntimeError: No study sweep entrypoint was found. Expected one of: run_study_sweep, run_baseline_first_sweep, orchestrate_study_sweep, orchestrate_study, run_rank_dropout_study, run_condition_grid_study, execute_study, run_experiment, run_study",
       command: `python ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
       metrics_path: metricsPath,
       suggested_next_action: "Expose the generated baseline-first condition sweep under the final study sweep entrypoint names.",
@@ -8264,7 +8264,7 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).not.toContain('"resolved_constraint_profile":');
   });
 
-  it("preserves repeated LoRA rank/dropout seed contracts in compact implement prompts", async () => {
+  it("preserves repeated condition-parameter seed contracts in compact implement prompts", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-repeat-contract-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -8321,7 +8321,7 @@ describe("ImplementSessionManager", () => {
               {
                 path: publicScriptPath,
                 content: [
-                  "PLANNED_CONDITIONS = ['rank_8_dropout_0_0', 'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05']",
+                  "PLANNED_CONDITIONS = ['baseline_condition', 'candidate_condition_d', 'candidate_condition_d5', 'candidate_condition_f', 'candidate_condition_f5']",
                   "REQUIRED_CONDITION_COUNT = 5",
                   "REQUIRED_RUN_COUNT = 25",
                   "SEED_SCHEDULE = [42, 43, 44, 45, 46]",
@@ -8352,9 +8352,9 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"required_condition_count": 5');
     expect(capturedPrompt).toContain('"required_run_count": 25');
     expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 5');
-    expect(capturedPrompt).toContain('"rank_8_dropout_0_0"');
-    expect(capturedPrompt).toContain('"rank_16_dropout_0_05"');
-    expect(capturedPrompt).toContain('"rank_32_dropout_0_05"');
+    expect(capturedPrompt).toContain('"baseline_condition"');
+    expect(capturedPrompt).toContain('"candidate_condition_d5"');
+    expect(capturedPrompt).toContain('"candidate_condition_f5"');
     expect(capturedPrompt).toContain("Do not compress repeated cells");
     expect(capturedPrompt).not.toContain('"required_condition_count": 2');
   });
@@ -8438,7 +8438,7 @@ describe("ImplementSessionManager", () => {
               {
                 path: publicScriptPath,
                 content: [
-                  "PLANNED_CONDITIONS = ['rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_16_dropout_0_0', 'rank_32_dropout_0_0']",
+                  "PLANNED_CONDITIONS = ['baseline_condition', 'candidate_condition_a', 'candidate_condition_d', 'candidate_condition_f']",
                   "REQUIRED_CONDITION_COUNT = 4",
                   "REQUIRED_RUN_COUNT = 22",
                   "SEED_SCHEDULE = [42, 43, 44, 45, 46]",
@@ -8469,13 +8469,13 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"required_condition_count": 4');
     expect(capturedPrompt).toContain('"required_run_count": 22');
     expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 5');
-    expect(capturedPrompt).toContain('"rank_4_dropout_0_0"');
-    expect(capturedPrompt).toContain('"rank_8_dropout_0_0"');
-    expect(capturedPrompt).toContain('"rank_16_dropout_0_0"');
-    expect(capturedPrompt).toContain('"rank_32_dropout_0_0"');
+    expect(capturedPrompt).toContain('"candidate_condition_a"');
+    expect(capturedPrompt).toContain('"baseline_condition"');
+    expect(capturedPrompt).toContain('"candidate_condition_d"');
+    expect(capturedPrompt).toContain('"candidate_condition_f"');
     expect(capturedPrompt).not.toContain('"required_condition_count": 8');
-    expect(capturedPrompt).not.toContain('"rank_4_dropout_0_05"');
-    expect(capturedPrompt).not.toContain('"rank_32_dropout_0_05"');
+    expect(capturedPrompt).not.toContain('"candidate_condition_a5"');
+    expect(capturedPrompt).not.toContain('"candidate_condition_f5"');
   });
 
   it("preserves full-grid LoRA condition and seed contracts from P6 plan prose", async () => {
@@ -8506,7 +8506,7 @@ describe("ImplementSessionManager", () => {
         '    - "Use LoRA ranks {4, 8, 16, 32} and dropouts {0.0, 0.05}; total training conditions per seed = 8"',
         '    - "Use seeds {42,43,44,45}; do not alter condition order."',
         "  evaluation_steps:",
-        '    - "Evaluate every completed checkpoint on the full ARC-Challenge validation split (n=299) and full HellaSwag validation split (n=10042)."',
+        '    - "Evaluate every completed checkpoint on the full Benchmark Task A validation split (n=299) and full Benchmark Task B validation split (n=10042)."',
         "  resource_notes:",
         '    - "Total planned train/eval jobs: 32"'
       ].join("\n"),
@@ -8524,10 +8524,10 @@ describe("ImplementSessionManager", () => {
     } as unknown as CodexNativeClient;
     const fullGridSource = [
       "PLANNED_CONDITIONS = [",
-      "  'rank_8_dropout_0_0',",
-      "  'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
-      "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05',",
-      "  'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+      "  'baseline_condition',",
+      "  'candidate_condition_a', 'candidate_condition_a5', 'baseline_condition5',",
+      "  'candidate_condition_d', 'candidate_condition_d5',",
+      "  'candidate_condition_f', 'candidate_condition_f5',",
       "]",
       "REQUIRED_CONDITION_COUNT = 8",
       "REQUIRED_RUN_COUNT = 32",
@@ -8576,19 +8576,19 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"required_condition_count": 8');
     expect(capturedPrompt).toContain('"required_run_count": 32');
     expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 4');
-    expect(capturedPrompt).toContain('"baseline_condition_marker": "rank_8_dropout_0_0"');
+    expect(capturedPrompt).toContain('"baseline_condition_marker": "baseline_condition"');
     expect(capturedPrompt).toContain('"seed_schedule":');
     expect(capturedPrompt).toContain('"full_evaluation_required": true');
     expect(capturedPrompt).toContain('"minimum_eval_examples_per_task":');
-    expect(capturedPrompt).toContain('"arc_challenge": 299');
-    expect(capturedPrompt).toContain('"hellaswag": 10042');
+    expect(capturedPrompt).toContain('"benchmark_task_a": 299');
+    expect(capturedPrompt).toContain('"benchmark_task_b": 10042');
     expect(capturedPrompt).toContain("42");
     expect(capturedPrompt).toContain("43");
     expect(capturedPrompt).toContain("44");
     expect(capturedPrompt).toContain("45");
-    expect(capturedPrompt).toContain('"rank_4_dropout_0_0"');
-    expect(capturedPrompt).toContain('"rank_4_dropout_0_05"');
-    expect(capturedPrompt).toContain('"rank_32_dropout_0_05"');
+    expect(capturedPrompt).toContain('"candidate_condition_a"');
+    expect(capturedPrompt).toContain('"candidate_condition_a5"');
+    expect(capturedPrompt).toContain('"candidate_condition_f5"');
     expect(capturedPrompt).not.toContain('"required_condition_count": 5');
   });
 
@@ -8655,10 +8655,10 @@ describe("ImplementSessionManager", () => {
                 path: publicScriptPath,
                 content: [
                   "PLANNED_CONDITIONS = [",
-                  "  'rank_8_dropout_0_0',",
-                  "  'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
-                  "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05',",
-                  "  'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+                  "  'baseline_condition',",
+                  "  'candidate_condition_a', 'candidate_condition_a5', 'baseline_condition5',",
+                  "  'candidate_condition_d', 'candidate_condition_d5',",
+                  "  'candidate_condition_f', 'candidate_condition_f5',",
                   "]",
                   "REQUIRED_CONDITION_COUNT = 8",
                   "REQUIRED_RUN_COUNT = 24",
@@ -8688,15 +8688,15 @@ describe("ImplementSessionManager", () => {
 
     expect(capturedPrompt).toContain('"required_condition_count": 8');
     expect(capturedPrompt).toContain('"required_run_count": 24');
-    expect(capturedPrompt).toContain('"rank_4_dropout_0_0"');
-    expect(capturedPrompt).toContain('"rank_4_dropout_0_05"');
-    expect(capturedPrompt).toContain('"rank_8_dropout_0_0"');
-    expect(capturedPrompt).toContain('"rank_8_dropout_0_05"');
-    expect(capturedPrompt).toContain('"rank_16_dropout_0_0"');
-    expect(capturedPrompt).toContain('"rank_16_dropout_0_05"');
-    expect(capturedPrompt).toContain('"rank_32_dropout_0_0"');
-    expect(capturedPrompt).toContain('"rank_32_dropout_0_05"');
-    expect(capturedPrompt).not.toContain('"rank_64_dropout_0_1"');
+    expect(capturedPrompt).toContain('"candidate_condition_a"');
+    expect(capturedPrompt).toContain('"candidate_condition_a5"');
+    expect(capturedPrompt).toContain('"baseline_condition"');
+    expect(capturedPrompt).toContain('"baseline_condition5"');
+    expect(capturedPrompt).toContain('"candidate_condition_d"');
+    expect(capturedPrompt).toContain('"candidate_condition_d5"');
+    expect(capturedPrompt).toContain('"candidate_condition_f"');
+    expect(capturedPrompt).toContain('"candidate_condition_f5"');
+    expect(capturedPrompt).not.toContain('"candidate_condition_j"');
   });
 
   it("uses staged_llm directly when the runtime no longer enters a codex implement turn", async () => {
@@ -9537,7 +9537,7 @@ describe("ImplementSessionManager", () => {
               requires_network: true,
               requires_warm_cache: true,
               blocking_reason:
-                "No known non-network blocker at bootstrap. If network access is unavailable, the Hugging Face model, tokenizer, ARC-Challenge, HellaSwag, and instruction-tuning dataset must already be present in the local cache; otherwise execution will fail despite valid code.",
+                "No known non-network blocker at bootstrap. If network access is unavailable, the Hugging Face model, tokenizer, Benchmark Task A, Benchmark Task B, and instruction-tuning dataset must already be present in the local cache; otherwise execution will fail despite valid code.",
               remediation: ["Prewarm the Hugging Face cache or allow network access for bootstrap."],
               requirements: [
                 {
@@ -12172,7 +12172,7 @@ describe("ImplementSessionManager", () => {
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(publicDir, "run_condition_grid_study.py");
     const metricsPath = path.join(runDir, "metrics.json");
     let callCount = 0;
     const codex = {
@@ -12590,7 +12590,7 @@ describe("ImplementSessionManager", () => {
         "import json",
         "from typing import Any, Dict, Tuple",
         "",
-        "BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
+        "BASELINE_CONDITION_MARKER = 'baseline_condition'",
         "",
         "def _parse_condition_marker(marker: str) -> Tuple[int, float]:",
         "    parts = marker.split('_')",
@@ -12611,7 +12611,7 @@ describe("ImplementSessionManager", () => {
         "    }",
         "",
         "if __name__ == '__main__':",
-        "    print(json.dumps(build_condition_spec('rank_8_dropout_0_05'), sort_keys=True))",
+        "    print(json.dumps(build_condition_spec('baseline_condition5'), sort_keys=True))",
         ""
       ].join("\n"),
       "utf8"
@@ -12626,7 +12626,7 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_rank_dropout_marker_parser_collision_marker");
     const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
     expect(JSON.parse(output)).toMatchObject({
-      marker: "rank_8_dropout_0_05",
+      marker: "baseline_condition5",
       rank: 8,
       lora_dropout: 0.05
     });
@@ -12682,7 +12682,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main() -> int:",
         "    runner = _find_callable(",
-        "        exact_names=('run_lora_rank_dropout_study',),",
+        "        exact_names=('run_condition_grid_study',),",
         "        include_tokens=(),",
         "        exclude_tokens=('parse', 'build', 'write', 'payload', 'metric', 'artifact', 'main', 'entry', 'preflight'),",
         "    )",
@@ -12875,12 +12875,12 @@ describe("ImplementSessionManager", () => {
         "    return {",
         "        'plan_id': 'plan_1',",
         "        'entries': [",
-        "            {'condition_id': 'rank_8_dropout_0_0', 'is_baseline': True},",
-        "            {'condition_id': 'rank_4_dropout_0_05', 'is_baseline': False},",
+        "            {'condition_id': 'baseline_condition', 'is_baseline': True},",
+        "            {'condition_id': 'candidate_condition_a5', 'is_baseline': False},",
         "        ],",
         "        'ordered_conditions': [",
-        "            {'condition_id': 'rank_8_dropout_0_0', 'is_baseline': True},",
-        "            {'condition_id': 'rank_4_dropout_0_05', 'is_baseline': False},",
+        "            {'condition_id': 'baseline_condition', 'is_baseline': True},",
+        "            {'condition_id': 'candidate_condition_a5', 'is_baseline': False},",
         "        ],",
         "    }",
         "",
@@ -13273,10 +13273,10 @@ describe("ImplementSessionManager", () => {
         "    return func(**{key: value for key, value in kwargs.items() if key in parameters})",
         "",
         "def load_all_benchmark_samples(args=None, seed=None):",
-        "    return {'arc_challenge': [{'id': 'arc-1'}], 'hellaswag': [{'id': 'hella-1'}]}",
+        "    return {'benchmark_task_a': [{'id': 'arc-1'}], 'benchmark_task_b': [{'id': 'hella-1'}]}",
         "",
         "def run_conditions_baseline_first(args, device, benchmark_samples, run_output_dir):",
-        "    return [{'condition_marker': 'locked_lora_baseline', 'sample_count': len(benchmark_samples['arc_challenge']), 'output_dir': str(run_output_dir), 'device': str(device)}]",
+        "    return [{'condition_marker': 'locked_lora_baseline', 'sample_count': len(benchmark_samples['benchmark_task_a']), 'output_dir': str(run_output_dir), 'device': str(device)}]",
         "",
         "def _resolve_helper(candidate_names, required=True):",
         "    for name in candidate_names:",
@@ -13374,7 +13374,7 @@ describe("ImplementSessionManager", () => {
         "    return ['unmodified_base', 'dora']",
         "",
         "def load_benchmark_subsets(max_examples_per_task, seed=42):",
-        "    return {'arc_challenge': [{'id': f'arc-{seed}', 'limit': max_examples_per_task}]}, {'source': 'benchmark-loader'}",
+        "    return {'benchmark_task_a': [{'id': f'arc-{seed}', 'limit': max_examples_per_task}]}, {'source': 'benchmark-loader'}",
         "",
         "def load_instruction_records(args):",
         "    return [{'instruction': 'bounded train example'}], {'source': 'instruction-loader'}",
@@ -13383,7 +13383,7 @@ describe("ImplementSessionManager", () => {
         "    return {",
         "        'condition_marker': condition,",
         "        'status': 'success',",
-        "        'eval_count': len(eval_examples['arc_challenge']),",
+        "        'eval_count': len(eval_examples['benchmark_task_a']),",
         "        'train_count': len(instruction_examples or []),",
         "        'condition_index': condition_index,",
         "        'device': str(device),",
@@ -14064,15 +14064,15 @@ describe("ImplementSessionManager", () => {
         "DEFAULT_OUTPUT_DIR = Path('outputs')",
         "DEFAULT_METRICS_PATH = Path('metrics.json')",
         "DEFAULT_LOG_FILENAME = 'run.log'",
-        "DEFAULT_PREFERRED_MODEL = 'Qwen/Qwen2.5-1.5B'",
-        "DEFAULT_FALLBACK_MODEL = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'",
+        "DEFAULT_PREFERRED_MODEL = 'the selected backbone'",
+        "DEFAULT_FALLBACK_MODEL = 'the configured fallback backbone'",
         "SCRIPT_PATH = Path(__file__)",
         "",
         "class PreparedStudyData:",
         "    pass",
         "",
         "class Preflight:",
-        "    resolved_model_name = 'Qwen/Qwen2.5-1.5B'",
+        "    resolved_model_name = 'the selected backbone'",
         "",
         "class RuntimeContext:",
         "    device = 'cpu'",
@@ -14118,7 +14118,7 @@ describe("ImplementSessionManager", () => {
         "def prepare_bounded_study_data(config: argparse.Namespace, tokenizer: Any = None, logger: logging.Logger | None = None) -> PreparedStudyData:",
         "    return PreparedStudyData()",
         "",
-        "def execute_lora_rank_dropout_study(",
+        "def execute_condition_grid_study(",
         "    config: argparse.Namespace,",
         "    prepared_data: PreparedStudyData,",
         "    device_context: Any,",
@@ -14136,7 +14136,7 @@ describe("ImplementSessionManager", () => {
         "    }",
         "",
         "def _main_resolve_runner() -> Any:",
-        "    return execute_lora_rank_dropout_study",
+        "    return execute_condition_grid_study",
         "",
         "def main(argv: Optional[Sequence[str]] = None) -> int:",
         "    wall_start_time = time.time()",
@@ -14188,7 +14188,7 @@ describe("ImplementSessionManager", () => {
       cwd: workspace,
       encoding: "utf8"
     }).trim();
-    expect(output).toBe("Qwen/Qwen2.5-1.5B|True|cpu");
+    expect(output).toBe("the selected backbone|True|cpu");
   });
 
   it("prioritizes locked baseline-first study runners before generic study helpers", async () => {
@@ -14212,7 +14212,7 @@ describe("ImplementSessionManager", () => {
         "    return {",
         "        'condition_results': [",
         "            {'condition_marker': 'unmodified_base', 'is_baseline': True, 'status': 'completed'},",
-        "            {'condition_marker': 'rank_8_dropout_0_0', 'is_baseline': False, 'status': 'completed'},",
+        "            {'condition_marker': 'baseline_condition', 'is_baseline': False, 'status': 'completed'},",
         "        ]",
         "    }",
         "",
@@ -14311,7 +14311,7 @@ describe("ImplementSessionManager", () => {
         "    return {",
         "        'condition_results': [",
         "            {'condition_marker': 'unmodified_base', 'is_baseline': True, 'average_accuracy': 0.5},",
-        "            {'condition_marker': 'rank_8_dropout_0_0', 'is_baseline': False, 'average_accuracy': 0.55},",
+        "            {'condition_marker': 'baseline_condition', 'is_baseline': False, 'average_accuracy': 0.55},",
         "        ]",
         "    }",
         "",
@@ -14389,7 +14389,7 @@ describe("ImplementSessionManager", () => {
       cwd: workspace,
       encoding: "utf8"
     }).trim();
-    expect(output).toBe("rank_8_dropout_0_0");
+    expect(output).toBe("baseline_condition");
   });
 
   it("prevents callable helper classes from shadowing runtime preflight helpers", async () => {
@@ -14614,7 +14614,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def _lookup_orchestration_helper() -> Optional[Any]:",
         "    explicit_names = (",
-        "        'run_lora_rank_dropout_study',",
+        "        'run_condition_grid_study',",
         "        'run_rank_dropout_study',",
         "        'run_study',",
         "        'execute_study',",
@@ -14945,7 +14945,7 @@ describe("ImplementSessionManager", () => {
         "",
         "BASELINE_CONDITION_NAME = 'unmodified_base'",
         "DEFAULT_PLAN_ID = 'plan_1'",
-        "PLANNED_CONDITION_MARKERS: Tuple[str, ...] = ('rank_8_dropout_0_0',)",
+        "PLANNED_CONDITION_MARKERS: Tuple[str, ...] = ('baseline_condition',)",
         "DEFAULT_EVAL_EXAMPLES_PER_TASK = 2",
         "torch = None",
         "device = 'cuda:0'",
@@ -14960,11 +14960,11 @@ describe("ImplementSessionManager", () => {
         "class StudyPlan:",
         "    plan_id: str = DEFAULT_PLAN_ID",
         "    baseline_condition: StudyCondition = field(default_factory=lambda: StudyCondition(BASELINE_CONDITION_NAME, True))",
-        "    tuned_conditions: Tuple[StudyCondition, ...] = field(default_factory=lambda: (StudyCondition('rank_8_dropout_0_0', False),))",
+        "    tuned_conditions: Tuple[StudyCondition, ...] = field(default_factory=lambda: (StudyCondition('baseline_condition', False),))",
         "    timeout_sec: int = 60",
         "    required_condition_count: int = 1",
         "    primary_metric_key: str = 'accuracy_delta_vs_baseline'",
-        "    objective_metric_description: str = 'average_accuracy_arc_challenge_hellaswag'",
+        "    objective_metric_description: str = 'average_accuracy_benchmark_task_a_benchmark_task_b'",
         "",
         "@dataclass",
         "class OutputPaths:",
@@ -14992,7 +14992,7 @@ describe("ImplementSessionManager", () => {
         "    return func(*args, **filtered_kwargs)",
         "",
         "def _resolve_selected_model_name(plan: StudyPlan, args: argparse.Namespace, output_paths: OutputPaths) -> str:",
-        "    return 'Qwen/Qwen2.5-1.5B'",
+        "    return 'the selected backbone'",
         "",
         "def _standardize_condition_record(raw: Any, condition: Any, selected_model_name: Optional[str], started_at: Optional[float] = None, ended_at: Optional[float] = None) -> Dict[str, Any]:",
         "    record = dict(raw)",
@@ -15010,7 +15010,7 @@ describe("ImplementSessionManager", () => {
         "    if device != 'cuda:0':",
         "        raise RuntimeError('runtime device was not supplied')",
         "    baseline = {'name': BASELINE_CONDITION_NAME, 'is_baseline': True, 'status': 'completed', 'average_accuracy': 0.4}",
-        "    tuned = [{'name': 'rank_8_dropout_0_0', 'is_baseline': False, 'status': 'completed', 'average_accuracy': 0.5, 'accuracy_delta_vs_baseline': 0.1}]",
+        "    tuned = [{'name': 'baseline_condition', 'is_baseline': False, 'status': 'completed', 'average_accuracy': 0.5, 'accuracy_delta_vs_baseline': 0.1}]",
         "    return {'selected_model_name': selected_model_name, 'baseline_result': baseline, 'tuned_condition_results': tuned, 'condition_results': [baseline, *tuned]}",
         "",
         "def _execute_condition_record(condition: Any, plan: StudyPlan, args: argparse.Namespace, output_paths: OutputPaths, selected_model_name: str, baseline_record: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:",
@@ -15153,7 +15153,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def run_condition_seed_execution_loop(execution_plan: Any, config: Any = None) -> Dict[str, Any]:",
         "    seeds = _resolve_seed_schedule(config)",
-        "    return {'seed_rows': [{'marker': 'rank_8_dropout_0_0', 'seed': seed, 'status': 'completed'} for seed in seeds]}",
+        "    return {'seed_rows': [{'marker': 'baseline_condition', 'seed': seed, 'status': 'completed'} for seed in seeds]}",
         "",
         "def _run_single_condition_seed(*, condition, seed, selected_model_name, runtime_context, run_output_dir):",
         "    return {'marker': condition, 'seed': seed}",
@@ -15252,7 +15252,7 @@ describe("ImplementSessionManager", () => {
         "def execute_locked_baseline_first_plan(**kwargs):",
         "    return {'status': 'completed', 'completed_run_count': 24}",
         "",
-        "def run_lora_rank_dropout_study():",
+        "def run_condition_grid_study():",
         "    execution_loop = _resolve_first_callable(",
         "        (",
         "            \"_execute_locked_study_plan\",",
@@ -15270,7 +15270,7 @@ describe("ImplementSessionManager", () => {
         "    return execution_loop()",
         "",
         "if __name__ == '__main__':",
-        "    print(run_lora_rank_dropout_study()['status'])",
+        "    print(run_condition_grid_study()['status'])",
         ""
       ].join("\n"),
       "utf8"
@@ -15340,14 +15340,14 @@ describe("ImplementSessionManager", () => {
         "            \"execute_locked_condition_sweep\",",
         "            \"run_locked_condition_sweep\",",
         "            \"orchestrate_locked_sweep\",",
-        "            \"run_lora_rank_dropout_study\",",
+        "            \"run_condition_grid_study\",",
         "            \"run_locked_lora_sweep\",",
         "            \"run_full_locked_study\",",
         "        ],",
         "        fuzzy_any_tokens=(\"sweep\", \"orchestrate\", \"study\"),",
         "        fuzzy_all_tokens=(\"baseline\",),",
         "    )",
-        "    return _invoke_with_supported_kwargs(orchestrator, condition_specs=['rank_8_dropout_0_0'])",
+        "    return _invoke_with_supported_kwargs(orchestrator, condition_specs=['baseline_condition'])",
         "",
         "if __name__ == '__main__':",
         "    print(_orchestrate_study_execution()['status'])",
@@ -15387,7 +15387,7 @@ describe("ImplementSessionManager", () => {
         "    return {",
         "        'status': 'completed',",
         "        'condition_seed_rows': [",
-        "            {'condition_marker': 'rank_8_dropout_0_0', 'seed': 42, 'status': 'completed', 'average_accuracy': 0.5}",
+        "            {'condition_marker': 'baseline_condition', 'seed': 42, 'status': 'completed', 'average_accuracy': 0.5}",
         "        ],",
         "    }",
         "",
@@ -15500,7 +15500,7 @@ describe("ImplementSessionManager", () => {
     const after = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
     expect(after.condition_seed_rows).toHaveLength(1);
     expect(after.condition_seed_rows[0]).toMatchObject({
-      condition_marker: "rank_8_dropout_0_0",
+      condition_marker: "baseline_condition",
       seed: 42,
       status: "completed"
     });
@@ -15521,11 +15521,11 @@ describe("ImplementSessionManager", () => {
         "import json",
         "from pathlib import Path",
         "",
-        "DEFAULT_BASE_MODEL = 'TinyLlama/TinyLlama-1.1B'",
-        "TASK_NAMES = ('arc_challenge', 'hellaswag')",
+        "DEFAULT_BASE_MODEL = 'the configured fallback backbone'",
+        "TASK_NAMES = ('benchmark_task_a', 'benchmark_task_b')",
         "TASK_DATASET_CONFIGS = {",
-        "    'arc_challenge': {'dataset_name': 'ai2_arc', 'dataset_config': 'ARC-Challenge', 'train_split': 'train', 'validation_split': 'validation'},",
-        "    'hellaswag': {'dataset_name': 'hellaswag', 'dataset_config': None, 'train_split': 'train', 'validation_split': 'validation'},",
+        "    'benchmark_task_a': {'dataset_name': 'ai2_arc', 'dataset_config': 'Benchmark Task A', 'train_split': 'train', 'validation_split': 'validation'},",
+        "    'benchmark_task_b': {'dataset_name': 'benchmark_task_b', 'dataset_config': None, 'train_split': 'train', 'validation_split': 'validation'},",
         "}",
         "class DatasetDict(dict):",
         "    pass",
@@ -15546,8 +15546,8 @@ describe("ImplementSessionManager", () => {
         "        'base_model_name': base_model_name,",
         "        'device': str(device),",
         "        'task_names': sorted(task_datasets.keys()),",
-        "        'arc_train_split': task_datasets['arc_challenge']['train'][0]['split'],",
-        "        'hellaswag_validation_split': task_datasets['hellaswag']['validation'][0]['split'],",
+        "        'arc_train_split': task_datasets['benchmark_task_a']['train'][0]['split'],",
+        "        'benchmark_task_b_validation_split': task_datasets['benchmark_task_b']['validation'][0]['split'],",
         "    }]",
         "def _extract_raw_condition_records(output):",
         "    return output, {}",
@@ -15557,7 +15557,7 @@ describe("ImplementSessionManager", () => {
         "    namespace.output_root_dir = output_dir",
         "    namespace.metrics_path = metrics_path",
         "    return namespace",
-        "def run_lora_rank_dropout_study(args: argparse.Namespace):",
+        "def run_condition_grid_study(args: argparse.Namespace):",
         "    output_dir = Path(args.output_dir).resolve()",
         "    metrics_path = Path(args.metrics_path).resolve()",
         "    runtime_namespace = _build_runtime_namespace(args, output_dir=output_dir, metrics_path=metrics_path)",
@@ -15591,10 +15591,10 @@ describe("ImplementSessionManager", () => {
         "    parser = argparse.ArgumentParser()",
         "    parser.add_argument('--output-dir', required=True)",
         "    parser.add_argument('--metrics-path', required=True)",
-        "    parser.add_argument('--base-model-name', default='Qwen/Qwen2.5-1.5B')",
+        "    parser.add_argument('--base-model-name', default='the selected backbone')",
         "    parser.add_argument('--timeout-sec', type=int, default=60)",
         "    parser.add_argument('--seed', type=int, default=42)",
-        "    run_lora_rank_dropout_study(parser.parse_args())",
+        "    run_condition_grid_study(parser.parse_args())",
         "if __name__ == '__main__':",
         "    main()",
         ""
@@ -15628,9 +15628,9 @@ describe("ImplementSessionManager", () => {
       condition_results: [
         {
           arc_train_split: "train",
-          base_model_name: "Qwen/Qwen2.5-1.5B",
-          hellaswag_validation_split: "validation",
-          task_names: ["arc_challenge", "hellaswag"]
+          base_model_name: "the selected backbone",
+          benchmark_task_b_validation_split: "validation",
+          task_names: ["benchmark_task_a", "benchmark_task_b"]
         }
       ]
     });
@@ -15648,8 +15648,8 @@ describe("ImplementSessionManager", () => {
         "import inspect",
         "import json",
         "",
-        "PREFERRED_BASE_MODEL = 'Qwen/Qwen2.5-1.5B'",
-        "FALLBACK_BASE_MODEL = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'",
+        "PREFERRED_BASE_MODEL = 'the selected backbone'",
+        "FALLBACK_BASE_MODEL = 'the configured fallback backbone'",
         "",
         "def _runtime_device_snapshot():",
         "    return {'device': 'cuda', 'cuda_available': True, 'gpu_name': 'RTX 4090'}",
@@ -15685,7 +15685,7 @@ describe("ImplementSessionManager", () => {
         "    }",
         "",
         "if __name__ == '__main__':",
-        "    args = argparse.Namespace(preferred_model='Qwen/Qwen2.5-1.5B', fallback_model='TinyLlama/TinyLlama-1.1B-Chat-v1.0')",
+        "    args = argparse.Namespace(preferred_model='the selected backbone', fallback_model='the configured fallback backbone')",
         "    print(json.dumps(run_study(args), sort_keys=True))",
         ""
       ].join("\n"),
@@ -15706,7 +15706,7 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("device_info=_autolabos_prepare_study_device_info(args)");
     expect(after).toEqual({
       device: "cuda",
-      selected_model_name: "Qwen/Qwen2.5-1.5B",
+      selected_model_name: "the selected backbone",
       status: "ok"
     });
   });
@@ -16748,7 +16748,7 @@ describe("ImplementSessionManager", () => {
         "",
         "if __name__ == \"__main__\":",
         "    manifest = {",
-        "        \"topic\": \"LoRA rank/dropout\",",
+        "        \"topic\": \"condition-parameter\",",
         "        \"comparison_contract\": {\"baseline_first_required\": True},",
         "        \"planned_condition_contract\": {\"required_condition_count\": 2},",
         "    }",
@@ -16774,7 +16774,7 @@ describe("ImplementSessionManager", () => {
       baseline_first_required: true,
       required_condition_count: 2,
       status: "ok",
-      topic: "LoRA rank/dropout"
+      topic: "condition-parameter"
     });
   });
 
@@ -16933,7 +16933,7 @@ describe("ImplementSessionManager", () => {
   it("repairs a python runner that calls the legacy runtime dependency helper before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runtime-deps-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -16976,7 +16976,7 @@ describe("ImplementSessionManager", () => {
   it("repairs a python runner that calls the underscore runtime dependency helper before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runtime-deps-private-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -17021,7 +17021,7 @@ describe("ImplementSessionManager", () => {
   it("repairs dependency checker calls that omit generated required dependency lists before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-dependency-checker-call-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -17073,7 +17073,7 @@ describe("ImplementSessionManager", () => {
   it("repairs a python runner that calls setup_logging while defining configure_logging", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-logging-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -17109,7 +17109,7 @@ describe("ImplementSessionManager", () => {
   it("repairs current_utc_timestamp logging fallbacks when utc_timestamp exists", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-current-utc-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -17162,7 +17162,7 @@ describe("ImplementSessionManager", () => {
   it("repairs cleanup_model_artifacts calls when generated cleanup helpers use another name", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-cleanup-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const markerPath = path.join(workspace, "cleanup.txt");
     writeFileSync(
       scriptPath,
@@ -17197,7 +17197,7 @@ describe("ImplementSessionManager", () => {
   it("repairs missing log_message aliases from generated entrypoint loggers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-log-message-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const logPath = path.join(workspace, "runner.log");
     writeFileSync(
       scriptPath,
@@ -17232,7 +17232,7 @@ describe("ImplementSessionManager", () => {
   it("repairs missing print_status aliases from generated status output", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-print-status-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -17262,7 +17262,7 @@ describe("ImplementSessionManager", () => {
   it("repairs missing module-level logger aliases from generated entrypoint logging", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-logger-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -17270,7 +17270,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main() -> int:",
         "    logging.basicConfig(level=logging.INFO)",
-        "    logger.info('Canonical runnable command: %s', 'python run_peft_instruction_study.py')",
+        "    logger.info('Canonical runnable command: %s', 'python run_instruction_study.py')",
         "    return 0",
         "",
         "if __name__ == '__main__':",
@@ -17293,7 +17293,7 @@ describe("ImplementSessionManager", () => {
   it("repairs entrypoint runtime helper aliases and dict-returning metrics writers before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-entrypoint-runtime-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -17342,7 +17342,7 @@ describe("ImplementSessionManager", () => {
   it("repairs missing get_device_info entrypoint helpers before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-get-device-info-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -17371,7 +17371,7 @@ describe("ImplementSessionManager", () => {
   it("normalizes entrypoint detect_device tuple metadata objects before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-device-tuple-info-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -17440,7 +17440,7 @@ describe("ImplementSessionManager", () => {
   it("repairs entrypoint filesystem path normalization for frozen dataclass configs", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-frozen-args-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const outputDir = path.join(workspace, "experiment");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
@@ -17501,7 +17501,7 @@ describe("ImplementSessionManager", () => {
   it("repairs missing Timer entrypoint helpers from generated WallClockTimer utilities", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-timer-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -17541,7 +17541,7 @@ describe("ImplementSessionManager", () => {
   it("repairs missing JSON-safe helper aliases without requiring an existing fallback", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-json-safe-fallback-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -17575,7 +17575,7 @@ describe("ImplementSessionManager", () => {
   it("inserts JSON-safe helper aliases after complete multi-line import blocks", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-json-safe-import-block-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -17613,7 +17613,7 @@ describe("ImplementSessionManager", () => {
   it("repairs metrics writer adapters that omit the writer's required path argument", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metrics-writer-path-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -17661,7 +17661,7 @@ describe("ImplementSessionManager", () => {
   it("repairs AutoLabOS metrics writer compatible-call adapters that duplicate the metrics argument", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-autolabos-metrics-writer-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -17820,14 +17820,14 @@ describe("ImplementSessionManager", () => {
         "            ('unmodified_base', {",
         "                'condition_marker': 'unmodified_base',",
         "                'status': 'completed',",
-        "                'arc_challenge_accuracy': 0.20,",
-        "                'hellaswag_accuracy': 0.30,",
+        "                'benchmark_task_a_accuracy': 0.20,",
+        "                'benchmark_task_b_accuracy': 0.30,",
         "            }),",
         "            ('locked_lora_baseline', {",
         "                'condition_marker': 'locked_lora_baseline',",
         "                'status': 'completed',",
-        "                'arc_challenge_accuracy': 0.40,",
-        "                'hellaswag_accuracy': 0.50,",
+        "                'benchmark_task_a_accuracy': 0.40,",
+        "                'benchmark_task_b_accuracy': 0.50,",
         "            }),",
         "        ]),",
         "    }",
@@ -17840,8 +17840,8 @@ describe("ImplementSessionManager", () => {
         "        'condition_marker': marker,",
         "        'status': condition_result.get('status', 'completed'),",
         "        'mean_zero_shot_accuracy': (",
-        "            condition_result.get('arc_challenge_accuracy', 0.0)",
-        "            + condition_result.get('hellaswag_accuracy', 0.0)",
+        "            condition_result.get('benchmark_task_a_accuracy', 0.0)",
+        "            + condition_result.get('benchmark_task_b_accuracy', 0.0)",
         "        ) / 2.0,",
         "    }",
         "",
@@ -18286,7 +18286,7 @@ describe("ImplementSessionManager", () => {
   it("repairs metrics writer dispatchers that select raw JSON writers before contract builders", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metrics-dispatcher-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -18385,7 +18385,7 @@ describe("ImplementSessionManager", () => {
   it("repairs failure metrics calls that use the write_json_metrics alias when only write_metrics_json exists", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-write-json-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -18430,7 +18430,7 @@ describe("ImplementSessionManager", () => {
   it("repairs failure metrics calls that use safe_write_json when only generated metrics writers exist", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-safe-write-json-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -18474,7 +18474,7 @@ describe("ImplementSessionManager", () => {
   it("repairs metrics payload builders that iterate an entire result mapping as candidate rows", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metrics-payload-mapping-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -18505,14 +18505,14 @@ describe("ImplementSessionManager", () => {
         "    arc_accuracy = _safe_float(",
         "        _nested_lookup(",
         "            result_map,",
-        "            ((\"arc_challenge_accuracy\",), (\"arc_accuracy\",), (\"metrics\", \"arc_challenge_accuracy\")),",
+        "            ((\"benchmark_task_a_accuracy\",), (\"arc_accuracy\",), (\"metrics\", \"benchmark_task_a_accuracy\")),",
         "            0.0,",
         "        )",
         "    )",
-        "    hellaswag_accuracy = _safe_float(",
+        "    benchmark_task_b_accuracy = _safe_float(",
         "        _nested_lookup(",
         "            result_map,",
-        "            ((\"hellaswag_accuracy\",), (\"metrics\", \"hellaswag_accuracy\")),",
+        "            ((\"benchmark_task_b_accuracy\",), (\"metrics\", \"benchmark_task_b_accuracy\")),",
         "            0.0,",
         "        )",
         "    )",
@@ -18520,14 +18520,14 @@ describe("ImplementSessionManager", () => {
         "        _nested_lookup(",
         "            result_map,",
         "            ((\"mean_zero_shot_accuracy\",), (\"primary_metric\",), (\"metrics\", \"mean_zero_shot_accuracy\")),",
-        "            (arc_accuracy + hellaswag_accuracy) / 2.0,",
+        "            (arc_accuracy + benchmark_task_b_accuracy) / 2.0,",
         "        )",
         "    )",
         "    return {",
         "        'candidate_id': result_map.get('candidate_id', 'unknown'),",
         "        'is_baseline': result_map.get('is_baseline', True),",
-        "        'arc_challenge_accuracy': arc_accuracy,",
-        "        'hellaswag_accuracy': hellaswag_accuracy,",
+        "        'benchmark_task_a_accuracy': arc_accuracy,",
+        "        'benchmark_task_b_accuracy': benchmark_task_b_accuracy,",
         "        'mean_zero_shot_accuracy': mean_accuracy,",
         "    }",
         "",
@@ -18538,8 +18538,8 @@ describe("ImplementSessionManager", () => {
         "def run_baseline_first_experiment(config):",
         "    return {",
         "        'candidate_results': [",
-        "            {'candidate_id': 'base', 'is_baseline': True, 'evaluation': {'arc_challenge_accuracy': 0.25, 'hellaswag_accuracy': 0.5, 'mean_zero_shot_accuracy': 0.375}},",
-        "            {'candidate_id': 'vanilla_lora_r8_alpha16_dropout005', 'is_baseline': False, 'evaluation': {'arc_challenge_accuracy': 0.5, 'hellaswag_accuracy': 0.75, 'mean_zero_shot_accuracy': 0.625}},",
+        "            {'candidate_id': 'base', 'is_baseline': True, 'evaluation': {'benchmark_task_a_accuracy': 0.25, 'benchmark_task_b_accuracy': 0.5, 'mean_zero_shot_accuracy': 0.375}},",
+        "            {'candidate_id': 'vanilla_lora_r8_alpha16_dropout005', 'is_baseline': False, 'evaluation': {'benchmark_task_a_accuracy': 0.5, 'benchmark_task_b_accuracy': 0.75, 'mean_zero_shot_accuracy': 0.625}},",
         "        ],",
         "        'summary': {'completed_candidate_ids': ['base', 'vanilla_lora_r8_alpha16_dropout005']},",
         "    }",
@@ -18557,7 +18557,7 @@ describe("ImplementSessionManager", () => {
         "    payload = run_study_and_build_metrics(object())",
         "    assert payload['candidate_results'][0]['candidate_id'] == 'base'",
         "    assert payload['candidate_results'][1]['is_baseline'] is False",
-        "    assert payload['candidate_results'][0]['arc_challenge_accuracy'] == 0.25",
+        "    assert payload['candidate_results'][0]['benchmark_task_a_accuracy'] == 0.25",
         "    assert payload['candidate_results'][1]['mean_zero_shot_accuracy'] == 0.625",
         "    return 0",
         "",
@@ -18575,14 +18575,14 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("Metrics payload builder received a mapping without candidate result rows.");
-    expect(repairedSource).toContain('("evaluation", "arc_challenge_accuracy")');
+    expect(repairedSource).toContain('("evaluation", "benchmark_task_a_accuracy")');
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
   it("repairs causal-LM training labels so generated Trainer batches can be collated", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-causal-label-padding-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -18638,7 +18638,7 @@ describe("ImplementSessionManager", () => {
   it("repairs inline causal-LM tokenizer padding before precomputed labels", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-inline-causal-label-padding-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -18689,7 +18689,7 @@ describe("ImplementSessionManager", () => {
   it("repairs PEFT virtual-token continuation scoring logits alignment before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-virtual-token-eval-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -18728,7 +18728,7 @@ describe("ImplementSessionManager", () => {
   it("repairs IA3 feedforward module lists so they are a subset of target modules before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-ia3-feedforward-subset-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -18792,7 +18792,7 @@ describe("ImplementSessionManager", () => {
   it("repairs tuple-returning main argument parser bridges before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-parser-tuple-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -18873,7 +18873,7 @@ describe("ImplementSessionManager", () => {
   it("repairs recipe execution orchestrator aliases when the generated runner defines a compatible implementation", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-orchestrator-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -18989,7 +18989,7 @@ describe("ImplementSessionManager", () => {
   it("repairs chunk 5a orchestration aliases when the generated runner defines execute_candidate_study", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-chunk5a-orchestrator-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -19005,7 +19005,7 @@ describe("ImplementSessionManager", () => {
         "        'run_candidate_execution_orchestration',",
         "        'run_candidate_experiments',",
         "        'execute_candidate_experiments',",
-        "        'execute_peft_instruction_study',",
+        "        'execute_instruction_study',",
         "        'run_peft_candidate_study',",
         "        'run_study_orchestration',",
         "        'run_experiment_orchestration',",
@@ -19043,7 +19043,7 @@ describe("ImplementSessionManager", () => {
   it("repairs final candidate orchestration aliases when the generated runner defines execute_candidate_study", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-candidate-orchestrator-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -19075,8 +19075,8 @@ describe("ImplementSessionManager", () => {
         "def _invoke_candidate_orchestration(args, metrics_path, output_dir):",
         "    executor = _resolve_global_callable(",
         "        (",
-        "            'execute_peft_instruction_study',",
-        "            'run_peft_instruction_study',",
+        "            'execute_instruction_study',",
+        "            'run_instruction_study',",
         "            'execute_experiment',",
         "            'run_experiment',",
         "            'execute_study',",
@@ -19118,7 +19118,7 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("def execute_peft_instruction_study(args=None, metrics_path=None, output_dir=None, **keyword):");
+    expect(repairedSource).toContain("def execute_instruction_study(args=None, metrics_path=None, output_dir=None, **keyword):");
     expect(repairedSource).toContain("target = execute_candidate_study");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
@@ -19126,7 +19126,7 @@ describe("ImplementSessionManager", () => {
   it("repairs final workflow dispatcher aliases when the generated runner defines a baseline-locked PEFT comparison", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-final-workflow-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -19153,7 +19153,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def _autolabos_run_workflow(config, args):",
         "    workflow = _autolabos_resolve_callable(",
-        "        'run_peft_instruction_study',",
+        "        'run_instruction_study',",
         "        'run_baseline_first_peft_comparison',",
         "        'run_peft_variant_comparison_loop',",
         "        'run_peft_comparison_study',",
@@ -19163,7 +19163,7 @@ describe("ImplementSessionManager", () => {
         "    if workflow is None:",
         "        raise RuntimeError(",
         "            'No experiment workflow function was found. Expected one of: '",
-        "            'run_peft_instruction_study, run_baseline_first_peft_comparison, '",
+        "            'run_instruction_study, run_baseline_first_peft_comparison, '",
         "            'run_peft_variant_comparison_loop, run_peft_comparison_study, run_experiment, execute_experiment.'",
         "        )",
         "    return _autolabos_call_compatible(workflow, config=config, args=args, experiment_config=config)",
@@ -19187,7 +19187,7 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("def run_peft_instruction_study(config=None, args=None, experiment_config=None, **keyword):");
+    expect(repairedSource).toContain("def run_instruction_study(config=None, args=None, experiment_config=None, **keyword):");
     expect(repairedSource).toContain("target = run_baseline_locked_peft_variant_comparison");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
@@ -19195,7 +19195,7 @@ describe("ImplementSessionManager", () => {
   it("repairs final workflow dispatcher aliases when the generated runner defines run_baseline_first_experiment", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-first-workflow-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -19251,14 +19251,14 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("target = run_baseline_first_experiment");
-    expect(repairedSource).toContain("run_baseline_first_experiment_workflow = run_peft_instruction_study");
+    expect(repairedSource).toContain("run_baseline_first_experiment_workflow = run_instruction_study");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
   it("repairs entrypoint orchestration resolver aliases when the runner defines run_baseline_first_orchestration", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-entrypoint-orchestration-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -19293,7 +19293,7 @@ describe("ImplementSessionManager", () => {
         "def _run_entrypoint_workflow(config):",
         "    orchestration_fn = _first_existing_callable((",
         "        'run_locked_peft_study',",
-        "        'run_peft_instruction_study',",
+        "        'run_instruction_study',",
         "        'run_experiment',",
         "        'orchestrate_experiment',",
         "        'run_orchestration_loop',",
@@ -19327,14 +19327,14 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("target = run_baseline_first_orchestration");
-    expect(repairedSource).toContain("run_peft_instruction_study = run_experiment");
+    expect(repairedSource).toContain("run_instruction_study = run_experiment");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
   it("repairs condition-study orchestration aliases when the generated runner defines baseline-first condition execution", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-orchestrator-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -19385,7 +19385,7 @@ describe("ImplementSessionManager", () => {
   it("repairs locked experiment runner aliases when generated runners define execute_locked_condition_study", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-locked-runner-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -19445,7 +19445,7 @@ describe("ImplementSessionManager", () => {
   it("repairs chunk-5c condition dispatch aliases when generated runners define baseline-first condition helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-chunk5c-condition-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -19488,7 +19488,7 @@ describe("ImplementSessionManager", () => {
         "def _chunk5c_run_condition_study(config):",
         "    runner = _chunk5c_first_global_callable((",
         "        'run_locked_peft_instruction_study',",
-        "        'run_peft_instruction_study',",
+        "        'run_instruction_study',",
         "        'execute_locked_peft_instruction_study',",
         "        'execute_locked_study',",
         "        'run_locked_condition_study',",
@@ -19535,7 +19535,7 @@ describe("ImplementSessionManager", () => {
   it("repairs completed-script condition runner aliases when generated runners define locked condition suites", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-completed-condition-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -19561,8 +19561,8 @@ describe("ImplementSessionManager", () => {
         "    candidate_names = (",
         "        'run_locked_baseline_first_study',",
         "        'execute_locked_baseline_first_study',",
-        "        'run_peft_instruction_study',",
-        "        'execute_peft_instruction_study',",
+        "        'run_instruction_study',",
+        "        'execute_instruction_study',",
         "        'run_condition_study',",
         "        'execute_condition_study',",
         "        'run_all_conditions',",
@@ -19620,7 +19620,7 @@ describe("ImplementSessionManager", () => {
   it("repairs final condition workflow aliases when generated runners define condition execution workflows", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-workflow-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -19637,7 +19637,7 @@ describe("ImplementSessionManager", () => {
         "def load_study_data(args):",
         "    return SimpleNamespace(",
         "        train_examples=[{'instruction': 'say hi', 'output': 'hi'}],",
-        "        eval_examples={'arc_challenge': [{'question': 'q', 'answer_index': 0}]},",
+        "        eval_examples={'benchmark_task_a': [{'question': 'q', 'answer_index': 0}]},",
         "    )",
         "",
         "def run_condition_execution_workflow(args, condition_registry, budget, train_records, eval_sets, device):",
@@ -19645,7 +19645,7 @@ describe("ImplementSessionManager", () => {
         "    assert condition_registry['locked_lora_baseline']['condition_id'] == 'locked_lora_baseline'",
         "    assert budget['seed'] == 42",
         "    assert train_records[0]['instruction'] == 'say hi'",
-        "    assert 'arc_challenge' in eval_sets",
+        "    assert 'benchmark_task_a' in eval_sets",
         "    assert device == 'cpu'",
         "    return {'condition_results': [{'condition_id': 'locked_lora_baseline', 'status': 'completed'}]}",
         "",
@@ -19714,7 +19714,7 @@ describe("ImplementSessionManager", () => {
   it("materializes AutoLabOS condition context for per-condition runners requiring dataset bundles and device info", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-context-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -19731,7 +19731,7 @@ describe("ImplementSessionManager", () => {
         "    assert eval_examples_per_benchmark == 1",
         "    return SimpleNamespace(",
         "        train_examples=[{'instruction': 'say hi', 'output': 'hi'}],",
-        "        eval_examples={'arc_challenge': [{'question': 'q', 'answer_index': 0}]},",
+        "        eval_examples={'benchmark_task_a': [{'question': 'q', 'answer_index': 0}]},",
         "    )",
         "",
         "def run_single_condition(condition_marker: str, *, dataset_bundle: Any, device_info: Mapping[str, Any], seed: int = SEED, **kwargs):",
@@ -19821,7 +19821,7 @@ describe("ImplementSessionManager", () => {
   it("materializes a top-level entrypoint workflow facade from composable generated runner helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-composable-workflow-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -19872,7 +19872,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def load_zero_shot_benchmark_examples(controls):",
         "    assert controls.seed == 42",
-        "    return {'arc_challenge': [{'question': 'q'}], 'hellaswag': [{'ctx': 'c'}]}",
+        "    return {'benchmark_task_a': [{'question': 'q'}], 'benchmark_task_b': [{'ctx': 'c'}]}",
         "",
         "def build_ordered_condition_specs(args=None):",
         "    return [{'condition_marker': 'unmodified_base'}, {'condition_marker': 'locked_lora_baseline'}]",
@@ -19881,7 +19881,7 @@ describe("ImplementSessionManager", () => {
         "    assert experiment_state['train_dataset'][0]['instruction'] == 'say hi'",
         "    assert experiment_state['model'] == 'base-model'",
         "    assert experiment_state['tokenizer'] == 'tok'",
-        "    assert 'arc_challenge' in experiment_state['eval_datasets']",
+        "    assert 'benchmark_task_a' in experiment_state['eval_datasets']",
         "    assert device == 'cpu'",
         "    return [",
         "        {'condition_marker': 'unmodified_base', 'status': 'success', 'success': True, 'mean_zero_shot_accuracy': 0.40},",
@@ -19898,7 +19898,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def _entrypoint_run_workflow(args, device_info):",
         "    workflow_func = _entrypoint_first_callable([",
-        "        'run_peft_instruction_study',",
+        "        'run_instruction_study',",
         "        'run_experiment_workflow',",
         "        'run_condition_workflow',",
         "        'execute_condition_workflow',",
@@ -19906,7 +19906,7 @@ describe("ImplementSessionManager", () => {
         "        'execute_study',",
         "    ])",
         "    if workflow_func is None:",
-        "        raise RuntimeError('No experiment workflow function was found in the runner. Expected one of: run_peft_instruction_study, run_experiment_workflow, run_condition_workflow, execute_condition_workflow, run_all_conditions, execute_study.')",
+        "        raise RuntimeError('No experiment workflow function was found in the runner. Expected one of: run_instruction_study, run_experiment_workflow, run_condition_workflow, execute_condition_workflow, run_all_conditions, execute_study.')",
         "    return _entrypoint_call_supported(workflow_func, args=args, device_info=device_info, metrics_path=args.metrics_path, seed=args.seed)",
         "",
         "def main():",
@@ -19930,7 +19930,7 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("def run_peft_instruction_study(config=None, args=None, experiment_config=None");
+    expect(repairedSource).toContain("def run_instruction_study(config=None, args=None, experiment_config=None");
     expect(repairedSource).toContain("collect_condition_results");
     expect(repairedSource).toContain("aggregate_condition_results_into_metrics");
     execFileSync("python3", [scriptPath], { cwd: workspace });
@@ -19945,7 +19945,7 @@ describe("ImplementSessionManager", () => {
   it("repairs failure-safe top-level orchestration aliases when the generated runner defines locked condition execution", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-top-level-orchestrator-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -19969,7 +19969,7 @@ describe("ImplementSessionManager", () => {
         "def _resolve_orchestration_callable():",
         "    candidates = (",
         "        'run_experiment',",
-        "        'run_peft_instruction_study',",
+        "        'run_instruction_study',",
         "        'run_full_experiment',",
         "        'execute_experiment',",
         "        'execute_study',",
@@ -20005,7 +20005,7 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("def run_experiment(args=None, **keyword):");
     expect(repairedSource).toContain("target = run_locked_baseline_first_conditions");
-    expect(repairedSource).toContain("run_peft_instruction_study = run_experiment");
+    expect(repairedSource).toContain("run_instruction_study = run_experiment");
     execFileSync("python3", [scriptPath], { cwd: workspace });
 
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
@@ -20016,7 +20016,7 @@ describe("ImplementSessionManager", () => {
   it("materializes baseline-first workflow dataset inputs before calling generated condition executors", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-workflow-inputs-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     const outputDir = path.join(workspace, "out");
     writeFileSync(
@@ -20047,11 +20047,11 @@ describe("ImplementSessionManager", () => {
         "",
         "def load_compact_benchmark_subsets(max_eval_examples_per_benchmark, seed=42):",
         "    assert max_eval_examples_per_benchmark == 2",
-        "    return ({'arc_challenge': [{'question': 'q', 'seed': seed}], 'hellaswag': [{'question': 'h', 'seed': seed}]}, {'selected_examples': 2})",
+        "    return ({'benchmark_task_a': [{'question': 'q', 'seed': seed}], 'benchmark_task_b': [{'question': 'h', 'seed': seed}]}, {'selected_examples': 2})",
         "",
         "def execute_baseline_first_conditions(args, instruction_examples, benchmark_samples, output_dir):",
         "    assert instruction_examples[0]['text'] == 'train'",
-        "    assert benchmark_samples['arc_challenge'][0]['seed'] == 42",
+        "    assert benchmark_samples['benchmark_task_a'][0]['seed'] == 42",
         "    assert str(output_dir).endswith('out')",
         "    return [{'marker': 'locked_lora_baseline', 'status': 'completed'}]",
         "",
@@ -20111,7 +20111,7 @@ describe("ImplementSessionManager", () => {
   it("materializes baseline-first study-loop runtime and dataset inputs before invoking generated study runners", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-study-loop-inputs-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     const outputDir = path.join(workspace, "out");
     writeFileSync(
@@ -20127,14 +20127,14 @@ describe("ImplementSessionManager", () => {
         "",
         "def load_evaluation_dataset_bundle(args):",
         "    assert args.eval_subset_size == 2",
-        "    return ({'arc_challenge': [{'question': 'q', 'seed': args.seed}], 'hellaswag': [{'question': 'h', 'seed': args.seed}]}, {'selected_examples': 2})",
+        "    return ({'benchmark_task_a': [{'question': 'q', 'seed': args.seed}], 'benchmark_task_b': [{'question': 'h', 'seed': args.seed}]}, {'selected_examples': 2})",
         "",
         "def run_baseline_first_study(args, runtime, train_examples, eval_bundle, condition_markers=None, output_dir=None):",
         "    assert args.seed == 42",
         "    assert runtime['device_info']['device'] == 'cpu'",
         "    assert runtime['seed'] == 42",
         "    assert train_examples[0]['text'] == 'train'",
-        "    assert eval_bundle['arc_challenge'][0]['seed'] == 42",
+        "    assert eval_bundle['benchmark_task_a'][0]['seed'] == 42",
         "    assert condition_markers == ['unmodified_base', 'locked_lora_baseline']",
         "    assert str(output_dir).endswith('out')",
         "    return [{'condition': 'locked_lora_baseline', 'status': 'completed', 'mean_zero_shot_accuracy': 0.5}]",
@@ -20204,7 +20204,7 @@ describe("ImplementSessionManager", () => {
   it("materializes baseline-first entrypoint context inputs before invoking generated condition loops", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-entrypoint-context-inputs-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -20226,13 +20226,13 @@ describe("ImplementSessionManager", () => {
         "",
         "def load_zero_shot_benchmark_subsets(max_examples_per_benchmark=None, seed=42):",
         "    assert max_examples_per_benchmark == 2",
-        "    return {'benchmarks': {'arc_challenge': [{'question': 'q', 'seed': seed}], 'hellaswag': [{'question': 'h', 'seed': seed}]}}",
+        "    return {'benchmarks': {'benchmark_task_a': [{'question': 'q', 'seed': seed}], 'benchmark_task_b': [{'question': 'h', 'seed': seed}]}}",
         "",
         "def run_baseline_first_condition_loop(args, device, instruction_dataset, benchmark_datasets):",
         "    assert args.seed == 42",
         "    assert device == 'cpu'",
         "    assert instruction_dataset[0]['text'] == 'train'",
-        "    assert benchmark_datasets['arc_challenge'][0]['seed'] == 42",
+        "    assert benchmark_datasets['benchmark_task_a'][0]['seed'] == 42",
         "    return {'condition_records': [{'condition': 'locked_lora_baseline', 'status': 'completed'}]}",
         "",
         "def _call_entrypoint_helper(helper, context):",
@@ -20309,7 +20309,7 @@ describe("ImplementSessionManager", () => {
   it("materializes train and benchmark inputs for final _main_execute_conditions dispatch", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-execute-conditions-inputs-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -20354,11 +20354,11 @@ describe("ImplementSessionManager", () => {
         "",
         "def load_benchmark_datasets(args):",
         "    assert args.max_eval_examples == 2",
-        "    return {'arc_challenge': [{'seed': args.seed}]}, {'kind': 'eval'}",
+        "    return {'benchmark_task_a': [{'seed': args.seed}]}, {'kind': 'eval'}",
         "",
         "def execute_all_conditions(args, train_dataset, benchmark_data, device):",
         "    assert train_dataset[0]['instruction'] == 'say hi'",
-        "    assert benchmark_data['arc_challenge'][0]['seed'] == 42",
+        "    assert benchmark_data['benchmark_task_a'][0]['seed'] == 42",
         "    assert device == 'cpu'",
         "    return {'conditions': [{'condition_id': 'locked_lora_baseline', 'status': 'completed'}]}",
         "",
@@ -20428,7 +20428,7 @@ describe("ImplementSessionManager", () => {
   it("accepts salt aliases for deterministic sample-record helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-sample-records-salt-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -20437,7 +20437,7 @@ describe("ImplementSessionManager", () => {
         "SEED = 42",
         "",
         "def deterministic_indices(length: int, limit: Optional[int], *, seed: int = SEED, namespace: str = '') -> List[int]:",
-        "    assert namespace == 'arc_challenge'",
+        "    assert namespace == 'benchmark_task_a'",
         "    return list(range(min(length, int(limit))))",
         "",
         "def row_to_plain_record(row):",
@@ -20454,12 +20454,12 @@ describe("ImplementSessionManager", () => {
         "    indices = deterministic_indices(len(records), limit, seed=seed, namespace=namespace)",
         "    return [row_to_plain_record(records[idx]) for idx in indices]",
         "",
-        "def prepare_arc_challenge_benchmark():",
+        "def prepare_benchmark_task_a_benchmark():",
         "    rows = [{'id': 1}, {'id': 2}]",
-        "    return deterministic_sample_records(rows, 1, seed=SEED, salt='arc_challenge')",
+        "    return deterministic_sample_records(rows, 1, seed=SEED, salt='benchmark_task_a')",
         "",
         "if __name__ == '__main__':",
-        "    records = prepare_arc_challenge_benchmark()",
+        "    records = prepare_benchmark_task_a_benchmark()",
         "    assert records == [{'id': 1}]",
         ""
       ].join("\n"),
@@ -20482,7 +20482,7 @@ describe("ImplementSessionManager", () => {
   it("adds required ConditionConfig aliases for generated condition factories", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-config-required-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -20568,7 +20568,7 @@ describe("ImplementSessionManager", () => {
   it("repairs _make_config_instance dataclass field aliases before runtime execution", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-config-instance-dataclass-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -20646,7 +20646,7 @@ describe("ImplementSessionManager", () => {
   it("aliases generated study runtime helpers searched by run_single_condition", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-study-runtime-helper-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -20688,11 +20688,11 @@ describe("ImplementSessionManager", () => {
         "        exclude_substrings=('run_single_condition', 'normalize', 'metrics'),",
         "    )",
         "    if eval_helper is None:",
-        "        raise RuntimeError('Unable to locate an evaluation helper for ARC-Challenge/HellaSwag')",
+        "        raise RuntimeError('Unable to locate an evaluation helper for Benchmark Task A/Benchmark Task B')",
         "    return {'train': train_helper(bundle='bundle', condition=condition, output_dir=condition_dir), 'evaluation': eval_helper(bundle='bundle')}",
         "",
         "if __name__ == '__main__':",
-        "    result = run_single_condition({'marker': 'rank_8_dropout_0_0'}, 'out')",
+        "    result = run_single_condition({'marker': 'baseline_condition'}, 'out')",
         `    with open(${JSON.stringify(metricsPath)}, 'w', encoding='utf8') as handle:`,
         "        json.dump(result, handle, sort_keys=True)",
         ""
@@ -20715,7 +20715,7 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       train: {
         status: "trained",
-        marker: "rank_8_dropout_0_0"
+        marker: "baseline_condition"
       },
       evaluation: {
         average_accuracy: 0.5
@@ -20726,7 +20726,7 @@ describe("ImplementSessionManager", () => {
   it("moves misplaced study runtime helper aliases out of multiline signatures", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-study-runtime-helper-alias-move-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -20763,7 +20763,7 @@ describe("ImplementSessionManager", () => {
         "    return train_helper(bundle='bundle', condition=condition, output_dir=condition_dir)",
         "",
         "if __name__ == '__main__':",
-        "    run_single_condition({'marker': 'rank_8_dropout_0_0'}, 'out')",
+        "    run_single_condition({'marker': 'baseline_condition'}, 'out')",
         ""
       ].join("\n"),
       "utf8"
@@ -20789,7 +20789,7 @@ describe("ImplementSessionManager", () => {
   it("renames result-level train loss helpers that shadow training-metric helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-train-loss-helper-arity-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -20841,15 +20841,15 @@ describe("ImplementSessionManager", () => {
   it("normalizes generated successful condition status before baseline-first projection", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-success-status-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
       [
         "import json",
         "",
-        "BASELINE_MARKER = 'rank_8_dropout_0_0'",
-        "PLANNED_CONDITIONS = [BASELINE_MARKER, 'rank_16_dropout_0_1']",
+        "BASELINE_MARKER = 'baseline_condition'",
+        "PLANNED_CONDITIONS = [BASELINE_MARKER, 'candidate_condition_i']",
         "",
         "def run_single_condition(condition):",
         "    result = {'marker': condition, 'train': {'train_loss': 0.2}}",
@@ -20899,8 +20899,8 @@ describe("ImplementSessionManager", () => {
       status: "failed",
       completed_condition_count: 0,
       condition_results: [
-        { marker: "rank_8_dropout_0_0", status: "succeeded", success: true },
-        { marker: "rank_16_dropout_0_1", status: "not_run_baseline_failed", success: false }
+        { marker: "baseline_condition", status: "succeeded", success: true },
+        { marker: "candidate_condition_i", status: "not_run_baseline_failed", success: false }
       ]
     });
 
@@ -20916,8 +20916,8 @@ describe("ImplementSessionManager", () => {
       success: true,
       completed_condition_count: 2,
       condition_results: [
-        { marker: "rank_8_dropout_0_0", status: "completed", success: true },
-        { marker: "rank_16_dropout_0_1", status: "completed", success: true }
+        { marker: "baseline_condition", status: "completed", success: true },
+        { marker: "candidate_condition_i", status: "completed", success: true }
       ]
     });
   });
@@ -20962,7 +20962,7 @@ describe("ImplementSessionManager", () => {
   it("preserves existing completed condition counts during terminal metrics finalization", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-terminal-metrics-count-preserve-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -20970,7 +20970,7 @@ describe("ImplementSessionManager", () => {
         "import json",
         "from pathlib import Path",
         "",
-        "LOCKED_CONDITIONS = ['rank_8_dropout_0_0', 'rank_16_dropout_0_1']",
+        "LOCKED_CONDITIONS = ['baseline_condition', 'candidate_condition_i']",
         "RUN_ID = 'run-test'",
         "STUDY_SLUG = 'study'",
         "STUDY_TITLE = 'Study'",
@@ -20979,7 +20979,7 @@ describe("ImplementSessionManager", () => {
         "BUDGET_MODE = 'single_run_locked'",
         "BUDGET_LOCKED = True",
         "BASELINE_FIRST_REQUIRED = True",
-        "REQUIRED_CONDITION_MARKERS = ['rank_8_dropout_0_0']",
+        "REQUIRED_CONDITION_MARKERS = ['baseline_condition']",
         "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
         "",
         "def _coerce_mapping(value):",
@@ -21047,8 +21047,8 @@ describe("ImplementSessionManager", () => {
         "        'failed_condition_count': 0,",
         "        'required_condition_count': 2,",
         "        'condition_results': [",
-        "            {'marker': 'rank_8_dropout_0_0', 'status': 'completed', 'success': True},",
-        "            {'marker': 'rank_16_dropout_0_1', 'status': 'completed', 'success': True},",
+        "            {'marker': 'baseline_condition', 'status': 'completed', 'success': True},",
+        "            {'marker': 'candidate_condition_i', 'status': 'completed', 'success': True},",
         "        ],",
         "    })",
         "    study_result = {'status': 'completed', 'summary': {'completed_condition_count': 2}, 'metrics': {'completed_condition_count': 2}}",
@@ -21084,7 +21084,7 @@ describe("ImplementSessionManager", () => {
   it("materializes chunk3b selected conditions and a condition runner for high-level study runners", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-chunk3b-study-runner-context-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -21123,7 +21123,7 @@ describe("ImplementSessionManager", () => {
         "    return {'records': [{'prompt': 'p', 'target': 't'} for _ in range(max_samples)], 'metadata': {'source_kind': 'test'}}",
         "",
         "def prepare_benchmark_eval_samples(max_examples_per_task, seed=17):",
-        "    return {'arc_challenge': [{'answer': 'A'}], 'hellaswag': [{'answer': 'B'}]}, {'source_kind': 'test'}",
+        "    return {'benchmark_task_a': [{'answer': 'A'}], 'benchmark_task_b': [{'answer': 'B'}]}, {'source_kind': 'test'}",
         "",
         "def flatten_benchmark_eval_samples(records_by_task):",
         "    return [record for records in records_by_task.values() for record in records]",
@@ -21135,7 +21135,7 @@ describe("ImplementSessionManager", () => {
         "    return dict(bundle)",
         "",
         "def evaluate_condition_on_benchmarks(trained_state, evaluation_tasks, device, **kwargs):",
-        "    return {'average_accuracy': 0.5, 'arc_challenge_accuracy': 0.5, 'hellaswag_accuracy': 0.5}",
+        "    return {'average_accuracy': 0.5, 'benchmark_task_a_accuracy': 0.5, 'benchmark_task_b_accuracy': 0.5}",
         "",
         "def release_condition_training_bundle(bundle):",
         "    bundle['released'] = True",
@@ -21202,7 +21202,7 @@ describe("ImplementSessionManager", () => {
   it("filters unsupported chunk3b condition markers before selecting generated study specs", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-chunk3b-marker-selection-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -21212,13 +21212,13 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Mapping, Sequence",
         "",
         "SUPPORTED_LORA_CONDITIONS = {",
-        "    'rank_8_dropout_0_0': object(),",
-        "    'rank_8_dropout_0_1': object(),",
-        "    'rank_16_dropout_0_0': object(),",
-        "    'rank_16_dropout_0_1': object(),",
+        "    'baseline_condition': object(),",
+        "    'candidate_condition_h': object(),",
+        "    'candidate_condition_d': object(),",
+        "    'candidate_condition_i': object(),",
         "}",
-        "DEFAULT_SELECTED_CONDITION_MARKERS = ('rank_8_dropout_0_0', 'rank_16_dropout_0_1')",
-        "ALLOWED_COMPARATOR_MARKERS = ('rank_8_dropout_0_1', 'rank_16_dropout_0_0', 'rank_16_dropout_0_1')",
+        "DEFAULT_SELECTED_CONDITION_MARKERS = ('baseline_condition', 'candidate_condition_i')",
+        "ALLOWED_COMPARATOR_MARKERS = ('candidate_condition_h', 'candidate_condition_d', 'candidate_condition_i')",
         "",
         "def _chunk3b_dedupe(values):",
         "    result = []",
@@ -21234,13 +21234,13 @@ describe("ImplementSessionManager", () => {
         "    required_helper = globals().get('_discover_required_condition_markers')",
         "    available_helper = globals().get('_discover_available_condition_markers')",
         "    count_helper = globals().get('_expected_condition_count')",
-        "    required = list(required_helper()) if callable(required_helper) else ['rank_8_dropout_0_0']",
+        "    required = list(required_helper()) if callable(required_helper) else ['baseline_condition']",
         "    available = list(available_helper()) if callable(available_helper) else []",
         "    try:",
         "        expected_count = int(count_helper()) if callable(count_helper) else 2",
         "    except Exception:",
         "        expected_count = 2",
-        "    required = _chunk3b_dedupe(required or ['rank_8_dropout_0_0'])",
+        "    required = _chunk3b_dedupe(required or ['baseline_condition'])",
         "    requested = _chunk3b_flatten_marker_tokens(getattr(args, 'condition_markers', None))",
         "    target_count = max(expected_count, len(required))",
         "    selected = list(required)",
@@ -21265,7 +21265,7 @@ describe("ImplementSessionManager", () => {
         "    }",
         "",
         "def main():",
-        "    selected, metadata = _chunk3b_resolve_selected_markers(argparse.Namespace(condition_markers=['rank_8_dropout_0_0', 'rank_8_dropout_0_05']))",
+        "    selected, metadata = _chunk3b_resolve_selected_markers(argparse.Namespace(condition_markers=['baseline_condition', 'baseline_condition5']))",
         "    print(json.dumps({'selected': selected, 'metadata': metadata}, sort_keys=True))",
         "",
         "if __name__ == '__main__':",
@@ -21276,7 +21276,7 @@ describe("ImplementSessionManager", () => {
     );
 
     const beforePayload = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
-    expect(beforePayload.selected).toEqual(["rank_8_dropout_0_0", "rank_8_dropout_0_05"]);
+    expect(beforePayload.selected).toEqual(["baseline_condition", "baseline_condition5"]);
 
     const repair = await repairPythonChunk3bConditionMarkerSelectionSurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
@@ -21284,14 +21284,14 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_chunk3b_condition_marker_selection_marker");
     const afterPayload = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
-    expect(afterPayload.selected).toEqual(["rank_8_dropout_0_0", "rank_16_dropout_0_1"]);
+    expect(afterPayload.selected).toEqual(["baseline_condition", "candidate_condition_i"]);
     expect(afterPayload.metadata).toMatchObject({
-      ignored_markers: ["rank_8_dropout_0_05"],
+      ignored_markers: ["baseline_condition5"],
       available_markers: [
-        "rank_8_dropout_0_0",
-        "rank_16_dropout_0_1",
-        "rank_8_dropout_0_1",
-        "rank_16_dropout_0_0"
+        "baseline_condition",
+        "candidate_condition_i",
+        "candidate_condition_h",
+        "candidate_condition_d"
       ]
     });
   });
@@ -21299,7 +21299,7 @@ describe("ImplementSessionManager", () => {
   it("widens duplicate multiple-choice prompt helpers for generated benchmark normalizers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-multiple-choice-prompt-signature-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -21337,7 +21337,7 @@ describe("ImplementSessionManager", () => {
         "        instruction='Answer with only the letter of the correct option.',",
         "    )",
         "    evaluator_prompt = _build_multiple_choice_prompt(",
-        "        task_name='arc_challenge',",
+        "        task_name='benchmark_task_a',",
         "        sample={'question': 'Which option is correct?'},",
         "        choice_items=[('A', 'alpha'), ('B', 'beta')],",
         "    )",
@@ -21362,14 +21362,14 @@ describe("ImplementSessionManager", () => {
     const payload = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
     expect(payload.normalizer).toContain("Question: Which option is correct?");
     expect(payload.normalizer).toContain("A. alpha");
-    expect(payload.evaluator).toContain("Task: arc_challenge");
+    expect(payload.evaluator).toContain("Task: benchmark_task_a");
     expect(payload.evaluator).toContain("Answer:");
   });
 
   it("adds a safe metric float helper for generated condition record normalization", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-safe-metric-float-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -21414,7 +21414,7 @@ describe("ImplementSessionManager", () => {
   it("repairs baseline-first condition runner aliases when the generated runner defines run_all_conditions_baseline_first", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-first-conditions-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -21431,7 +21431,7 @@ describe("ImplementSessionManager", () => {
         "        'run_baseline_first_conditions',",
         "        'execute_baseline_first_conditions',",
         "        'run_condition_study',",
-        "        'run_peft_instruction_study',",
+        "        'run_instruction_study',",
         "        'run_study_conditions',",
         "    )",
         "    for name in runner_names:",
@@ -21468,7 +21468,7 @@ describe("ImplementSessionManager", () => {
   it("adds condition-suite aliases when execute_selected_conditions misses run_baseline_first_conditions", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-suite-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -21559,7 +21559,7 @@ describe("ImplementSessionManager", () => {
   it("adds condition-suite aliases for main orchestration helper resolver variants", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-condition-suite-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -21585,7 +21585,7 @@ describe("ImplementSessionManager", () => {
         "def execute_baseline_first_conditions(args=None, instruction_examples=None, benchmark_samples=None, output_dir=None):",
         "    assert args.seed == 42",
         "    assert instruction_examples == [{'instruction': 'x'}]",
-        "    assert benchmark_samples == {'arc_challenge': [{'answer': 'A'}]}",
+        "    assert benchmark_samples == {'benchmark_task_a': [{'answer': 'A'}]}",
         "    return [",
         "        {'condition_id': 'unmodified_base', 'status': 'completed'},",
         "        {'condition_id': 'locked_lora_baseline', 'status': 'completed'},",
@@ -21600,7 +21600,7 @@ describe("ImplementSessionManager", () => {
         "    parser.add_argument('--seed', type=int, default=42)",
         "    args = parser.parse_args(argv)",
         "    instruction_examples = [{'instruction': 'x'}]",
-        "    benchmark_samples = {'arc_challenge': [{'answer': 'A'}]}",
+        "    benchmark_samples = {'benchmark_task_a': [{'answer': 'A'}]}",
         "    condition_runner = _pick_global_callable(",
         "        'run_condition_suite',",
         "        'run_peft_conditions',",
@@ -21650,7 +21650,7 @@ describe("ImplementSessionManager", () => {
   it("adds condition-suite aliases when locked-condition helpers use generated study names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-condition-suite-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -21724,7 +21724,7 @@ describe("ImplementSessionManager", () => {
   it("aliases locked condition studies into final experiment orchestration resolvers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-condition-study-orchestration-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -21788,7 +21788,7 @@ describe("ImplementSessionManager", () => {
   it("materializes entrypoint condition datasets for baseline-first orchestrators", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-condition-datasets-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -21803,8 +21803,8 @@ describe("ImplementSessionManager", () => {
         "class PublicDatasetBundle:",
         "    def __init__(self):",
         "        self.train = [{'instruction': 'say hi'}]",
-        "        self.arc_challenge = [{'answer': 'A'}]",
-        "        self.hellaswag = [{'label': 'B'}]",
+        "        self.benchmark_task_a = [{'answer': 'A'}]",
+        "        self.benchmark_task_b = [{'label': 'B'}]",
         "",
         "def load_public_dataset_bundle(args):",
         "    assert args.seed == 42",
@@ -21812,8 +21812,8 @@ describe("ImplementSessionManager", () => {
         "",
         "def run_baseline_first_condition_orchestrator(args: Any, train_dataset: Any, eval_datasets: Any, *, output_dir: Path = None):",
         "    assert train_dataset == [{'instruction': 'say hi'}]",
-        "    assert eval_datasets['arc_challenge'] == [{'answer': 'A'}]",
-        "    assert eval_datasets['hellaswag'] == [{'label': 'B'}]",
+        "    assert eval_datasets['benchmark_task_a'] == [{'answer': 'A'}]",
+        "    assert eval_datasets['benchmark_task_b'] == [{'label': 'B'}]",
         "    return [{'condition_marker': 'locked_lora_baseline', 'status': 'completed', 'output_dir': str(output_dir)}]",
         "",
         "execute_baseline_first_conditions = run_baseline_first_condition_orchestrator",
@@ -21890,7 +21890,7 @@ describe("ImplementSessionManager", () => {
   it("adds PEFT acronym class aliases when staged chunks disagree on config casing", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-acronym-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -21945,7 +21945,7 @@ describe("ImplementSessionManager", () => {
   it("bridges abstract condition-spec kwargs into concrete generated factory signatures", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-spec-factory-kwargs-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -22099,7 +22099,7 @@ describe("ImplementSessionManager", () => {
   it("aliases locked baseline-first workflows and payload builders for final entrypoints", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-final-entrypoint-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -22327,7 +22327,7 @@ describe("ImplementSessionManager", () => {
   it("exposes generated baseline-first condition sequences as final orchestration facades", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-sequence-facade-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -22342,8 +22342,8 @@ describe("ImplementSessionManager", () => {
         "",
         "def load_benchmark_records(eval_limit=2, seed=42):",
         "    return {",
-        "        'arc_challenge': [{'id': f'arc-{seed}', 'answer': 'A'} for _ in range(int(eval_limit or 2))],",
-        "        'hellaswag': [{'id': f'hs-{seed}', 'answer': 'B'} for _ in range(int(eval_limit or 2))],",
+        "        'benchmark_task_a': [{'id': f'arc-{seed}', 'answer': 'A'} for _ in range(int(eval_limit or 2))],",
+        "        'benchmark_task_b': [{'id': f'hs-{seed}', 'answer': 'B'} for _ in range(int(eval_limit or 2))],",
         "    }, {'seed': seed, 'eval_limit': eval_limit}",
         "",
         "def select_device(prefer_cuda=True):",
@@ -22378,7 +22378,7 @@ describe("ImplementSessionManager", () => {
         "    candidate_names = [",
         "        'run_baseline_first_experiment',",
         "        'run_baseline_first_study',",
-        "        'run_peft_instruction_study',",
+        "        'run_instruction_study',",
         "        'run_experiment',",
         "        'orchestrate_experiment',",
         "        'orchestrate_baseline_first_experiment',",
@@ -22418,7 +22418,7 @@ describe("ImplementSessionManager", () => {
         "    parser = argparse.ArgumentParser()",
         "    parser.add_argument('--metrics-path', required=True)",
         "    parser.add_argument('--output-dir', default='out')",
-        "    parser.add_argument('--model-name', default='Qwen/Qwen2.5-1.5B')",
+        "    parser.add_argument('--model-name', default='the selected backbone')",
         "    parser.add_argument('--instruction-dataset', default='tatsu-lab/alpaca')",
         "    parser.add_argument('--max-train-examples', type=int, default=3)",
         "    parser.add_argument('--max-eval-examples', type=int, default=2)",
@@ -22448,7 +22448,7 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       status: "completed",
       train_count: 3,
-      eval_keys: ["arc_challenge", "hellaswag"],
+      eval_keys: ["benchmark_task_a", "benchmark_task_b"],
       device: { device: "cpu", torch_available: false },
       conditions: [
         { condition: "unmodified_base", status: "success" },
@@ -22460,7 +22460,7 @@ describe("ImplementSessionManager", () => {
   it("repairs recipe evaluation loop aliases when the generated runner defines recipe execution and evaluation", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-loop-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -22886,7 +22886,7 @@ describe("ImplementSessionManager", () => {
         "def main() -> int:",
         "    config = Config()",
         "    raw_result = {",
-        "        'condition_results': [{'marker': 'rank_8_dropout_0_0', 'status': 'completed'}],",
+        "        'condition_results': [{'marker': 'baseline_condition', 'status': 'completed'}],",
         "        'run_context': {'name': 'live-run'},",
         "        'data_summary': {'name': 'benchmark-bundle'},",
         "    }",
@@ -23602,7 +23602,7 @@ describe("ImplementSessionManager", () => {
         "from pathlib import Path",
         "from typing import Any, Optional, Sequence",
         "",
-        "PREFERRED_BASE_MODEL_ID = 'Qwen/Qwen2.5-1.5B'",
+        "PREFERRED_BASE_MODEL_ID = 'the selected backbone'",
         "SCRIPT_PATH = Path(__file__)",
         "",
         "class CliPaths:",
@@ -23654,7 +23654,7 @@ describe("ImplementSessionManager", () => {
         ") -> Any:",
         "    candidate_names = (",
         "        'run_locked_lora_rank_dropout_study',",
-        "        'run_lora_rank_dropout_study',",
+        "        'run_condition_grid_study',",
         "        'execute_locked_lora_rank_dropout_study',",
         "        'execute_locked_condition_sweep',",
         "        'execute_condition_sweep',",
@@ -23680,7 +23680,7 @@ describe("ImplementSessionManager", () => {
         "    )",
         "",
         "def main():",
-        "    args = argparse.Namespace(base_model_id='Qwen/Qwen2.5-1.5B')",
+        "    args = argparse.Namespace(base_model_id='the selected backbone')",
         "    cli_paths = CliPaths(Path('out'), Path('metrics.json'))",
         "    result = _autolabos_run_study(args, cli_paths, 'python runner.py')",
         "    return 0 if result.get('ok') else 1",
@@ -23703,7 +23703,7 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(path.join(workspace, "out", "study_results.json"), "utf8"))).toMatchObject({
       ok: true,
-      base_model_id: "Qwen/Qwen2.5-1.5B"
+      base_model_id: "the selected backbone"
     });
   });
 
@@ -23818,7 +23818,7 @@ describe("ImplementSessionManager", () => {
         "    raise RuntimeError(\"Unable to find a study execution function in the prepared sections.\")",
         "",
         "def main() -> int:",
-        "    result = _execute_main_study({'condition': 'rank_8_dropout_0_0'}, {'output_dir': 'out', 'metrics_path': 'metrics.json'})",
+        "    result = _execute_main_study({'condition': 'baseline_condition'}, {'output_dir': 'out', 'metrics_path': 'metrics.json'})",
         "    return 0 if result.get('ok') else 1",
         "",
         "if __name__ == '__main__':",
@@ -23861,7 +23861,7 @@ describe("ImplementSessionManager", () => {
         "    payload = {",
         "        'ok': True,",
         "        'controller': 'execute_locked_rank_dropout_sweep',",
-        "        'run_rows': [{'condition_marker': 'rank_8_dropout_0_0', 'status': 'completed'}],",
+        "        'run_rows': [{'condition_marker': 'baseline_condition', 'status': 'completed'}],",
         "        'failures': [],",
         "    }",
         "    Path('controller_executed.json').write_text(json.dumps(payload), encoding='utf-8')",
@@ -23930,17 +23930,17 @@ describe("ImplementSessionManager", () => {
         "from types import SimpleNamespace",
         "from typing import Any, Mapping, Sequence",
         "",
-        "PREFERRED_BASE_MODEL = 'Qwen/Qwen2.5-1.5B'",
+        "PREFERRED_BASE_MODEL = 'the selected backbone'",
         "",
         "class Condition:",
-        "    marker = 'rank_8_dropout_0_0'",
+        "    marker = 'baseline_condition'",
         "    rank = 8",
         "    dropout = 0.0",
         "    def resolved_lora_alpha(self):",
         "        return 16",
         "",
         "class RunKey:",
-        "    condition_marker = 'rank_8_dropout_0_0'",
+        "    condition_marker = 'baseline_condition'",
         "    seed = 42",
         "    order_index = 0",
         "",
@@ -23973,13 +23973,13 @@ describe("ImplementSessionManager", () => {
         "        \"seed\": run_key.seed,",
         "        \"run_key\": run_key,",
         "        \"order_index\": run_key.order_index,",
-        "        \"run_id\": '000__rank_8_dropout_0_0__seed_42',",
+        "        \"run_id\": '000__baseline_condition__seed_42',",
         "        \"output_dir\": run_output_dir,",
         "        \"run_output_dir\": run_output_dir,",
         "        \"condition_output_dir\": run_output_dir,",
         "        \"study_output_dir\": runtime_config.paths.output_dir,",
         "        \"base_model_override\": runtime_config.base_model_override,",
-        "        \"tasks\": ('arc_challenge', 'hellaswag'),",
+        "        \"tasks\": ('benchmark_task_a', 'benchmark_task_b'),",
         "    }",
         "    signature = inspect.signature(executor)",
         "    call_kwargs = {}",
@@ -23991,7 +23991,7 @@ describe("ImplementSessionManager", () => {
         "    return executor(**call_kwargs)",
         "",
         "def execute_locked_sweep(runtime_config: Any) -> dict[str, Any]:",
-        "    output_dir = runtime_config.paths.output_dir / 'condition_runs' / 'rank_8_dropout_0_0' / 'seed_42'",
+        "    output_dir = runtime_config.paths.output_dir / 'condition_runs' / 'baseline_condition' / 'seed_42'",
         "    output_dir.mkdir(parents=True, exist_ok=True)",
         "    row = _invoke_executor_for_run(",
         "        run_finetune_for_condition_seed,",
@@ -24057,13 +24057,13 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("\"model_name\": runtime_config.base_model_override");
     expect(repairedSource).toContain("\"evidence_rows\"");
     execFileSync("python3", [scriptPath], { cwd: workspace });
-    expect(readFileSync(path.join(workspace, "out", "condition_runs", "rank_8_dropout_0_0", "seed_42", "model_name.txt"), "utf8")).toBe(
-      "Qwen/Qwen2.5-1.5B"
+    expect(readFileSync(path.join(workspace, "out", "condition_runs", "baseline_condition", "seed_42", "model_name.txt"), "utf8")).toBe(
+      "the selected backbone"
     );
     expect(JSON.parse(readFileSync(path.join(workspace, "rows.json"), "utf8"))).toEqual([
       expect.objectContaining({
         status: "completed",
-        condition_marker: "rank_8_dropout_0_0",
+        condition_marker: "baseline_condition",
         average_accuracy: 0.5
       })
     ]);
@@ -24165,7 +24165,7 @@ describe("ImplementSessionManager", () => {
         "    return _attempt_call(sweep_callable, attempts)",
         "",
         "def main() -> int:",
-        "    sweep_result = _invoke_sweep_execution(config_obj={'condition': 'rank_8_dropout_0_0'}, args_obj={}, argv=[])",
+        "    sweep_result = _invoke_sweep_execution(config_obj={'condition': 'baseline_condition'}, args_obj={}, argv=[])",
         "    return 0 if sweep_result.get('ok') else 1",
         "",
         "if __name__ == '__main__':",
@@ -24208,7 +24208,7 @@ describe("ImplementSessionManager", () => {
         "from pathlib import Path",
         "from typing import Any, Sequence",
         "",
-        "LOCKED_CONDITION_SPECS = ('rank_8_dropout_0_0', 'rank_16_dropout_0_05')",
+        "LOCKED_CONDITION_SPECS = ('baseline_condition', 'candidate_condition_d5')",
         "REQUIRED_SEED_SCHEDULE = (42, 314)",
         "",
         "def validate_locked_condition_specs(conditions: Sequence[str] | None = None) -> tuple[str, ...]:",
@@ -24254,7 +24254,7 @@ describe("ImplementSessionManager", () => {
         "        argparse.Namespace(seed=42),",
         "        ({'stale': True},),",
         "    )",
-        "    return 0 if len(rows) == 4 and rows[0]['condition'] == 'rank_8_dropout_0_0' else 1",
+        "    return 0 if len(rows) == 4 and rows[0]['condition'] == 'baseline_condition' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -24276,10 +24276,10 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("'seed_schedule'");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(path.join(workspace, "schedule.json"), "utf8"))).toEqual([
-      { condition: "rank_8_dropout_0_0", seed: 42 },
-      { condition: "rank_8_dropout_0_0", seed: 314 },
-      { condition: "rank_16_dropout_0_05", seed: 42 },
-      { condition: "rank_16_dropout_0_05", seed: 314 }
+      { condition: "baseline_condition", seed: 42 },
+      { condition: "baseline_condition", seed: 314 },
+      { condition: "candidate_condition_d5", seed: 42 },
+      { condition: "candidate_condition_d5", seed: 314 }
     ]);
   });
 
@@ -24491,7 +24491,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def expand_locked_sweep_plan(config: Any = None) -> PreparedSweepPlan:",
         "    plan = PreparedSweepPlan(",
-        "        condition_specs=['rank_8_dropout_0_0', 'rank_4_dropout_0_0'],",
+        "        condition_specs=['baseline_condition', 'candidate_condition_a'],",
         "        seed_schedule=[42, 43],",
         "    )",
         "    return plan",
@@ -24570,7 +24570,7 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("build_sweep_plan = _autolabos_locked_sweep_plan_builder");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(path.join(workspace, "plan.json"), "utf8"))).toEqual({
-      condition_specs: ["rank_8_dropout_0_0", "rank_4_dropout_0_0"],
+      condition_specs: ["baseline_condition", "candidate_condition_a"],
       seed_schedule: [42, 43]
     });
   });
@@ -24618,7 +24618,7 @@ describe("ImplementSessionManager", () => {
         "    runner = _autolabos_select_callable(",
         "        (",
         "            'run_locked_lora_rank_dropout_study',",
-        "            'run_lora_rank_dropout_study',",
+        "            'run_condition_grid_study',",
         "            'run_locked_rank_dropout_study',",
         "            'run_locked_study',",
         "            'run_study',",
@@ -24699,7 +24699,7 @@ describe("ImplementSessionManager", () => {
         "from pathlib import Path",
         "from typing import Any, Mapping, MutableMapping, Optional, Sequence",
         "",
-        "CONDITION_SPECS = [{'marker': 'rank_8_dropout_0_0'}, {'marker': 'rank_4_dropout_0_0'}]",
+        "CONDITION_SPECS = [{'marker': 'baseline_condition'}, {'marker': 'candidate_condition_a'}]",
         "",
         "def execute_condition_run(condition, shared_context=None):",
         "    return {'status': 'completed', 'marker': condition['marker']}",
@@ -24739,7 +24739,7 @@ describe("ImplementSessionManager", () => {
         "            'run_locked_condition_study',",
         "            'execute_locked_condition_schedule',",
         "            'run_baseline_first_locked_study',",
-        "            'run_lora_rank_dropout_study',",
+        "            'run_condition_grid_study',",
         "            'execute_study',",
         "            'run_condition_study',",
         "            'train_and_evaluate_study',",
@@ -24750,7 +24750,7 @@ describe("ImplementSessionManager", () => {
         "        timeout_sec=17,",
         "    )",
         "    if not study_name:",
-        "        raise RuntimeError('No study execution helper was found. Expected one of: run_locked_study, run_locked_condition_study, execute_locked_condition_schedule, run_baseline_first_locked_study, run_lora_rank_dropout_study, execute_study, run_condition_study, train_and_evaluate_study.')",
+        "        raise RuntimeError('No study execution helper was found. Expected one of: run_locked_study, run_locked_condition_study, execute_locked_condition_schedule, run_baseline_first_locked_study, run_condition_grid_study, execute_study, run_condition_study, train_and_evaluate_study.')",
         "    return study_result",
         "",
         "def main() -> int:",
@@ -24838,7 +24838,7 @@ describe("ImplementSessionManager", () => {
         "        'orchestrate_study_sweep',",
         "        'orchestrate_study',",
         "        'run_rank_dropout_study',",
-        "        'run_lora_rank_dropout_study',",
+        "        'run_condition_grid_study',",
         "        'execute_study',",
         "        'run_experiment',",
         "        'run_study',",
@@ -24912,8 +24912,8 @@ describe("ImplementSessionManager", () => {
         "",
         "def _stage3b_resolve_study_callable():",
         "    exact_candidates = [",
-        "        'run_lora_rank_dropout_study',",
-        "        'execute_lora_rank_dropout_study',",
+        "        'run_condition_grid_study',",
+        "        'execute_condition_grid_study',",
         "        'run_rank_dropout_study',",
         "        'execute_rank_dropout_study',",
         "        'run_lora_study',",
@@ -24968,7 +24968,7 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
-    expect(repairedSource).toContain("run_lora_rank_dropout_study");
+    expect(repairedSource).toContain("run_condition_grid_study");
     expect(repairedSource).toContain("execute_condition_sweep");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(path.join(workspace, "stage3b-executed.json"), "utf8"))).toMatchObject({
@@ -25055,7 +25055,7 @@ describe("ImplementSessionManager", () => {
         "def _invoke_study_runner(options: RuntimeOptions) -> Any:",
         "    candidate_names = (",
         "        'run_locked_lora_rank_dropout_study',",
-        "        'run_lora_rank_dropout_study',",
+        "        'run_condition_grid_study',",
         "        'execute_locked_study',",
         "        'execute_baseline_first_sweep',",
         "        'run_baseline_first_sweep',",
@@ -25172,7 +25172,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def _invoke(fn, args):",
         "    signature = inspect.signature(fn)",
-        "    kwargs = {'args': args, 'metrics_path': args.metrics_path, 'required_condition_markers': ('rank_8_dropout_0_0',)}",
+        "    kwargs = {'args': args, 'metrics_path': args.metrics_path, 'required_condition_markers': ('baseline_condition',)}",
         "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):",
         "        return fn(**kwargs)",
         "    return fn(args)",
@@ -25205,7 +25205,7 @@ describe("ImplementSessionManager", () => {
       status: "completed",
       runner: "execute_locked_rank_dropout_sweep",
       metrics_path: "metrics.json",
-      required_condition_markers: ["rank_8_dropout_0_0"]
+      required_condition_markers: ["baseline_condition"]
     });
   });
 
@@ -25289,7 +25289,7 @@ describe("ImplementSessionManager", () => {
         "DEFAULT_EVAL_MAX_CONTEXT_LENGTH = 24",
         "PREFERRED_BASE_MODEL = 'preferred-model'",
         "FALLBACK_BASE_MODEL = 'fallback-model'",
-        "REQUIRED_CONDITION_MARKERS = ('rank_8_dropout_0_0',)",
+        "REQUIRED_CONDITION_MARKERS = ('baseline_condition',)",
         "",
         "@dataclass",
         "class LoRACondition:",
@@ -25337,7 +25337,7 @@ describe("ImplementSessionManager", () => {
         "    return ['tokenized-train'], {'seed': seed, 'max_train_samples': max_train_samples}, ['train-example']",
         "",
         "def prepare_benchmark_evaluation_data(tokenizer: Any, max_eval_samples_per_task: int, seed: int, max_context_length: int):",
-        "    return {'arc_challenge': [{'prompt': 'p'}]}, {'seed': seed, 'max_eval_samples_per_task': max_eval_samples_per_task}",
+        "    return {'benchmark_task_a': [{'prompt': 'p'}]}, {'seed': seed, 'max_eval_samples_per_task': max_eval_samples_per_task}",
         "",
         "def prepare_trainable_condition_model(args: argparse.Namespace, condition: LoRACondition, model_bundle: LoadedBundle, tokenized_train_dataset: Any, output_dir: Path):",
         "    condition_dir = output_dir / DEFAULT_CONDITION_ARTIFACT_DIRNAME / condition.marker",
@@ -25359,7 +25359,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def evaluate_trained_condition(condition: LoRACondition, bundle_or_state: Any, eval_examples_by_task: Dict[str, Sequence[Any]], max_context_length: int = DEFAULT_EVAL_MAX_CONTEXT_LENGTH) -> Dict[str, Any]:",
         "    Path('evaluation-called.json').write_text(json.dumps({'marker': condition.marker, 'tasks': sorted(eval_examples_by_task.keys())}), encoding='utf-8')",
-        "    return {'condition_marker': condition.marker, 'average_accuracy': 0.75, 'per_task_accuracy': {'arc_challenge': 0.75}}",
+        "    return {'condition_marker': condition.marker, 'average_accuracy': 0.75, 'per_task_accuracy': {'benchmark_task_a': 0.75}}",
         "",
         "def _lookup_callable(candidate_names: Sequence[str]) -> Optional[Any]:",
         "    for candidate_name in candidate_names:",
@@ -25369,7 +25369,7 @@ describe("ImplementSessionManager", () => {
         "    return None",
         "",
         "def _resolve_locked_condition_sequence() -> List[LoRACondition]:",
-        "    return [LoRACondition(marker='rank_8_dropout_0_0', rank=8, dropout=0.0)]",
+        "    return [LoRACondition(marker='baseline_condition', rank=8, dropout=0.0)]",
         "",
         "def _invoke_with_supported_kwargs(fn: Any, **kwargs: Any) -> Any:",
         "    signature = inspect.signature(fn)",
@@ -25447,7 +25447,7 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(readFileSync(path.join(workspace, "fallback-result.json"), "utf8"))).toMatchObject({
       condition_results: [
         {
-          marker: "rank_8_dropout_0_0",
+          marker: "baseline_condition",
           status: "completed",
           success: true,
           average_accuracy: 0.75,
@@ -25457,11 +25457,11 @@ describe("ImplementSessionManager", () => {
       ]
     });
     expect(JSON.parse(readFileSync(path.join(workspace, "training-called.json"), "utf8"))).toMatchObject({
-      marker: "rank_8_dropout_0_0"
+      marker: "baseline_condition"
     });
     expect(JSON.parse(readFileSync(path.join(workspace, "evaluation-called.json"), "utf8"))).toMatchObject({
-      marker: "rank_8_dropout_0_0",
-      tasks: ["arc_challenge"]
+      marker: "baseline_condition",
+      tasks: ["benchmark_task_a"]
     });
   });
 
@@ -25521,7 +25521,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def prepare_study_data(args: Optional[argparse.Namespace]) -> PreparedDataBundle:",
         "    Path('data-called.txt').write_text(str(getattr(args, 'seed', None)), encoding='utf-8')",
-        "    return PreparedDataBundle(train_examples=['train-1'], evaluation_tasks={'arc_challenge': ['eval-1']})",
+        "    return PreparedDataBundle(train_examples=['train-1'], evaluation_tasks={'benchmark_task_a': ['eval-1']})",
         "",
         "def execute_condition_training(",
         "    condition: StudyCondition,",
@@ -25553,7 +25553,7 @@ describe("ImplementSessionManager", () => {
         "    eval_max_new_tokens: int = DEFAULT_EVAL_MAX_NEW_TOKENS,",
         ") -> Dict[str, Any]:",
         "    Path('evaluation-called.json').write_text(json.dumps({'marker': condition.marker, 'tasks': sorted(eval_payload.keys())}), encoding='utf-8')",
-        "    return {'status': 'completed', 'arc_challenge_accuracy': 0.8, 'hellaswag_accuracy': 0.6, 'average_accuracy': 0.7}",
+        "    return {'status': 'completed', 'benchmark_task_a_accuracy': 0.8, 'benchmark_task_b_accuracy': 0.6, 'average_accuracy': 0.7}",
         "",
         "def build_condition_result_record(condition: Any, training_result: Any, evaluation_record: Any, *, model_name: Optional[str] = None, model_source: Optional[str] = None) -> Dict[str, Any]:",
         "    return {",
@@ -25595,7 +25595,7 @@ describe("ImplementSessionManager", () => {
         "def run_locked_lora_rank_dropout_study(args: argparse.Namespace) -> Dict[str, Any]:",
         "    output_dir = Path(args.output_dir)",
         "    output_dir.mkdir(parents=True, exist_ok=True)",
-        "    condition = StudyCondition(marker='rank_8_dropout_0_0', rank=8, lora_dropout=0.0, is_baseline=True)",
+        "    condition = StudyCondition(marker='baseline_condition', rank=8, lora_dropout=0.0, is_baseline=True)",
         "    preflight_fn = globals().get('preflight_model_and_runtime') or preflight_and_select_model",
         "    data_fn = globals().get('prepare_datasets') or prepare_study_data",
         "    runner = _orchestration_find_helper(",
@@ -25641,7 +25641,7 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(readFileSync(path.join(workspace, "result.json"), "utf8"))).toMatchObject({
       condition_results: [
         {
-          marker: "rank_8_dropout_0_0",
+          marker: "baseline_condition",
           status: "completed",
           completed: true,
           average_accuracy: 0.7,
@@ -25654,13 +25654,13 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(path.join(workspace, "preflight-called.txt"), "utf8")).toBe("23");
     expect(readFileSync(path.join(workspace, "data-called.txt"), "utf8")).toBe("23");
     expect(JSON.parse(readFileSync(path.join(workspace, "training-called.json"), "utf8"))).toMatchObject({
-      marker: "rank_8_dropout_0_0",
+      marker: "baseline_condition",
       examples: 1,
       model: "model-a"
     });
     expect(JSON.parse(readFileSync(path.join(workspace, "evaluation-called.json"), "utf8"))).toMatchObject({
-      marker: "rank_8_dropout_0_0",
-      tasks: ["arc_challenge"]
+      marker: "baseline_condition",
+      tasks: ["benchmark_task_a"]
     });
   });
 
@@ -25720,7 +25720,7 @@ describe("ImplementSessionManager", () => {
         "    args = argparse.Namespace(metrics_path='metrics.json')",
         "    study_runner = _chunk3b_resolve_global_callable(",
         "        [",
-        "            'run_lora_rank_dropout_study',",
+        "            'run_condition_grid_study',",
         "            'run_locked_lora_rank_dropout_study',",
         "            'run_locked_study',",
         "            'execute_locked_study',",
@@ -25788,7 +25788,7 @@ describe("ImplementSessionManager", () => {
         "    }",
         "    return target(**supported_kwargs)",
         "",
-        "def run_lora_rank_dropout_study(args):",
+        "def run_condition_grid_study(args):",
         "    return {'status': 'completed', 'completed_run_count': 1}",
         "",
         "def write_study_artifacts(study_result, args, run_command=None):",
@@ -25803,7 +25803,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    args = argparse.Namespace(metrics_path='metrics.json')",
-        "    study_output = run_lora_rank_dropout_study(args)",
+        "    study_output = run_condition_grid_study(args)",
         "    final_payload = _entrypoint_invoke_callable(",
         "        write_study_artifacts,",
         "        study_output=study_output,",
@@ -25926,8 +25926,8 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    context = Context(",
-        "        conditions=[Condition('rank_8_dropout_0_0', 0), Condition('rank_4_dropout_0_0', 1)],",
-        "        baseline_condition=Condition('rank_8_dropout_0_0', 0),",
+        "        conditions=[Condition('baseline_condition', 0), Condition('candidate_condition_a', 1)],",
+        "        baseline_condition=Condition('baseline_condition', 0),",
         "    )",
         "    payload = {",
         "        'per_run_results': [",
@@ -25935,8 +25935,8 @@ describe("ImplementSessionManager", () => {
         "                'status': 'not_run',",
         "                'raw_result': {",
         "                    'value': [",
-        "                        {'condition_marker': 'rank_8_dropout_0_0', 'seed': 42, 'status': 'completed', 'accuracy': 0.5},",
-        "                        {'condition_marker': 'rank_4_dropout_0_0', 'seed': 42, 'status': 'completed', 'accuracy': 0.6},",
+        "                        {'condition_marker': 'baseline_condition', 'seed': 42, 'status': 'completed', 'accuracy': 0.5},",
+        "                        {'condition_marker': 'candidate_condition_a', 'seed': 42, 'status': 'completed', 'accuracy': 0.6},",
         "                    ]",
         "                },",
         "            }",
@@ -25969,8 +25969,8 @@ describe("ImplementSessionManager", () => {
     writeFileSync(
       scriptPath,
       [
-        "BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
-        "REQUIRED_CONDITION_MARKERS = ['rank_8_dropout_0_0', 'rank_4_dropout_0_0']",
+        "BASELINE_CONDITION_MARKER = 'baseline_condition'",
+        "REQUIRED_CONDITION_MARKERS = ['baseline_condition', 'candidate_condition_a']",
         "SEED_SCHEDULE = [42]",
         "",
         "def normalize_run_result(run_result):",
@@ -26008,8 +26008,8 @@ describe("ImplementSessionManager", () => {
         "            'success': True,",
         "            'raw_result': {",
         "                'value': [",
-        "                    {'condition_marker': 'rank_8_dropout_0_0', 'seed': 42, 'status': 'completed', 'accuracy': 0.5},",
-        "                    {'condition_marker': 'rank_4_dropout_0_0', 'seed': 42, 'status': 'completed', 'accuracy': 0.6},",
+        "                    {'condition_marker': 'baseline_condition', 'seed': 42, 'status': 'completed', 'accuracy': 0.5},",
+        "                    {'condition_marker': 'candidate_condition_a', 'seed': 42, 'status': 'completed', 'accuracy': 0.6},",
         "                ]",
         "            },",
         "        }",
@@ -26109,10 +26109,10 @@ describe("ImplementSessionManager", () => {
         "    raise RuntimeError('Single-run executor invocation failed without a captured signature error')",
         "",
         "def main():",
-        "    args = argparse.Namespace(model_name='Qwen/Qwen2.5-1.5B', local_files_only=True)",
-        "    condition = StudyCondition('rank_8_dropout_0_0')",
+        "    args = argparse.Namespace(model_name='the selected backbone', local_files_only=True)",
+        "    condition = StudyCondition('baseline_condition')",
         "    result = _invoke_single_run_executor(run_single_condition_seed, args, condition, 42, Path('run_out'))",
-        "    return 0 if result.get('condition_marker') == 'rank_8_dropout_0_0' else 1",
+        "    return 0 if result.get('condition_marker') == 'baseline_condition' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -26132,10 +26132,10 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_single_run_executor_signature_dispatch_marker");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(path.join(workspace, "run_out", "result.json"), "utf8"))).toMatchObject({
-      condition_marker: "rank_8_dropout_0_0",
+      condition_marker: "baseline_condition",
       seed: 42,
       bundle: "loaded",
-      model_name: "Qwen/Qwen2.5-1.5B"
+      model_name: "the selected backbone"
     });
   });
 
@@ -26152,17 +26152,17 @@ describe("ImplementSessionManager", () => {
         "from typing import Mapping",
         "",
         "class Condition:",
-        "    marker = 'rank_8_dropout_0_0'",
+        "    marker = 'baseline_condition'",
         "",
         "class Example:",
         "    prompt = 'Question?\\nAnswer:'",
         "    correct_label = 'A'",
         "    correct_text = 'alpha'",
-        "    task_name = 'arc_challenge'",
+        "    task_name = 'benchmark_task_a'",
         "    example_id = 'arc_1'",
         "",
         "def prepare_benchmark_task_data(args):",
-        "    return {'arc_challenge': SimpleNamespace(examples=[Example()])}",
+        "    return {'benchmark_task_a': SimpleNamespace(examples=[Example()])}",
         "",
         "def load_base_model_bundle(config_or_args=None):",
         "    return SimpleNamespace(model='model', tokenizer='tokenizer', device_context='device_ctx')",
@@ -26181,7 +26181,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def evaluate_condition_benchmarks(condition, training_result, evaluation_examples_by_task, config_or_args=None, baseline_average_accuracy=None):",
         "    assert training_result['model'] == 'model'",
-        "    assert evaluation_examples_by_task['arc_challenge'][0].correct_label == 'A'",
+        "    assert evaluation_examples_by_task['benchmark_task_a'][0].correct_label == 'A'",
         "    return {'status': 'completed', 'average_accuracy': 0.5}",
         "",
         "def _resolve_locked_condition_runner(condition_runner=None):",
@@ -26311,7 +26311,7 @@ describe("ImplementSessionManager", () => {
         "    return None",
         "",
         "def prepare_study_data(config, tokenizer):",
-        "    return SimpleNamespace(train_dataset=[1], eval_examples={'arc_challenge': [1]})",
+        "    return SimpleNamespace(train_dataset=[1], eval_examples={'benchmark_task_a': [1]})",
         "",
         "def run_condition_finetuning(*, condition, model_bundle, prepared_data, config, logger=None, started_at=None):",
         "    assert model_bundle.model == 'model'",
@@ -26321,7 +26321,7 @@ describe("ImplementSessionManager", () => {
         "def evaluate_model_on_benchmarks(model, tokenizer, prepared_data, device, config):",
         "    assert model == 'model'",
         "    assert tokenizer == 'tokenizer'",
-        "    return {'average_accuracy': 0.5, 'metrics': {'arc_challenge_accuracy': 0.5}}",
+        "    return {'average_accuracy': 0.5, 'metrics': {'benchmark_task_a_accuracy': 0.5}}",
         "",
         "def assemble_condition_result(*, condition, train_result, evaluation_summary, model_context=None, baseline_average_accuracy=None, failure=None, elapsed_wall_sec=None, device=None):",
         "    return {'status': 'completed', 'marker': condition['marker'], 'average_accuracy': evaluation_summary['average_accuracy'], 'device': device}",
@@ -26345,7 +26345,7 @@ describe("ImplementSessionManager", () => {
         "    return executor(condition, config, model_spec)",
         "",
         "def main():",
-        "    result = execute_planned_condition({'marker': 'rank_8_dropout_0_0'}, RunnerConfig(), {'selected_model_id': 'fake-model'})",
+        "    result = execute_planned_condition({'marker': 'baseline_condition'}, RunnerConfig(), {'selected_model_id': 'fake-model'})",
         "    assert result['status'] == 'completed'",
         "    assert result['average_accuracy'] == 0.5",
         "    return 0",
@@ -26402,7 +26402,7 @@ describe("ImplementSessionManager", () => {
         "    return (2, 10)",
         "",
         "def main():",
-        "    bundle = load_base_model_bundle({}, 'fake-model', condition={'marker': 'rank_8_dropout_0_0'})",
+        "    bundle = load_base_model_bundle({}, 'fake-model', condition={'marker': 'baseline_condition'})",
         "    assert bundle['lora_summary']['trainable_parameters'] == 2",
         "    assert bundle['load_summary']['total_parameters'] == 10",
         "    return 0",
@@ -26436,12 +26436,12 @@ describe("ImplementSessionManager", () => {
       [
         "from types import SimpleNamespace",
         "",
-        "DATA_TASK_ORDER = ['arc_challenge', 'hellaswag']",
+        "DATA_TASK_ORDER = ['benchmark_task_a', 'benchmark_task_b']",
         "",
-        "def evaluate_arc_challenge(**kwargs):",
+        "def evaluate_benchmark_task_a(**kwargs):",
         "    return SimpleNamespace(accuracy=0.5, scored_example_count=1, example_count=1, correct_count=1, failed_example_count=0)",
         "",
-        "def evaluate_hellaswag(**kwargs):",
+        "def evaluate_benchmark_task_b(**kwargs):",
         "    return SimpleNamespace(accuracy=0.25, scored_example_count=1, example_count=1, correct_count=0, failed_example_count=0)",
         "",
         "class BenchmarkEvaluationSummary:",
@@ -26450,8 +26450,8 @@ describe("ImplementSessionManager", () => {
         "",
         "def evaluate_model_on_benchmarks(model, tokenizer, prepared_data, device, config):",
         "    task_results = {",
-        "        'arc_challenge': evaluate_arc_challenge(),",
-        "        'hellaswag': evaluate_hellaswag(),",
+        "        'benchmark_task_a': evaluate_benchmark_task_a(),",
+        "        'benchmark_task_b': evaluate_benchmark_task_b(),",
         "    }",
         "    accuracies = [",
         "        result.accuracy for task_name in DATA_TASK_ORDER if task_name in task_results and task_results[task_name].scored_example_count > 0",
@@ -26491,7 +26491,7 @@ describe("ImplementSessionManager", () => {
     writeFileSync(
       scriptPath,
       [
-        "LOCKED_BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
+        "LOCKED_BASELINE_CONDITION_MARKER = 'baseline_condition'",
         "",
         "def build_metrics_payload(*, condition_results):",
         "    return {",
@@ -26506,15 +26506,15 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    payload = build_metrics_payload(condition_results=[",
-        "        {'marker': 'rank_8_dropout_0_0', 'condition_id': 'rank_8_dropout_0_0', 'status': 'success', 'success': True, 'is_baseline': True, 'average_accuracy': 0.8, 'accuracy_delta_vs_baseline': 0.0},",
-        "        {'marker': 'rank_8_dropout_0_05', 'condition_id': 'rank_8_dropout_0_05', 'status': 'success', 'success': True, 'average_accuracy': 0.83, 'accuracy_delta_vs_baseline': 0.03},",
-        "        {'marker': 'rank_8_dropout_0_1', 'condition_id': 'rank_8_dropout_0_1', 'status': 'succeeded', 'average_accuracy': 0.82, 'accuracy_delta_vs_baseline': 0.02},",
+        "        {'marker': 'baseline_condition', 'condition_id': 'baseline_condition', 'status': 'success', 'success': True, 'is_baseline': True, 'average_accuracy': 0.8, 'accuracy_delta_vs_baseline': 0.0},",
+        "        {'marker': 'baseline_condition5', 'condition_id': 'baseline_condition5', 'status': 'success', 'success': True, 'average_accuracy': 0.83, 'accuracy_delta_vs_baseline': 0.03},",
+        "        {'marker': 'candidate_condition_h', 'condition_id': 'candidate_condition_h', 'status': 'succeeded', 'average_accuracy': 0.82, 'accuracy_delta_vs_baseline': 0.02},",
         "    ])",
         "    assert payload['status'] == 'completed'",
         "    assert payload['completed_condition_count'] == 3",
         "    assert payload['accuracy_delta_vs_baseline'] == 0.03",
         "    assert payload['primary_metric'] == 0.03",
-        "    assert payload['best_condition_marker'] == 'rank_8_dropout_0_05'",
+        "    assert payload['best_condition_marker'] == 'baseline_condition5'",
         "    return 0",
         "",
         "if __name__ == '__main__':",
@@ -26553,7 +26553,7 @@ describe("ImplementSessionManager", () => {
   it("passes preflight model_selection into generated study condition calls", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-study-model-selection-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -26562,12 +26562,12 @@ describe("ImplementSessionManager", () => {
         "from pathlib import Path",
         "from typing import Any, Dict",
         "",
-        "PREFERRED_MODEL_NAME = 'Qwen/Qwen2.5-1.5B'",
-        "FALLBACK_MODEL_NAME = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'",
+        "PREFERRED_MODEL_NAME = 'the selected backbone'",
+        "FALLBACK_MODEL_NAME = 'the configured fallback backbone'",
         "DEFAULT_OUTPUT_DIR = Path('out')",
         "",
         "class StudyCondition:",
-        "    marker = 'rank_8_dropout_0_0'",
+        "    marker = 'baseline_condition'",
         "    rank = 8",
         "    dropout = 0.0",
         "",
@@ -26629,14 +26629,14 @@ describe("ImplementSessionManager", () => {
   it("coerces scalar model-selection fallback candidates before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-model-selection-scalar-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     writeFileSync(
       scriptPath,
       [
         "from typing import Any, Mapping, Optional, Sequence",
         "",
         "PREFER_LOCAL_CACHE_ONLY = True",
-        "FALLBACK_MODEL_NAME = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'",
+        "FALLBACK_MODEL_NAME = 'the configured fallback backbone'",
         "",
         "def preflight_model_candidate(",
         "    candidate: Mapping[str, Any],",
@@ -26671,7 +26671,7 @@ describe("ImplementSessionManager", () => {
         "    return {'selected_model_name': selected_record['model_name'], 'preflight_records': preflight_records}",
         "",
         "if __name__ == '__main__':",
-        "    print(build_model_selection_plan('Qwen/Qwen2.5-1.5B', 'TinyLlama/TinyLlama-1.1B-Chat-v1.0')['selected_model_name'])",
+        "    print(build_model_selection_plan('the selected backbone', 'the configured fallback backbone')['selected_model_name'])",
         ""
       ].join("\n"),
       "utf8"
@@ -26687,13 +26687,13 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_model_selection_plan_scalar_fallback_marker");
     const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
-    expect(output).toBe("Qwen/Qwen2.5-1.5B");
+    expect(output).toBe("the selected backbone");
   });
 
   it("honors AUTOLABOS_ALLOW_MODEL_DOWNLOAD for generated local-files-only defaults", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-model-download-default-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -26731,7 +26731,7 @@ describe("ImplementSessionManager", () => {
   it("bridges generated call_context invokers from positional condition dispatch", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-call-context-invoker-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -26742,7 +26742,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Mapping",
         "",
         "class StudyCondition:",
-        "    marker = 'rank_8_dropout_0_0'",
+        "    marker = 'baseline_condition'",
         "",
         "def condition_worker(condition: StudyCondition, args: argparse.Namespace, condition_output_dir: Path):",
         "    return {'marker': condition.marker, 'output_dir': str(condition_output_dir)}",
@@ -26794,13 +26794,13 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_call_context_invoker_bridge_marker");
     const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
-    expect(JSON.parse(output)).toEqual({ marker: "rank_8_dropout_0_0", output_dir: "out" });
+    expect(JSON.parse(output)).toEqual({ marker: "baseline_condition", output_dir: "out" });
   });
 
   it("materializes generated study condition train and eval inputs before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-study-runtime-inputs-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -26811,15 +26811,15 @@ describe("ImplementSessionManager", () => {
         "from pathlib import Path",
         "from typing import Any, Sequence",
         "",
-        "PREFERRED_MODEL_ID = 'Qwen/Qwen2.5-1.5B'",
+        "PREFERRED_MODEL_ID = 'the selected backbone'",
         "RUNTIME_DEVICE = 'cpu'",
         "DEFAULT_SEED = 17",
         "DEFAULT_MAX_TRAIN_EXAMPLES = 2",
         "DEFAULT_MAX_EVAL_EXAMPLES_PER_TASK = 1",
-        "TASK_NAMES = ('arc_challenge', 'hellaswag')",
+        "TASK_NAMES = ('benchmark_task_a', 'benchmark_task_b')",
         "REQUIRED_CONDITION_COUNT = 1",
-        "REQUIRED_CONDITION_MARKERS = ('rank_8_dropout_0_0',)",
-        "BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
+        "REQUIRED_CONDITION_MARKERS = ('baseline_condition',)",
+        "BASELINE_CONDITION_MARKER = 'baseline_condition'",
         "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
         "",
         "@dataclass",
@@ -26852,7 +26852,7 @@ describe("ImplementSessionManager", () => {
         "        'model_id': model_id,",
         "        'device': device,",
         "        'average_accuracy': 0.5,",
-        "        'task_accuracies': {'arc_challenge': 0.5, 'hellaswag': 0.5},",
+        "        'task_accuracies': {'benchmark_task_a': 0.5, 'benchmark_task_b': 0.5},",
         "    }",
         "",
         "def _study_plain_data(value: Any) -> Any:",
@@ -26914,7 +26914,7 @@ describe("ImplementSessionManager", () => {
         "    return context, warnings",
         "",
         "def get_locked_study_conditions():",
-        "    return [ExperimentCondition('rank_8_dropout_0_0', 8, 0.0, True)]",
+        "    return [ExperimentCondition('baseline_condition', 8, 0.0, True)]",
         "",
         "def _resolve_single_condition_runner():",
         "    return run_condition_experiment",
@@ -26972,8 +26972,8 @@ describe("ImplementSessionManager", () => {
     expect(afterOutput.records[0]).toMatchObject({
       status: "completed",
       train_count: 1,
-      eval_tasks: ["arc_challenge", "hellaswag"],
-      model_id: "Qwen/Qwen2.5-1.5B",
+      eval_tasks: ["benchmark_task_a", "benchmark_task_b"],
+      model_id: "the selected backbone",
       device: "cpu"
     });
     expect(afterOutput.setup_warnings.join("\n")).toContain("dataset_bundle_helper_skipped_missing_required:tokenizer");
@@ -26992,7 +26992,7 @@ describe("ImplementSessionManager", () => {
         "from pathlib import Path",
         "from typing import Any, Mapping, Sequence",
         "",
-        "PREFERRED_MODEL_ID = 'Qwen/Qwen2.5-1.5B'",
+        "PREFERRED_MODEL_ID = 'the selected backbone'",
         "DEFAULT_TIMEOUT_SEC = 30",
         "DEVICE = 'cpu'",
         "",
@@ -27045,7 +27045,7 @@ describe("ImplementSessionManager", () => {
         "def prepare_study_data(paths, budget):",
         "    return PreparedData(",
         "        train_examples=[{'instruction': 'i', 'output': 'o'}],",
-        "        evaluation_examples_by_task={'arc_challenge': [{'answer': 'A'}], 'hellaswag': [{'answer': 'B'}]},",
+        "        evaluation_examples_by_task={'benchmark_task_a': [{'answer': 'A'}], 'benchmark_task_b': [{'answer': 'B'}]},",
         "    )",
         "",
         "def train_single_condition(condition, base_model_id: str, train_examples: Sequence[Mapping[str, Any]], budget, paths, logger=None):",
@@ -27081,7 +27081,7 @@ describe("ImplementSessionManager", () => {
         "    resolved_paths = paths or Paths()",
         "    resolved_paths.condition_artifacts_dir.mkdir(parents=True, exist_ok=True)",
         "    budget = _get_value(study_config, 'budget', 'budget_config', default=study_config)",
-        "    condition = ConditionSpec('rank_8_dropout_0_0')",
+        "    condition = ConditionSpec('baseline_condition')",
         "    raw_result = _execute_single_condition(",
         "        condition=condition,",
         "        study_config=study_config,",
@@ -27118,7 +27118,7 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(path.join(workspace, "result.json"), "utf8"))).toMatchObject({
       status: "completed",
-      base_model_id: "Qwen/Qwen2.5-1.5B",
+      base_model_id: "the selected backbone",
       train_count: 1,
       average_accuracy: 0.5
     });
@@ -27346,7 +27346,7 @@ describe("ImplementSessionManager", () => {
         "    parser.add_argument('--output-dir')",
         "    parser.add_argument(",
         "        '--model-name-or-path',",
-        "        default='TinyLlama/TinyLlama-1.1B-Chat-v1.0',",
+        "        default='the configured fallback backbone',",
         "        help='Compact open base model checkpoint used for every condition.',",
         "    )",
         "    return parser",
@@ -27609,7 +27609,7 @@ describe("ImplementSessionManager", () => {
       {
         verifyReport: { status: "not_run" },
         testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
-        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)} --disable-progress-bars --fallback-model TinyLlama/TinyLlama-1.1B --base-model Qwen/Qwen2.5-0.5B --baseline-condition rank_8_dropout_0_0 --budget-timeout-sec 1800`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)} --disable-progress-bars --fallback-model the configured fallback backbone --base-model the selected backbone --baseline-condition baseline_condition --budget-timeout-sec 1800`,
         scriptPath,
         workingDir: publicDir,
         workspaceRoot: workspace,
@@ -27641,11 +27641,11 @@ describe("ImplementSessionManager", () => {
         publicDir,
         "--disable-progress-bars",
         "--fallback-model",
-        "TinyLlama/TinyLlama-1.1B",
+        "the configured fallback backbone",
         "--base-model",
-        "Qwen/Qwen2.5-0.5B",
+        "the selected backbone",
         "--baseline-condition",
-        "rank_8_dropout_0_0",
+        "baseline_condition",
         "--budget-timeout-sec",
         "1800"
       ],
@@ -27653,9 +27653,9 @@ describe("ImplementSessionManager", () => {
     );
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       disable_progress_bar: true,
-      fallback_base_model: "TinyLlama/TinyLlama-1.1B",
-      base_model_id: "Qwen/Qwen2.5-0.5B",
-      baseline_condition_marker: "rank_8_dropout_0_0",
+      fallback_base_model: "the configured fallback backbone",
+      base_model_id: "the selected backbone",
+      baseline_condition_marker: "baseline_condition",
       timeout_sec: 1800
     });
   });
@@ -27730,7 +27730,7 @@ describe("ImplementSessionManager", () => {
     };
 
     const comparisonContractJson = JSON.stringify({ baseline: "standard_lora" });
-    const plannedConditionContractJson = JSON.stringify({ conditions: ["rank_8_dropout_0_05"] });
+    const plannedConditionContractJson = JSON.stringify({ conditions: ["baseline_condition5"] });
     const report = await verifier.verifyAttempt(
       {
         verifyReport: { status: "not_run" },
@@ -27773,7 +27773,7 @@ describe("ImplementSessionManager", () => {
     );
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       comparison_contract: { baseline: "standard_lora" },
-      planned_condition_contract: { conditions: ["rank_8_dropout_0_05"] }
+      planned_condition_contract: { conditions: ["baseline_condition5"] }
     });
   });
 
@@ -27987,11 +27987,11 @@ describe("ImplementSessionManager", () => {
       "--run-artifact-dir",
       JSON.stringify(runDir),
       "--base-model",
-      JSON.stringify("Qwen/Qwen2.5-1.5B"),
+      JSON.stringify("the selected backbone"),
       "--fallback-base-model",
-      JSON.stringify("TinyLlama/TinyLlama-1.1B-Chat-v1.0"),
+      JSON.stringify("the configured fallback backbone"),
       "--condition-markers",
-      JSON.stringify("rank_8_dropout_0_0,rank_4_dropout_0_0"),
+      JSON.stringify("baseline_condition,candidate_condition_a"),
       "--locked-budget-timeout-sec",
       "1800"
     ].join(" ");
@@ -28034,11 +28034,11 @@ describe("ImplementSessionManager", () => {
         "--run-artifact-dir",
         runDir,
         "--base-model",
-        "Qwen/Qwen2.5-1.5B",
+        "the selected backbone",
         "--fallback-base-model",
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "the configured fallback backbone",
         "--condition-markers",
-        "rank_8_dropout_0_0,rank_4_dropout_0_0",
+        "baseline_condition,candidate_condition_a",
         "--locked-budget-timeout-sec",
         "1800"
       ],
@@ -28048,9 +28048,9 @@ describe("ImplementSessionManager", () => {
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
     expect(metrics).toMatchObject({
       status: "completed",
-      base_model: "Qwen/Qwen2.5-1.5B",
-      fallback_base_model: "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-      condition_markers: "rank_8_dropout_0_0,rank_4_dropout_0_0",
+      base_model: "the selected backbone",
+      fallback_base_model: "the configured fallback backbone",
+      condition_markers: "baseline_condition,candidate_condition_a",
       timeout_sec: 1800,
       public_dir: publicDir,
       run_artifact_dir: runDir
@@ -28749,7 +28749,7 @@ describe("ImplementSessionManager", () => {
   it("repairs PEFTRecipeConfig metadata aliases before module-level locked recipe projection", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-recipe-config-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -28858,7 +28858,7 @@ describe("ImplementSessionManager", () => {
   it("adds _canonical_string when locked recipe identity helpers reference it without defining it", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-canonical-string-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -28905,7 +28905,7 @@ describe("ImplementSessionManager", () => {
   it("repairs candidate executor argument bridges for runtime and candidate index parameters", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-candidate-executor-args-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -29022,7 +29022,7 @@ describe("ImplementSessionManager", () => {
   it("repairs entrypoint workflow resolver and metrics schema signature bridges", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-entrypoint-workflow-signature-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -29078,8 +29078,8 @@ describe("ImplementSessionManager", () => {
         "",
         "def _entrypoint_run_study(args: argparse.Namespace) -> Mapping[str, Any]:",
         "    workflow_candidates = (",
-        "        'run_peft_instruction_study',",
-        "        'execute_peft_instruction_study',",
+        "        'run_instruction_study',",
+        "        'execute_instruction_study',",
         "        'run_instruction_tuning_study',",
         "        'run_peft_study',",
         "        'run_study',",
@@ -29156,7 +29156,7 @@ describe("ImplementSessionManager", () => {
   it("repairs final metrics schema kwargs and missing inline assembly helper drift", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-final-metrics-schema-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -29237,7 +29237,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def assemble_final_metrics_payload(args: Any, study_result: Mapping[str, Any]) -> dict[str, Any]:",
         "    objective_metrics = {'mean_zero_shot_accuracy': 0.73}",
-        "    benchmark_results = {'arc_challenge': {'accuracy': 0.71}, 'hellaswag': {'accuracy': 0.75}}",
+        "    benchmark_results = {'benchmark_task_a': {'accuracy': 0.71}, 'benchmark_task_b': {'accuracy': 0.75}}",
         "    return build_final_metrics_schema(",
         "        study_result=study_result,",
         "        run_metadata={'seed': 7},",
@@ -29268,13 +29268,13 @@ describe("ImplementSessionManager", () => {
     expect(metrics.primary_metric).toBe(0.73);
     expect(metrics.run_metadata.seed).toBe(7);
     expect(metrics.device_metadata.device).toBe("cpu");
-    expect(metrics.benchmark_results.arc_challenge.accuracy).toBe(0.71);
+    expect(metrics.benchmark_results.benchmark_task_a.accuracy).toBe(0.71);
   });
 
   it("projects raw_results aliases into main metrics condition records", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-metrics-raw-results-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -29288,12 +29288,12 @@ describe("ImplementSessionManager", () => {
         "",
         "STATUS_COMPLETED = 'completed'",
         "STATUS_FAILED = 'failed'",
-        "REQUIRED_CONDITION_MARKERS = ('rank_8_dropout_0_0', 'rank_16_dropout_0_0', 'rank_32_dropout_0_0')",
+        "REQUIRED_CONDITION_MARKERS = ('baseline_condition', 'candidate_condition_d', 'candidate_condition_f')",
         "LOCKED_SWEEP_MARKERS = REQUIRED_CONDITION_MARKERS",
-        "BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
+        "BASELINE_CONDITION_MARKER = 'baseline_condition'",
         "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
         "PRIMARY_SCORE_AGGREGATE_KEY = 'average_accuracy'",
-        "TASK_ACCURACY_KEYS = ('arc_challenge_accuracy', 'hellaswag_accuracy')",
+        "TASK_ACCURACY_KEYS = ('benchmark_task_a_accuracy', 'benchmark_task_b_accuracy')",
         "STUDY_SLUG = 'lora-rank-dropout'",
         "",
         "def _main_make_json_safe(value):",
@@ -29361,9 +29361,9 @@ describe("ImplementSessionManager", () => {
         "        'status': 'completed',",
         "        'completed_condition_count': 3,",
         "        'raw_results': [",
-        "            {'marker': 'rank_8_dropout_0_0', 'status': 'completed', 'average_accuracy': 0.34},",
-        "            {'marker': 'rank_16_dropout_0_0', 'status': 'completed', 'average_accuracy': 0.34},",
-        "            {'marker': 'rank_32_dropout_0_0', 'status': 'completed', 'average_accuracy': 0.33},",
+        "            {'marker': 'baseline_condition', 'status': 'completed', 'average_accuracy': 0.34},",
+        "            {'marker': 'candidate_condition_d', 'status': 'completed', 'average_accuracy': 0.34},",
+        "            {'marker': 'candidate_condition_f', 'status': 'completed', 'average_accuracy': 0.33},",
         "        ],",
         "    }",
         "    payload = _assemble_main_metrics_payload(",
@@ -29403,16 +29403,16 @@ describe("ImplementSessionManager", () => {
     expect(metrics.success).toBe(true);
     expect(metrics.completed_condition_count).toBe(3);
     expect(metrics.condition_results.map((item: { marker: string }) => item.marker)).toEqual([
-      "rank_8_dropout_0_0",
-      "rank_16_dropout_0_0",
-      "rank_32_dropout_0_0"
+      "baseline_condition",
+      "candidate_condition_d",
+      "candidate_condition_f"
     ]);
   });
 
   it("repairs final metrics document dispatch by bridging condition evaluation into metrics assembly", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-metrics-bridge-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -29432,15 +29432,15 @@ describe("ImplementSessionManager", () => {
         "def load_benchmark_examples(per_benchmark_limit=None, seed=42):",
         "    return (",
         "        {",
-        "            'arc_challenge': [{'id': 'arc-1', 'choices': ['A', 'B'], 'answer_index': 0}],",
-        "            'hellaswag': [{'id': 'hs-1', 'choices': ['A', 'B'], 'answer_index': 1}],",
+        "            'benchmark_task_a': [{'id': 'arc-1', 'choices': ['A', 'B'], 'answer_index': 0}],",
+        "            'benchmark_task_b': [{'id': 'hs-1', 'choices': ['A', 'B'], 'answer_index': 1}],",
         "        },",
         "        {'status': 'ok', 'seed': seed, 'limit': per_benchmark_limit},",
         "    )",
         "",
         "def run_ordered_condition_evaluation(args, train_samples, eval_sets, device):",
         "    assert train_samples[0]['instruction'] == 'classify'",
-        "    assert eval_sets['arc_challenge'][0]['id'] == 'arc-1'",
+        "    assert eval_sets['benchmark_task_a'][0]['id'] == 'arc-1'",
         "    assert device == 'cpu'",
         "    return {",
         "        'condition_order': ['unmodified_base', 'locked_lora_baseline', 'dora'],",
@@ -29532,7 +29532,7 @@ describe("ImplementSessionManager", () => {
       "dora"
     ]);
     expect(metrics.dataset_metadata.train_sample_count).toBe(1);
-    expect(metrics.dataset_metadata.benchmark_sample_counts.arc_challenge).toBe(1);
+    expect(metrics.dataset_metadata.benchmark_sample_counts.benchmark_task_a).toBe(1);
     expect(metrics.device_info.device).toBe("cpu");
     expect(metrics.study.condition_order).toEqual(["unmodified_base", "locked_lora_baseline", "dora"]);
   });
@@ -29540,7 +29540,7 @@ describe("ImplementSessionManager", () => {
   it("repairs chunk-5 orchestration helper dispatch without fabricating metrics", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-chunk5-orchestration-bridge-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -29660,7 +29660,7 @@ describe("ImplementSessionManager", () => {
   it("bridges build_metrics_payload_from_options to generated study helpers without fallback rows", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-build-metrics-options-bridge-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -29710,7 +29710,7 @@ describe("ImplementSessionManager", () => {
         "    CALL_TRACE.append(f'load:{train_subset_size}:{eval_samples_per_task}:{seed}')",
         "    return (",
         "        [{'text': 'train-example'}],",
-        "        {'arc_challenge': [{'prompt': 'arc'}], 'hellaswag': [{'prompt': 'hella'}]},",
+        "        {'benchmark_task_a': [{'prompt': 'arc'}], 'benchmark_task_b': [{'prompt': 'hella'}]},",
         "        {'train_subset_size': train_subset_size, 'eval_samples_per_task': eval_samples_per_task, 'seed': seed},",
         "    )",
         "",
@@ -29724,9 +29724,9 @@ describe("ImplementSessionManager", () => {
         "    validate_recipe_registry(ordered)",
         "    return [train_or_prepare_condition(condition, train_records, args, run_dir) for condition in ordered]",
         "",
-        "def evaluate_all_conditions_on_benchmarks(condition_results: Sequence[Dict[str, Any]], benchmark_samples: Mapping[str, Any], device: Optional[Any] = None, benchmark_names: Sequence[str] = ('arc_challenge', 'hellaswag')) -> List[Dict[str, Any]]:",
+        "def evaluate_all_conditions_on_benchmarks(condition_results: Sequence[Dict[str, Any]], benchmark_samples: Mapping[str, Any], device: Optional[Any] = None, benchmark_names: Sequence[str] = ('benchmark_task_a', 'benchmark_task_b')) -> List[Dict[str, Any]]:",
         "    CALL_TRACE.append('evaluate')",
-        "    assert set(benchmark_samples.keys()) == {'arc_challenge', 'hellaswag'}",
+        "    assert set(benchmark_samples.keys()) == {'benchmark_task_a', 'benchmark_task_b'}",
         "    evaluated = []",
         "    for index, row in enumerate(condition_results):",
         "        assert 'model' in row and 'tokenizer' in row",
@@ -29861,7 +29861,7 @@ describe("ImplementSessionManager", () => {
   it("repairs final condition dispatcher aliases without fabricating condition rows", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-dispatch-bridge-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -29968,7 +29968,7 @@ describe("ImplementSessionManager", () => {
   it("repairs runtime MutableMapping imports that py_compile cannot catch", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-mutable-mapping-runtime-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -30604,7 +30604,7 @@ describe("ImplementSessionManager", () => {
   it("repairs a missing RecipeSpec train_adapter property before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-train-adapter-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -30652,7 +30652,7 @@ describe("ImplementSessionManager", () => {
   it("repairs RecipeSpec validation so no-training baselines can use inert hyperparameters", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-inert-hparams-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -31202,10 +31202,10 @@ describe("ImplementSessionManager", () => {
                 "def orchestrate_peft_instruction_study(config=None):",
                 "    return {'status': 'completed', 'accuracy_delta_vs_baseline': 0.0}",
                 "",
-                "run_peft_instruction_study = orchestrate_peft_instruction_study",
+                "run_instruction_study = orchestrate_peft_instruction_study",
                 "",
                 "def _call_experiment_orchestrator(config=None):",
-                "    for name in ('run_peft_instruction_study', 'run_study', 'execute_experiment', 'orchestrate_experiment'):",
+                "    for name in ('run_instruction_study', 'run_study', 'execute_experiment', 'orchestrate_experiment'):",
                 "        candidate = globals().get(name)",
                 "        if callable(candidate):",
                 "            return candidate(config)",
@@ -31302,8 +31302,8 @@ describe("ImplementSessionManager", () => {
                   "        'execute_study_with_status',",
                   "        'run_study_with_status',",
                   "        'run_full_study_with_status',",
-                  "        'run_peft_instruction_study',",
-                  "        'execute_peft_instruction_study',",
+                  "        'run_instruction_study',",
+                  "        'execute_instruction_study',",
                   "        'run_experiment_with_status',",
                   "        'run_experiment',",
                   "    )",
@@ -31402,7 +31402,7 @@ describe("ImplementSessionManager", () => {
                   "    candidate_names = (",
                   "        'run_experiment',",
                   "        'run_study',",
-                  "        'run_peft_instruction_study',",
+                  "        'run_instruction_study',",
                   "        'orchestrate_experiment',",
                   "        'orchestrate_study',",
                   "        'execute_experiment',",
@@ -31509,7 +31509,7 @@ describe("ImplementSessionManager", () => {
                   "def _autolabos_invoke_orchestration(args):",
                   "    orchestrator = _autolabos_find_callable(",
                   "        'run_experiment',",
-                  "        'run_peft_instruction_study',",
+                  "        'run_instruction_study',",
                   "        'execute_experiment',",
                   "        'execute_study',",
                   "        'orchestrate_experiment',",
@@ -31621,7 +31621,7 @@ describe("ImplementSessionManager", () => {
                   "        'run_baseline_first_recipe_orchestration',",
                   "        'run_baseline_first_recipe_comparison',",
                   "        'execute_baseline_first_study',",
-                  "        'run_peft_instruction_study',",
+                  "        'run_instruction_study',",
                   "        'run_study',",
                   "        'run_experiment',",
                   "    ))",
@@ -31830,7 +31830,7 @@ describe("ImplementSessionManager", () => {
                   "def _run_study_with_available_helper(args=None):",
                   "    candidate_names = (",
                   "        'run_locked_peft_instruction_study',",
-                  "        'run_peft_instruction_study',",
+                  "        'run_instruction_study',",
                   "        'run_locked_peft_study',",
                   "        'run_peft_study',",
                   "        'run_experiment_rows',",
@@ -31944,7 +31944,7 @@ describe("ImplementSessionManager", () => {
                   "        'run_study',",
                   "        'execute_study',",
                   "        'run_experiment',",
-                  "        'execute_peft_instruction_study',",
+                  "        'execute_instruction_study',",
                   "    ), args)",
                   "",
                   "if __name__ == '__main__':",
@@ -32431,10 +32431,10 @@ describe("ImplementSessionManager", () => {
                   "            return candidate",
                   "    return None",
                   "",
-                  "def evaluate_arc_challenge_and_hellaswag(model=None, tokenizer=None, eval_datasets=None, device=None):",
-                  "    return {'arc_challenge_accuracy': 0.25, 'hellaswag_accuracy': 0.5, 'mean_zero_shot_accuracy': 0.375}",
+                  "def evaluate_benchmark_task_a_and_benchmark_task_b(model=None, tokenizer=None, eval_datasets=None, device=None):",
+                  "    return {'benchmark_task_a_accuracy': 0.25, 'benchmark_task_b_accuracy': 0.5, 'mean_zero_shot_accuracy': 0.375}",
                   "",
-                  "evaluate_zero_shot_benchmarks = evaluate_arc_challenge_and_hellaswag",
+                  "evaluate_zero_shot_benchmarks = evaluate_benchmark_task_a_and_benchmark_task_b",
                   "",
                   "def _evaluate_candidate_for_run():",
                   "    evaluator = _first_callable('evaluate_model_on_benchmarks', 'evaluate_benchmarks', 'compute_benchmark_accuracies')",
@@ -32604,7 +32604,7 @@ describe("ImplementSessionManager", () => {
         "    prefer_model_scoring: bool = True,",
         "    max_examples_per_task: int | None = None,",
         ") -> Dict[str, Any]:",
-        "    samples = list(benchmark_samples.get('arc_challenge', [])) + list(benchmark_samples.get('hellaswag', []))",
+        "    samples = list(benchmark_samples.get('benchmark_task_a', [])) + list(benchmark_samples.get('benchmark_task_b', []))",
         "    return {",
         "        'condition_marker': condition_marker,",
         "        'benchmark_count': len(samples),",
@@ -32642,7 +32642,7 @@ describe("ImplementSessionManager", () => {
         "        Spec(),",
         "        argparse.Namespace(eval_examples_per_task=3),",
         "        {},",
-        "        {'arc_challenge': [1], 'hellaswag': [2, 3]},",
+        "        {'benchmark_task_a': [1], 'benchmark_task_b': [2, 3]},",
         "        {'status': 'trained'},",
         "    )",
         "    print(json.dumps(payload, sort_keys=True))",
@@ -32729,11 +32729,11 @@ describe("ImplementSessionManager", () => {
                   "    candidates = ', '.join(name_candidates)",
                   "    raise RuntimeError(f'required helper missing; expected one of: {candidates}')",
                   "",
-                  "def evaluate_benchmark(model=None, tokenizer=None, examples=None, benchmark_name='arc_challenge'):",
+                  "def evaluate_benchmark(model=None, tokenizer=None, examples=None, benchmark_name='benchmark_task_a'):",
                   "    return {'accuracy': 0.25}",
                   "",
                   "def evaluate_recipe_model(recipe_name, model=None, tokenizer=None, benchmark_examples=None, device=None):",
-                  "    return {'arc_challenge': {'accuracy': 0.25}, 'hellaswag': {'accuracy': 0.5}}",
+                  "    return {'benchmark_task_a': {'accuracy': 0.25}, 'benchmark_task_b': {'accuracy': 0.5}}",
                   "",
                   "def _evaluate_recipe_model(model=None, tokenizer=None, config=None, device=None):",
                   "    return _call_helper(",
@@ -32832,7 +32832,7 @@ describe("ImplementSessionManager", () => {
                   "from __future__ import annotations",
                   "",
                   "def load_evaluation_benchmarks(seed=None):",
-                  "    return {'arc_challenge': [], 'hellaswag': []}",
+                  "    return {'benchmark_task_a': [], 'benchmark_task_b': []}",
                   "",
                   "def evaluate_zero_shot_benchmarks(model=None, tokenizer=None, benchmark_examples=None, device=None):",
                   "    if benchmark_examples is None:",
@@ -32927,7 +32927,7 @@ describe("ImplementSessionManager", () => {
                   "from __future__ import annotations",
                   "",
                   "def load_all_benchmark_examples(eval_examples_per_benchmark=None, seed=0):",
-                  "    return {'arc_challenge': [], 'hellaswag': []}",
+                  "    return {'benchmark_task_a': [], 'benchmark_task_b': []}",
                   "",
                   "def _load_benchmarks_for_run(config=None):",
                   "    loader_names = (",
@@ -32971,7 +32971,7 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
-  it("rejects python runners whose ARC and HellaSwag bundle resolver misses generated benchmark subset loaders", async () => {
+  it("rejects python runners whose ARC and Benchmark Task B bundle resolver misses generated benchmark subset loaders", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-benchmark-bundle-loader-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -33002,7 +33002,7 @@ describe("ImplementSessionManager", () => {
         return {
           threadId: "thread-missing-benchmark-bundle-loader",
           finalText: JSON.stringify({
-            summary: "Implemented a runner whose ARC/HellaSwag bundle resolver cannot find generated subset loaders.",
+            summary: "Implemented a runner whose ARC/Benchmark Task B bundle resolver cannot find generated subset loaders.",
             run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
             working_dir: publicDir,
@@ -33024,11 +33024,11 @@ describe("ImplementSessionManager", () => {
                 content: [
                   "from __future__ import annotations",
                   "",
-                  "def load_benchmark_subsets(arc_limit=None, hellaswag_limit=None, seed=0):",
-                  "    return {'arc_challenge': [], 'hellaswag': []}, {}",
+                  "def load_benchmark_subsets(arc_limit=None, benchmark_task_b_limit=None, seed=0):",
+                  "    return {'benchmark_task_a': [], 'benchmark_task_b': []}, {}",
                   "",
-                  "def load_normalized_evaluation_sets(arc_limit=1, hellaswag_limit=1, seed=0):",
-                  "    return {'arc_challenge': [], 'hellaswag': []}",
+                  "def load_normalized_evaluation_sets(arc_limit=1, benchmark_task_b_limit=1, seed=0):",
+                  "    return {'benchmark_task_a': [], 'benchmark_task_b': []}",
                   "",
                   "def _load_benchmark_bundle(args=None):",
                   "    helper_names = (",
@@ -33042,11 +33042,11 @@ describe("ImplementSessionManager", () => {
                   "        helper = globals().get(helper_name)",
                   "        if callable(helper):",
                   "            return helper()",
-                  "    arc_helper = globals().get('load_arc_challenge') or globals().get('load_arc_challenge_examples') or globals().get('prepare_arc_challenge')",
-                  "    hs_helper = globals().get('load_hellaswag') or globals().get('load_hellaswag_examples') or globals().get('prepare_hellaswag')",
+                  "    arc_helper = globals().get('load_benchmark_task_a') or globals().get('load_benchmark_task_a_examples') or globals().get('prepare_benchmark_task_a')",
+                  "    hs_helper = globals().get('load_benchmark_task_b') or globals().get('load_benchmark_task_b_examples') or globals().get('prepare_benchmark_task_b')",
                   "    if arc_helper is None or hs_helper is None:",
-                  "        raise RuntimeError('No benchmark loading helper found for ARC-Challenge and HellaSwag.')",
-                  "    return {'arc_challenge': list(arc_helper()), 'hellaswag': list(hs_helper())}",
+                  "        raise RuntimeError('No benchmark loading helper found for Benchmark Task A and Benchmark Task B.')",
+                  "    return {'benchmark_task_a': list(arc_helper()), 'benchmark_task_b': list(hs_helper())}",
                   "",
                   "def run_baseline_first_experiment(argv=None):",
                   "    return _load_benchmark_bundle(None)",
@@ -33077,8 +33077,8 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
-  it("rejects python runners whose run-level ARC and HellaSwag resolver misses generated example loaders despite a suite loader", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-arc-hellaswag-loader-"));
+  it("rejects python runners whose run-level ARC and Benchmark Task B resolver misses generated example loaders despite a suite loader", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-arc-benchmark_task_b-loader-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -33086,7 +33086,7 @@ describe("ImplementSessionManager", () => {
 
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
-      title: "Reject Missing ARC HellaSwag Loader Dispatch",
+      title: "Reject Missing ARC Benchmark Task B Loader Dispatch",
       topic: "PEFT instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
@@ -33106,9 +33106,9 @@ describe("ImplementSessionManager", () => {
       runTurnStream: async () => {
         calls += 1;
         return {
-          threadId: "thread-missing-arc-hellaswag-loader",
+          threadId: "thread-missing-arc-benchmark_task_b-loader",
           finalText: JSON.stringify({
-            summary: "Implemented a runner whose run-level ARC/HellaSwag resolver misses generated example loaders.",
+            summary: "Implemented a runner whose run-level ARC/Benchmark Task B resolver misses generated example loaders.",
             run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
             working_dir: publicDir,
@@ -33133,10 +33133,10 @@ describe("ImplementSessionManager", () => {
                   "def load_evaluation_benchmarks(seed=None):",
                   "    return {'metadata': {'seed': seed}}",
                   "",
-                  "def load_arc_challenge_examples(max_examples=None, seed=0):",
+                  "def load_benchmark_task_a_examples(max_examples=None, seed=0):",
                   "    return [{'answerKey': 'A'}]",
                   "",
-                  "def load_hellaswag_examples(max_examples=None, seed=0):",
+                  "def load_benchmark_task_b_examples(max_examples=None, seed=0):",
                   "    return [{'label': '0'}]",
                   "",
                   "def _first_callable(*names):",
@@ -33155,23 +33155,23 @@ describe("ImplementSessionManager", () => {
                   "    )",
                   "    if suite_loader is not None:",
                   "        loaded = suite_loader()",
-                  "        if 'arc_challenge' in loaded or 'hellaswag' in loaded:",
+                  "        if 'benchmark_task_a' in loaded or 'benchmark_task_b' in loaded:",
                   "            return loaded",
                   "    arc_loader = _first_callable(",
-                  "        'load_arc_challenge_subset',",
-                  "        'load_arc_challenge',",
+                  "        'load_benchmark_task_a_subset',",
+                  "        'load_benchmark_task_a',",
                   "        'load_arc_dataset',",
-                  "        'prepare_arc_challenge_examples',",
+                  "        'prepare_benchmark_task_a_examples',",
                   "    )",
-                  "    hellaswag_loader = _first_callable(",
-                  "        'load_hellaswag_subset',",
-                  "        'load_hellaswag',",
-                  "        'load_hellaswag_dataset',",
-                  "        'prepare_hellaswag_examples',",
+                  "    benchmark_task_b_loader = _first_callable(",
+                  "        'load_benchmark_task_b_subset',",
+                  "        'load_benchmark_task_b',",
+                  "        'load_benchmark_task_b_dataset',",
+                  "        'prepare_benchmark_task_b_examples',",
                   "    )",
-                  "    if arc_loader is None or hellaswag_loader is None:",
-                  "        raise RuntimeError('No ARC-Challenge/HellaSwag benchmark loaders were defined in earlier sections.')",
-                  "    return {'arc_challenge': arc_loader(), 'hellaswag': hellaswag_loader()}",
+                  "    if arc_loader is None or benchmark_task_b_loader is None:",
+                  "        raise RuntimeError('No Benchmark Task A/Benchmark Task B benchmark loaders were defined in earlier sections.')",
+                  "    return {'benchmark_task_a': arc_loader(), 'benchmark_task_b': benchmark_task_b_loader()}",
                   "",
                   "def run_baseline_first_experiment(argv=None):",
                   "    return _load_benchmarks_for_run(None)",
@@ -33680,7 +33680,7 @@ describe("ImplementSessionManager", () => {
                   "    correct_index: int",
                   "",
                   "def load_evaluation_samples(max_examples_per_benchmark=2, seed=42) -> Dict[str, List[EvaluationSample]]:",
-                  "    return {'arc_challenge': [EvaluationSample('prompt', ('A', 'B'), 0)]}",
+                  "    return {'benchmark_task_a': [EvaluationSample('prompt', ('A', 'B'), 0)]}",
                   "",
                   "def _entrypoint_evaluate_model(model: Any, tokenizer: Any, eval_samples: Mapping[str, Sequence[Mapping[str, Any]]], device: Any) -> Dict[str, Any]:",
                   "    for benchmark, samples in eval_samples.items():",
@@ -33824,7 +33824,7 @@ describe("ImplementSessionManager", () => {
   it("repairs instruction dataset helper aliases when generated loaders use train-dataset names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-instruction-loader-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -33869,7 +33869,7 @@ describe("ImplementSessionManager", () => {
         "        max_examples=config.max_train_examples,",
         "        max_train_examples=config.max_train_examples,",
         "    )",
-        "    return train_dataset, {'arc_challenge': []}",
+        "    return train_dataset, {'benchmark_task_a': []}",
         "",
         "def main() -> int:",
         "    train_dataset, _ = _load_main_datasets(RuntimeConfig())",
@@ -33898,7 +33898,7 @@ describe("ImplementSessionManager", () => {
   it("repairs instruction dataset helper aliases when generated loaders use instruction-tuning names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-instruction-tuning-loader-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -34287,7 +34287,7 @@ describe("ImplementSessionManager", () => {
   it("repairs instruction dataset helper aliases when orchestration misses training-examples loaders", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-instruction-examples-loader-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -34348,7 +34348,7 @@ describe("ImplementSessionManager", () => {
   it("repairs instruction dataset helper aliases when generated canonical loader is not searched by final dispatcher", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-instruction-canonical-loader-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -34421,7 +34421,7 @@ describe("ImplementSessionManager", () => {
   it("repairs model loader aliases when generated compact loader is not searched by final dispatcher", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-compact-model-loader-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -34429,7 +34429,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Any",
         "",
         "class RunConfig:",
-        "    model_name = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'",
+        "    model_name = 'the configured fallback backbone'",
         "    seed = 42",
         "    local_files_only = False",
         "    trust_remote_code = False",
@@ -34464,7 +34464,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main() -> int:",
         "    bundle = _run_base_model_helper(RunConfig())",
-        "    return 0 if bundle.get('model') == 'model:TinyLlama/TinyLlama-1.1B-Chat-v1.0' and bundle.get('tokenizer') == 'tokenizer' else 1",
+        "    return 0 if bundle.get('model') == 'model:the configured fallback backbone' and bundle.get('tokenizer') == 'tokenizer' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -34489,7 +34489,7 @@ describe("ImplementSessionManager", () => {
   it("repairs evaluation dataset helper aliases when generated loaders use public dataset names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-eval-loader-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -34509,7 +34509,7 @@ describe("ImplementSessionManager", () => {
         "    return func(**{name: value for name, value in kwargs.items() if name in parameters})",
         "",
         "def load_bounded_public_evaluation_datasets(args=None, seed=42, max_examples=2):",
-        "    return {'arc_challenge': ['arc-row'], 'hellaswag': ['hellaswag-row']}, {'seed': seed, 'max_examples': max_examples}",
+        "    return {'benchmark_task_a': ['arc-row'], 'benchmark_task_b': ['benchmark_task_b-row']}, {'seed': seed, 'max_examples': max_examples}",
         "",
         "def _entrypoint_load_datasets(args, output_dir):",
         "    seed = int(getattr(args, 'seed', 42))",
@@ -34522,15 +34522,15 @@ describe("ImplementSessionManager", () => {
         "                datasets_obj = datasets_obj[0]",
         "            if isinstance(datasets_obj, Mapping):",
         "                return dict(datasets_obj)",
-        "    arc_loader = _entrypoint_callable('load_arc_challenge_examples', 'load_arc_challenge_dataset', 'load_arc_challenge')",
-        "    hellaswag_loader = _entrypoint_callable('load_hellaswag_examples', 'load_hellaswag_dataset', 'load_hellaswag')",
-        "    if arc_loader is None or hellaswag_loader is None:",
+        "    arc_loader = _entrypoint_callable('load_benchmark_task_a_examples', 'load_benchmark_task_a_dataset', 'load_benchmark_task_a')",
+        "    benchmark_task_b_loader = _entrypoint_callable('load_benchmark_task_b_examples', 'load_benchmark_task_b_dataset', 'load_benchmark_task_b')",
+        "    if arc_loader is None or benchmark_task_b_loader is None:",
         "        raise RuntimeError('No evaluation dataset loader is available in the materialized script')",
-        "    return {'arc_challenge': _entrypoint_call(arc_loader, seed=seed, max_examples=eval_samples), 'hellaswag': _entrypoint_call(hellaswag_loader, seed=seed, max_examples=eval_samples)}",
+        "    return {'benchmark_task_a': _entrypoint_call(arc_loader, seed=seed, max_examples=eval_samples), 'benchmark_task_b': _entrypoint_call(benchmark_task_b_loader, seed=seed, max_examples=eval_samples)}",
         "",
         "def main() -> int:",
         "    datasets = _entrypoint_load_datasets(argparse.Namespace(seed=7, eval_samples=3), '.')",
-        "    return 0 if datasets == {'arc_challenge': ['arc-row'], 'hellaswag': ['hellaswag-row']} else 1",
+        "    return 0 if datasets == {'benchmark_task_a': ['arc-row'], 'benchmark_task_b': ['benchmark_task_b-row']} else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -34555,7 +34555,7 @@ describe("ImplementSessionManager", () => {
   it("repairs singular bounded eval dataset aliases when generated helpers use plural names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-bounded-eval-singular-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -34563,8 +34563,8 @@ describe("ImplementSessionManager", () => {
         "",
         "def assemble_bounded_eval_datasets(eval_examples_per_benchmark=2, seed=42, use_public_datasets=True):",
         "    return {",
-        "        'arc_challenge': [{'seed': seed, 'limit': eval_examples_per_benchmark, 'public': use_public_datasets}],",
-        "        'hellaswag': [{'seed': seed, 'limit': eval_examples_per_benchmark, 'public': use_public_datasets}],",
+        "        'benchmark_task_a': [{'seed': seed, 'limit': eval_examples_per_benchmark, 'public': use_public_datasets}],",
+        "        'benchmark_task_b': [{'seed': seed, 'limit': eval_examples_per_benchmark, 'public': use_public_datasets}],",
         "    }, {'source': 'plural-helper'}",
         "",
         "build_bounded_eval_datasets = assemble_bounded_eval_datasets",
@@ -34578,8 +34578,8 @@ describe("ImplementSessionManager", () => {
         "        output_dir='ignored-by-plural-helper',",
         "    )",
         "    expected = {",
-        "        'arc_challenge': [{'seed': 7, 'limit': 3, 'public': True}],",
-        "        'hellaswag': [{'seed': 7, 'limit': 3, 'public': True}],",
+        "        'benchmark_task_a': [{'seed': 7, 'limit': 3, 'public': True}],",
+        "        'benchmark_task_b': [{'seed': 7, 'limit': 3, 'public': True}],",
         "    }",
         "    return 0 if eval_examples == expected else 1",
         "",
@@ -34609,7 +34609,7 @@ describe("ImplementSessionManager", () => {
   it("repairs condition-runner eval aliases when generated loaders use benchmark eval dataset names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-benchmark-eval-loader-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -34621,8 +34621,8 @@ describe("ImplementSessionManager", () => {
         "",
         "def load_benchmark_eval_datasets(max_eval_examples=64, seed=42):",
         "    return {",
-        "        'arc_challenge': [f'arc-{seed}-{max_eval_examples}'],",
-        "        'hellaswag': [f'hellaswag-{seed}-{max_eval_examples}'],",
+        "        'benchmark_task_a': [f'arc-{seed}-{max_eval_examples}'],",
+        "        'benchmark_task_b': [f'benchmark_task_b-{seed}-{max_eval_examples}'],",
         "    }, {'source': 'benchmark-eval-datasets'}",
         "",
         "def _resolve_helper(names):",
@@ -34648,7 +34648,7 @@ describe("ImplementSessionManager", () => {
         "        'load_eval_datasets',",
         "    ))",
         "    if helper is None:",
-        "        raise RuntimeError('no ARC-Challenge/HellaSwag evaluation dataset helper is available')",
+        "        raise RuntimeError('no Benchmark Task A/Benchmark Task B evaluation dataset helper is available')",
         "    return _call_with_supported_kwargs(",
         "        helper,",
         "        args=args,",
@@ -34658,7 +34658,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main() -> int:",
         "    eval_payload = _load_eval_datasets_for_conditions(argparse.Namespace(seed=7, max_eval_examples=3))",
-        "    expected = {'arc_challenge': ['arc-7-3'], 'hellaswag': ['hellaswag-7-3']}",
+        "    expected = {'benchmark_task_a': ['arc-7-3'], 'benchmark_task_b': ['benchmark_task_b-7-3']}",
         "    return 0 if eval_payload == expected else 1",
         "",
         "if __name__ == '__main__':",
@@ -34669,7 +34669,7 @@ describe("ImplementSessionManager", () => {
     );
 
     expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
-      /no ARC-Challenge\/HellaSwag evaluation dataset helper is available/
+      /no Benchmark Task A\/Benchmark Task B evaluation dataset helper is available/
     );
 
     const repair = await repairPythonEvaluationDatasetHelperAliasSurface(scriptPath);
@@ -34685,7 +34685,7 @@ describe("ImplementSessionManager", () => {
   it("repairs evaluation dataset helper aliases when final orchestration reports missing helpers but load_evaluation_examples exists", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-eval-examples-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -34718,7 +34718,7 @@ describe("ImplementSessionManager", () => {
         "    return [{'text': f'train-{seed}-{subset_size}'}]",
         "",
         "def load_evaluation_examples(args=None, seed=42, eval_size=None):",
-        "    return {'arc_challenge': [f'arc-{seed}-{eval_size}'], 'hellaswag': [f'hellaswag-{seed}-{eval_size}']}",
+        "    return {'benchmark_task_a': [f'arc-{seed}-{eval_size}'], 'benchmark_task_b': [f'benchmark_task_b-{seed}-{eval_size}']}",
         "",
         "def _load_experiment_datasets(args):",
         "    loader = _resolve_callable(",
@@ -34768,9 +34768,9 @@ describe("ImplementSessionManager", () => {
         "    datasets = _load_experiment_datasets(argparse.Namespace(seed=7, max_train_examples=11, max_eval_examples=3))",
         "    expected = {",
         "        'train_examples': [{'text': 'train-7-11'}],",
-        "        'eval_sets': {'arc_challenge': ['arc-7-3'], 'hellaswag': ['hellaswag-7-3']},",
-        "        'arc_challenge': ['arc-7-3'],",
-        "        'hellaswag': ['hellaswag-7-3'],",
+        "        'eval_sets': {'benchmark_task_a': ['arc-7-3'], 'benchmark_task_b': ['benchmark_task_b-7-3']},",
+        "        'benchmark_task_a': ['arc-7-3'],",
+        "        'benchmark_task_b': ['benchmark_task_b-7-3'],",
         "    }",
         "    return 0 if datasets == expected else 1",
         "",
@@ -34795,10 +34795,10 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("repairs evaluation dataset helper aliases when generated loaders use raw ARC and HellaSwag names", async () => {
+  it("repairs evaluation dataset helper aliases when generated loaders use raw ARC and Benchmark Task B names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-eval-raw-loader-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -34816,11 +34816,11 @@ describe("ImplementSessionManager", () => {
         "    parameters = inspect.signature(func).parameters",
         "    return func(**{name: value for name, value in kwargs.items() if name in parameters})",
         "",
-        "def load_arc_challenge_raw_dataset(seed=42, max_examples=2):",
+        "def load_benchmark_task_a_raw_dataset(seed=42, max_examples=2):",
         "    return ['arc-row'], {'seed': seed, 'max_examples': max_examples}",
         "",
-        "def load_hellaswag_raw_dataset(seed=42, max_examples=2):",
-        "    return ['hellaswag-row'], {'seed': seed, 'max_examples': max_examples}",
+        "def load_benchmark_task_b_raw_dataset(seed=42, max_examples=2):",
+        "    return ['benchmark_task_b-row'], {'seed': seed, 'max_examples': max_examples}",
         "",
         "def _entrypoint_load_datasets(args, output_dir):",
         "    seed = int(getattr(args, 'seed', 42))",
@@ -34829,18 +34829,18 @@ describe("ImplementSessionManager", () => {
         "        loader = _entrypoint_callable(loader_name)",
         "        if callable(loader):",
         "            return _entrypoint_call(loader, args=args, output_dir=output_dir, seed=seed, max_examples=eval_samples)",
-        "    arc_loader = _entrypoint_callable('load_arc_challenge_examples', 'load_arc_challenge_dataset', 'load_arc_challenge')",
-        "    hellaswag_loader = _entrypoint_callable('load_hellaswag_examples', 'load_hellaswag_dataset', 'load_hellaswag')",
-        "    if arc_loader is None or hellaswag_loader is None:",
+        "    arc_loader = _entrypoint_callable('load_benchmark_task_a_examples', 'load_benchmark_task_a_dataset', 'load_benchmark_task_a')",
+        "    benchmark_task_b_loader = _entrypoint_callable('load_benchmark_task_b_examples', 'load_benchmark_task_b_dataset', 'load_benchmark_task_b')",
+        "    if arc_loader is None or benchmark_task_b_loader is None:",
         "        raise RuntimeError('No evaluation dataset loader is available in the materialized script')",
         "    return {",
-        "        'arc_challenge': _entrypoint_call(arc_loader, seed=seed, max_examples=eval_samples),",
-        "        'hellaswag': _entrypoint_call(hellaswag_loader, seed=seed, max_examples=eval_samples),",
+        "        'benchmark_task_a': _entrypoint_call(arc_loader, seed=seed, max_examples=eval_samples),",
+        "        'benchmark_task_b': _entrypoint_call(benchmark_task_b_loader, seed=seed, max_examples=eval_samples),",
         "    }",
         "",
         "def main() -> int:",
         "    datasets = _entrypoint_load_datasets(argparse.Namespace(seed=7, eval_samples=3), '.')",
-        "    return 0 if datasets == {'arc_challenge': ['arc-row'], 'hellaswag': ['hellaswag-row']} else 1",
+        "    return 0 if datasets == {'benchmark_task_a': ['arc-row'], 'benchmark_task_b': ['benchmark_task_b-row']} else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -34857,17 +34857,17 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("def load_arc_challenge_examples(*positional, **keyword):");
-    expect(repairedSource).toContain("def load_hellaswag_examples(*positional, **keyword):");
-    expect(repairedSource).toContain("\"load_arc_challenge_raw_dataset\"");
-    expect(repairedSource).toContain("\"load_hellaswag_raw_dataset\"");
+    expect(repairedSource).toContain("def load_benchmark_task_a_examples(*positional, **keyword):");
+    expect(repairedSource).toContain("def load_benchmark_task_b_examples(*positional, **keyword):");
+    expect(repairedSource).toContain("\"load_benchmark_task_a_raw_dataset\"");
+    expect(repairedSource).toContain("\"load_benchmark_task_b_raw_dataset\"");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
   it("repairs evaluation dataset loader sample-limit argument aliases", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-eval-loader-arg-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -34898,37 +34898,37 @@ describe("ImplementSessionManager", () => {
         "    }",
         "    return fn(**supported)",
         "",
-        "def load_arc_challenge_examples(max_examples: int, seed: int = SEED, split: str = 'validation'):",
-        "    return {'task': 'arc_challenge', 'examples': list(range(max_examples)), 'seed': seed, 'split': split}",
+        "def load_benchmark_task_a_examples(max_examples: int, seed: int = SEED, split: str = 'validation'):",
+        "    return {'task': 'benchmark_task_a', 'examples': list(range(max_examples)), 'seed': seed, 'split': split}",
         "",
-        "def load_hellaswag_examples(requested_examples: int, seed: int = SEED, split: str = 'validation'):",
-        "    return {'task': 'hellaswag', 'examples': list(range(requested_examples)), 'seed': seed, 'split': split}",
+        "def load_benchmark_task_b_examples(requested_examples: int, seed: int = SEED, split: str = 'validation'):",
+        "    return {'task': 'benchmark_task_b', 'examples': list(range(requested_examples)), 'seed': seed, 'split': split}",
         "",
         "def _load_study_datasets(args: argparse.Namespace):",
         "    seed = int(_arg_value(args, 'seed', SEED))",
         "    arc_samples = int(_arg_value(args, 'arc_eval_samples', DEFAULT_ARC_EVAL_SAMPLES))",
-        "    hellaswag_samples = int(_arg_value(args, 'hellaswag_eval_samples', DEFAULT_HELLASWAG_EVAL_SAMPLES))",
+        "    benchmark_task_b_samples = int(_arg_value(args, 'benchmark_task_b_eval_samples', DEFAULT_HELLASWAG_EVAL_SAMPLES))",
         "    arc_payload = _invoke_with_supported_kwargs(",
-        "        load_arc_challenge_examples,",
+        "        load_benchmark_task_a_examples,",
         "        split='validation',",
         "        sample_size=arc_samples,",
         "        max_samples=arc_samples,",
         "        seed=seed,",
         "    )",
-        "    hellaswag_payload = _invoke_with_supported_kwargs(",
-        "        load_hellaswag_examples,",
+        "    benchmark_task_b_payload = _invoke_with_supported_kwargs(",
+        "        load_benchmark_task_b_examples,",
         "        split='validation',",
-        "        sample_size=hellaswag_samples,",
-        "        max_samples=hellaswag_samples,",
+        "        sample_size=benchmark_task_b_samples,",
+        "        max_samples=benchmark_task_b_samples,",
         "        seed=seed,",
         "    )",
-        "    return {'arc_challenge': arc_payload, 'hellaswag': hellaswag_payload}",
+        "    return {'benchmark_task_a': arc_payload, 'benchmark_task_b': benchmark_task_b_payload}",
         "",
         "def main() -> int:",
-        "    datasets = _load_study_datasets(argparse.Namespace(seed=7, arc_eval_samples=2, hellaswag_eval_samples=5))",
-        "    if len(datasets['arc_challenge']['examples']) != 2:",
+        "    datasets = _load_study_datasets(argparse.Namespace(seed=7, arc_eval_samples=2, benchmark_task_b_eval_samples=5))",
+        "    if len(datasets['benchmark_task_a']['examples']) != 2:",
         "        return 1",
-        "    if len(datasets['hellaswag']['examples']) != 5:",
+        "    if len(datasets['benchmark_task_b']['examples']) != 5:",
         "        return 2",
         "    return 0",
         "",
@@ -34955,7 +34955,7 @@ describe("ImplementSessionManager", () => {
   it("repairs benchmark evaluator aliases without fabricating metrics", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-benchmark-evaluator-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -34970,7 +34970,7 @@ describe("ImplementSessionManager", () => {
         "        self.seed = 7",
         "        self.data_cache_dir = 'cache-dir'",
         "        self.arc_eval_samples = 2",
-        "        self.hellaswag_eval_samples = 3",
+        "        self.benchmark_task_b_eval_samples = 3",
         "        self.eval_batch_size = 1",
         "",
         "def _call_with_supported_kwargs(fn, **kwargs):",
@@ -34992,16 +34992,16 @@ describe("ImplementSessionManager", () => {
         "def load_evaluation_datasets(args=None, seed=SEED):",
         "    assert getattr(args, 'dataset_cache_dir') == 'cache-dir'",
         "    return {",
-        "        'arc_challenge': [{'benchmark': 'arc_challenge'} for _ in range(int(args.arc_challenge_eval_examples))],",
-        "        'hellaswag': [{'benchmark': 'hellaswag'} for _ in range(int(args.hellaswag_eval_examples))],",
+        "        'benchmark_task_a': [{'benchmark': 'benchmark_task_a'} for _ in range(int(args.benchmark_task_a_eval_examples))],",
+        "        'benchmark_task_b': [{'benchmark': 'benchmark_task_b'} for _ in range(int(args.benchmark_task_b_eval_examples))],",
         "    }",
         "",
         "def evaluate_zero_shot_accuracy(model=None, tokenizer=None, benchmarks=None, device=None, args=None, include_predictions=False):",
-        "    total = len(benchmarks['arc_challenge']) + len(benchmarks['hellaswag'])",
+        "    total = len(benchmarks['benchmark_task_a']) + len(benchmarks['benchmark_task_b'])",
         "    return {",
         "        'mean_zero_shot_accuracy': 0.5,",
-        "        'arc_challenge_accuracy': 0.5,",
-        "        'hellaswag_accuracy': 0.5,",
+        "        'benchmark_task_a_accuracy': 0.5,",
+        "        'benchmark_task_b_accuracy': 0.5,",
         "        'total_evaluated': total,",
         "    }",
         "",
@@ -35027,7 +35027,7 @@ describe("ImplementSessionManager", () => {
         "        device=_device_from_device_info(device_info),",
         "        device_info=device_info,",
         "        arc_eval_samples=config.arc_eval_samples,",
-        "        hellaswag_eval_samples=config.hellaswag_eval_samples,",
+        "        benchmark_task_b_eval_samples=config.benchmark_task_b_eval_samples,",
         "        eval_batch_size=config.eval_batch_size,",
         "        seed=config.seed,",
         "        cache_dir=str(config.data_cache_dir),",
@@ -35062,13 +35062,13 @@ describe("ImplementSessionManager", () => {
   it("repairs evaluator compatible-call helpers that pass unsupported sample-limit kwargs", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-supported-signature-kwargs-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
         "from typing import Any, Callable",
         "",
-        "def evaluate_arc_challenge(model, tokenizer, device=None, limit=None, seed=None, score_mode='label'):",
+        "def evaluate_benchmark_task_a(model, tokenizer, device=None, limit=None, seed=None, score_mode='label'):",
         "    assert device == 'cuda'",
         "    assert limit == 3",
         "    assert seed == 7",
@@ -35094,7 +35094,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def _evaluate_candidate_model(model, tokenizer, device, max_eval_examples, seed):",
         "    return _safe_call_with_supported_signature(",
-        "        evaluate_arc_challenge,",
+        "        evaluate_benchmark_task_a,",
         "        model,",
         "        tokenizer,",
         "        device,",
@@ -35131,7 +35131,7 @@ describe("ImplementSessionManager", () => {
   it("bridges locked sweep data/model kwargs and raw condition results before runtime handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-sweep-runtime-bridge-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(workspace, "run_condition_grid_study.py");
     const metricsPath = path.join(workspace, "metrics.json");
     writeFileSync(
       scriptPath,
@@ -35162,9 +35162,9 @@ describe("ImplementSessionManager", () => {
         "    return [Example(f'train-{seed}-{index}') for index in range(max_samples)], {'rows': max_samples}",
         "",
         "def load_evaluation_examples_bundle(*, max_samples, seed, cache_dir):",
-        "    return {'arc_challenge': ['arc'] * max_samples, 'hellaswag': ['hs'] * max_samples}, {'rows': max_samples}",
+        "    return {'benchmark_task_a': ['arc'] * max_samples, 'benchmark_task_b': ['hs'] * max_samples}, {'rows': max_samples}",
         "",
-        "def train_and_evaluate_condition(condition, model_id, train_data, arc_data, hellaswag_data, output_dir, args=None):",
+        "def train_and_evaluate_condition(condition, model_id, train_data, arc_data, benchmark_task_b_data, output_dir, args=None):",
         "    return {",
         "        'status': 'completed',",
         "        'success': True,",
@@ -35172,7 +35172,7 @@ describe("ImplementSessionManager", () => {
         "        'model_id': model_id,",
         "        'train_count': len(train_data),",
         "        'arc_count': len(arc_data),",
-        "        'hellaswag_count': len(hellaswag_data),",
+        "        'benchmark_task_b_count': len(benchmark_task_b_data),",
         "    }",
         "",
         "def _context_from_args_kwargs(args, kwargs):",
@@ -35290,7 +35290,7 @@ describe("ImplementSessionManager", () => {
         "    args = parser.parse_args(argv)",
         "    output_dir = Path(args.output_dir)",
         "    metrics_path = Path(args.metrics_path)",
-        "    runnable_command = 'python run_lora_rank_dropout_study.py'",
+        "    runnable_command = 'python run_condition_grid_study.py'",
         "    started_at = time.time()",
         "    run_context = {'run_name': args.run_name, 'output_dir': output_dir, 'metrics_path': metrics_path, 'args': args, 'selected_model_id': None}",
         "    helper_kwargs: JSONDict = {",
@@ -35351,7 +35351,7 @@ describe("ImplementSessionManager", () => {
   it("repairs deterministic subset helpers generated with keyword-only subset sizes", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-subset-arity-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -35456,7 +35456,7 @@ describe("ImplementSessionManager", () => {
   it("repairs tokenizer helper aliases when generated loaders use configure-tokenizer names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-tokenizer-loader-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -35512,7 +35512,7 @@ describe("ImplementSessionManager", () => {
   it("repairs ExperimentDefaults when parser defaults reference trust_remote_code", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-defaults-hf-runtime-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -35563,7 +35563,7 @@ describe("ImplementSessionManager", () => {
   it("repairs baseline evaluator calls that omit model tokenizer and benchmark datasets", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-eval-args-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -35596,15 +35596,15 @@ describe("ImplementSessionManager", () => {
         "    return 'model:' + str(model_name_or_path), 'tokenizer', 'cpu', {'loaded': True}",
         "",
         "def load_benchmark_datasets(eval_subset_size=None, seed=None):",
-        "    return {'arc_challenge': [{'answer': 'A'}], 'hellaswag': [{'answer': 'B'}]}, {'seed': seed}",
+        "    return {'benchmark_task_a': [{'answer': 'A'}], 'benchmark_task_b': [{'answer': 'B'}]}, {'seed': seed}",
         "",
         "def evaluate_baseline_zero_shot(model, tokenizer, benchmark_datasets):",
         "    assert model == 'model:tiny-model'",
         "    assert tokenizer == 'tokenizer'",
-        "    assert 'arc_challenge' in benchmark_datasets",
+        "    assert 'benchmark_task_a' in benchmark_datasets",
         "    return {'mean_accuracy': 0.5}",
         "",
-        "def run_peft_instruction_study(args):",
+        "def run_instruction_study(args):",
         "    seed = 42",
         "    output_dir = '.'",
         "    common_kwargs = {",
@@ -35620,7 +35620,7 @@ describe("ImplementSessionManager", () => {
         "    return baseline_raw",
         "",
         "def main():",
-        "    result = run_peft_instruction_study(object())",
+        "    result = run_instruction_study(object())",
         "    return 0 if result['mean_accuracy'] == 0.5 else 1",
         "",
         "if __name__ == '__main__':",
@@ -35646,7 +35646,7 @@ describe("ImplementSessionManager", () => {
   it("repairs baseline-first condition-loop invocations that pass config positionally", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-first-loop-inputs-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -35677,7 +35677,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def load_benchmark_subsets(eval_examples_per_benchmark=None, seed=None):",
         "    assert eval_examples_per_benchmark == 2",
-        "    return {'arc_challenge': [{'answer': 'A', 'seed': seed}]}",
+        "    return {'benchmark_task_a': [{'answer': 'A', 'seed': seed}]}",
         "",
         "def log(message):",
         "    return None",
@@ -35693,11 +35693,11 @@ describe("ImplementSessionManager", () => {
         "    assert config['seed'] == 7",
         "    assert device == 'cpu'",
         "    assert train_examples and train_examples[0]['seed'] == 7",
-        "    assert eval_examples['arc_challenge'][0]['seed'] == 7",
+        "    assert eval_examples['benchmark_task_a'][0]['seed'] == 7",
         "    assert callable(logger)",
         "    return {'status': 'completed'}",
         "",
-        "def run_peft_instruction_study(config):",
+        "def run_instruction_study(config):",
         "    run_result = _invoke_named_helper(",
         "        (",
         "            'run_locked_baseline_first_conditions',",
@@ -35711,7 +35711,7 @@ describe("ImplementSessionManager", () => {
         "    return run_result",
         "",
         "def main():",
-        "    result = run_peft_instruction_study({",
+        "    result = run_instruction_study({",
         "        'seed': 7,",
         "        'dataset_name': 'tiny-instructions',",
         "        'dataset_config_name': None,",
@@ -35743,7 +35743,7 @@ describe("ImplementSessionManager", () => {
   it("repairs locked recipe workflow invokers that omit materialized dataset and device inputs", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-locked-workflow-inputs-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -35753,7 +35753,7 @@ describe("ImplementSessionManager", () => {
         "def load_all_benchmark_examples(examples_per_benchmark=None, seed=None, cache_dir=None):",
         "    assert examples_per_benchmark == 2",
         "    assert cache_dir == 'cache'",
-        "    return {'arc_challenge': [{'seed': seed, 'answer': 'A'}]}",
+        "    return {'benchmark_task_a': [{'seed': seed, 'answer': 'A'}]}",
         "",
         "def load_instruction_tuning_examples(train_examples=None, validation_examples=None, seed=None, cache_dir=None):",
         "    assert train_examples == 3",
@@ -35765,7 +35765,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def run_condition_execution_loop(args, eval_examples_by_benchmark, train_examples, device_info):",
         "    assert args.seed == 7",
-        "    assert eval_examples_by_benchmark['arc_challenge'][0]['seed'] == 7",
+        "    assert eval_examples_by_benchmark['benchmark_task_a'][0]['seed'] == 7",
         "    assert train_examples[0]['text'] == 'train'",
         "    assert device_info['device'] == 'cpu'",
         "    return [{'condition_id': 'locked_lora_baseline', 'status': 'completed'}]",
@@ -35826,7 +35826,7 @@ describe("ImplementSessionManager", () => {
   it("repairs singular condition-result normalization calls using the generated plural helper", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-normalizer-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -35892,7 +35892,7 @@ describe("ImplementSessionManager", () => {
   it("repairs flexible model-loader calls that omit a required device_or_info argument", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-model-loader-device-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -35947,7 +35947,7 @@ describe("ImplementSessionManager", () => {
   it("repairs NEFTune embedding monkeypatches to replica-safe forward hooks", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-neftune-hook-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -35993,7 +35993,7 @@ describe("ImplementSessionManager", () => {
   it("repairs final orchestration calls to undefined detect_device using generated device helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-detect-device-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -36033,7 +36033,7 @@ describe("ImplementSessionManager", () => {
   it("repairs baseline-first pipeline calls to undefined detect_device_info using generated device helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-detect-device-info-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -36074,7 +36074,7 @@ describe("ImplementSessionManager", () => {
   it("repairs device_info detect_device calls using generated detect_execution_device metadata", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-detect-execution-device-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -36113,7 +36113,7 @@ describe("ImplementSessionManager", () => {
   it("repairs final orchestration calls to undefined get_device using generated device info helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-get-device-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -36625,7 +36625,7 @@ describe("ImplementSessionManager", () => {
   it("repairs CandidateSpec-backed PEFT recipe normalization before locked baseline validation", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-candidate-spec-peft-normalization-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -36886,7 +36886,7 @@ describe("ImplementSessionManager", () => {
   it("repairs baseline-first PEFT runners whose locked standard LoRA id drifts from the recipe registry", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-locked-lora-id-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -36939,7 +36939,7 @@ describe("ImplementSessionManager", () => {
   it("repairs locked recipe catalogs backed by generated candidate IDs and dataclass rows", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-locked-recipe-catalog-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -37021,7 +37021,7 @@ describe("ImplementSessionManager", () => {
   it("repairs final recipe registries that ignore generated PEFT_RECIPES mappings", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-recipes-registry-alias-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -37111,7 +37111,7 @@ describe("ImplementSessionManager", () => {
   it("repairs final recipe catalog lookup aliases when generated registries use ORDERED_RECIPE_SPECS", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-final-recipe-catalog-lookup-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -37175,7 +37175,7 @@ describe("ImplementSessionManager", () => {
   it("repairs aggregate metrics finalization so plural candidate results do not call singular row aggregators", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-aggregate-plural-finalizer-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -37245,7 +37245,7 @@ describe("ImplementSessionManager", () => {
   it("repairs legacy base_model recipe defaults when the generated registry uses another baseline id", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-base-model-id-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -37320,7 +37320,7 @@ describe("ImplementSessionManager", () => {
   it("repairs broader-target LoRA marker aliases before locked recipe coverage validation", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-broader-target-marker-repair-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
       scriptPath,
       [
@@ -38968,8 +38968,8 @@ describe("ImplementSessionManager", () => {
           scriptPath,
           [
             "PLANNED_CONDITION_MARKERS = (",
-            "  'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_0', 'rank_8_dropout_0_05',",
-            "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+            "  'candidate_condition_a', 'candidate_condition_a5', 'baseline_condition', 'baseline_condition5',",
+            "  'candidate_condition_d', 'candidate_condition_d5', 'candidate_condition_f', 'candidate_condition_f5',",
             ")",
             "REQUIRED_CONDITION_COUNT = 8",
             "REQUIRED_RUN_COUNT = 24",

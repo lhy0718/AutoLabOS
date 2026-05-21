@@ -339,12 +339,12 @@ describe("paperMinimumGate", () => {
 
   it("blocks paper-scale promotion for tiny one-example gains without repeated seeds", () => {
     const input = fullInput();
-    input.topic = "LoRA rank/dropout tuning";
+    input.topic = "condition-parameter tuning";
     input.report.metrics = {
       accuracy_delta_vs_baseline: 0.083332,
       summary: {
-        baseline_condition_marker: "rank_8_dropout_0_0",
-        best_condition_marker: "rank_32_dropout_0_05",
+        baseline_condition_marker: "baseline_condition",
+        best_condition_marker: "candidate_condition_f5",
         best_accuracy_delta_vs_baseline: 0.083332
       },
       run_config: {
@@ -353,30 +353,30 @@ describe("paperMinimumGate", () => {
       },
       data: {
         eval: {
-          arc_challenge: { count: 6 },
-          hellaswag: { count: 6 }
+          benchmark_task_a: { count: 6 },
+          benchmark_task_b: { count: 6 }
         }
       },
       conditions: [
         {
-          marker: "rank_8_dropout_0_0",
+          marker: "baseline_condition",
           rank: 8,
           dropout: 0,
           steps_completed: 4,
           per_task_metrics: {
-            arc_challenge: { correct: 3, total: 6 },
-            hellaswag: { correct: 1, total: 6 }
+            benchmark_task_a: { correct: 3, total: 6 },
+            benchmark_task_b: { correct: 1, total: 6 }
           },
           accuracy_delta_vs_baseline: 0
         },
         {
-          marker: "rank_32_dropout_0_05",
+          marker: "candidate_condition_f5",
           rank: 32,
           dropout: 0.05,
           steps_completed: 4,
           per_task_metrics: {
-            arc_challenge: { correct: 3, total: 6 },
-            hellaswag: { correct: 2, total: 6 }
+            benchmark_task_a: { correct: 3, total: 6 },
+            benchmark_task_b: { correct: 2, total: 6 }
           },
           accuracy_delta_vs_baseline: 0.083332
         }

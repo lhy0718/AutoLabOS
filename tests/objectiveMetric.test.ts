@@ -356,7 +356,7 @@ describe("objectiveMetric", () => {
       conditions: [
         {
           baseline: true,
-          condition_marker: "rank_8_dropout_0_0",
+          condition_marker: "baseline_condition",
           average_accuracy: 0.27083333333333337,
           status: "completed"
         },
@@ -501,7 +501,7 @@ describe("objectiveMetric", () => {
 
   it("downgrades a met accuracy delta when the winning treatment has a large resource regression", () => {
     const objective =
-      "Primary metric: mean zero-shot accuracy across ARC-Challenge and HellaSwag. What counts as meaningful improvement: at least +1.0 percentage point over the named tuned baseline on the primary metric without an unacceptable runtime or memory regression.";
+      "Primary metric: mean zero-shot accuracy across Benchmark Task A and Benchmark Task B. What counts as meaningful improvement: at least +1.0 percentage point over the named tuned baseline on the primary metric without an unacceptable runtime or memory regression.";
     const profile = normalizeObjectiveMetricProfile(
       {
         source: "llm",
@@ -570,7 +570,7 @@ describe("objectiveMetric", () => {
         preferredMetricKeys: [
           "accuracy_delta_vs_baseline",
           "mean_zero_shot_accuracy",
-          "arc_challenge_accuracy"
+          "benchmark_task_a_accuracy"
         ],
         direction: "maximize",
         comparator: ">=",
@@ -583,7 +583,7 @@ describe("objectiveMetric", () => {
       {
         best_condition: {
           name: "base_unmodified",
-          arc_challenge_accuracy: 0.296875,
+          benchmark_task_a_accuracy: 0.296875,
           mean_zero_shot_accuracy: 0.40234375
         },
         conditions: [

@@ -194,7 +194,7 @@ describe("ImplementationLocalizer", () => {
     const experimentDir = path.join(outputRoot, "experiment");
     mkdirSync(experimentDir, { recursive: true });
 
-    const runnerPath = path.join(experimentDir, "run_peft_instruction_study.py");
+    const runnerPath = path.join(experimentDir, "run_instruction_study.py");
     writeFileSync(path.join(outputRoot, "manifest.json"), "{\"current\":true}\n", "utf8");
     writeFileSync(
       runnerPath,

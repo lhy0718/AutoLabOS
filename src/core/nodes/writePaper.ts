@@ -2192,8 +2192,6 @@ function summarizeConditionForPaperContext(condition: Record<string, unknown>): 
       "average_accuracy_ci95",
       "accuracy_delta_vs_baseline_mean",
       "accuracy_delta_vs_baseline_ci95",
-      "arc_challenge_accuracy_mean",
-      "hellaswag_accuracy_mean",
       "runtime_sec_mean",
       "peak_vram_bytes_mean",
       "train_loss_mean"
@@ -2215,8 +2213,6 @@ function summarizeSeedResultForPaperContext(seedResult: Record<string, unknown>)
       "dropout",
       "average_accuracy",
       "accuracy_delta_vs_baseline",
-      "arc_challenge_accuracy",
-      "hellaswag_accuracy",
       "completed",
       "train_status"
     ]),
@@ -3008,7 +3004,7 @@ function sanitizeFinalPaperAbstract(abstract: string): string {
     || /\bpaper[- ]?readiness audit\b/iu.test(cleaned)
     || /\bcurrent workflow\b/iu.test(cleaned)
   ) {
-    return "We study how LoRA rank and dropout interact under a fixed local instruction-tuning budget. The run evaluates eight rank/dropout cells on Qwen/Qwen2.5-1.5B with a locked rank-8/dropout-0 baseline and ARC-Challenge plus HellaSwag evaluation. The best observed cell, rank 32 with dropout 0.05, reaches 0.4167 average accuracy versus 0.3333 for the baseline; the gain is driven by HellaSwag while ARC-Challenge remains unchanged. Because each task uses only six evaluation examples and no repeated-seed replication is reported, the result is treated as a screening signal for follow-up rather than as a general LoRA tuning rule.";
+    return "This paper reports a bounded experimental run under a fixed local budget. It states the selected artifact metadata, configured conditions, baseline or comparator, evaluation scope, result table, and uncertainty limits while treating small-sample evidence as a screening signal rather than as a general rule.";
   }
   return cleaned;
 }
@@ -3026,7 +3022,7 @@ function softenFinalLmBenchmarkPilotTitle(title: string): string {
     && /\b(?:LoRA|rank|dropout|parameter-efficient|instruction tuning)\b/iu.test(cleaned)
     )
   ) {
-    return "A Fixed-Budget Pilot Study of LoRA Rank and Dropout for Local Instruction Tuning";
+    return "A Fixed-Budget Pilot Study of a Local Experimental Configuration";
   }
   return cleaned;
 }
@@ -3042,10 +3038,10 @@ function sanitizeFinalPaperParagraph(heading: string, paragraph: string, index: 
     .trim();
   if (/^introduction$/iu.test(heading)) {
     if (/^This draft studies\b/iu.test(paragraph)) {
-      return "This paper studies how LoRA rank and dropout interact under a fixed local instruction-tuning budget. It reports the selected backbone, evaluation tasks, requested rank/dropout grid, locked baseline, condition coverage, and uncertainty limits while treating the pilot as a screening study rather than as a statistically definitive tuning result.";
+      return "This paper reports a fixed-budget experimental pilot. It identifies the selected artifacts, configured comparison set, baseline or comparator, evaluation tasks, condition coverage, and uncertainty limits while treating the result as a screening study rather than as a statistically definitive conclusion.";
     }
     if (/\b-\s*Primary metric:/iu.test(paragraph) || /\bfailed-run visibility\b/iu.test(paragraph)) {
-      return "The contribution is a cautious LoRA rank/dropout preflight on a locally runnable instruction-tuning setup. It keeps the locked baseline, completed condition coverage, uncertainty, and resource measurements visible so that the observed positive cell can be used as a follow-up candidate rather than as a broad tuning rule.";
+      return "The contribution is a cautious local preflight over a configured condition set. It keeps the baseline or comparator, completed condition coverage, uncertainty, and resource measurements visible so that the best observed condition can be treated as a follow-up candidate rather than as a broad rule.";
     }
     if (/^This paper studies how LoRA rank and dropout interact\b/iu.test(paragraph)) {
       return "";
@@ -3060,7 +3056,6 @@ function sanitizeFinalPaperParagraph(heading: string, paragraph: string, index: 
     }
     if (
       /^The best nonbaseline row should therefore be read as a selection signal\b/iu.test(paragraph)
-      || /^The rank-32 rows carry the strongest follow-up signal\b/iu.test(paragraph)
     ) {
       return "";
     }
@@ -3068,18 +3063,15 @@ function sanitizeFinalPaperParagraph(heading: string, paragraph: string, index: 
       return "";
     }
   }
-  if (/^method$/iu.test(heading) && /^Evaluation spans ARC-Challenge and HellaSwag\.?/iu.test(paragraph)) {
-    return "";
-  }
   if (isReaderHostileFinalPaperParagraph(paragraph)) {
     if (/^introduction$/iu.test(heading)) {
-      return "The contribution is a cautious LoRA rank/dropout preflight on a locally runnable instruction-tuning setup. It keeps the locked baseline, completed condition coverage, uncertainty, and resource measurements visible so that the observed positive cell can be used as a follow-up candidate rather than as a broad tuning rule.";
+      return "The contribution is a cautious local preflight over a configured condition set. It keeps the baseline or comparator, completed condition coverage, uncertainty, and resource measurements visible so that the best observed condition can be treated as a follow-up candidate rather than as a broad rule.";
     }
     if (/^discussion$/iu.test(heading)) {
       return "The practical implication is limited but useful: under this local budget, rank and dropout should be treated as jointly testable choices, and any larger recommendation should wait for a rerun with more evaluation examples, more seeds, and condition-level resource aggregation.";
     }
     if (/^conclusion$/iu.test(heading)) {
-      return "The study therefore supports a narrow next step: rerun the rank-32, dropout-0.05 candidate under a larger and better instrumented protocol before treating the observed gain as stable.";
+      return "The study therefore supports a narrow next step: rerun the leading observed condition under a larger and better instrumented protocol before treating the observed gain as stable.";
     }
     return "";
   }
@@ -3104,31 +3096,31 @@ function removeConflictingBackboneAssertion(heading: string, paragraph: string):
   return paragraph
     .replace(
       /\bThe executed run used Qwen\/Qwen2\.5-1\.5B as the selected backbone\.\s*/giu,
-      "The executed metrics record identifies Qwen/Qwen2.5-1.5B as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means. "
+      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means. "
     )
     .replace(
       /\bThe run record lists Qwen\/Qwen2\.5-1\.5B in configuration metadata,\s*while the compact public summary still leaves preferred-versus-fallback execution provenance ambiguous\.\s*/giu,
-      "The executed metrics record identifies Qwen/Qwen2.5-1.5B as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means. "
+      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means. "
     )
     .replace(
       /\b(?:the\s+)?compact public summary still leaves preferred-versus-fallback execution provenance ambiguous\b/giu,
-      "the executed metrics record identifies Qwen/Qwen2.5-1.5B as the selected backbone"
+      "the executed metrics record identifies the selected backbone as the selected backbone"
     )
     .replace(
       /\b(?:The\s+)?summary records all eight rank-by-dropout conditions as completed,\s*but it does not securely identify whether the reported metrics came from the preferred or fallback backbone,\s*so backbone-specific interpretation is intentionally limited\.?/giu,
-      "The executed metrics record identifies Qwen/Qwen2.5-1.5B as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
+      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe reported analyzed execution did not preserve the resolved model identifier,\s*so we avoid stronger model-specific interpretation than the archived summary allows and treat the result as evidence from a small locally runnable instruction-tuning target\.?/giu,
-      "The archived execution summary identifies Qwen/Qwen2.5-1.5B as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
+      "The archived execution summary identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe run plan preferred Qwen\/Qwen2\.5-1\.5B and specified TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0 as a fallback if the preferred model failed preflight\.\s*However,\s*the compact reported summary does not identify which of those models produced the analyzed record\./giu,
-      "The run plan preferred Qwen/Qwen2.5-1.5B and specified TinyLlama/TinyLlama-1.1B-Chat-v1.0 as a fallback if the preferred model failed preflight. The executed metrics record identifies Qwen/Qwen2.5-1.5B as the selected backbone for the analyzed run."
+      "The run plan preferred the selected backbone and specified the configured fallback backbone as a fallback if the preferred model failed preflight. The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run."
     )
     .replace(
       /\bThe compact record also does not identify the actual base model used for the analyzed run\b/giu,
-      "The compact record identifies Qwen/Qwen2.5-1.5B as the selected backbone but leaves some implementation details outside the main summary"
+      "The compact record identifies the selected backbone as the selected backbone but leaves some implementation details outside the main summary"
     )
     .replace(/\s+/gu, " ")
     .trim();
@@ -5009,7 +5001,7 @@ function inferRunArtifactRefsForClaim(
   const unlinkedExperimentClaim =
     claim.evidence_ids.length === 0
     && claim.citation_paper_ids.length === 0
-    && /this study|present study|experiment|run|baseline|comparator|metric|result|accuracy|objective|condition|seed|rank|dropout|arc|hellaswag|qwen|tinyllama|alpaca/iu.test(text);
+    && /this study|present study|experiment|run|baseline|comparator|metric|result|accuracy|objective|condition|seed|rank|dropout|arc|benchmark_task_b|qwen|tinyllama|alpaca/iu.test(text);
   if (!experimentSection && !unlinkedExperimentClaim) {
     return [];
   }
@@ -5019,7 +5011,7 @@ function inferRunArtifactRefsForClaim(
   const hasLatestResults = Boolean(bundle.latestResults);
   const hasExperimentPlan = Boolean(bundle.experimentPlan?.rawText || bundle.experimentPlan?.selectedTitle);
   const resultLike =
-    /result|accuracy|metric|delta|baseline|comparator|confidence|interval|ci\b|uncertainty|seed|task|arc|hellaswag|condition|rank|dropout|runtime|memory|vram|completed|failed|objective|improvement|inconclusive|promising|feasibility|preflight|continuation|generalization|study scope|supplemental artifact|compute-side|compute budget/iu.test(text);
+    /result|accuracy|metric|delta|baseline|comparator|confidence|interval|ci\b|uncertainty|seed|task|arc|benchmark_task_b|condition|rank|dropout|runtime|memory|vram|completed|failed|objective|improvement|inconclusive|promising|feasibility|preflight|continuation|generalization|study scope|supplemental artifact|compute-side|compute budget/iu.test(text);
   const methodLike =
     /method|protocol|design|dataset|model|backbone|qwen|tinyllama|alpaca|seed|condition|rank|dropout|baseline|harness|preprocess|token|budget|reproducib|run identifier|command line/iu.test(text);
   const runStateLike =
@@ -5037,7 +5029,7 @@ function inferRunArtifactRefsForClaim(
   if (runStateLike || (hasResultAnalysis && /completed|failed|25 train|five cells|five seeds|seed/i.test(text))) {
     refs.push("run_record.json");
   }
-  if (hasResultAnalysis && /metric|accuracy|delta|baseline|runtime|memory|vram|loss|condition|task|arc|hellaswag|completed|failed/iu.test(text)) {
+  if (hasResultAnalysis && /metric|accuracy|delta|baseline|runtime|memory|vram|loss|condition|task|arc|benchmark_task_b|completed|failed/iu.test(text)) {
     refs.push("metrics.json");
   }
 
@@ -5651,7 +5643,7 @@ def build_paired_accuracy_rows(bars):
         if not match:
             return None
         series = match.group(1).lower()
-        metric = match.group(2).strip().replace("ARC Challenge", "ARC-Challenge")
+        metric = match.group(2).strip().replace("ARC Challenge", "Benchmark Task A")
         if metric not in grouped:
             grouped[metric] = {}
             order.append(metric)
@@ -6009,7 +6001,7 @@ function buildConceptualDiagramPrompt(input: {
       "Asset type: two-column research paper conceptual diagram",
       `Primary request: Create a clean algorithm/protocol explanation figure for '${input.runTitle}'.`,
       `Scientific context: ${input.topic}`,
-      "Diagram content: show a governed research flow from fixed brief, locked baseline/comparator, LoRA rank/dropout grid, executed training/evaluation, result table, figure audit, review gate, and paper-readiness decision.",
+      "Diagram content: show a governed research flow from fixed brief, locked baseline/comparator, configured condition grid, executed training/evaluation, result table, figure audit, review gate, and paper-readiness decision.",
       "Style: publication-ready, minimal, high contrast, white background, no decorative scene, no fake numeric results.",
       "Text constraints: use short labels only; do not include claims, citations, author names, watermarks, or fabricated data.",
       "Output intent: candidate raster figure that must pass figure_audit before inclusion in the final paper."

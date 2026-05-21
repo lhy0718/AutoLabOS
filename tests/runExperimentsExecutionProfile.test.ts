@@ -230,7 +230,7 @@ describe("run_experiments execution profile behavior", () => {
                 status: "completed",
                 summary: {
                   primary_metric: {
-                    name: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
+                    name: "mean_zero_shot_accuracy_benchmark_tasks",
                     baseline_value: null,
                     best_tuned_value: null,
                     best_tuned_delta_vs_baseline: null,
@@ -563,7 +563,7 @@ describe("run_experiments execution profile behavior", () => {
                 completed_condition_count: 0,
                 required_condition_count: 8,
                 observed_condition_count: 31,
-                missing_required_condition_markers: ["rank_8_dropout_0_0", "rank_4_dropout_0_0"],
+                missing_required_condition_markers: ["baseline_condition", "candidate_condition_a"],
                 condition_results_path: path.join(root, "condition_results.json"),
                 error: {
                   type: "AttributeError",
@@ -603,7 +603,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.status).toBe("failure");
     expect(result.error).toContain("Experiment metrics payload reports failed status");
     expect(result.error).toContain("completed_condition_count=0/8");
-    expect(result.error).toContain("missing_required_condition_markers=rank_8_dropout_0_0,rank_4_dropout_0_0");
+    expect(result.error).toContain("missing_required_condition_markers=baseline_condition,candidate_condition_a");
     expect(result.error).toContain("_build_model_load_kwargs()");
     expect(result.error).toContain("local_files_only");
     expect(result.error).toContain("'dict' object has no attribute 'baseline_run'");
@@ -723,7 +723,7 @@ describe("run_experiments execution profile behavior", () => {
                 selected_model: null,
                 per_seed_rows: [
                   {
-                    condition_marker: "rank_8_dropout_0_0",
+                    condition_marker: "baseline_condition",
                     seed: 42,
                     status: "failed",
                     failure_reason: "missing_row_for_required_condition_seed"
@@ -967,19 +967,19 @@ describe("run_experiments execution profile behavior", () => {
                 required_condition_count: 3,
                 conditions: [
                   {
-                    marker: "rank_8_dropout_0_0",
+                    marker: "baseline_condition",
                     status: "completed",
                     average_accuracy: 0.28125,
                     accuracy_delta_vs_baseline: 0
                   },
                   {
-                    marker: "rank_16_dropout_0_0",
+                    marker: "candidate_condition_d",
                     status: "completed",
                     average_accuracy: 0.25,
                     accuracy_delta_vs_baseline: -0.03125
                   },
                   {
-                    marker: "rank_32_dropout_0_0",
+                    marker: "candidate_condition_f",
                     status: "completed",
                     average_accuracy: 0.21875,
                     accuracy_delta_vs_baseline: -0.0625
@@ -1092,25 +1092,25 @@ describe("run_experiments execution profile behavior", () => {
                 accuracy_delta_vs_baseline: null,
                 completed_run_count: 22,
                 completed_condition_count: 4,
-                baseline_condition_marker: "rank_8_dropout_0_0",
+                baseline_condition_marker: "baseline_condition",
                 condition_summaries: [
                   {
-                    condition_marker: "rank_8_dropout_0_0",
+                    condition_marker: "baseline_condition",
                     completed_runs: 7,
                     accuracy_delta_vs_baseline: 0
                   },
                   {
-                    condition_marker: "rank_4_dropout_0_0",
+                    condition_marker: "candidate_condition_a",
                     completed_runs: 5,
                     accuracy_delta_vs_baseline: 0
                   },
                   {
-                    condition_marker: "rank_16_dropout_0_0",
+                    condition_marker: "candidate_condition_d",
                     completed_runs: 5,
                     accuracy_delta_vs_baseline: -0.0375
                   },
                   {
-                    condition_marker: "rank_32_dropout_0_0",
+                    condition_marker: "candidate_condition_f",
                     completed_runs: 5,
                     accuracy_delta_vs_baseline: -0.0375
                   }
@@ -1210,7 +1210,7 @@ describe("run_experiments execution profile behavior", () => {
                 accuracy_delta_vs_baseline: 0,
                 condition_summaries: [
                   {
-                    condition_marker: "rank_8_dropout_0_0",
+                    condition_marker: "baseline_condition",
                     completed_runs: 3,
                     accuracy_delta_vs_baseline: 0
                   }
@@ -1714,7 +1714,7 @@ describe("run_experiments execution profile behavior", () => {
               label: "Primary repeated-seed rank sweep",
               role: "primary",
               group_kind: "aggregate",
-              dataset_scope: ["ARC-Challenge", "HellaSwag"],
+              dataset_scope: ["Benchmark Task A", "Benchmark Task B"],
               metrics: ["accuracy_delta_vs_baseline"],
               baselines: ["Locked rank=8 dropout=0.0 baseline"],
               notes: [
@@ -1756,10 +1756,10 @@ describe("run_experiments execution profile behavior", () => {
                 completed_run_count: 4,
                 completed_condition_count: 4,
                 condition_summaries: [
-                  { condition_marker: "rank_8_dropout_0_0", completed_runs: 1 },
-                  { condition_marker: "rank_4_dropout_0_0", completed_runs: 1 },
-                  { condition_marker: "rank_16_dropout_0_0", completed_runs: 1 },
-                  { condition_marker: "rank_32_dropout_0_0", completed_runs: 1 }
+                  { condition_marker: "baseline_condition", completed_runs: 1 },
+                  { condition_marker: "candidate_condition_a", completed_runs: 1 },
+                  { condition_marker: "candidate_condition_d", completed_runs: 1 },
+                  { condition_marker: "candidate_condition_f", completed_runs: 1 }
                 ]
               },
               null,

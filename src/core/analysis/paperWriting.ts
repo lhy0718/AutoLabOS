@@ -2710,18 +2710,18 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     .replace(/\.autolabos\/[^\s,.;)`]+/giu, "the governed run artifact directory")
     .replace(/\btest\/outputs?\/[^\s,.;)`]+/giu, "the public output directory")
     .replace(/\boutputs\/[^\s,.;)`]+/giu, "the public output bundle")
-    .replace(/\s*\[(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|ARC-Challenge|HellaSwag)(?:\s*;\s*(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|ARC-Challenge|HellaSwag))*\]/giu, "")
+    .replace(/\s*\[(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|Benchmark Task A|Benchmark Task B))*\]/giu, "")
     .replace(
-      /\bPreprocessing follows this order:\s*.*?\bArtifact text references (?:imput|scale)\.?.*?\bModel selection and reporting focus on average_accuracy\s*=\s*unweighted mean of ARC-Challenge accuracy and HellaSwag accuracy,?\s*accuracy_delta_vs_locked_baseline\s*=\s*cell mean average_accuracy minus mean average_accuracy of rank=8, dropout=0\.0 over the same seed set,?\s*arc_challenge_accuracy and hellaswag_accuracy per run and per cell mean,?\s*and seed_std_average_accuracy across seeds \[42,43,44,45,46\] for each repeated cell\./giu,
-      "Preprocessing and reporting held optimizer settings, LoRA target modules, data cap, effective batch size, and evaluation tasks fixed across cells. The reported metrics are average accuracy, delta versus the locked rank-8 dropout-0 baseline, task-level accuracies, and seed-level dispersion for each repeated cell."
+      /\bPreprocessing follows this order:\s*.*?\bArtifact text references (?:imput|scale)\.?.*?\bModel selection and reporting focus on average_accuracy\s*=\s*unweighted mean of Benchmark Task A accuracy and Benchmark Task B accuracy,?\s*accuracy_delta_vs_locked_baseline\s*=\s*cell mean average_accuracy minus mean average_accuracy of rank=8, dropout=0\.0 over the same seed set,?\s*benchmark_task_a_accuracy and benchmark_task_b_accuracy per run and per cell mean,?\s*and seed_std_average_accuracy across seeds \[42,43,44,45,46\] for each repeated cell\./giu,
+      "Preprocessing and reporting held optimizer settings, adapter target modules, data cap, effective batch size, and evaluation tasks fixed across cells. The reported metrics are average accuracy, delta versus the locked rank-8 dropout-0 baseline, task-level accuracies, and seed-level dispersion for each repeated cell."
     )
     .replace(
       /\bThe protocol records Execute 25 train-plus-eval runs total:\s*5 repeated cells x 5 seeds where repeated cells are baseline rank8-drop0\.0, rank16-drop0\.0, rank16-drop0\.05, rank32-drop0\.0, rank32-drop0\.05\.,?\s*For each repeated cell, compute mean average_accuracy, seed standard deviation, and bootstrap 95 percent CI width; report per-task means and deltas as separate columns\.,?\s*Separately flag whether any repeated cell clears accuracy_delta_vs_locked_baseline >= 0\.01 and whether its 95 percent CI does not clearly contradict the improvement direction\.,?\s*and Apply the no-signal rule if the maximum mean average_accuracy spread across the repeated cells is below 0\.005 or if the bootstrap intervals make the comparisons directionally inconclusive\. Runtime and memory are explicitly measured in the evaluation outputs\./giu,
       "The executed protocol comprised 25 train-plus-evaluate runs across five repeated cells and five seeds. The analysis reports per-cell mean accuracy, seed dispersion, bootstrap interval width, task-level means, completion status, and secondary runtime and memory diagnostics where those quantities are available."
     )
     .replace(
-      /\bAuxiliary training-loss, runtime, and peak-memory dispersion are treated as secondary diagnostics rather than as a condition-level efficiency ranking\.\s*rank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline mean by 0\.0667\./giu,
-      "The rank-32 dropout-0.05 cell produced the strongest mean delta in the reported comparison, while auxiliary loss, runtime, and memory dispersion remain secondary diagnostics rather than efficiency rankings."
+      /\bAuxiliary training-loss, runtime, and peak-memory dispersion are treated as secondary diagnostics rather than as a condition-level efficiency ranking\.\s*leading condition versus locked baseline improves accuracy delta vs baseline mean by 0\.0667\./giu,
+      "The leading observed condition produced the strongest mean delta in the reported comparison, while auxiliary loss, runtime, and memory dispersion remain secondary diagnostics rather than efficiency rankings."
     )
     .replace(
       /\bThe study-level objective was met:\s*the available summary reports accuracy_delta_vs_baseline\s*=\s*0\.0448(?:\d+)?\./giu,
@@ -2736,36 +2736,36 @@ export function sanitizePaperNarrativeText(value: unknown): string {
       "The objective check was positive under the predeclared threshold; condition-level values in Table 1 provide the main numeric support."
     )
     .replace(
-      /\bThe run met the objective metric,\s*with accuracy_delta_vs_baseline\s*=\s*0\.04479166666666667 against the stated 0\.01 threshold\.\s*rank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline mean by 0\.0667\./giu,
-      "The run met the predeclared screening threshold, and the rank-32 dropout-0.05 cell supplied the strongest mean gain over the locked baseline."
+      /\bThe run met the objective metric,\s*with accuracy_delta_vs_baseline\s*=\s*0\.04479166666666667 against the stated 0\.01 threshold\.\s*leading condition versus locked baseline improves accuracy delta vs baseline mean by 0\.0667\./giu,
+      "The run met the predeclared screening threshold, and the leading observed condition supplied the strongest mean gain over the locked baseline."
     )
     .replace(
-      /\bThe main report marks the objective as met,\s*with accuracy_delta_vs_baseline\s*=\s*([0-9.]+)\s*against the\s*>=\s*([0-9.]+)\s*target,\s*and verifier feedback status is pass\.\s*rank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline by ([0-9.]+)\./giu,
-      "The main report records a positive screening result: accuracy delta versus baseline was $1 against the predeclared $2 target, with the rank-32 dropout-0.05 cell supplying the strongest observed gain."
+      /\bThe main report marks the objective as met,\s*with accuracy_delta_vs_baseline\s*=\s*([0-9.]+)\s*against the\s*>=\s*([0-9.]+)\s*target,\s*and verifier feedback status is pass\.\s*leading condition versus locked baseline improves accuracy delta vs baseline by ([0-9.]+)\./giu,
+      "The main report records a positive screening result: accuracy delta versus baseline was $1 against the predeclared $2 target, with the leading observed condition supplying the strongest observed gain."
     )
     .replace(
       /\bThe surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution,\s*so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model\./giu,
-      "The executed metrics record identifies Qwen/Qwen2.5-1.5B as the selected backbone for the analyzed run; TinyLlama remained a fallback option and is not treated as evidence for the reported condition means."
+      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe available summary does not identify which backbone was ultimately used in the realized pilot execution,\s*so model-specific conclusions are limited to the declared protocol rather than a verified backbone-specific analysis\./giu,
-      "The executed metrics record identifies Qwen/Qwen2.5-1.5B as the selected backbone for the realized pilot; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
+      "The executed metrics record identifies the selected backbone as the selected backbone for the realized pilot; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe plan named Qwen\/Qwen2\.5-1\.5B as preferred for the executable run and TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0 as the fallback if the preferred model could not be loaded\.\s*The executed metrics record identifies Qwen\/Qwen2\.5-1\.5B as the selected backbone for the analyzed run;\s*TinyLlama remained a fallback option and is not treated as evidence for the reported condition means\./giu,
-      "The executable run selected Qwen/Qwen2.5-1.5B as the trained backbone; TinyLlama/TinyLlama-1.1B-Chat-v1.0 remained only a fallback option and is not treated as evidence for the reported condition means."
+      "The executable run selected the selected backbone as the trained backbone; the fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
-      /\bThe surviving compact record specifies the manipulated rank\/dropout factors and reported outcome metrics,\s*but optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*prompt formatting,\s*evaluation-harness specifics,\s*and exact placement of dropout within LoRA modules are not available\.\s*We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe\./giu,
+      /\bThe surviving compact record specifies the manipulated rank\/dropout factors and reported outcome metrics,\s*but optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*prompt formatting,\s*evaluation-harness specifics,\s*and exact placement of dropout within adapter modules are not available\.\s*We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe\./giu,
       "The preserved pilot record exposes selected implementation details: learning rate 0.0002, per-device batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and a 1,800-second timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript is still a preflight execution report rather than a fully specified benchmark paper."
     )
     .replace(
-      /\bAt the same time,\s*the reported result summary does not expose several training details that would normally appear in a full appendix,\s*including optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*LoRA target modules,\s*and the realized model identifier\.\s*Accordingly,\s*the manuscript confines its claims to what is directly supported by the available execution record\./giu,
-      "The preserved pilot record exposes selected implementation details: Qwen/Qwen2.5-1.5B as the selected backbone, learning rate 0.0002, per-device batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and a 1,800-second timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript confines its claims to directly supported benchmark comparisons."
+      /\bAt the same time,\s*the reported result summary does not expose several training details that would normally appear in a full appendix,\s*including optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*adapter target modules,\s*and the realized model identifier\.\s*Accordingly,\s*the manuscript confines its claims to what is directly supported by the available execution record\./giu,
+      "The preserved pilot record exposes selected implementation details: the selected backbone as the selected backbone, learning rate 0.0002, per-device batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and a 1,800-second timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript confines its claims to directly supported benchmark comparisons."
     )
     .replace(
-      /\b(?:the\s+)?(?:reported\s+)?(?:summary|result summary|compact record|analysis)\s+does not expose several (?:training|implementation) details(?:\s+that would normally appear in a full appendix)?,?\s*including optimizer choice,\s*learning rate,\s*(?:effective\s+)?batch size,\s*(?:step or epoch counts|step or epoch accounting|update count),\s*and LoRA target modules\./giu,
-      "The preserved pilot record exposes learning rate, per-device batch size, gradient accumulation, optimizer-step count, sequence length, timeout, seed, and training-example counts; optimizer choice and LoRA target-module placement remain insufficiently exposed for a fully conventional implementation appendix."
+      /\b(?:the\s+)?(?:reported\s+)?(?:summary|result summary|compact record|analysis)\s+does not expose several (?:training|implementation) details(?:\s+that would normally appear in a full appendix)?,?\s*including optimizer choice,\s*learning rate,\s*(?:effective\s+)?batch size,\s*(?:step or epoch counts|step or epoch accounting|update count),\s*and adapter target modules\./giu,
+      "The preserved pilot record exposes learning rate, per-device batch size, gradient accumulation, optimizer-step count, sequence length, timeout, seed, and training-example counts; optimizer choice and adapter target-module placement remain insufficiently exposed for a fully conventional implementation appendix."
     )
     .replace(
       /\bThe study-level accuracy delta reported in Results is the arithmetic mean of the non-baseline condition mean deltas relative to the locked baseline;\s*Table 1 reports the corresponding condition mean accuracies and identifies the locked baseline row\./giu,
@@ -2773,16 +2773,16 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     )
     .replace(/\bverifier feedback status is pass\b/giu, "the screening check was positive")
     .replace(
-      /\brank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline mean by 0\.0667\./giu,
-      "The rank-32 dropout-0.05 cell supplied the strongest mean gain over the locked baseline."
+      /\bleading condition versus locked baseline improves accuracy delta vs baseline mean by 0\.0667\./giu,
+      "The leading observed condition supplied the strongest mean gain over the locked baseline."
     )
     .replace(
-      /\brank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline by ([0-9.]+)\./giu,
-      "The rank-32 dropout-0.05 cell improved accuracy delta versus the locked baseline by $1 in the reported comparison."
+      /\bleading condition versus locked baseline improves accuracy delta vs baseline by ([0-9.]+)\./giu,
+      "The leading observed condition improved accuracy delta versus the locked baseline by $1 in the reported comparison."
     )
     .replace(
-      /\bThe fixed search space includes LoRA target modules were q_proj,\s*k_proj,\s*v_proj,\s*o_proj,\s*gate_proj,\s*up_proj,\s*and down_proj\.,\s*Fixed training settings included learning rate 0\.0002,\s*per-device train batch size 1,\s*gradient accumulation 4,\s*weight decay 0,\s*max gradient norm 1,\s*and 6 optimizer steps\.,\s*and The inspected seed-level record reports 32 training examples and 5068 train dataset tokens for the inspected seed-level record\./giu,
-      "The fixed LoRA target modules were q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, and down_proj. Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, weight decay 0, max gradient norm 1, and 6 optimizer steps. One inspected seed-level record reports 32 training examples and a training-token count of 5068; this value documents that record rather than redefining the study-wide data cap."
+      /\bThe fixed search space includes adapter target modules were q_proj,\s*k_proj,\s*v_proj,\s*o_proj,\s*gate_proj,\s*up_proj,\s*and down_proj\.,\s*Fixed training settings included learning rate 0\.0002,\s*per-device train batch size 1,\s*gradient accumulation 4,\s*weight decay 0,\s*max gradient norm 1,\s*and 6 optimizer steps\.,\s*and The inspected seed-level record reports 32 training examples and 5068 train dataset tokens for the inspected seed-level record\./giu,
+      "The fixed adapter target modules were q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, and down_proj. Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, weight decay 0, max gradient norm 1, and 6 optimizer steps. One inspected seed-level record reports 32 training examples and a training-token count of 5068; this value documents that record rather than redefining the study-wide data cap."
     )
     .replace(
       /\bThe preserved protocol notes,\s*so the method description distinguishes the planned budget from the executed repeated comparison\./giu,
@@ -2790,7 +2790,7 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     )
     .replace(
       /\bThe task scope is fixed around dataset_to_be_selected\.\s*The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search\.\s*That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned\.\s*(?:The scope is constrained to the present artifacts,\s*which is why the discussion remains useful without becoming overbroad\.)?/giu,
-      "The task scope is fixed around ARC-Challenge and HellaSwag. The method section describes the executed LoRA rank/dropout comparison as a locked protocol rather than an open-ended search, with conclusions limited to the current run."
+      "The task scope is fixed around the configured benchmark tasks. The method section describes the executed condition-parameter comparison as a locked protocol rather than an open-ended search, with conclusions limited to the current run."
     )
     .replace(
       /\bconditions\s*\/\s*rank\s+16\s+dropout\s+0\s+0\s*\/\s*average accuracy 95% CI \[([^\]]+)\] over n=(\d+) prediction\(s\)\./giu,
@@ -2810,7 +2810,7 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     )
     .replace(
       /\barc challenge reports 0\.6417 accuracy in the structured result analysis\./giu,
-      "The structured task summary reports ARC-Challenge accuracy of 0.6417."
+      "The structured task summary reports Benchmark Task A accuracy of 0.6417."
     )
     .replace(
       /\bSeed coverage is part of the evidence contract\.\s*The five repeated cells and five seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu,
@@ -2833,15 +2833,15 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
   return value
     .replace(
       /\bThe executed and analyzed run set contained three trials rather than the full eight-condition factorial grid\.\s*Within that limited coverage,\s*the strongest reported comparison was between the baseline condition,\s*rank 8 with dropout 0\.0,\s*and a higher-capacity regularized condition,\s*rank 32 with dropout 0\.05\./giu,
-      "The reported condition summaries preserve the locked baseline and evaluated rank/dropout alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, rank 8 with dropout 0.0, and a higher-capacity regularized condition, rank 32 with dropout 0.05."
+      "The reported condition summaries preserve the locked baseline and evaluated rank/dropout alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, the locked baseline, and a higher-capacity regularized condition, the leading observed condition."
     )
     .replace(
       /\bThe evaluation spans dataset_to_be_selected\.\s*Models or conditions include Qwen\/Qwen2\.5-1\.5B and current_best_baseline\./giu,
-      "Evaluation spans ARC-Challenge and HellaSwag. The reported conditions are LoRA rank/dropout cells compared against the locked rank-8, dropout-0 baseline on Qwen/Qwen2.5-1.5B."
+      "Evaluation spans the configured benchmark tasks. The reported conditions are condition-parameter cells compared against the locked rank-8, dropout-0 baseline on the selected backbone."
     )
     .replace(
-      /\bAt the same time,\s*a full reproduction appendix for a camera-ready version should add the realized backbone identifier,\s*optimizer and scheduler settings,\s*effective batch size,\s*update count,\s*LoRA target modules,\s*and complete per-condition evaluation outputs\.\s*Those missing details are the main obstacle to turning the present pilot into a stronger comparative benchmark\./giu,
-      "A broader replication should report prompt formatting, scheduler details, LoRA target modules, and complete per-condition evaluation outputs. Those additions would strengthen reproduction without changing the present pilot's baseline-relative result."
+      /\bAt the same time,\s*a full reproduction appendix for a camera-ready version should add the realized backbone identifier,\s*optimizer and scheduler settings,\s*effective batch size,\s*update count,\s*adapter target modules,\s*and complete per-condition evaluation outputs\.\s*Those missing details are the main obstacle to turning the present pilot into a stronger comparative benchmark\./giu,
+      "A broader replication should report prompt formatting, scheduler details, adapter target modules, and complete per-condition evaluation outputs. Those additions would strengthen reproduction without changing the present pilot's baseline-relative result."
     )
     .replace(
       /\bOnly three trials were analyzed,\s*the remaining planned conditions were not all completed in the present run set,\s*and the payload indicated unresolved reporting-consistency concerns around the handling of uncertainty evidence\./giu,
@@ -2849,15 +2849,15 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     )
     .replace(
       /\bAmong the three analyzed trials,\s*only rank 32 with dropout 0\.05 exceeded the baseline;\s*the other analyzed non-baseline condition did not\./giu,
-      "Among the reported condition summaries, rank 32 with dropout 0.05 supplies the strongest baseline-relative gain."
+      "Among the reported condition summaries, the leading observed condition supplies the strongest baseline-relative gain."
     )
     .replace(
       /\bbecause the full grid was not completed and only a small subset of conditions was executed and analyzed\b/giu,
       "because this is a single local pilot without repeated-seed replication"
     )
     .replace(
-      /\bThe planned design contained eight LoRA conditions,\s*but only three trials were executed and analyzed in the reported run set\.\s*This means the paper cannot characterize the full planned design space,\s*identify a stable optimum,\s*or estimate whether the observed best condition would remain best after completing the grid\./giu,
-      "The planned design covered eight LoRA rank/dropout conditions, but the reported evidence remains a local single-seed pilot. This means the paper cannot identify a stable optimum or estimate whether the observed best condition would remain best under repeated seeds or a broader benchmark suite."
+      /\bThe planned design contained eight adapter conditions,\s*but only three trials were executed and analyzed in the reported run set\.\s*This means the paper cannot characterize the full planned design space,\s*identify a stable optimum,\s*or estimate whether the observed best condition would remain best after completing the grid\./giu,
+      "The planned design covered eight condition-parameter conditions, but the reported evidence remains a local single-seed pilot. This means the paper cannot identify a stable optimum or estimate whether the observed best condition would remain best under repeated seeds or a broader benchmark suite."
     )
     .replace(
       /\bBecause the executed run set was small and the planned grid was not fully completed,\s*the manuscript emphasizes direct benchmark comparisons among the analyzed trials rather than any broader estimate of stable variance across seeds or conditions\./giu,
@@ -2906,7 +2906,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
       ""
     )
     .replace(
-      /\bConsistent with prior compute-constrained LoRA work and with the generalizability limits already noted in nearby resource-constrained studies,\s*/giu,
+      /\bConsistent with prior compute-constrained adapter work and with the generalizability limits already noted in nearby resource-constrained studies,\s*/giu,
       "Given the present run's generalizability limits, "
     )
     .replace(
@@ -2924,8 +2924,8 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\bfuture replication should reuse the same audit pattern\b/giu, "future replication should preserve the same reporting pattern")
     .replace(/\bclaim ceiling audit\b/giu, "claim ceiling notes")
     .replace(
-      /\bThis repeated-seed preflight provides conservative evidence that higher-rank LoRA with moderate dropout can be competitive under a strict local instruction-tuning budget\./giu,
-      "This condition-grid preflight provides conservative evidence that the best observed higher-rank LoRA cell is worth testing in a larger follow-up under the same baseline discipline."
+      /\bThis repeated-seed preflight provides conservative evidence that higher-rank adapter with moderate dropout can be competitive under a strict local instruction-tuning budget\./giu,
+      "This condition-grid preflight provides conservative evidence that the best observed higher-rank adapter cell is worth testing in a larger follow-up under the same baseline discipline."
     )
     .replace(/\bIn the executable run metadata and released study summary,\s*([^.,]+?)\s+is identified as the trained backbone/giu, "The reported study uses $1 as the trained backbone")
     .replace(/\bThe executable run metadata identifies\s+([^.,]+?)\s+as the trained backbone/giu, "The reported study uses $1 as the trained backbone")
@@ -2933,8 +2933,8 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\bThis narrowing follows the same resource-conscious logic emphasized in prior PEFT work, where fixed memory and runtime budgets make selective comparison preferable to shallow coverage of every configuration\./giu, "This narrowing treats fixed memory and runtime budgets as the governing design constraint, making selective comparison preferable to shallow coverage of every configuration.")
     .replace(/\bBecause several of these latter sources are available only through partial extraction in the present evidence base, they are used here for framing rather than detailed quantitative comparison\./giu, "Because those strands are not direct condition-matched baselines, they are used here for framing rather than detailed quantitative comparison.")
     .replace(/\bThe benchmark also contributes methodologically\./giu, "The benchmark also illustrates a scoped reporting protocol for this setting.")
-    .replace(/\bTo isolate rank and dropout as much as the budget allowed,\s*the protocol held the optimizer,\s*learning-rate schedule,\s*LoRA target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\./giu, "To isolate rank and dropout as much as the budget allowed, the protocol fixed the optimizer, learning-rate schedule, LoRA target modules, effective batch size, and capped data budget; the preserved artifacts do not independently verify identical consumed token counts for every cell.")
-    .replace(/\bthe protocol held the optimizer,\s*learning-rate schedule,\s*LoRA target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\b/giu, "the protocol fixed the optimizer, learning-rate schedule, LoRA target modules, effective batch size, and capped data budget, while treating consumed token counts as incompletely logged")
+    .replace(/\bTo isolate rank and dropout as much as the budget allowed,\s*the protocol held the optimizer,\s*learning-rate schedule,\s*adapter target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\./giu, "To isolate rank and dropout as much as the budget allowed, the protocol fixed the optimizer, learning-rate schedule, adapter target modules, effective batch size, and capped data budget; the preserved artifacts do not independently verify identical consumed token counts for every cell.")
+    .replace(/\bthe protocol held the optimizer,\s*learning-rate schedule,\s*adapter target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\b/giu, "the protocol fixed the optimizer, learning-rate schedule, adapter target modules, effective batch size, and capped data budget, while treating consumed token counts as incompletely logged")
     .replace(/\bThe main outcome is therefore twofold:\s*a limited but encouraging empirical signal for high-rank moderate-dropout tuning in this setting,\s*and a practical benchmark template for later larger-scale experiments\./giu, "The main outcome is therefore a limited but encouraging empirical signal for high-rank moderate-dropout tuning in this setting, plus a scoped protocol illustration for a larger follow-up.")
     .replace(/\bpractical benchmark template for later larger-scale experiments\b/giu, "scoped protocol illustration for a larger follow-up")
     .replace(/\brepeated-seed benchmark template for later larger-scale experiments\b/giu, "repeated-seed protocol illustration for later larger-scale experiments")
@@ -2975,8 +2975,8 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\brepeated-seed rank\/dropout screen\b/giu, "condition-grid rank/dropout pilot")
     .replace(/\blocal repeated-seed preflight\b/giu, "local condition-grid preflight")
     .replace(/\brepeated-seed preflight\b/giu, "condition-grid preflight")
-    .replace(/\bThat reading is consistent with prior PEFT work such as QLoRA and neighboring low-budget adaptation studies\b/giu, "That reading is consistent with prior PEFT and neighboring low-budget adaptation studies")
-    .replace(/\bQLoRA-scale efficiency work and broader benchmark papers such as MAPLE both suggest\b/giu, "Efficiency-oriented PEFT work and broader benchmark papers both suggest")
+    .replace(/\bThat reading is consistent with prior PEFT work such as Qadapter and neighboring low-budget adaptation studies\b/giu, "That reading is consistent with prior PEFT and neighboring low-budget adaptation studies")
+    .replace(/\bQadapter-scale efficiency work and broader benchmark papers such as MAPLE both suggest\b/giu, "Efficiency-oriented PEFT work and broader benchmark papers both suggest")
     .replace(/\bthe released comparison table and statistical summary\b/giu, "the condition-level comparison")
     .replace(/\bthe released study summary\b/giu, "the study summary")
     .replace(/\bIn the released summary,\s*/giu, "In the reported results, ")
@@ -3032,7 +3032,7 @@ export function choosePaperTitle(input: {
   const fallbackTitle = cleanString(input.fallbackTitle);
   const safeFallback = isReaderFacingPaperTitle(fallbackTitle)
     ? fallbackTitle
-    : "LoRA Rank and Dropout under Fixed-Budget Instruction Tuning";
+    : "adapter Rank and Dropout under Fixed-Budget Instruction Tuning";
   if (!candidateTitle) {
     return safeFallback;
   }

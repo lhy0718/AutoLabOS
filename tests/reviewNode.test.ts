@@ -1250,16 +1250,16 @@ describe("review node", () => {
         "selected_design:",
         "  title: P6 repeated-seed LoRA validation",
         "  baselines:",
-        "    - rank_8_dropout_0_0",
+        "    - baseline_condition",
         "  evaluation_steps:",
         "    - run five seeds per condition"
       ].join("\n"),
       "utf8"
     );
-    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "rank_8_dropout_0_0" }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "baseline_condition" }, null, 2), "utf8");
     await writeFile(path.join(runDir, "result_table.json"), JSON.stringify({
-      conditions: [{ name: "rank_32_dropout_0_05_vs_rank_8_dropout_0_0", metrics: { accuracy_delta_vs_baseline_mean: 0.0667 } }],
-      comparisons: [{ primary: "rank_32_dropout_0_05", baseline: "rank_8_dropout_0_0", metric: "accuracy_delta_vs_baseline_mean", delta: 0.0667 }]
+      conditions: [{ name: "candidate_condition_f5_vs_baseline_condition", metrics: { accuracy_delta_vs_baseline_mean: 0.0667 } }],
+      comparisons: [{ primary: "candidate_condition_f5", baseline: "baseline_condition", metric: "accuracy_delta_vs_baseline_mean", delta: 0.0667 }]
     }, null, 2), "utf8");
     await writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({
       analysis_version: 1,
@@ -1279,7 +1279,7 @@ describe("review node", () => {
           summary: "Validate repeated-seed LoRA comparison.",
           selected_hypothesis_ids: ["h_1"],
           metrics: ["accuracy_delta_vs_baseline"],
-          baselines: ["rank_8_dropout_0_0"],
+          baselines: ["baseline_condition"],
           evaluation_steps: ["run five seeds per condition"],
           risks: ["The small backbone may make the effect unstable."],
           resource_notes: []
@@ -1295,7 +1295,7 @@ describe("review node", () => {
         { metric: "accuracy_delta_vs_baseline_mean", baseline: 0, comparator: 0.0667, delta: 0.0667, direction: "higher_better" }
       ],
       condition_comparisons: [{
-        id: "rank_32_dropout_0_05_vs_rank_8_dropout_0_0",
+        id: "candidate_condition_f5_vs_baseline_condition",
         label: "rank 32 dropout 0 05 vs rank 8 dropout 0 0",
         source: "metrics.condition_summaries",
         metrics: [{ key: "accuracy_delta_vs_baseline_mean", value: 0.0667, primary_value: 0.0667, baseline_value: 0 }],
@@ -1316,7 +1316,7 @@ describe("review node", () => {
         cached_trials: 0,
         confidence_intervals: [{ metric_key: "accuracy_delta_vs_baseline", label: "delta", lower: 0.002, upper: 0.13, level: 0.95, source: "metrics", summary: "95% CI." }],
         stability_metrics: [],
-        effect_estimates: [{ comparison_id: "rank_32_dropout_0_05_vs_rank_8_dropout_0_0", metric_key: "accuracy_delta_vs_baseline_mean", delta: 0.0667, direction: "positive", summary: "mean delta 0.0667." }],
+        effect_estimates: [{ comparison_id: "candidate_condition_f5_vs_baseline_condition", metric_key: "accuracy_delta_vs_baseline_mean", delta: 0.0667, direction: "positive", summary: "mean delta 0.0667." }],
         notes: []
       },
       failure_taxonomy: [{
@@ -1390,13 +1390,13 @@ describe("review node", () => {
         "selected_design:",
         "  title: Single-run LoRA validation",
         "  baselines:",
-        "    - rank_8_dropout_0_0",
+        "    - baseline_condition",
         "  evaluation_steps:",
         "    - run one bounded local trial"
       ].join("\n"),
       "utf8"
     );
-    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "rank_8_dropout_0_0" }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "baseline_condition" }, null, 2), "utf8");
     await writeFile(path.join(runDir, "result_table.json"), JSON.stringify([
       { metric: "accuracy_delta_vs_baseline", baseline: 0, comparator: 0.0625, delta: 0.0625, direction: "higher_better" }
     ], null, 2), "utf8");
@@ -1418,7 +1418,7 @@ describe("review node", () => {
           summary: "Validate a bounded local LoRA comparison.",
           selected_hypothesis_ids: ["h_1"],
           metrics: ["accuracy_delta_vs_baseline"],
-          baselines: ["rank_8_dropout_0_0"],
+          baselines: ["baseline_condition"],
           evaluation_steps: ["run one bounded local trial"],
           risks: ["Specification may be underspecified and require narrower scope."],
           resource_notes: []
@@ -1434,7 +1434,7 @@ describe("review node", () => {
         { metric: "accuracy_delta_vs_baseline", baseline: 0, comparator: 0.0625, delta: 0.0625, direction: "higher_better" }
       ],
       condition_comparisons: [{
-        id: "rank_4_dropout_0_0_vs_rank_8_dropout_0_0",
+        id: "candidate_condition_a_vs_baseline_condition",
         label: "rank 4 dropout 0 0 vs rank 8 dropout 0 0",
         source: "metrics.condition_results",
         metrics: [{ key: "accuracy_delta_vs_baseline", value: 0.0625, primary_value: 0.0625, baseline_value: 0 }],
@@ -1453,9 +1453,9 @@ describe("review node", () => {
         total_trials: 1,
         executed_trials: 1,
         cached_trials: 0,
-        confidence_intervals: [{ metric_key: "condition_results.rank_4_dropout_0_0.average_accuracy", label: "delta", lower: 0.28, upper: 0.72, level: 0.95, sample_size: 16, source: "condition_metrics", summary: "95% CI." }],
+        confidence_intervals: [{ metric_key: "condition_results.candidate_condition_a.average_accuracy", label: "delta", lower: 0.28, upper: 0.72, level: 0.95, sample_size: 16, source: "condition_metrics", summary: "95% CI." }],
         stability_metrics: [],
-        effect_estimates: [{ comparison_id: "rank_4_dropout_0_0_vs_rank_8_dropout_0_0", metric_key: "accuracy_delta_vs_baseline", delta: 0.0625, direction: "positive", summary: "delta 0.0625." }],
+        effect_estimates: [{ comparison_id: "candidate_condition_a_vs_baseline_condition", metric_key: "accuracy_delta_vs_baseline", delta: 0.0625, direction: "positive", summary: "delta 0.0625." }],
         notes: []
       },
       failure_taxonomy: [{

@@ -3007,7 +3007,7 @@ describe("TerminalApp pending natural plan execution", () => {
       app.askWithinTui = vi
         .fn()
         .mockResolvedValueOnce("Evaluate compact-model instruction-tuning recipe choices under a local budget.")
-        .mockResolvedValueOnce("Mean zero-shot accuracy across ARC-Challenge and HellaSwag.")
+        .mockResolvedValueOnce("Mean zero-shot accuracy across Benchmark Task A and Benchmark Task B.")
         .mockResolvedValueOnce("+1.0 point over the tuned baseline.")
         .mockResolvedValueOnce("2x RTX 4090 only; public datasets only; seed=42.")
         .mockResolvedValueOnce("Which lightweight recipe choice improves benchmark accuracy most reliably?")
@@ -3183,7 +3183,7 @@ describe("TerminalApp pending natural plan execution", () => {
             language: "en",
             answers: [
               "Instruction tuning recipe comparisons for compact open models.",
-              "Average zero-shot accuracy across ARC-Challenge and HellaSwag.",
+              "Average zero-shot accuracy across Benchmark Task A and Benchmark Task B.",
               "+1.0 percentage point over the tuned baseline.",
               "2x RTX 4090 maximum; public data only; seed=42.",
               "Which lightweight recipe choice improves benchmark accuracy most reliably?",

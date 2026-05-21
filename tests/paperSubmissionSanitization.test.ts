@@ -20,11 +20,11 @@ import {
 describe("paper submission sanitization", () => {
   it("cleans brief-derived study prompts before they reach reader-facing manuscript text", () => {
     const text = sanitizePaperNarrativeText(
-      "This study addresses Study how LoRA rank and dropout interact during parameter-efficient instruction tuning under a fixed local compute budget. The study is framed as a local preflight. This paper studies Study how LoRA rank and dropout interact during parameter-efficient instruction tuning under a fixed local compute budget. under an explicitly bounded evidence ceiling."
+      "This study addresses Study how condition parameters interact during parameter-efficient instruction tuning under a fixed local compute budget. The study is framed as a local preflight. This paper studies Study how condition parameters interact during parameter-efficient instruction tuning under a fixed local compute budget. under an explicitly bounded evidence ceiling."
     );
 
-    expect(text).toContain("This study addresses how LoRA rank and dropout interact");
-    expect(text).toContain("This paper studies how LoRA rank and dropout interact");
+    expect(text).toContain("This study addresses how condition parameters interact");
+    expect(text).toContain("This paper studies how condition parameters interact");
     expect(text).not.toContain("addresses Study how");
     expect(text).not.toContain("studies Study how");
     expect(text).not.toContain("clean. under");
@@ -35,13 +35,13 @@ describe("paper submission sanitization", () => {
     const draft = normalizePaperDraft({
       raw: {
         title: "A Reader Facing Study",
-        abstract: "This paper studies Study how LoRA rank and dropout interact.",
+        abstract: "This paper studies Study how condition parameters interact.",
         sections: [
           {
             heading: "Introduction",
             paragraphs: [
               {
-                text: "This study addresses Study how LoRA rank and dropout interact. This paper studies Study how LoRA rank and dropout interact. under an explicitly bounded evidence ceiling.",
+                text: "This study addresses Study how condition parameters interact. This paper studies Study how condition parameters interact. under an explicitly bounded evidence ceiling.",
                 evidence_ids: [],
                 citation_paper_ids: []
               }
@@ -52,7 +52,7 @@ describe("paper submission sanitization", () => {
       } as any,
       bundle: {
         runTitle: "LoRA run",
-        topic: "LoRA rank and dropout",
+        topic: "condition parameters",
         objectiveMetric: "accuracy",
         constraints: [],
         paperSummaries: [],
@@ -63,8 +63,8 @@ describe("paper submission sanitization", () => {
     });
 
     const serialized = JSON.stringify(draft);
-    expect(serialized).toContain("This study addresses how LoRA rank and dropout interact");
-    expect(serialized).toContain("This paper studies how LoRA rank and dropout interact under an explicitly bounded evidence ceiling");
+    expect(serialized).toContain("This study addresses how condition parameters interact");
+    expect(serialized).toContain("This paper studies how condition parameters interact under an explicitly bounded evidence ceiling");
     expect(serialized).not.toContain("Study how");
     expect(serialized).not.toContain(". under an explicitly");
   });
@@ -73,20 +73,20 @@ describe("paper submission sanitization", () => {
     const tex = renderSubmissionPaperTex({
       manuscript: {
         title: "Reader Surface Guard",
-        abstract: "This paper studies Study how LoRA rank and dropout interact.",
+        abstract: "This paper studies Study how condition parameters interact.",
         keywords: [],
         sections: [
           {
             heading: "Introduction",
             paragraphs: [
-              "This study addresses Study how LoRA rank and dropout interact. under an explicitly bounded evidence ceiling."
+              "This study addresses Study how condition parameters interact. under an explicitly bounded evidence ceiling."
             ]
           }
         ],
         appendix_sections: [
           {
             heading: "Supplementary Notes",
-            paragraphs: ["This paper studies Study how LoRA rank and dropout interact."]
+            paragraphs: ["This paper studies Study how condition parameters interact."]
           }
         ],
         tables: [],
@@ -97,8 +97,8 @@ describe("paper submission sanitization", () => {
       includeKeywords: false
     });
 
-    expect(tex).toContain("This paper studies how LoRA rank and dropout interact");
-    expect(tex).toContain("This study addresses how LoRA rank and dropout interact under an explicitly bounded evidence ceiling");
+    expect(tex).toContain("This paper studies how condition parameters interact");
+    expect(tex).toContain("This study addresses how condition parameters interact under an explicitly bounded evidence ceiling");
     expect(tex).not.toContain("Study how");
     expect(tex).not.toContain(". under an explicitly");
   });
@@ -113,9 +113,9 @@ describe("paper submission sanitization", () => {
           {
             heading: "Introduction",
             paragraphs: [
-              "This draft studies how LoRA rank and dropout interact during parameter-efficient instruction tuning under a fixed local compute budget.",
-              "This study addresses Study how LoRA rank and dropout interact. The paper is scoped around - Primary metric: average accuracy across ARC-Challenge and HellaSwag. - Secondary metrics: per-task accuracy, failed-run visibility, and claim-scope correctness.",
-              "This study addresses Study how LoRA rank and dropout interact. The paper is scoped around - Primary metric: average accuracy across ARC-Challenge and HellaSwag. - Secondary metrics: per-task accuracy, failed-run visibility, and claim-scope correctness."
+              "This draft studies how condition parameters interact during parameter-efficient instruction tuning under a fixed local compute budget.",
+              "This study addresses Study how condition parameters interact. The paper is scoped around - Primary metric: average accuracy across Benchmark Task A and Benchmark Task B. - Secondary metrics: per-task accuracy, failed-run visibility, and claim-scope correctness.",
+              "This study addresses Study how condition parameters interact. The paper is scoped around - Primary metric: average accuracy across Benchmark Task A and Benchmark Task B. - Secondary metrics: per-task accuracy, failed-run visibility, and claim-scope correctness."
             ]
           },
           {
@@ -134,8 +134,8 @@ describe("paper submission sanitization", () => {
       includeKeywords: false
     });
 
-    expect(tex).toContain("This paper studies how LoRA rank and dropout interact under a fixed local instruction-tuning budget");
-    expect(tex).toContain("The contribution is a cautious LoRA rank/dropout preflight");
+    expect(tex).toContain("This paper studies how condition parameters interact under a fixed local instruction-tuning budget");
+    expect(tex).toContain("The contribution is a cautious condition-parameter preflight");
     expect(tex.match(/The contribution is a cautious LoRA rank\/dropout preflight/gu)).toHaveLength(1);
     expect(tex).toContain("Nearby PEFT, LoRA, and instruction-tuning studies provide context");
     expect(tex).not.toContain("This draft studies");
@@ -214,8 +214,8 @@ describe("paper submission sanitization", () => {
                 lora_dropout: 0,
                 average_accuracy: 0.333334,
                 accuracy_delta_vs_baseline: 0,
-                arc_challenge_accuracy: 0.5,
-                hellaswag_accuracy: 0.166667,
+                benchmark_task_a_accuracy: 0.5,
+                benchmark_task_b_accuracy: 0.166667,
                 is_baseline: true
               },
               {
@@ -225,8 +225,8 @@ describe("paper submission sanitization", () => {
                 lora_dropout: 0,
                 average_accuracy: 0.333334,
                 accuracy_delta_vs_baseline: 0,
-                arc_challenge_accuracy: 0.5,
-                hellaswag_accuracy: 0.166667
+                benchmark_task_a_accuracy: 0.5,
+                benchmark_task_b_accuracy: 0.166667
               },
               {
                 label: "rank 16 / dropout 0.05",
@@ -235,8 +235,8 @@ describe("paper submission sanitization", () => {
                 lora_dropout: 0.05,
                 average_accuracy: 0.333334,
                 accuracy_delta_vs_baseline: 0,
-                arc_challenge_accuracy: 0.5,
-                hellaswag_accuracy: 0.166667
+                benchmark_task_a_accuracy: 0.5,
+                benchmark_task_b_accuracy: 0.166667
               },
               {
                 label: "rank 32 / dropout 0.05",
@@ -245,8 +245,8 @@ describe("paper submission sanitization", () => {
                 lora_dropout: 0.05,
                 average_accuracy: 0.416666,
                 accuracy_delta_vs_baseline: 0.083332,
-                arc_challenge_accuracy: 0.5,
-                hellaswag_accuracy: 0.333333
+                benchmark_task_a_accuracy: 0.5,
+                benchmark_task_b_accuracy: 0.333333
               }
             ]
           }
@@ -259,7 +259,7 @@ describe("paper submission sanitization", () => {
     });
 
     expect(tex).toContain("\\begin{table*}[t]");
-    expect(tex).toContain("Condition & Rank & Dropout & Avg. acc. & $\\Delta$ avg. & ARC-C & HellaSwag");
+    expect(tex).toContain("Condition & Rank & Dropout & Avg. acc. & $\\Delta$ avg. & ARC-C & Benchmark Task B");
     expect(tex).toContain("Locked baseline & 8 & 0 & 0.3333 & 0 & 0.5 & 0.1667");
     expect(tex).toContain("rank 32 / dropout 0.05 & 32 & 0.05 & 0.4167 & +0.0833 & 0.5 & 0.3333");
     expect(tex).not.toContain("Metric & Value");
@@ -395,7 +395,7 @@ describe("paper submission sanitization", () => {
           heading: "Method",
           paragraphs: [
             "The experiment used a 4x2 factorial design crossing LoRA rank with dropout.",
-            "The realized data and evaluation settings were training data from Alpaca Clean, evaluation on ARC-Challenge and HellaSwag, and seed 17."
+            "The realized data and evaluation settings were training data from Alpaca Clean, evaluation on Benchmark Task A and Benchmark Task B, and seed 17."
           ]
         },
         {
@@ -438,7 +438,7 @@ describe("paper submission sanitization", () => {
     });
 
     expect(tex).not.toContain("factorial design crossing LoRA rank with dropout. \\cite{paperA}");
-    expect(tex).not.toContain("ARC-Challenge and HellaSwag, and seed 17. \\cite{paperB}");
+    expect(tex).not.toContain("Benchmark Task A and Benchmark Task B, and seed 17. \\cite{paperB}");
     expect(tex).toContain("Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
   });
 
@@ -684,7 +684,7 @@ describe("paper submission sanitization", () => {
   it("removes raw DOI and opaque paper identifiers from normalized manuscript prose", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "LoRA benchmark",
-      topic: "LoRA rank/dropout benchmark",
+      topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
       paperSummaries: [],
@@ -720,7 +720,7 @@ describe("paper submission sanitization", () => {
   it("sanitizes wrapped revised manuscript repair prose", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "LoRA benchmark",
-      topic: "LoRA rank/dropout benchmark",
+      topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
       paperSummaries: [],
@@ -753,7 +753,7 @@ describe("paper submission sanitization", () => {
   it("restores executed model and fixed training settings when manuscript prose claims they are unavailable", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "LoRA benchmark",
-      topic: "LoRA rank/dropout benchmark",
+      topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
       paperSummaries: [],
@@ -770,7 +770,7 @@ describe("paper submission sanitization", () => {
           {
             heading: "Method",
             paragraphs: [
-              "The planned experiment compared LoRA rank and dropout against a locked baseline.",
+              "The planned experiment compared condition parameters against a locked baseline.",
               "The executed summary remains incomplete as a methods record because it does not expose the final selected model identifier, optimizer, learning rate, batch size, gradient accumulation, LoRA target modules, or confidence-interval construction."
             ]
           }
@@ -779,8 +779,8 @@ describe("paper submission sanitization", () => {
       draft,
       resultAnalysis: {
         metrics: {
-          selected_model_id: "Qwen/Qwen2.5-1.5B",
-          fallback_model: "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+          selected_model_id: "the selected backbone",
+          fallback_model: "the configured fallback backbone",
           run_config: {
             seed: 17,
             train_samples: 48,
@@ -795,8 +795,8 @@ describe("paper submission sanitization", () => {
           data: {
             train: { dataset: { path: "yahma/alpaca-cleaned", split: "train" } },
             eval: {
-              arc_challenge: { dataset: { path: "allenai/ai2_arc", name: "ARC-Challenge", split: "validation" } },
-              hellaswag: { dataset: { path: "hellaswag", split: "validation" } }
+              benchmark_task_a: { dataset: { path: "allenai/ai2_arc", name: "Benchmark Task A", split: "validation" } },
+              benchmark_task_b: { dataset: { path: "benchmark_task_b", split: "validation" } }
             }
           }
         },
@@ -808,7 +808,7 @@ describe("paper submission sanitization", () => {
 
     const method = manuscript.sections.find((section) => section.heading === "Method");
     const text = method?.paragraphs.join(" ") || "";
-    expect(text).toContain("Qwen/Qwen2.5-1.5B");
+    expect(text).toContain("the selected backbone");
     expect(text).toContain("learning rate 0.0002");
     expect(text).toContain("per-device train batch size 1");
     expect(text).toContain("gradient accumulation 4");
@@ -820,7 +820,7 @@ describe("paper submission sanitization", () => {
   it("repairs reader-visible table availability and appendix protocol-label contradictions", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "LoRA benchmark",
-      topic: "LoRA rank/dropout benchmark",
+      topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
       paperSummaries: [],
@@ -838,7 +838,7 @@ describe("paper submission sanitization", () => {
           {
             heading: "Method",
             paragraphs: [
-              "The fixed search space includes Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and 1800-second timeout., reported run details records 48 training examples for the reported pilot., and the LoRA rank/dropout tuning grid.",
+              "The fixed search space includes Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and 1800-second timeout., reported run details records 48 training examples for the reported pilot., and the condition-parameter tuning grid.",
               "Results reports the best observed cell against the locked rank-8, dropout-0 baseline; Table 1 reports condition mean accuracies and identifies only that locked row as the baseline."
             ]
           },
@@ -848,7 +848,7 @@ describe("paper submission sanitization", () => {
               "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 rank/dropout preflight.",
               "The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform QLoRA, MAPLE, or adapter-variant methods.",
               "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked rank-8, no-dropout condition inside the executed run, not a literature result. Prior PEFT papers instead define why the local rank/dropout question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
-              "Accordingly, external PEFT papers serve as framing comparators rather than numerical baselines for this manuscript. The relevant baseline here is the locked rank-8, dropout-0.0 condition inside the executed run. Prior work motivates why the question matters but differences in model scale, task mix, adapter family, and evaluation objective prevent direct superiority claims."
+              "Accordingly, external PEFT papers serve as framing comparators rather than numerical baselines for this manuscript. The relevant baseline here is the locked locked baseline condition inside the executed run. Prior work motivates why the question matters but differences in model scale, task mix, adapter family, and evaluation objective prevent direct superiority claims."
             ]
           },
           {
@@ -884,8 +884,8 @@ describe("paper submission sanitization", () => {
           {
             caption: "Task-level delta for the leading condition.",
             bars: [
-              { label: "ARC-Challenge delta", value: 0 },
-              { label: "HellaSwag delta", value: 0.1667 }
+              { label: "Benchmark Task A delta", value: 0 },
+              { label: "Benchmark Task B delta", value: 0.1667 }
             ]
           }
         ],
@@ -912,8 +912,8 @@ describe("paper submission sanitization", () => {
     expect(text).toContain("the reported analyses do not report optimizer choice, LoRA target modules");
     expect(text).toContain("Table 1 reports all eight condition mean accuracies");
     expect(text).toContain("The comparison to external PEFT methods is therefore one of scope and experimental role");
-    expect(text).toContain("executed metrics identify Qwen/Qwen2.5-1.5B");
-    expect(text).toContain("The fixed search space held LoRA rank and dropout as the manipulated factors");
+    expect(text).toContain("executed metrics identify the selected backbone");
+    expect(text).toContain("The fixed search space held condition parameters as the manipulated factors");
     expect(text).toContain("Relative to memory-efficient finetuning work");
     expect(text).not.toContain("does not expose a full eight-cell accuracy table");
     expect(text).not.toContain("compact writing record does not expose the full per-cell table");
@@ -938,7 +938,7 @@ describe("paper submission sanitization", () => {
   it("repairs stale limitations, repeated screening paragraphs, and method benchmark citations", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "LoRA benchmark",
-      topic: "LoRA rank/dropout benchmark",
+      topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
       paperSummaries: [],
@@ -970,16 +970,16 @@ describe("paper submission sanitization", () => {
           {
             heading: "Method",
             paragraphs: [
-              "Accordingly, the analysis was defined as a within-run comparison of LoRA rank/dropout cells against the locked rank-8, dropout-0 baseline, using the cited ARC-Challenge and HellaSwag benchmark pair."
+              "Accordingly, the analysis was defined as a within-run comparison of condition-parameter cells against the locked rank-8, dropout-0 baseline, using the cited Benchmark Task A and Benchmark Task B benchmark pair."
             ]
           },
           {
             heading: "Discussion",
             paragraphs: [
               "This cautious interpretation is consistent with prior low-budget LoRA and PEFT studies (e.g., QLoRA and related benchmarking work) that also treat adapter configuration as consequential, while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers.",
-              "The main report records a positive screening result: accuracy delta versus baseline was 0.083332 against the predeclared 0.01 target, with the rank-32 dropout-0.05 cell supplying the strongest observed gain.",
-              "The current evidence is most actionable as a cautious benchmark note for this fixed-budget LoRA rank/dropout pilot, especially where the best observed cell clears the pre-specified screening threshold.",
-              "The rank-32 dropout-0.05 cell improved accuracy delta versus the locked baseline by 0.0833 in the reported comparison."
+              "The main report records a positive screening result: accuracy delta versus baseline was 0.083332 against the predeclared 0.01 target, with the leading condition cell supplying the strongest observed gain.",
+              "The current evidence is most actionable as a cautious benchmark note for this fixed-budget condition-parameter pilot, especially where the best observed cell clears the pre-specified screening threshold.",
+              "The leading condition cell improved accuracy delta versus the locked baseline by 0.0833 in the reported comparison."
             ]
           },
           {
@@ -997,13 +997,13 @@ describe("paper submission sanitization", () => {
     });
 
     const text = JSON.stringify(manuscript);
-    expect(text).toContain("Method identifies the selected Qwen/Qwen2.5-1.5B backbone");
-    expect(text).toContain("For this fixed-budget LoRA rank/dropout pilot");
+    expect(text).toContain("Method identifies the selected the selected backbone backbone");
+    expect(text).toContain("For this fixed-budget condition-parameter pilot");
     expect(text).not.toContain("final backbone used for the reported run is not identified");
     expect(text).not.toContain("The main report records a positive screening result");
-    expect(text).not.toContain("The rank-32 dropout-0.05 cell improved accuracy delta");
+    expect(text).not.toContain("The leading condition cell improved accuracy delta");
     expect(text).not.toContain("The most important limitation is scale");
-    expect(text).not.toContain("using the cited ARC-Challenge");
+    expect(text).not.toContain("using the cited Benchmark Task A");
     expect(text).not.toContain("QLoRA and related benchmarking work");
 
     const tex = renderSubmissionPaperTex({
@@ -1023,12 +1023,12 @@ describe("paper submission sanitization", () => {
         {
           heading: "Method",
           paragraphs: [
-            "The study was designed as a 4 x 2 factorial sweep over LoRA rank and dropout under a fixed local compute budget. Rank took values {4, 8, 16, 32}, dropout took values {0.0, 0.05}, and rank 8 with dropout 0.0 was locked in advance as the baseline condition.",
+            "The study was designed as a 4 x 2 factorial sweep over condition parameters under a fixed local compute budget. Rank took values {4, 8, 16, 32}, dropout took values {0.0, 0.05}, and rank 8 with dropout 0.0 was locked in advance as the baseline condition.",
             "The study was designed as a fixed-budget 4 x 2 factorial sweep over LoRA rank {4, 8, 16, 32} and dropout {0.0, 0.05}, with rank 8 and dropout 0.0 designated in advance as the locked baseline.",
-            "The planned backbone preference was Qwen/Qwen2.5-1.5B, with TinyLlama/TinyLlama-1.1B-Chat-v1.0 reserved as a fallback if the preferred model failed preflight. The retained run summary used for manuscript preparation does not preserve a model identifier that allows the final executed backbone to be verified.",
-            "The realized record preserves the data and evaluation settings: training data from the yahma/alpaca-cleaned train split, 48 training examples, evaluation on ARC-Challenge and HellaSwag validation slices, and seed 17.",
-            "The primary endpoint was average accuracy across ARC-Challenge and HellaSwag. Secondary reporting included per-task accuracy, train loss, wall-clock runtime, peak VRAM, and complete accounting of requested conditions.",
-            "The primary endpoint was average accuracy across ARC-Challenge and HellaSwag. Secondary reporting covered per-task accuracy, train loss, wall-clock runtime, peak VRAM, completed-condition count, failed-run visibility, and correctness of claim downgrades."
+            "The planned backbone preference was the selected backbone, with the configured fallback backbone reserved as a fallback if the preferred model failed preflight. The retained run summary used for manuscript preparation does not preserve a model identifier that allows the final executed backbone to be verified.",
+            "The realized record preserves the data and evaluation settings: training data from the yahma/alpaca-cleaned train split, 48 training examples, evaluation on Benchmark Task A and Benchmark Task B validation slices, and seed 17.",
+            "The primary endpoint was average accuracy across Benchmark Task A and Benchmark Task B. Secondary reporting included per-task accuracy, train loss, wall-clock runtime, peak VRAM, and complete accounting of requested conditions.",
+            "The primary endpoint was average accuracy across Benchmark Task A and Benchmark Task B. Secondary reporting covered per-task accuracy, train loss, wall-clock runtime, peak VRAM, completed-condition count, failed-run visibility, and correctness of claim downgrades."
           ]
         },
         {
@@ -1056,7 +1056,7 @@ describe("paper submission sanitization", () => {
 
     expect(method.paragraphs.filter((paragraph) => /4 x 2 factorial sweep/iu.test(paragraph))).toHaveLength(1);
     expect(method.paragraphs.filter((paragraph) => /primary endpoint was average accuracy/iu.test(paragraph))).toHaveLength(1);
-    expect(text).toContain("executed metrics identify Qwen/Qwen2.5-1.5B");
+    expect(text).toContain("executed metrics identify the selected backbone");
     expect(text).not.toContain("does not preserve a model identifier");
     expect(results.paragraphs.filter((paragraph) => /average accuracy increased/iu.test(paragraph))).toHaveLength(1);
     expect(text).not.toContain("A No broader replication");
@@ -1065,7 +1065,7 @@ describe("paper submission sanitization", () => {
   it("renders reader-visible citations for related discussion claims but not Method execution records", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "LoRA benchmark",
-      topic: "LoRA rank/dropout benchmark",
+      topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
       paperSummaries: [],
@@ -1098,7 +1098,7 @@ describe("paper submission sanitization", () => {
             heading: "Method",
             paragraphs: [
               "The design fixed rank and dropout before execution.",
-              "In the preregistered plan, the training source was an Alpaca Clean subset capped at 10,000 examples, and evaluation was limited to ARC-Challenge and HellaSwag. The preferred base model for this plan was Qwen/Qwen2.5-1.5B, with TinyLlama/TinyLlama-1.1B-Chat-v1.0 reserved only as a fallback if preflight checks failed. However, the reported execution artifact is narrower than that original plan: the metric summary records 48 training samples and a run seed of 17."
+              "In the preregistered plan, the training source was an Alpaca Clean subset capped at 10,000 examples, and evaluation was limited to Benchmark Task A and Benchmark Task B. The preferred base model for this plan was the selected backbone, with the configured fallback backbone reserved only as a fallback if preflight checks failed. However, the reported execution artifact is narrower than that original plan: the metric summary records 48 training samples and a run seed of 17."
             ]
           },
           {
@@ -1145,7 +1145,7 @@ describe("paper submission sanitization", () => {
 
     const citedParagraphs = tex.split("\\cite{doe_2025_peft}").length - 1;
     expect(citedParagraphs).toBe(2);
-    expect(tex).toContain("Qwen/Qwen2.5-1.5B");
+    expect(tex).toContain("the selected backbone");
     expect(tex).not.toContain("run seed of 17. \\cite{doe_2025_peft}");
     expect(tex).toContain("\\cite{doe_2025_peft}");
   });
@@ -1153,7 +1153,7 @@ describe("paper submission sanitization", () => {
   it("adds TeX line-stretch guard for long model identifiers in narrow paper columns", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "LoRA benchmark",
-      topic: "LoRA rank/dropout benchmark",
+      topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
       paperSummaries: [],
@@ -1171,7 +1171,7 @@ describe("paper submission sanitization", () => {
           {
             heading: "Method",
             paragraphs: [
-              "The protocol used Qwen/Qwen2.5-1.5B with TinyLlama/TinyLlama-1.1B-Chat-v1.0 reserved as a fallback under the same local workstation budget."
+              "The protocol used the selected backbone with the configured fallback backbone reserved as a fallback under the same local workstation budget."
             ]
           }
         ]
@@ -1187,13 +1187,13 @@ describe("paper submission sanitization", () => {
 
     expect(tex).toContain("\\emergencystretch=3em");
     expect(tex.indexOf("\\emergencystretch=3em")).toBeLessThan(tex.indexOf("\\begin{document}"));
-    expect(tex).toContain("Qwen/Qwen2.5-1.5B");
+    expect(tex).toContain("the selected backbone");
   });
 
   it("keeps abstract and limitations model-disclosure story aligned after manuscript repair", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "LoRA benchmark",
-      topic: "LoRA rank/dropout benchmark",
+      topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
       paperSummaries: [],
@@ -1222,7 +1222,7 @@ describe("paper submission sanitization", () => {
     });
 
     const text = JSON.stringify(manuscript);
-    expect(manuscript.abstract).toContain("verified execution metadata identifying Qwen/Qwen2.5-1.5B");
+    expect(manuscript.abstract).toContain("verified execution metadata identifying the selected backbone");
     expect(text).toContain("The manuscript supplements that compact summary with verified execution metadata");
     expect(text).not.toContain("not exposing the final model identity");
     expect(text).not.toContain("does not disclose the final model choice");
@@ -1232,7 +1232,7 @@ describe("paper submission sanitization", () => {
   it("repairs live-review stale model, table, and appendix claims after manuscript repair", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "LoRA benchmark",
-      topic: "LoRA rank/dropout benchmark",
+      topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
       paperSummaries: [],
@@ -1295,7 +1295,7 @@ describe("paper submission sanitization", () => {
     });
 
     const text = JSON.stringify(manuscript);
-    expect(text).toContain("Verified execution metadata identifies Qwen/Qwen2.5-1.5B");
+    expect(text).toContain("Verified execution metadata identifies the selected backbone");
     expect(text).toContain("visible manuscript reports the eight condition-level mean accuracies");
     expect(text).toContain("auditable screening result");
     expect(text).toContain("related-work comparison remains narrower than a full survey");
@@ -1315,7 +1315,7 @@ describe("paper submission sanitization", () => {
   it("derives a main-body result figure and removes raw metric-key prose before rendering", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "LoRA benchmark",
-      topic: "LoRA rank/dropout benchmark",
+      topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
       paperSummaries: [],
@@ -1333,13 +1333,13 @@ describe("paper submission sanitization", () => {
           {
             heading: "Introduction",
             paragraphs: [
-              "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01. The paper is scoped around - Primary metric: average accuracy across ARC-Challenge and HellaSwag. - Secondary metrics: per-task accuracy, train loss, wall-clock runtime, peak VRAM, completed-condition count, failed-run visibility, and claim downgrade correctness. - Meaningful improvement: at least +1.0 percentage point average accuracy over the baseline with uncertainty reporting that does not clearly contradict the direction of improvement. - No-signal boundary: maximum condition spread below +0.5 percentage points, or confidence intervals that make the comparison inconclusive."
+              "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01. The paper is scoped around - Primary metric: average accuracy across Benchmark Task A and Benchmark Task B. - Secondary metrics: per-task accuracy, train loss, wall-clock runtime, peak VRAM, completed-condition count, failed-run visibility, and claim downgrade correctness. - Meaningful improvement: at least +1.0 percentage point average accuracy over the baseline with uncertainty reporting that does not clearly contradict the direction of improvement. - No-signal boundary: maximum condition spread below +0.5 percentage points, or confidence intervals that make the comparison inconclusive."
             ]
           },
           {
             heading: "Results",
             paragraphs: [
-              "rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), arc_challenge_accuracy: 0.5 vs 0.5 (delta 0), hellaswag_accuracy: 0.3333 vs 0.1667 (delta 0.1667).",
+              "rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0.1667).",
               "In the analyzed run record, the strongest reported cell corresponded to an accuracy\\_delta\\_vs\\_baseline of 0.083332.",
               "Within that sweep, the strongest reported comparison is rank 32 with dropout 0.05 against the locked baseline of rank 8 with dropout 0.0. Average accuracy increases from 0.333334 to 0.416666, yielding an absolute improvement of 0.083332. By the study's own decision rule, this exceeds the predeclared +0.01 objective threshold.",
               "The best reported cell is rank 32 with dropout 0.05, which increases average accuracy from 0.3333 in the locked baseline to 0.4167, for an absolute gain of 0.0833."
@@ -1367,27 +1367,27 @@ describe("paper submission sanitization", () => {
               label: "rank 8 dropout 0 baseline",
               is_baseline: true,
               average_accuracy_mean: 0.333334,
-              arc_challenge_accuracy_mean: 0.5,
-              hellaswag_accuracy_mean: 0.166667
+              benchmark_task_a_accuracy_mean: 0.5,
+              benchmark_task_b_accuracy_mean: 0.166667
             },
             {
               label: "rank 4 dropout 0",
               average_accuracy_mean: 0.333334,
-              arc_challenge_accuracy_mean: 0.5,
-              hellaswag_accuracy_mean: 0.166667
+              benchmark_task_a_accuracy_mean: 0.5,
+              benchmark_task_b_accuracy_mean: 0.166667
             },
             {
               label: "rank 16 dropout 0",
               average_accuracy_mean: 0.333334,
-              arc_challenge_accuracy_mean: 0.5,
-              hellaswag_accuracy_mean: 0.166667
+              benchmark_task_a_accuracy_mean: 0.5,
+              benchmark_task_b_accuracy_mean: 0.166667
             },
             {
               label: "rank 32 dropout 0.05",
               average_accuracy_mean: 0.416666,
               accuracy_delta_vs_baseline_mean: 0.083332,
-              arc_challenge_accuracy_mean: 0.5,
-              hellaswag_accuracy_mean: 0.333333
+              benchmark_task_a_accuracy_mean: 0.5,
+              benchmark_task_b_accuracy_mean: 0.333333
             }
           ]
         }
@@ -1398,10 +1398,10 @@ describe("paper submission sanitization", () => {
     expect(manuscript.figures).toHaveLength(1);
     expect(manuscript.figures?.[0]?.caption).toContain("Task-level and average accuracy");
     expect(manuscript.figures?.[0]?.bars).toEqual([
-      { label: "Baseline ARC-Challenge", value: 0.5 },
-      { label: "Leading ARC-Challenge", value: 0.5 },
-      { label: "Baseline HellaSwag", value: 0.1667 },
-      { label: "Leading HellaSwag", value: 0.3333 },
+      { label: "Baseline Benchmark Task A", value: 0.5 },
+      { label: "Leading Benchmark Task A", value: 0.5 },
+      { label: "Baseline Benchmark Task B", value: 0.1667 },
+      { label: "Leading Benchmark Task B", value: 0.3333 },
       { label: "Baseline Average", value: 0.3333 },
       { label: "Leading Average", value: 0.4167 }
     ]);
@@ -1414,8 +1414,8 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("accuracy_delta_vs_baseline");
     expect(text).not.toContain("accuracy\\_delta\\_vs\\_baseline");
     expect(text).not.toContain("average_accuracy");
-    expect(text).not.toContain("arc_challenge_accuracy");
-    expect(text).not.toContain("hellaswag_accuracy");
+    expect(text).not.toContain("benchmark_task_a_accuracy");
+    expect(text).not.toContain("benchmark_task_b_accuracy");
 
     const tex = renderSubmissionPaperTex({
       manuscript: {
@@ -1427,7 +1427,7 @@ describe("paper submission sanitization", () => {
             paragraphs: [
               "[warning] consistency: Results cites 0.0833, but the comparable structured results support 0 for accuracy_delta_vs_baseline.",
               "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01.",
-              "rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), arc_challenge_accuracy: 0.5 vs 0.5 (delta 0), hellaswag_accuracy: 0.3333 vs 0.1667 (delta 0)."
+              "rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0)."
             ]
           }
         ]
@@ -1443,15 +1443,15 @@ describe("paper submission sanitization", () => {
     });
     expect(validation.ok).toBe(true);
     expect(tex).toContain("The prespecified baseline-relative accuracy target was met");
-    expect(tex).toContain("The leading rank-32/dropout-0.05 condition");
+    expect(tex).toContain("The leading leading condition condition");
     expect(tex).toContain("Table 1 reports the condition-level values");
     expect(tex).not.toContain("[warning]");
     expect(tex).not.toContain("average accuracy was 0.4167 versus 0.3333");
     expect(tex).not.toContain("accuracy_delta_vs_baseline");
     expect(tex).not.toContain("accuracy\\_delta\\_vs\\_baseline");
     expect(tex).not.toContain("average_accuracy");
-    expect(tex).not.toContain("arc_challenge_accuracy");
-    expect(tex).not.toContain("hellaswag_accuracy");
+    expect(tex).not.toContain("benchmark_task_a_accuracy");
+    expect(tex).not.toContain("benchmark_task_b_accuracy");
   });
 
   it("replaces redundant condition-delta figures with a task-level split when condition summaries are available", () => {
@@ -1495,8 +1495,8 @@ describe("paper submission sanitization", () => {
             bars: [
               { label: "Baseline ARC Challenge", value: 0.5 },
               { label: "Leading ARC Challenge", value: 0.5 },
-              { label: "Baseline HellaSwag", value: 0.1667 },
-              { label: "Leading HellaSwag", value: 0.3333 },
+              { label: "Baseline Benchmark Task B", value: 0.1667 },
+              { label: "Leading Benchmark Task B", value: 0.3333 },
               { label: "Baseline Average", value: 0.3333 },
               { label: "Leading Average", value: 0.4167 }
             ]
@@ -1509,27 +1509,27 @@ describe("paper submission sanitization", () => {
             label: "rank 8 dropout 0 baseline",
             is_baseline: true,
             average_accuracy_mean: 0.333334,
-            arc_challenge_accuracy: 0.5,
-            hellaswag_accuracy: 0.166667
+            benchmark_task_a_accuracy: 0.5,
+            benchmark_task_b_accuracy: 0.166667
           },
           {
             label: "rank 4 dropout 0",
             average_accuracy_mean: 0.333334,
-            arc_challenge_accuracy: 0.5,
-            hellaswag_accuracy: 0.166667
+            benchmark_task_a_accuracy: 0.5,
+            benchmark_task_b_accuracy: 0.166667
           },
           {
             label: "rank 16 dropout 0",
             average_accuracy_mean: 0.333334,
-            arc_challenge_accuracy: 0.5,
-            hellaswag_accuracy: 0.166667
+            benchmark_task_a_accuracy: 0.5,
+            benchmark_task_b_accuracy: 0.166667
           },
           {
             label: "rank 32 dropout 0.05",
             average_accuracy_mean: 0.416666,
             accuracy_delta_vs_baseline_mean: 0.083332,
-            arc_challenge_accuracy: 0.5,
-            hellaswag_accuracy: 0.333333
+            benchmark_task_a_accuracy: 0.5,
+            benchmark_task_b_accuracy: 0.333333
           }
         ]
       }
@@ -1538,10 +1538,10 @@ describe("paper submission sanitization", () => {
     expect(stabilized.figures).toHaveLength(1);
     expect(stabilized.figures?.[0]?.caption).toContain("Task-level and average accuracy");
     expect(stabilized.figures?.[0]?.bars).toEqual([
-      { label: "Baseline ARC-Challenge", value: 0.5 },
-      { label: "Leading ARC-Challenge", value: 0.5 },
-      { label: "Baseline HellaSwag", value: 0.1667 },
-      { label: "Leading HellaSwag", value: 0.3333 },
+      { label: "Baseline Benchmark Task A", value: 0.5 },
+      { label: "Leading Benchmark Task A", value: 0.5 },
+      { label: "Baseline Benchmark Task B", value: 0.1667 },
+      { label: "Leading Benchmark Task B", value: 0.3333 },
       { label: "Baseline Average", value: 0.3333 },
       { label: "Leading Average", value: 0.4167 }
     ]);
@@ -1557,8 +1557,8 @@ describe("paper submission sanitization", () => {
           {
             heading: "Method",
             paragraphs: [
-              "The protocol preferred Qwen/Qwen2.5-1.5B (cited model source) and allowed TinyLlama/TinyLlama-1.1B-Chat-v1.0 only as a fallback.",
-              "Although the broader protocol preferred Qwen/Qwen2.5-1.5B and allowed TinyLlama/TinyLlama-1.1B-Chat-v1.0 only as a fallback, the compact realized summary does not clearly expose the final instantiated backbone."
+              "The protocol preferred the selected backbone (cited model source) and allowed the configured fallback backbone only as a fallback.",
+              "Although the broader protocol preferred the selected backbone and allowed the configured fallback backbone only as a fallback, the compact realized summary does not clearly expose the final instantiated backbone."
             ]
           }
         ]
@@ -1566,8 +1566,8 @@ describe("paper submission sanitization", () => {
       {
         resultAnalysis: {
           metrics: {
-            selected_model_id: "Qwen/Qwen2.5-1.5B",
-            fallback_model_id: "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            selected_model_id: "the selected backbone",
+            fallback_model_id: "the configured fallback backbone",
             run_config: {
               learning_rate: 0.0002,
               per_device_train_batch_size: 1,
@@ -1582,8 +1582,8 @@ describe("paper submission sanitization", () => {
             data: {
               train: { dataset: { path: "yahma/alpaca-cleaned" } },
               eval: {
-                arc_challenge: { dataset: { path: "allenai/ai2_arc", name: "ARC-Challenge", split: "validation" } },
-                hellaswag: { dataset: { path: "hellaswag", split: "validation" } }
+                benchmark_task_a: { dataset: { path: "allenai/ai2_arc", name: "Benchmark Task A", split: "validation" } },
+                benchmark_task_b: { dataset: { path: "benchmark_task_b", split: "validation" } }
               }
             }
           },
@@ -1595,8 +1595,8 @@ describe("paper submission sanitization", () => {
     );
 
     const methodText = stabilized.sections.find((section) => section.heading === "Method")?.paragraphs.join(" ") || "";
-    expect(methodText).toContain("The executed run used Qwen/Qwen2.5-1.5B as the selected backbone");
-    expect(methodText).toContain("TinyLlama/TinyLlama-1.1B-Chat-v1.0 retained only as the fallback candidate");
+    expect(methodText).toContain("The executed run used the selected backbone as the selected backbone");
+    expect(methodText).toContain("the configured fallback backbone retained only as the fallback candidate");
     expect(methodText).not.toContain("cited model source");
     expect(methodText).not.toContain("does not clearly expose the final instantiated backbone");
   });
@@ -1617,26 +1617,26 @@ describe("paper submission sanitization", () => {
         ]
       },
       {
-        methodModelNames: ["Qwen/Qwen2.5-1.5B", "TinyLlama/TinyLlama-1.1B-Chat-v1.0"]
+        methodModelNames: ["the selected backbone", "the configured fallback backbone"]
       }
     );
 
     const methodText = stabilized.sections.find((section) => section.heading === "Method")?.paragraphs.join(" ") || "";
-    expect(methodText).toContain("The executed run used Qwen/Qwen2.5-1.5B as the selected backbone");
+    expect(methodText).toContain("The executed run used the selected backbone as the selected backbone");
     expect(methodText).not.toContain("does not clearly expose the final instantiated backbone");
   });
 
   it("repairs reader-facing manuscript quality residues after LLM manuscript repair", () => {
     const stabilized = stabilizePaperManuscriptForSubmission({
       title: "A LoRA Benchmark",
-      abstract: "A cautious benchmark. The protocol targeted a 4 x 2 factorial sweep over ranks {4, 8, 16, 32} and dropout values {0.0, 0.05}, with average accuracy across ARC-Challenge and HellaSwag as the primary performance measure and rank 8 with no dropout as the locked in-grid baseline. Within that reviewed artifact, the best reported condition, rank 32 with dropout 0.05, improved average accuracy from 0.333334 to 0.416666, a gain of 0.083332 over baseline. The same artifact completed all eight requested conditions, reported 45.687 s wall-clock time, and used approximately 4.28 GB of peak allocated GPU memory. The run also remained inexpensive, completing the eight planned conditions in 45.687 s with about 4.28 GB of peak allocated CUDA memory. The sweep was also lightweight, with 45.687 s wall-clock runtime and 4,278,951,936 bytes of peak allocated memory. The strongest contribution of the study is a reproducible and conservative protocol for comparing LoRA settings under explicit budget, reporting, and uncertainty constraints.",
+      abstract: "A cautious benchmark. The protocol targeted a 4 x 2 factorial sweep over ranks {4, 8, 16, 32} and dropout values {0.0, 0.05}, with average accuracy across Benchmark Task A and Benchmark Task B as the primary performance measure and rank 8 with no dropout as the locked in-grid baseline. Within that reviewed artifact, the best reported condition, rank 32 with dropout 0.05, improved average accuracy from 0.333334 to 0.416666, a gain of 0.083332 over baseline. The same artifact completed all eight requested conditions, reported 45.687 s wall-clock time, and used approximately 4.28 GB of peak allocated GPU memory. The run also remained inexpensive, completing the eight planned conditions in 45.687 s with about 4.28 GB of peak allocated CUDA memory. The sweep was also lightweight, with 45.687 s wall-clock runtime and 4,278,951,936 bytes of peak allocated memory. The strongest contribution of the study is a reproducible and conservative protocol for comparing LoRA settings under explicit budget, reporting, and uncertainty constraints.",
       keywords: ["LoRA"],
       sections: [
         {
           heading: "Method",
           paragraphs: [
-            "The run specification named Qwen/Qwen2.5-1.5B as the preferred base model and TinyLlama/TinyLlama-1.1B-Chat-v1.0 as fallback, but the manuscript-ready reported summary does not expose the executed model identifier, so the present paper reports the intended configuration without claiming model-level verification.",
-            "The execution summary used for manuscript preparation reports training data from the yahma/alpaca-cleaned train split, 48 training examples, evaluation on the allenai/ai2_arc ARC-Challenge validation split and the HellaSwag validation split, 6 examples per evaluation task, and execution seed 17. The configured backbone choices were Qwen/Qwen2.5-1.5B and TinyLlama/TinyLlama-1.1B-Chat-v1.0, but the summary materials used here do not identify unambiguously which of those two backbones produced the reported results. Fixed training settings were learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, 4 optimizer steps, maximum sequence length 256, and 1800 s timeout. Uncertainty summaries were reported as condition-level 95% intervals over n=12 prediction records; they are treated as screening intervals rather than significance tests.",
+            "The run specification named the selected backbone as the preferred base model and the configured fallback backbone as fallback, but the manuscript-ready reported summary does not expose the executed model identifier, so the present paper reports the intended configuration without claiming model-level verification.",
+            "The execution summary used for manuscript preparation reports training data from the yahma/alpaca-cleaned train split, 48 training examples, evaluation on the allenai/ai2_arc Benchmark Task A validation split and the Benchmark Task B validation split, 6 examples per evaluation task, and execution seed 17. The configured backbone choices were the selected backbone and the configured fallback backbone, but the summary materials used here do not identify unambiguously which of those two backbones produced the reported results. Fixed training settings were learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, 4 optimizer steps, maximum sequence length 256, and 1800 s timeout. Uncertainty summaries were reported as condition-level 95% intervals over n=12 prediction records; they are treated as screening intervals rather than significance tests.",
             "The compact artifact bundle provides only partial training detail. It reports command provenance, runtime, memory, completed-condition counts, and condition-level confidence intervals, but it does not surface optimizer settings, scheduler, batch size, target modules, epoch count, or stopping rule in manuscript-readable form. Rather than reconstructing missing configuration by inference, we treat the study as a transparent but incomplete preflight protocol."
           ]
         },
@@ -1651,9 +1651,9 @@ describe("paper submission sanitization", () => {
           paragraphs: [
             "No broader replication is reported in the compact main record, and supplementary No broader replication is reported here, so the main gain remains a single-run preflight observation. The documented gain therefore remains a single-run preflight observation.",
             "The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. rank 32 / dropout 0.05 is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage.",
-            "The rank-32 rows carry the strongest follow-up signal because they combine the largest nonbaseline mean with the same condition-completion accounting used for the rest of the grid.",
+            "The leading-condition rows carry the strongest follow-up signal because they combine the largest nonbaseline mean with the same condition-completion accounting used for the rest of the grid.",
             "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every LoRA configuration is better than every other configuration.",
-            "The rank-16 rows are useful mainly as a calibration point for the interpretation. They show that adding dropout at a higher rank did not create a clean, decisive gain under the current budget.",
+            "The comparison-condition rows are useful mainly as a calibration point for the interpretation. They show that adding dropout at a higher rank did not create a clean, decisive gain under the current budget.",
             "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale.",
             "Operationally, the run was inexpensive and clean. The summarized record reports completion of all eight planned conditions, a wall-clock runtime of 45.687 s, and peak allocated CUDA memory of 4,278,951,936 bytes, or about 4.28 GB. The runtime stayed far below the configured 1,800 s limit.",
             "From a systems perspective, the sweep was small but operationally complete. The record reports 8 requested conditions, 8 recorded conditions, and 8 completed conditions, together with wall-clock runtime of 45.687 s, peak allocated CUDA memory of 4,278,951,936 bytes, and a timeout budget of 1,800 s. No failed or hidden condition is visible in the compact tables.",
@@ -1682,7 +1682,7 @@ describe("paper submission sanitization", () => {
         {
           heading: "Supplementary Experimental Details",
           paragraphs: [
-            "The study used a fixed 4x2 grid over ranks 4, 8, 16, and 32 and dropout values 0.0 and 0.05, with rank 8 and dropout 0.0 serving as the locked baseline. The run was designed for a dual-RTX-4090-class local workstation and used seed 42. The preferred backbone in the protocol was Qwen/Qwen2.5-1.5B, with TinyLlama/TinyLlama-1.1B-Chat-v1.0 reserved as a fallback. The training source was Alpaca Clean under a cap of 10000 examples, although the summarized preflight reported here used 48 examples."
+            "The study used a fixed 4x2 grid over ranks 4, 8, 16, and 32 and dropout values 0.0 and 0.05, with rank 8 and dropout 0.0 serving as the locked baseline. The run was designed for a dual-RTX-4090-class local workstation and used seed 42. The preferred backbone in the protocol was the selected backbone, with the configured fallback backbone reserved as a fallback. The training source was Alpaca Clean under a cap of 10000 examples, although the summarized preflight reported here used 48 examples."
           ]
         },
         {
@@ -1706,7 +1706,7 @@ describe("paper submission sanitization", () => {
     expect(text).toContain("completion of all eight planned conditions under the configured 1,800 s limit");
     expect(text).toContain("all eight requested, recorded, and completed conditions under the configured 1,800 s timeout");
     expect(text).toContain("scheduler details beyond the scalar learning rate");
-    expect(text).toContain("executed metrics identify Qwen/Qwen2.5-1.5B");
+    expect(text).toContain("executed metrics identify the selected backbone");
     expect(text).toContain("learning rate 0.0002");
     expect(text).toContain("reports seed 17 with 48 yahma/alpaca-cleaned training examples");
     expect(text).toContain("Table 1 exposes the eight condition means");
@@ -1724,9 +1724,9 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("full per-condition numerical table");
     expect(text).not.toContain("does not provide the adjacent-cell contrasts needed");
     expect(text).not.toContain("The best nonbaseline row should");
-    expect(text).not.toContain("The rank-32 rows carry");
+    expect(text).not.toContain("The leading-condition rows carry");
     expect(text).not.toContain("The baseline row also changes");
-    expect(text).not.toContain("The rank-16 rows are useful mainly");
+    expect(text).not.toContain("The comparison-condition rows are useful mainly");
     expect(text).not.toContain("Resource reporting is therefore separated");
     expect(text).not.toContain("Table 1 is part of the evidential core");
     expect(text).not.toContain("Runtime and memory records support feasibility");

@@ -717,7 +717,7 @@ function buildSectionTransitionAdjacentRepairResponses(): string[] {
 function buildSectionTransitionRepairWithGlobalCleanupNoiseResponses(): string[] {
   const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
   initial.sections[2].paragraphs[2] =
-    "The executed run used Qwen/Qwen2.5-1.5B as the selected backbone. Extra method details remain conservative.";
+    "The executed run used the selected backbone as the selected backbone. Extra method details remain conservative.";
   initial.sections[3].paragraphs[0] =
     "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline on AgentBench-mini, using the same evaluation setup as the baseline.";
   initial.sections[3].paragraphs[1] =

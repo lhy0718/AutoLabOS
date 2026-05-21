@@ -20,8 +20,8 @@ describe("resultAnalysis", () => {
             peft_type: "none",
             status: "completed",
             mean_accuracy: 0.546875,
-            arc_challenge_accuracy: 0.53125,
-            hellaswag_accuracy: 0.5625,
+            benchmark_task_a_accuracy: 0.53125,
+            benchmark_task_b_accuracy: 0.5625,
             accuracy_delta_vs_baseline: 0,
             wall_clock_seconds: 7.5
           },
@@ -30,8 +30,8 @@ describe("resultAnalysis", () => {
             peft_type: "lora",
             status: "completed",
             mean_accuracy: 0.546875,
-            arc_challenge_accuracy: 0.53125,
-            hellaswag_accuracy: 0.5625,
+            benchmark_task_a_accuracy: 0.53125,
+            benchmark_task_b_accuracy: 0.5625,
             accuracy_delta_vs_baseline: 0,
             wall_clock_seconds: 24.0,
             peak_gpu_memory_allocated_bytes: 4477727232
@@ -99,32 +99,32 @@ describe("resultAnalysis", () => {
             condition_id: "reference_base_model",
             recipe_type: "reference",
             is_baseline_reference: true,
-            mean_zero_shot_accuracy_arc_challenge_hellaswag: 0.27919,
-            hellaswag_accuracy: 0.312286,
-            arc_challenge_accuracy: 0.246094
+            mean_zero_shot_accuracy_benchmark_tasks: 0.27919,
+            benchmark_task_b_accuracy: 0.312286,
+            benchmark_task_a_accuracy: 0.246094
           },
           {
             condition_id: "locked_lora_baseline_r8",
             recipe_type: "locked_baseline",
             is_locked_lora_baseline: true,
-            mean_zero_shot_accuracy_arc_challenge_hellaswag: 0.304353,
-            hellaswag_accuracy: 0.332559,
-            arc_challenge_accuracy: 0.276147
+            mean_zero_shot_accuracy_benchmark_tasks: 0.304353,
+            benchmark_task_b_accuracy: 0.332559,
+            benchmark_task_a_accuracy: 0.276147
           },
           {
             condition_id: "lora_r16_attention_mlp",
             recipe_type: "candidate",
-            mean_zero_shot_accuracy_arc_challenge_hellaswag: 0.313533,
-            hellaswag_accuracy: 0.342223,
-            arc_challenge_accuracy: 0.284843
+            mean_zero_shot_accuracy_benchmark_tasks: 0.313533,
+            benchmark_task_b_accuracy: 0.342223,
+            benchmark_task_a_accuracy: 0.284843
           }
         ]
       },
       objectiveProfile: {
         source: "llm",
         raw: "Improve mean zero-shot accuracy over the locked LoRA baseline.",
-        primaryMetric: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
-        preferredMetricKeys: ["mean_zero_shot_accuracy_arc_challenge_hellaswag"],
+        primaryMetric: "mean_zero_shot_accuracy_benchmark_tasks",
+        preferredMetricKeys: ["mean_zero_shot_accuracy_benchmark_tasks"],
         comparator: ">=",
         targetValue: 0.01,
         targetDescription: "Accuracy should improve by at least one point.",
@@ -135,9 +135,9 @@ describe("resultAnalysis", () => {
       objectiveEvaluation: {
         rawObjectiveMetric: "Improve mean zero-shot accuracy over the locked LoRA baseline.",
         profileSource: "llm",
-        primaryMetric: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
-        preferredMetricKeys: ["mean_zero_shot_accuracy_arc_challenge_hellaswag"],
-        matchedMetricKey: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
+        primaryMetric: "mean_zero_shot_accuracy_benchmark_tasks",
+        preferredMetricKeys: ["mean_zero_shot_accuracy_benchmark_tasks"],
+        matchedMetricKey: "mean_zero_shot_accuracy_benchmark_tasks",
         comparator: ">=",
         targetValue: 0.01,
         observedValue: 0.313533,
@@ -153,7 +153,7 @@ describe("resultAnalysis", () => {
     expect(report.condition_comparisons[0]?.metrics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          key: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
+          key: "mean_zero_shot_accuracy_benchmark_tasks",
           baseline_value: 0.304353,
           primary_value: 0.313533,
           value: 0.0092
@@ -176,8 +176,8 @@ describe("resultAnalysis", () => {
             evaluation: {
               mean_zero_shot_accuracy: 0.53125,
               per_benchmark_accuracy: {
-                arc_challenge: 0.375,
-                hellaswag: 0.6875
+                benchmark_task_a: 0.375,
+                benchmark_task_b: 0.6875
               }
             },
             wall_time_sec: 1.4
@@ -187,8 +187,8 @@ describe("resultAnalysis", () => {
             evaluation: {
               mean_zero_shot_accuracy: 0.53125,
               per_benchmark_accuracy: {
-                arc_challenge: 0.375,
-                hellaswag: 0.6875
+                benchmark_task_a: 0.375,
+                benchmark_task_b: 0.6875
               }
             },
             wall_time_sec: 8.6
@@ -198,8 +198,8 @@ describe("resultAnalysis", () => {
             evaluation: {
               mean_zero_shot_accuracy: 0.5,
               per_benchmark_accuracy: {
-                arc_challenge: 0.3125,
-                hellaswag: 0.6875
+                benchmark_task_a: 0.3125,
+                benchmark_task_b: 0.6875
               }
             },
             wall_time_sec: 17.4
@@ -210,7 +210,7 @@ describe("resultAnalysis", () => {
         source: "llm",
         raw: "Improve mean zero-shot accuracy over the LoRA baseline.",
         primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_arc_challenge_hellaswag", "accuracy"],
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_benchmark_tasks", "accuracy"],
         comparator: ">=",
         targetValue: 0.01,
         targetDescription: "Accuracy should improve by at least one point.",
@@ -222,7 +222,7 @@ describe("resultAnalysis", () => {
         rawObjectiveMetric: "Improve mean zero-shot accuracy over the LoRA baseline.",
         profileSource: "llm",
         primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_arc_challenge_hellaswag", "accuracy"],
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_benchmark_tasks", "accuracy"],
         matchedMetricKey: "best_improvement_over_baseline",
         comparator: ">=",
         targetValue: 0.01,
@@ -257,8 +257,8 @@ describe("resultAnalysis", () => {
         status: "completed",
         best_condition: {
           name: "base_unmodified",
-          arc_challenge_accuracy: 0.296875,
-          hellaswag_accuracy: 0.5078125,
+          benchmark_task_a_accuracy: 0.296875,
+          benchmark_task_b_accuracy: 0.5078125,
           mean_zero_shot_accuracy: 0.40234375,
           bootstrap_mean_ci: {
             ci_low: 0.296875,
@@ -269,8 +269,8 @@ describe("resultAnalysis", () => {
         condition_summaries: [
           {
             name: "base_unmodified",
-            arc_challenge_accuracy: 0.296875,
-            hellaswag_accuracy: 0.5078125,
+            benchmark_task_a_accuracy: 0.296875,
+            benchmark_task_b_accuracy: 0.5078125,
             mean_zero_shot_accuracy: 0.40234375,
             bootstrap_mean_ci: {
               ci_low: 0.296875,
@@ -282,8 +282,8 @@ describe("resultAnalysis", () => {
           },
           {
             name: "lora_r8",
-            arc_challenge_accuracy: 0.2734375,
-            hellaswag_accuracy: 0.5234375,
+            benchmark_task_a_accuracy: 0.2734375,
+            benchmark_task_b_accuracy: 0.5234375,
             mean_zero_shot_accuracy: 0.3984375,
             trainable_params: 6307840,
             training_wall_time_sec: 431.3
@@ -294,8 +294,8 @@ describe("resultAnalysis", () => {
             name: "base_unmodified",
             condition_type: "baseline_unmodified_checkpoint",
             evaluation: {
-              arc_challenge: { accuracy: 0.296875 },
-              hellaswag: { accuracy: 0.5078125 }
+              benchmark_task_a: { accuracy: 0.296875 },
+              benchmark_task_b: { accuracy: 0.5078125 }
             },
             training: { trainable_params: 0, wall_time_sec: 0 }
           },
@@ -303,8 +303,8 @@ describe("resultAnalysis", () => {
             name: "lora_r8",
             condition_type: "peft_lora_instruction_tuned",
             evaluation: {
-              arc_challenge: { accuracy: 0.2734375 },
-              hellaswag: { accuracy: 0.5234375 }
+              benchmark_task_a: { accuracy: 0.2734375 },
+              benchmark_task_b: { accuracy: 0.5234375 }
             },
             training: { trainable_params: 6307840, wall_time_sec: 431.3 }
           }
@@ -314,7 +314,7 @@ describe("resultAnalysis", () => {
         source: "llm",
         raw: "Improve mean zero-shot accuracy over the unmodified baseline.",
         primaryMetric: "mean_zero_shot_accuracy",
-        preferredMetricKeys: ["mean_zero_shot_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+        preferredMetricKeys: ["mean_zero_shot_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
         comparator: ">=",
         targetValue: 0.01,
         targetDescription: "Mean zero-shot accuracy should improve by at least one point.",
@@ -326,8 +326,8 @@ describe("resultAnalysis", () => {
         rawObjectiveMetric: "Improve mean zero-shot accuracy over the unmodified baseline.",
         profileSource: "llm",
         primaryMetric: "mean_zero_shot_accuracy",
-        preferredMetricKeys: ["mean_zero_shot_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
-        matchedMetricKey: "best_condition.arc_challenge_accuracy",
+        preferredMetricKeys: ["mean_zero_shot_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
+        matchedMetricKey: "best_condition.benchmark_task_a_accuracy",
         comparator: ">=",
         targetValue: 0.01,
         observedValue: 0.296875,
@@ -372,13 +372,13 @@ describe("resultAnalysis", () => {
       ].join("\n"),
       metrics: {
         status: "completed",
-        baseline_marker: "rank_8_dropout_0_0",
+        baseline_marker: "baseline_condition",
         required_run_count: 25,
         completed_run_count: 25,
         accuracy_delta_vs_baseline: 0.04479166666666667,
         condition_summaries: [
           {
-            condition_marker: "rank_8_dropout_0_0",
+            condition_marker: "baseline_condition",
             status: "completed",
             lora_rank: 8,
             lora_dropout: 0,
@@ -389,11 +389,11 @@ describe("resultAnalysis", () => {
             accuracy_delta_vs_baseline_mean: 0,
             accuracy_delta_vs_baseline_ci95: 0,
             accuracy_delta_vs_baseline_count: 5,
-            arc_challenge_accuracy_mean: 0.5666666666666667,
-            hellaswag_accuracy_mean: 0.31666666666666665
+            benchmark_task_a_accuracy_mean: 0.5666666666666667,
+            benchmark_task_b_accuracy_mean: 0.31666666666666665
           },
           {
-            condition_marker: "rank_16_dropout_0_0",
+            condition_marker: "candidate_condition_d",
             status: "completed",
             lora_rank: 16,
             lora_dropout: 0,
@@ -404,11 +404,11 @@ describe("resultAnalysis", () => {
             accuracy_delta_vs_baseline_mean: 0.025000000000000012,
             accuracy_delta_vs_baseline_ci95: 0.08408097948472716,
             accuracy_delta_vs_baseline_count: 5,
-            arc_challenge_accuracy_mean: 0.6166666666666667,
-            hellaswag_accuracy_mean: 0.31666666666666665
+            benchmark_task_a_accuracy_mean: 0.6166666666666667,
+            benchmark_task_b_accuracy_mean: 0.31666666666666665
           },
           {
-            condition_marker: "rank_32_dropout_0_05",
+            condition_marker: "candidate_condition_f5",
             status: "completed",
             lora_rank: 32,
             lora_dropout: 0.05,
@@ -419,8 +419,8 @@ describe("resultAnalysis", () => {
             accuracy_delta_vs_baseline_mean: 0.06666666666666667,
             accuracy_delta_vs_baseline_ci95: 0.06378370568657102,
             accuracy_delta_vs_baseline_count: 5,
-            arc_challenge_accuracy_mean: 0.6416666666666667,
-            hellaswag_accuracy_mean: 0.375
+            benchmark_task_a_accuracy_mean: 0.6416666666666667,
+            benchmark_task_b_accuracy_mean: 0.375
           }
         ]
       },
@@ -428,7 +428,7 @@ describe("resultAnalysis", () => {
         source: "llm",
         raw: "accuracy_delta_vs_baseline >= 0.01",
         primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "average_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "average_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
         comparator: ">=",
         targetValue: 0.01,
         targetDescription: "Accuracy delta should improve by at least one point.",
@@ -440,7 +440,7 @@ describe("resultAnalysis", () => {
         rawObjectiveMetric: "accuracy_delta_vs_baseline >= 0.01",
         profileSource: "llm",
         primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "average_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "average_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
         matchedMetricKey: "accuracy_delta_vs_baseline",
         comparator: ">=",
         targetValue: 0.01,
@@ -451,7 +451,7 @@ describe("resultAnalysis", () => {
     });
 
     expect(report.condition_comparisons[0]).toMatchObject({
-      id: "rank_32_dropout_0_05_vs_rank_8_dropout_0_0",
+      id: "candidate_condition_f5_vs_baseline_condition",
       source: "metrics.condition_summaries",
       hypothesis_supported: true
     });
@@ -482,7 +482,7 @@ describe("resultAnalysis", () => {
     );
     expect(
       report.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key === "condition_summaries.rank_32_dropout_0_05.average_accuracy"
+        item.metric_key === "condition_summaries.candidate_condition_f5.average_accuracy"
       )
     ).toBe(true);
     expect(report.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);

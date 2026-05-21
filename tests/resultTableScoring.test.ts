@@ -73,7 +73,7 @@ describe("result table scoring", () => {
     const score = scoreResultTableArtifact({
       conditions: [
         {
-          name: "rank_32_dropout_0_05_vs_rank_8_dropout_0_0",
+          name: "candidate_condition_f5_vs_baseline_condition",
           metrics: {
             accuracy_delta_vs_baseline_mean: 0.066667
           }
@@ -81,7 +81,7 @@ describe("result table scoring", () => {
       ],
       comparisons: [
         {
-          primary: "rank_32_dropout_0_05_vs_rank_8_dropout_0_0",
+          primary: "candidate_condition_f5_vs_baseline_condition",
           baseline: "metrics.condition_summaries",
           metric: "accuracy_delta_vs_baseline_mean",
           delta: 0.066667,

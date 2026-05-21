@@ -10,9 +10,9 @@ function candidate(overrides: Partial<ExperimentDesignCandidate>): ExperimentDes
     title: "Candidate",
     hypothesis_ids: ["h1"],
     plan_summary: "Compare the intervention against a baseline.",
-    datasets: ["arc_challenge"],
+    datasets: ["benchmark_task_a"],
     metrics: ["accuracy_delta_vs_baseline"],
-    baselines: ["rank_8_dropout_0_0"],
+    baselines: ["baseline_condition"],
     implementation_notes: ["Run the planned experiment."],
     evaluation_steps: ["Report the objective metric with uncertainty."],
     risks: ["Small local budget."],
@@ -36,7 +36,7 @@ describe("designExperimentsPanel", () => {
   it("blocks reporting-integrity audits that drift away from a model-quality objective", () => {
     const modelQuality = candidate({
       id: "model_quality",
-      title: "Staged full factorial LoRA rank/dropout experiment",
+      title: "Staged full factorial condition-parameter experiment",
       metrics: ["accuracy_delta_vs_baseline", "avg_accuracy_ci_low", "avg_accuracy_ci_high"]
     });
     const reportingAudit = candidate({
@@ -69,8 +69,8 @@ describe("designExperimentsPanel", () => {
   it("blocks report-gating audits that explicitly say they are not model-quality experiments", () => {
     const modelQuality = candidate({
       id: "model_quality",
-      title: "Adaptive two-stage LoRA rank/dropout confirmation",
-      plan_summary: "Screen the full LoRA rank/dropout grid and confirm top cells with held-out seeds.",
+      title: "Adaptive two-stage condition-parameter confirmation",
+      plan_summary: "Screen the full condition-parameter grid and confirm top cells with held-out seeds.",
       metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "avg_accuracy_ci_low"]
     });
     const reportGateAudit = candidate({
@@ -122,7 +122,7 @@ describe("designExperimentsPanel", () => {
       id: "factorial",
       title: "Staged full 4x2 factorial with promotion gate to paper-ready evidence",
       plan_summary: "Run the complete rank x dropout design under a staged evidence plan.",
-      metrics: ["Primary: avg_accuracy and delta_avg_accuracy_vs_baseline_pp", "arc_challenge_accuracy"]
+      metrics: ["Primary: avg_accuracy and delta_avg_accuracy_vs_baseline_pp", "benchmark_task_a_accuracy"]
     });
 
     const result = runDesignExperimentsPanel({

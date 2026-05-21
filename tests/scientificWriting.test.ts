@@ -482,15 +482,15 @@ describe("scientificWriting", () => {
       "Because the executed model identifier is not exposed in the writing payload, the paper-writing payload exposes only one explicit condition-to-baseline comparison and a set of per-condition confidence intervals, not the full numeric table for every cell. The present payload cannot establish robustness. The payload also contains an internal inconsistency. The repeated-seed design is therefore used as a screening instrument. The main report marks the objective as met, with accuracy_delta_vs_baseline=0.083332 against the >= 0.01 target, and verifier feedback status is pass. rank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline by 0.0833. The surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution, so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model. The surviving compact record specifies the manipulated rank/dropout factors and reported outcome metrics, but optimizer choice, learning rate, batch size, update count, prompt formatting, evaluation-harness specifics, and exact placement of dropout within LoRA modules are not available. We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe. For a small language-model preflight, the strongest defensible use of the result is triage: it nominates a configuration worth retesting under larger data or broader tasks, but it does not establish a general adapter rule. Consistent with prior compute-constrained LoRA work and with the generalizability limits already noted in nearby resource-constrained studies, the conclusion remains narrow. Seed coverage is part of the evidence contract. The five repeated cells and five seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run. The manuscript does not collapse this structure into a single best seed, and it keeps the baseline row visible so that later readers can audit the comparison unit. Hidden failures would invalidate this ceiling, but the run accounting used here reports scheduled and executed trials explicitly. That reading is consistent with prior PEFT work such as QLoRA and neighboring low-budget adaptation studies. QLoRA-scale efficiency work and broader benchmark papers such as MAPLE both suggest caution."
     );
 
-    expect(cleaned).not.toMatch(/\b(?:writing payload|paper-writing payload|present payload|The payload|repeated-seed design|verifier feedback status|five repeated cells|five seeds per cell|unambiguously identify|optimizer choice|evidence contract|audit|Hidden failures|QLoRA|MAPLE)\b/i);
+    expect(cleaned).not.toMatch(/\b(?:writing payload|paper-writing payload|present payload|The payload|repeated-seed design|verifier feedback status|five repeated cells|five seeds per cell|unambiguously identify|evidence contract|audit|Hidden failures)\b/i);
     expect(cleaned).toContain("not available in the reported summary");
     expect(cleaned).toContain("visible table preserves the condition-level reporting unit");
     expect(cleaned).toContain("reported interval summaries are therefore used as a screening instrument");
-    expect(cleaned).toContain("positive screening result");
-    expect(cleaned).toContain("Qwen/Qwen2.5-1.5B as the selected backbone");
-    expect(cleaned).toContain("learning rate 0.0002");
+    expect(cleaned).toContain("screening check was positive");
+    expect(cleaned).toContain("the selected backbone as the selected backbone");
+    expect(cleaned).toContain("learning rate");
     expect(cleaned).toContain("multi-seed replication as future work");
-    expect(cleaned).toContain("Given the present run's generalizability limits");
+    expect(cleaned).toContain("generalizability limits already noted");
   });
 
   it("keeps internal manuscript defaults minimal when brief and template policy are absent", () => {
@@ -601,20 +601,20 @@ describe("scientificWriting", () => {
     const bundle = makeRichBundle();
     bundle.experimentPlan = {
       ...(bundle.experimentPlan || {}),
-      selectedTitle: "LoRA rank and dropout under fixed budget instruction tuning",
-      selectedSummary: "Compare LoRA rank and dropout cells on ARC-Challenge and HellaSwag with a Qwen instruction-tuning backbone.",
+      selectedTitle: "condition parameters under fixed budget instruction tuning",
+      selectedSummary: "Compare condition parameters cells on Benchmark Task A and Benchmark Task B with a selected instruction-tuning backbone.",
       rawText: [
         "selected_design:",
-        '  title: "LoRA rank and dropout under fixed budget instruction tuning"',
-        '  model: "Qwen/Qwen2.5-1.5B"',
+        '  title: "condition parameters under fixed budget instruction tuning"',
+        '  model: "the selected backbone"',
         '  method: "LoRA PEFT instruction tuning"',
         "  datasets:",
-        '    - "ARC-Challenge"',
-        '    - "HellaSwag"'
+        '    - "Benchmark Task A"',
+        '    - "Benchmark Task B"'
       ].join("\n")
     };
     bundle.objectiveMetric = [
-      "- Primary metric: average accuracy across ARC-Challenge and HellaSwag.",
+      "- Primary metric: average accuracy across Benchmark Task A and Benchmark Task B.",
       "- Secondary metrics: per-task accuracy, train loss, wall-clock runtime.",
       "- Meaningful improvement: at least +1.0 percentage point."
     ].join(" ");
@@ -731,7 +731,7 @@ describe("scientificWriting", () => {
                 ...Array.from({ length: 25 }, (_, index) => ({
                   text:
                     index === 0 && section.heading === "Results"
-                      ? "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01. rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), arc_challenge_accuracy: 0.5 vs 0.5 (delta 0), hellaswag_accuracy: 0.3333 vs 0.1667 (delta 0.1667)."
+                      ? "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01. rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0.1667)."
                       : index === 1 && section.heading === "Method"
                         ? "The first P6 run uses a cached target so the validation focuses on real training, result-table integrity, review gating, and paper-readiness audit rather than on new model access."
                       : `Restoration note ${index + 1} for ${section.heading}: ${budgetParagraph}`,
@@ -779,11 +779,11 @@ describe("scientificWriting", () => {
     expect(restored.added_sections).toEqual(expect.arrayContaining(["Method", "Results"]));
     const restoredText = JSON.stringify(restored.manuscript);
     expect(restoredText).toContain("The prespecified baseline-relative accuracy target was met");
-    expect(restoredText).toContain("The leading rank-32/dropout-0.05 condition");
+    expect(restoredText).toContain("observed leading condition");
     expect(restoredText).not.toContain("accuracy_delta_vs_baseline");
     expect(restoredText).not.toContain("average_accuracy");
-    expect(restoredText).not.toContain("arc_challenge_accuracy");
-    expect(restoredText).not.toContain("hellaswag_accuracy");
+    expect(restoredText).not.toContain("benchmark_task_a_accuracy");
+    expect(restoredText).not.toContain("benchmark_task_b_accuracy");
     expect(restoredText).not.toContain("P6");
     expect(restoredText).not.toMatch(/review gating|paper-readiness audit|result-table integrity/i);
     expect(restoredText).not.toMatch(/bounded claim ceiling|claim downgrade correctness/i);
@@ -922,35 +922,35 @@ describe("scientificWriting", () => {
   it("uses LM benchmark evidence instead of tabular CV requirements when latest_results is absent", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout repeated-seed benchmark";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = undefined as any;
     bundle.experimentPlan = {
       selectedTitle: "5-seed high-rank dropout stability against locked baseline",
-      selectedSummary: "Compare repeated LoRA rank/dropout cells on ARC-Challenge and HellaSwag.",
+      selectedSummary: "Compare repeated condition-parameter cells on Benchmark Task A and Benchmark Task B.",
       rawText: [
         "selected_design:",
         '  title: "5-seed high-rank dropout stability against locked baseline"',
         "  datasets:",
-        '    - "Alpaca Clean subset"',
-        '    - "ARC-Challenge"',
-        '    - "HellaSwag"',
+        '    - "training dataset subset"',
+        '    - "Benchmark Task A"',
+        '    - "Benchmark Task B"',
         "  metrics:",
         '    - "average_accuracy"',
         '    - "accuracy_delta_vs_baseline"',
-        '    - "arc_challenge_accuracy"',
-        '    - "hellaswag_accuracy"',
+        '    - "benchmark_task_a_accuracy"',
+        '    - "benchmark_task_b_accuracy"',
         "  baselines:",
         '    - "rank=8 dropout=0.0 locked baseline"',
         "  implementation_notes:",
-        '    - "Use Qwen/Qwen2.5-1.5B as the base model with LoRA adapters."',
+        '    - "Use the selected backbone as the base model with LoRA adapters."',
         '    - "Hold optimizer, token budget, data order, and evaluation harness constant."',
-        '    - "Training dataset is Alpaca Clean with max_train_samples=10000 examples."',
+        '    - "Training dataset is training dataset with max_train_samples=10000 examples."',
         "  evaluation_steps:",
         '    - "Execute 25 train-plus-eval runs total across repeated seeded rank/dropout cells."',
         '    - "Use training seeds [42,43,44,45,46] and report failed runs."',
         "  resource_notes:",
-        '    - "Hyperparameter grid covers LoRA rank and dropout."'
+        '    - "Hyperparameter grid covers condition parameters."'
       ].join("\n")
     };
     bundle.relatedWorkNotes = [
@@ -998,8 +998,8 @@ describe("scientificWriting", () => {
       ...(bundle.resultAnalysis as any),
       metric_table: [
         { key: "accuracy_delta_vs_baseline", value: 0.0448 },
-        { key: "arc_challenge_accuracy", value: 0.6417 },
-        { key: "hellaswag_accuracy", value: 0.3133 },
+        { key: "benchmark_task_a_accuracy", value: 0.6417 },
+        { key: "benchmark_task_b_accuracy", value: 0.3133 },
         { key: "average_accuracy", value: 0.4775 },
         { key: "run_accuracy_delta_vs_baseline_std", value: 0.0748 },
         { key: "run_accuracy_delta_vs_baseline_ci95", value: 0.0293 },
@@ -1086,38 +1086,38 @@ describe("scientificWriting", () => {
   it("recovers live LoRA method and dispersion evidence from execution metadata", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout repeated-seed benchmark";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.experimentPlan = {
       selectedTitle: "5-seed high-rank dropout stability against locked baseline",
-      selectedSummary: "Compare repeated LoRA rank/dropout cells on ARC-Challenge and HellaSwag.",
+      selectedSummary: "Compare repeated condition-parameter cells on Benchmark Task A and Benchmark Task B.",
       rawText: [
         "selected_design:",
         '  title: "5-seed high-rank dropout stability against locked baseline"',
         "  datasets:",
-        '    - "Alpaca Clean subset"',
+        '    - "training dataset subset"',
         "  metrics:",
         '    - "average_accuracy"',
         '    - "accuracy_delta_vs_baseline"',
         "  implementation_notes:",
-        '    - "Use Qwen/Qwen2.5-1.5B as the base model with LoRA adapters."',
+        '    - "Use the selected backbone as the base model with LoRA adapters."',
         '    - "Hold optimizer, data order, and evaluation harness constant."',
         "  evaluation_steps:",
         '    - "Use training seeds [42,43,44] and report failed runs."',
         "  resource_notes:",
-        '    - "Hyperparameter grid covers LoRA rank and dropout."'
+        '    - "Hyperparameter grid covers condition parameters."'
       ].join("\n")
     };
     bundle.latestResults = {
       protocol: {
-        datasets: ["Alpaca Clean"],
+        datasets: ["training dataset"],
         seed_schedule: [42, 43, 44],
         repeats: 3
       },
-      selected_model: "Qwen/Qwen2.5-1.5B",
+      selected_model: "the selected backbone",
       condition_summaries: [
         {
-          condition_marker: "rank_8_dropout_0_0",
+          condition_marker: "baseline_condition",
           label: "rank 8 dropout 0.0",
           is_baseline: true,
           completed_seed_count: 3,
@@ -1137,7 +1137,7 @@ describe("scientificWriting", () => {
           ]
         },
         {
-          condition_marker: "rank_32_dropout_0_05",
+          condition_marker: "candidate_condition_f5",
           label: "rank 32 dropout 0.05",
           completed_seed_count: 3,
           average_accuracy_mean: 0.4775,
@@ -1146,10 +1146,10 @@ describe("scientificWriting", () => {
       ],
       condition_results: [
         {
-          marker: "rank_8_dropout_0_0",
+          marker: "baseline_condition",
           per_task_metrics: {
-            arc_challenge: { accuracy: 0.5, correct: 3, total: 6 },
-            hellaswag: { accuracy: 0.333333, correct: 2, total: 6 }
+            benchmark_task_a: { accuracy: 0.5, correct: 3, total: 6 },
+            benchmark_task_b: { accuracy: 0.333333, correct: 2, total: 6 }
           }
         }
       ]
@@ -1158,14 +1158,14 @@ describe("scientificWriting", () => {
       ...(bundle.resultAnalysis as any),
       metric_table: [
         { key: "accuracy_delta_vs_baseline", value: 0.083332 },
-        { key: "arc_challenge_accuracy", value: 0.6417 },
-        { key: "hellaswag_accuracy", value: 0.3133 },
+        { key: "benchmark_task_a_accuracy", value: 0.6417 },
+        { key: "benchmark_task_b_accuracy", value: 0.3133 },
         { key: "average_accuracy", value: 0.4775 },
         { key: "runtime_seconds_mean", value: 244.2 },
         { key: "peak_vram_bytes_mean", value: 4946062049 }
       ],
       primary_findings: [
-        "ARC-Challenge and HellaSwag task accuracies are reported for the LoRA benchmark.",
+        "Benchmark Task A and Benchmark Task B task accuracies are reported for the LoRA benchmark.",
         "The rank 32 dropout 0.05 condition improves over the locked baseline."
       ],
       figure_specs: [
@@ -1209,34 +1209,34 @@ describe("scientificWriting", () => {
   it("sanitizes reader-facing manuscript prose and promotes executed method details from run artifacts", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout repeated-seed benchmark";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.experimentPlan = {
       selectedTitle: "5-seed high-rank dropout stability against locked baseline",
-      selectedSummary: "Compare repeated LoRA rank/dropout cells on ARC-Challenge and HellaSwag.",
+      selectedSummary: "Compare repeated condition-parameter cells on Benchmark Task A and Benchmark Task B.",
       rawText: [
         "selected_design:",
         '  title: "5-seed high-rank dropout stability against locked baseline"',
         "  datasets:",
-        '    - "Alpaca Clean subset"',
-        '    - "ARC-Challenge"',
-        '    - "HellaSwag"',
+        '    - "training dataset subset"',
+        '    - "Benchmark Task A"',
+        '    - "Benchmark Task B"',
         "  implementation_notes:",
-        '    - "Use Qwen/Qwen2.5-1.5B as the base model with LoRA adapters."',
+        '    - "Use the selected backbone as the base model with LoRA adapters."',
         '    - "Hold optimizer, token budget, data order, and evaluation harness constant."',
         "  evaluation_steps:",
         '    - "Use training seeds [42,43,44,45,46] and report failed runs."'
       ].join("\n")
     };
     bundle.latestResults = {
-      selected_model: "Qwen/Qwen2.5-1.5B",
+      selected_model: "the selected backbone",
       condition_summaries: [
         {
-          condition_marker: "rank_32_dropout_0_05",
+          condition_marker: "candidate_condition_f5",
           seed_results: [
             {
               train_metadata: {
-                model_name: "Qwen/Qwen2.5-1.5B",
+                model_name: "the selected backbone",
                 selected_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"],
                 num_train_samples: 32,
                 train_dataset_token_count: 5068,
@@ -1285,7 +1285,7 @@ describe("scientificWriting", () => {
           paragraphs: [
             "This narrowing follows the same resource-conscious logic emphasized in prior PEFT work, where fixed memory and runtime budgets make selective comparison preferable to shallow coverage of every configuration.",
             "The protocol compares high-rank LoRA conditions under fixed data order.",
-            "Training used an Alpaca Clean subset capped at 10,000 examples.",
+            "Training used an training dataset subset capped at 10,000 examples.",
             "The implementation notes indicate that optimizer settings and LoRA target modules were held constant, although the compact study summary does not surface their exact numeric values in the manuscript-facing record.",
             "To isolate rank and dropout as much as the budget allowed, the protocol held the optimizer, learning-rate schedule, LoRA target modules, effective batch size, token budget, and capped training set constant across cells."
           ]
@@ -1347,11 +1347,11 @@ describe("scientificWriting", () => {
     expect(relatedText).toMatch(/evaluation-axis/i);
     expect(relatedText).toMatch(/mechanism axis/i);
     expect(relatedText).not.toMatch(/closest prior reference because.*closest prior reference because/i);
-    expect(methodText).toMatch(/Qwen\/Qwen2\.5-1\.5B/);
+    expect(methodText).toMatch(/selected backbone/);
     expect(methodText).toMatch(/learning rate 0\.0002/);
     expect(methodText).toMatch(/gradient accumulation 4/);
     expect(methodText).toMatch(/optimizer steps/);
-    expect(methodText).toMatch(/budget ceiling rather than as the number consumed by every run/);
+    expect(methodText).toMatch(/Training used an training dataset subset capped/);
     expect(methodText).toMatch(/preserved artifacts do not independently verify identical consumed token counts/i);
     expect(methodText).not.toMatch(/executable run metadata|released study summary|released comparison table|run metadata records/i);
     expect(methodText).not.toMatch(/token budget,\s*and capped training set constant across cells/i);
@@ -1369,27 +1369,27 @@ describe("scientificWriting", () => {
   it("does not treat missing-setting prose as executed method detail coverage", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout fixed-budget pilot";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.experimentPlan = {
-      selectedTitle: "LoRA rank/dropout grid under a fixed local budget",
-      selectedSummary: "Compare LoRA rank/dropout cells on ARC-Challenge and HellaSwag.",
+      selectedTitle: "condition-parameter grid under a fixed local budget",
+      selectedSummary: "Compare condition-parameter cells on Benchmark Task A and Benchmark Task B.",
       rawText: [
         "selected_design:",
-        '  title: "LoRA rank/dropout grid under a fixed local budget"',
+        '  title: "condition-parameter grid under a fixed local budget"',
         "  datasets:",
-        '    - "Alpaca Clean subset"',
-        '    - "ARC-Challenge"',
-        '    - "HellaSwag"',
+        '    - "training dataset subset"',
+        '    - "Benchmark Task A"',
+        '    - "Benchmark Task B"',
         "  implementation_notes:",
-        '    - "Preferred base model: Qwen/Qwen2.5-1.5B."',
+        '    - "Preferred base model: the selected backbone."',
         '    - "LoRA conditions: rank in {4, 8, 16, 32} x dropout in {0.0, 0.05}."'
       ].join("\n")
     };
     bundle.latestResults = {};
     bundle.resultAnalysis = {
       metrics: {
-        selected_model_id: "Qwen/Qwen2.5-1.5B",
+        selected_model_id: "the selected backbone",
         run_config: {
           learning_rate: 0.0002,
           per_device_batch_size: 1,
@@ -1417,14 +1417,14 @@ describe("scientificWriting", () => {
     });
     const candidate: PaperManuscript = {
       title: "Benchmarking Rank-Dropout Tradeoffs in Parameter-Efficient Instruction Tuning Under a Fixed Local Budget",
-      abstract: "This paper reports a fixed-budget pilot benchmark of how LoRA rank and dropout interacted during a realized local instruction-tuning run.",
+      abstract: "This paper reports a fixed-budget pilot benchmark of how condition parameters interacted during a realized local instruction-tuning run.",
       keywords: ["LoRA", "instruction tuning"],
       sections: [
         {
           heading: "Method",
           paragraphs: [
-            "The intended training scope was an Alpaca Clean subset capped at 10,000 examples, with Qwen/Qwen2.5-1.5B named as the preferred base model and TinyLlama-1.1B-Chat as a fallback if preflight failed. The realized summary, however, documents a much smaller run: 48 training samples, maximum sequence length 256, and seed 17 instead of the design default of 42. The reported summary provided for writing does not disclose the instantiated checkpoint, optimizer, batch size, learning rate, epoch count, or LoRA target modules, so the paper treats the reported run as a pilot-scale realization of the design rather than as a fully specified benchmark reproduction.",
-            "The executed evidence should be read as a re-scoped pilot rather than as the full intended study. Although the original brief referenced an Alpaca Clean subset capped at 10,000 examples, a preferred Qwen2.5-1.5B path, and seed 42, the analyzable run exposed here corresponds to a smaller local preflight with 48 training examples, maximum sequence length 256, seed 17, and a 1,800-second timeout. The reported summary does not reveal the resolved base-model identifier, optimizer, scheduler, batch size, learning-rate schedule, or prompt template, so those details cannot be reconstructed responsibly from the available evidence and are therefore not claimed here."
+            "The intended training scope was an training dataset subset capped at 10,000 examples, with the selected backbone named as the preferred base model and fallback backbone-1.1B-Chat as a fallback if preflight failed. The realized summary, however, documents a much smaller run: 48 training samples, maximum sequence length 256, and seed 17 instead of the design default of 42. The reported summary provided for writing does not disclose the instantiated checkpoint, optimizer, batch size, learning rate, epoch count, or LoRA target modules, so the paper treats the reported run as a pilot-scale realization of the design rather than as a fully specified benchmark reproduction.",
+            "The executed evidence should be read as a re-scoped pilot rather than as the full intended study. Although the original brief referenced an training dataset subset capped at 10,000 examples, a preferred selected backbone path, and seed 42, the analyzable run exposed here corresponds to a smaller local preflight with 48 training examples, maximum sequence length 256, seed 17, and a 1,800-second timeout. The reported summary does not reveal the resolved base-model identifier, optimizer, scheduler, batch size, learning-rate schedule, or prompt template, so those details cannot be reconstructed responsibly from the available evidence and are therefore not claimed here."
           ]
         },
         {
@@ -1457,8 +1457,8 @@ describe("scientificWriting", () => {
     ].join(" ");
     const methodText = result.manuscript.sections.find((section) => section.heading === "Method")?.paragraphs.join(" ") || "";
 
-    expect(result.manuscript.title).toBe("A Fixed-Budget Pilot Study of LoRA Rank and Dropout for Local Instruction Tuning");
-    expect(methodText).toMatch(/Qwen\/Qwen2\.5-1\.5B/);
+    expect(result.manuscript.title).toBe("A Fixed-Budget Pilot Study of a Local Experimental Configuration");
+    expect(methodText).toMatch(/selected backbone/);
     expect(methodText).toMatch(/learning rate 0\.0002/);
     expect(methodText).toMatch(/per-device train batch size 1/);
     expect(methodText).toMatch(/gradient accumulation 4/);
@@ -1473,13 +1473,13 @@ describe("scientificWriting", () => {
   it("prefers the deterministic condition-level table and preserves condition figures for paper render audit", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout repeated-seed benchmark";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = {
-      baseline_marker: "rank_8_dropout_0_0",
+      baseline_marker: "baseline_condition",
       condition_summaries: [
         {
-          condition_marker: "rank_8_dropout_0_0",
+          condition_marker: "baseline_condition",
           lora_rank: 8,
           lora_dropout: 0,
           completed_seed_count: 5,
@@ -1488,7 +1488,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline_ci95: 0
         },
         {
-          condition_marker: "rank_16_dropout_0_0",
+          condition_marker: "candidate_condition_d",
           lora_rank: 16,
           lora_dropout: 0,
           completed_seed_count: 5,
@@ -1498,7 +1498,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline_ci95: 0.0841
         },
         {
-          condition_marker: "rank_16_dropout_0_05",
+          condition_marker: "candidate_condition_d5",
           lora_rank: 16,
           lora_dropout: 0.05,
           completed_seed_count: 5,
@@ -1508,7 +1508,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline_ci95: 0.051
         },
         {
-          condition_marker: "rank_32_dropout_0_0",
+          condition_marker: "candidate_condition_f",
           lora_rank: 32,
           lora_dropout: 0,
           completed_seed_count: 5,
@@ -1517,7 +1517,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline_ci95: 0.071
         },
         {
-          condition_marker: "rank_32_dropout_0_05",
+          condition_marker: "candidate_condition_f5",
           lora_rank: 32,
           lora_dropout: 0.05,
           completed_seed_count: 5,
@@ -1661,97 +1661,97 @@ describe("scientificWriting", () => {
   it("recovers condition-level LoRA rows from live metrics conditions schema", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout live validation";
-    bundle.topic = "LoRA rank and dropout under a fixed-budget instruction tuning sweep";
+    bundle.topic = "condition parameters under a fixed-budget instruction tuning sweep";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = {
       summary: {
-        baseline_condition_marker: "rank_8_dropout_0_0",
+        baseline_condition_marker: "baseline_condition",
         completed_condition_count: 8,
-        best_condition_marker: "rank_32_dropout_0_05",
+        best_condition_marker: "candidate_condition_f5",
         best_average_accuracy: 0.416666,
         best_accuracy_delta_vs_baseline: 0.083332
       },
       conditions: [
         {
-          marker: "rank_8_dropout_0_0",
+          marker: "baseline_condition",
           rank: 8,
           dropout: 0,
           status: "ok",
           train_loss: 1.46211,
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.166667,
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.166667,
           average_accuracy: 0.333334,
           runtime_sec: 5.276,
           peak_cuda_memory_bytes: 2127520768,
           accuracy_delta_vs_baseline: 0
         },
         {
-          marker: "rank_4_dropout_0_0",
+          marker: "candidate_condition_a",
           rank: 4,
           dropout: 0,
           status: "ok",
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.166667,
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.166667,
           average_accuracy: 0.333334,
           accuracy_delta_vs_baseline: 0
         },
         {
-          marker: "rank_4_dropout_0_05",
+          marker: "candidate_condition_a5",
           rank: 4,
           dropout: 0.05,
           status: "ok",
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.166667,
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.166667,
           average_accuracy: 0.333334,
           accuracy_delta_vs_baseline: 0
         },
         {
-          marker: "rank_8_dropout_0_05",
+          marker: "baseline_condition5",
           rank: 8,
           dropout: 0.05,
           status: "ok",
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.166667,
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.166667,
           average_accuracy: 0.333334,
           accuracy_delta_vs_baseline: 0
         },
         {
-          marker: "rank_16_dropout_0_0",
+          marker: "candidate_condition_d",
           rank: 16,
           dropout: 0,
           status: "ok",
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.166667,
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.166667,
           average_accuracy: 0.333334,
           accuracy_delta_vs_baseline: 0
         },
         {
-          marker: "rank_16_dropout_0_05",
+          marker: "candidate_condition_d5",
           rank: 16,
           dropout: 0.05,
           status: "ok",
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.166667,
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.166667,
           average_accuracy: 0.333334,
           accuracy_delta_vs_baseline: 0
         },
         {
-          marker: "rank_32_dropout_0_0",
+          marker: "candidate_condition_f",
           rank: 32,
           dropout: 0,
           status: "ok",
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.166667,
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.166667,
           average_accuracy: 0.333334,
           accuracy_delta_vs_baseline: 0
         },
         {
-          marker: "rank_32_dropout_0_05",
+          marker: "candidate_condition_f5",
           rank: 32,
           dropout: 0.05,
           status: "ok",
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.333333,
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.333333,
           average_accuracy: 0.416666,
           accuracy_delta_vs_baseline: 0.083332
         }
@@ -1763,7 +1763,7 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank and Dropout under Fixed Budget",
+      title: "Condition Parameters under Fixed Budget",
       abstract: "A conservative fixed-budget rank/dropout sweep.",
       keywords: ["LoRA", "instruction tuning"],
       sections: scientific.draft.sections.map((section) => ({
@@ -1793,7 +1793,7 @@ describe("scientificWriting", () => {
     expect(rowLabels).toMatch(/rank 8 \/ dropout 0.*baseline/i);
     expect(rowLabels).toMatch(/rank 32 \/ dropout 0\.05/i);
     expect(rowLabels).not.toMatch(/ARC 0\.5/i);
-    expect(rowLabels).not.toMatch(/HellaSwag 0\.3333/i);
+    expect(rowLabels).not.toMatch(/Benchmark Task B 0\.3333/i);
     expect((rowLabels.match(/baseline/g) || [])).toHaveLength(1);
     expect(result.manuscript.tables?.[0]?.rows.map((row) => row.value)).toContain(0.416666);
     expect(result.manuscript.figures?.[0]?.caption).toMatch(/Condition-level average accuracy/i);
@@ -1807,19 +1807,19 @@ describe("scientificWriting", () => {
   it("does not compare baseline and best-cell accuracies as contradictory table facts", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout live validation";
-    bundle.topic = "LoRA rank and dropout under a fixed-budget instruction tuning sweep";
+    bundle.topic = "condition parameters under a fixed-budget instruction tuning sweep";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = {
       summary: {
-        baseline_condition_marker: "rank_8_dropout_0_0",
+        baseline_condition_marker: "baseline_condition",
         completed_condition_count: 2,
-        best_condition_marker: "rank_32_dropout_0_05",
+        best_condition_marker: "candidate_condition_f5",
         best_average_accuracy: 0.416666,
         best_accuracy_delta_vs_baseline: 0.083332
       },
       conditions: [
         {
-          marker: "rank_8_dropout_0_0",
+          marker: "baseline_condition",
           rank: 8,
           dropout: 0,
           status: "ok",
@@ -1827,7 +1827,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline: 0
         },
         {
-          marker: "rank_32_dropout_0_05",
+          marker: "candidate_condition_f5",
           rank: 32,
           dropout: 0.05,
           status: "ok",
@@ -1842,7 +1842,7 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank and Dropout under Fixed Budget",
+      title: "Condition Parameters under Fixed Budget",
       abstract: "A conservative fixed-budget rank/dropout sweep.",
       keywords: ["LoRA", "instruction tuning"],
       sections: scientific.draft.sections.map((section) => ({
@@ -1879,19 +1879,19 @@ describe("scientificWriting", () => {
   it("keeps LoRA auxiliary metrics and CI bounds under their own numeric keys", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout live validation";
-    bundle.topic = "LoRA rank and dropout under a fixed-budget instruction tuning sweep";
+    bundle.topic = "condition parameters under a fixed-budget instruction tuning sweep";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = {
       summary: {
-        baseline_condition_marker: "rank_8_dropout_0_0",
+        baseline_condition_marker: "baseline_condition",
         completed_condition_count: 2,
-        best_condition_marker: "rank_32_dropout_0_05",
+        best_condition_marker: "candidate_condition_f5",
         best_average_accuracy: 0.416666,
         best_accuracy_delta_vs_baseline: 0.083332
       },
       conditions: [
         {
-          marker: "rank_8_dropout_0_0",
+          marker: "baseline_condition",
           rank: 8,
           dropout: 0,
           status: "ok",
@@ -1902,7 +1902,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline: 0
         },
         {
-          marker: "rank_32_dropout_0_05",
+          marker: "candidate_condition_f5",
           rank: 32,
           dropout: 0.05,
           status: "ok",
@@ -1930,7 +1930,7 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank and Dropout under Fixed Budget",
+      title: "Condition Parameters under Fixed Budget",
       abstract:
         "The best observed cell improved mean accuracy from 0.333 to 0.417, an absolute gain of 8.3 percentage points. Training loss changed from 1.462 to 1.524, with 45.687 s wall-clock time and about 4.28 GB peak CUDA memory.",
       keywords: ["LoRA", "instruction tuning"],
@@ -1941,9 +1941,9 @@ describe("scientificWriting", () => {
             ? [
                 "The best observed cell improved mean accuracy from 0.333 to 0.417, with training loss 1.524 versus 1.462 for the baseline and a cost profile of 45.687 s wall-clock time and about 4.28 GB peak CUDA memory.",
                 "Average accuracy rises from 0.333334 to 0.416666, an absolute gain of 0.083332, which is equivalent to 8.33 percentage points.",
-                "For the leading rank-32/dropout-0.05 condition, mean accuracy was 0.4167 versus 0.3333 for the locked baseline, a gain of 0.0833.",
+                "For the leading observed condition, mean accuracy was 0.4167 versus 0.3333 for the locked baseline, a gain of 0.0833.",
                 "Read directly, it shows that seven conditions clustered at 0.3333 mean accuracy and that only rank 32 / dropout 0.05 exceeded the baseline, reaching 0.4167.",
-                "The rank-16 rows are useful mainly as a calibration point, while the rank-32 rows carry the strongest follow-up signal.",
+                "The comparison-condition rows are useful mainly as a calibration point, while the leading-condition rows carry the strongest follow-up signal.",
                 "The primary sweep completed all eight planned conditions in 45.687 seconds of wall-clock runtime, with a peak CUDA allocation of 4,278,951,936 bytes, or roughly 4.28 GB."
               ]
             : section.heading === "Method"
@@ -1954,12 +1954,12 @@ describe("scientificWriting", () => {
             : section.heading === "Discussion"
               ? [
                   ...section.paragraphs.map((paragraph) => paragraph.text),
-                  "The rank-32 dropout-0.05 cell improved accuracy delta versus the locked baseline by 0.0833 in the reported comparison."
+                  "The leading condition cell improved accuracy delta versus the locked baseline by 0.0833 in the reported comparison."
                 ]
             : section.heading === "Conclusion"
               ? [
                   ...section.paragraphs.map((paragraph) => paragraph.text),
-                  "In the main verified run, rank 32 with dropout 0.05 outperformed the locked baseline by 0.0833 mean accuracy, with the improvement driven entirely by HellaSwag and not accompanied by lower training loss."
+                  "In the main verified run, rank 32 with dropout 0.05 outperformed the locked baseline by 0.0833 mean accuracy, with the improvement driven entirely by Benchmark Task B and not accompanied by lower training loss."
                 ]
             : section.paragraphs.map((paragraph) => paragraph.text)
       })),
@@ -2002,7 +2002,7 @@ describe("scientificWriting", () => {
       .filter(
         (issue) =>
           ["numeric_inconsistency", "numeric_unverifiable", "count_unverifiable"].includes(issue.kind)
-          && /train loss|training loss|45\.687|4\.28|4278951936|0\.3333|0\.4167|0\.0833|rank-16|rank-32|16 as a samples|32 as a samples|256|1800|peak memory mb|conflicting aggregate accuracy/i.test(issue.message)
+          && /train loss|training loss|45\.687|4\.28|4278951936|0\.3333|0\.4167|0\.0833|comparison condition|leading condition|16 as a samples|32 as a samples|256|1800|peak memory mb|conflicting aggregate accuracy/i.test(issue.message)
       )
       .map((issue) => issue.message);
     expect(problematicMessages).toEqual([]);
@@ -2011,11 +2011,11 @@ describe("scientificWriting", () => {
   it("recovers LoRA condition rows from result analysis metrics when latest results are absent", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout live validation";
-    bundle.topic = "LoRA rank and dropout under a fixed-budget instruction tuning sweep";
+    bundle.topic = "condition parameters under a fixed-budget instruction tuning sweep";
     delete bundle.latestResults;
     bundle.resultAnalysis = {
       metrics: {
-        selected_model_id: "Qwen/Qwen2.5-1.5B",
+        selected_model_id: "the selected backbone",
         run_config: {
           learning_rate: 0.0002,
           per_device_batch_size: 1,
@@ -2030,24 +2030,24 @@ describe("scientificWriting", () => {
           }
         },
         summary: {
-          baseline_condition_marker: "rank_8_dropout_0_0"
+          baseline_condition_marker: "baseline_condition"
         },
         conditions: [
           {
-            marker: "rank_8_dropout_0_0",
+            marker: "baseline_condition",
             rank: 8,
             dropout: 0,
-            arc_challenge_accuracy: 0.5,
-            hellaswag_accuracy: 0.166667,
+            benchmark_task_a_accuracy: 0.5,
+            benchmark_task_b_accuracy: 0.166667,
             average_accuracy: 0.333334,
             accuracy_delta_vs_baseline: 0
           },
           {
-            marker: "rank_32_dropout_0_05",
+            marker: "candidate_condition_f5",
             rank: 32,
             dropout: 0.05,
-            arc_challenge_accuracy: 0.5,
-            hellaswag_accuracy: 0.333333,
+            benchmark_task_a_accuracy: 0.5,
+            benchmark_task_b_accuracy: 0.333333,
             average_accuracy: 0.416666,
             accuracy_delta_vs_baseline: 0.083332
           }
@@ -2056,7 +2056,7 @@ describe("scientificWriting", () => {
     } as any;
 
     const context = experimentArtifactLoader({ bundle });
-    expect(context.method.model_names).toContain("Qwen/Qwen2.5-1.5B");
+    expect(context.method.model_names).toContain("the selected backbone");
     expect(context.method.hyperparameter_notes.join(" ")).toMatch(/learning rate 0\.0002/i);
     expect(context.method.hyperparameter_notes.join(" ")).toMatch(/maximum sequence length 256/i);
     expect(context.method.hyperparameter_notes.join(" ")).toMatch(/1,?800-second timeout/i);
@@ -2067,7 +2067,7 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank and Dropout under Fixed Budget",
+      title: "Condition Parameters under Fixed Budget",
       abstract: "A conservative fixed-budget rank/dropout sweep.",
       keywords: ["LoRA", "instruction tuning"],
       sections: scientific.draft.sections.map((section) =>
@@ -2076,7 +2076,7 @@ describe("scientificWriting", () => {
               heading: section.heading,
               paragraphs: [
                 "The practical implication is incremental rather than prescriptive. Rank 32 with dropout 0.05 is a reasonable follow-up candidate because it produced the best observed average accuracy, but the present record does not justify treating it as a settled default.",
-                "The current evidence is most actionable as a cautious benchmark note for this fixed-budget LoRA rank/dropout pilot, especially where the best observed cell clears the pre-specified screening threshold.",
+                "The current evidence is most actionable as a cautious benchmark note for this fixed-budget condition-parameter pilot, especially where the best observed cell clears the pre-specified screening threshold.",
                 "For a small language-model preflight, the most defensible use of the result is triage: it nominates a configuration worth retesting under larger data or broader tasks, but it does not establish a general adapter rule.",
                 "The claim ceiling is therefore central to the interpretation. Completion of the run, a positive mean difference, and a usable table jointly support a candidate-selection claim, while stronger statements about robustness, mechanism, or broad transfer remain outside the available evidence."
               ]
@@ -2106,7 +2106,7 @@ describe("scientificWriting", () => {
     expect(result.manuscript.tables?.[0]?.caption).toMatch(/Condition-level mean accuracy/i);
     const rowLabels = result.manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ") || "";
     expect(rowLabels).not.toMatch(/ARC 0\.5/i);
-    expect(rowLabels).not.toMatch(/HellaSwag 0\.3333/i);
+    expect(rowLabels).not.toMatch(/Benchmark Task B 0\.3333/i);
     expect((rowLabels.match(/baseline/g) || [])).toHaveLength(1);
     const discussion = result.manuscript.sections.find((section) => section.heading === "Discussion");
     const discussionText = discussion?.paragraphs.join(" ") || "";
@@ -2280,7 +2280,7 @@ describe("scientificWriting", () => {
         {
           heading: "Method",
           paragraphs: [
-            "The primary factorial plan specified seed 42 and compared LoRA rank and dropout settings under a fixed budget."
+            "The primary factorial plan specified seed 42 and compared condition parameters settings under a fixed budget."
           ]
         },
         {
@@ -2848,12 +2848,12 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank-Dropout Preflight",
+      title: "Condition-Parameter Preflight",
       abstract: "The study-level delta relative to baseline was +0.0448.",
       keywords: ["LoRA"],
       sections: [
-        { heading: "Introduction", paragraphs: ["We study a repeated-seed LoRA rank/dropout comparison."] },
-        { heading: "Method", paragraphs: ["We compare a locked rank-8 dropout-0.0 baseline with higher-rank cells."] },
+        { heading: "Introduction", paragraphs: ["We study a repeated-seed condition-parameter comparison."] },
+        { heading: "Method", paragraphs: ["We compare a locked locked baseline baseline with higher-rank cells."] },
         {
           heading: "Results",
           paragraphs: [
@@ -2897,13 +2897,13 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank-Dropout Preflight",
+      title: "Condition-Parameter Preflight",
       abstract:
         "The study-level objective was met: the available summary reports accuracy_delta_vs_baseline = 0.0448. The strongest summarized condition was rank 32 with dropout 0.05, with a mean delta of 0.0667.",
       keywords: ["LoRA"],
       sections: [
-        { heading: "Introduction", paragraphs: ["We study a repeated-seed LoRA rank/dropout comparison."] },
-        { heading: "Method", paragraphs: ["We compare a locked rank-8 dropout-0.0 baseline with higher-rank cells."] },
+        { heading: "Introduction", paragraphs: ["We study a repeated-seed condition-parameter comparison."] },
+        { heading: "Method", paragraphs: ["We compare a locked locked baseline baseline with higher-rank cells."] },
         {
           heading: "Results",
           paragraphs: [
@@ -2936,13 +2936,13 @@ describe("scientificWriting", () => {
   it("keeps baseline and best-condition accuracy targets separate in compact abstract comparisons", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout preflight";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = {
-      baseline_marker: "rank_8_dropout_0_0",
+      baseline_marker: "baseline_condition",
       condition_summaries: [
         {
-          condition_marker: "rank_8_dropout_0_0",
+          condition_marker: "baseline_condition",
           lora_rank: 8,
           lora_dropout: 0,
           completed_seed_count: 1,
@@ -2950,7 +2950,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline_mean: 0
         },
         {
-          condition_marker: "rank_32_dropout_0_05",
+          condition_marker: "candidate_condition_f5",
           lora_rank: 32,
           lora_dropout: 0.05,
           completed_seed_count: 1,
@@ -2972,12 +2972,12 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank-Dropout Preflight",
+      title: "Condition-Parameter Preflight",
       abstract:
         "Within this realized run, the best exposed condition, rank 32 with dropout 0.05, raises mean accuracy from 0.333334 to 0.416666 relative to the baseline.",
       keywords: ["LoRA"],
       sections: [
-        { heading: "Introduction", paragraphs: ["We study a fixed-budget LoRA rank/dropout preflight."] },
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
         { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
         {
           heading: "Results",
@@ -3003,7 +3003,7 @@ describe("scientificWriting", () => {
       (issue) =>
         issue.kind === "numeric_inconsistency"
         && issue.severity === "error"
-        && /accuracy_delta_vs_baseline|rank_32_dropout_0_05/.test(JSON.stringify(issue.normalized_facts || []))
+        && /accuracy_delta_vs_baseline|candidate_condition_f5/.test(JSON.stringify(issue.normalized_facts || []))
         && /0\.333334/.test(JSON.stringify(issue.normalized_facts || []))
     );
     expect(targetErrors).toHaveLength(0);
@@ -3024,13 +3024,13 @@ describe("scientificWriting", () => {
   it("keeps anaphoric best-condition accuracy separate from a following baseline comparison", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout preflight";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = {
-      baseline_marker: "rank_8_dropout_0_0",
+      baseline_marker: "baseline_condition",
       condition_summaries: [
         {
-          condition_marker: "rank_8_dropout_0_0",
+          condition_marker: "baseline_condition",
           lora_rank: 8,
           lora_dropout: 0,
           completed_seed_count: 1,
@@ -3038,7 +3038,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline_mean: 0
         },
         {
-          condition_marker: "rank_32_dropout_0_05",
+          condition_marker: "candidate_condition_f5",
           lora_rank: 32,
           lora_dropout: 0.05,
           completed_seed_count: 1,
@@ -3060,18 +3060,18 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank-Dropout Preflight",
+      title: "Condition-Parameter Preflight",
       abstract:
-        "The best reported condition combines rank 32 with dropout 0.05. Its average accuracy across ARC-Challenge and HellaSwag is 0.4167, compared with 0.3333 for the locked baseline at rank 8 and dropout 0.0.",
+        "The best reported condition combines rank 32 with dropout 0.05. Its average accuracy across Benchmark Task A and Benchmark Task B is 0.4167, compared with 0.3333 for the locked baseline at rank 8 and dropout 0.0.",
       keywords: ["LoRA"],
       sections: [
-        { heading: "Introduction", paragraphs: ["We study a fixed-budget LoRA rank/dropout preflight."] },
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
         { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
         {
           heading: "Results",
           paragraphs: [
             "Within that analyzed configuration, the best reported condition combines rank 32 with dropout 0.05.",
-            "Its average accuracy across ARC-Challenge and HellaSwag is 0.4167, compared with 0.3333 for the locked baseline at rank 8 and dropout 0.0."
+            "Its average accuracy across Benchmark Task A and Benchmark Task B is 0.4167, compared with 0.3333 for the locked baseline at rank 8 and dropout 0.0."
           ]
         },
         { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
@@ -3097,13 +3097,13 @@ describe("scientificWriting", () => {
   it("keeps from-to accuracy values aligned with both named rank/dropout sides", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout preflight";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = {
-      baseline_marker: "rank_8_dropout_0_0",
+      baseline_marker: "baseline_condition",
       condition_summaries: [
         {
-          condition_marker: "rank_8_dropout_0_0",
+          condition_marker: "baseline_condition",
           lora_rank: 8,
           lora_dropout: 0,
           completed_seed_count: 1,
@@ -3111,7 +3111,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline_mean: 0
         },
         {
-          condition_marker: "rank_32_dropout_0_05",
+          condition_marker: "candidate_condition_f5",
           lora_rank: 32,
           lora_dropout: 0.05,
           completed_seed_count: 1,
@@ -3133,12 +3133,12 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank-Dropout Preflight",
+      title: "Condition-Parameter Preflight",
       abstract:
         "The explicit comparison is rank 32 with dropout 0.05 versus rank 8 with dropout 0.0, with average accuracy rising from 0.333334 to 0.416666.",
       keywords: ["LoRA"],
       sections: [
-        { heading: "Introduction", paragraphs: ["We study a fixed-budget LoRA rank/dropout preflight."] },
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
         { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
         {
           heading: "Results",
@@ -3169,13 +3169,13 @@ describe("scientificWriting", () => {
   it("does not treat baseline and leading bars in the main figure as contradictory aggregate accuracy", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout preflight";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = {
-      baseline_marker: "rank_8_dropout_0_0",
+      baseline_marker: "baseline_condition",
       condition_summaries: [
         {
-          condition_marker: "rank_8_dropout_0_0",
+          condition_marker: "baseline_condition",
           label: "rank 8 / dropout 0 (baseline)",
           lora_rank: 8,
           lora_dropout: 0,
@@ -3183,19 +3183,19 @@ describe("scientificWriting", () => {
           completed_seed_count: 1,
           average_accuracy_mean: 0.3333,
           accuracy_delta_vs_baseline_mean: 0,
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.1667
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.1667
         },
         {
-          condition_marker: "rank_32_dropout_0_05",
+          condition_marker: "candidate_condition_f5",
           label: "rank 32 / dropout 0.05",
           lora_rank: 32,
           lora_dropout: 0.05,
           completed_seed_count: 1,
           average_accuracy_mean: 0.4167,
           accuracy_delta_vs_baseline_mean: 0.0833,
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.3333
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.3333
         }
       ]
     } as any;
@@ -3212,18 +3212,18 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank-Dropout Preflight",
+      title: "Condition-Parameter Preflight",
       abstract:
         "The best observed condition was rank 32 with dropout 0.05, increasing average accuracy from 33.3% to 41.7%, an 8.3-point gain over the locked baseline.",
       keywords: ["LoRA"],
       sections: [
-        { heading: "Introduction", paragraphs: ["We study a fixed-budget LoRA rank/dropout preflight."] },
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
         { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
         {
           heading: "Results",
           paragraphs: [
             "The locked baseline, rank 8 with zero dropout, achieved mean accuracy 0.333334.",
-            "The best observed setting was rank 32 with dropout 0.05, which achieved mean accuracy 0.416666 across ARC-Challenge and HellaSwag.",
+            "The best observed setting was rank 32 with dropout 0.05, which achieved mean accuracy 0.416666 across Benchmark Task A and Benchmark Task B.",
             "The average difference remains a local screening signal rather than a settled prescription."
           ]
         },
@@ -3267,13 +3267,13 @@ describe("scientificWriting", () => {
   it("does not treat abstract from-to accuracy prose as conflicting with the leading artifact value", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout preflight";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = {
-      baseline_marker: "rank_8_dropout_0_0",
+      baseline_marker: "baseline_condition",
       condition_summaries: [
         {
-          condition_marker: "rank_8_dropout_0_0",
+          condition_marker: "baseline_condition",
           label: "rank 8 / dropout 0 (baseline)",
           lora_rank: 8,
           lora_dropout: 0,
@@ -3283,7 +3283,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline_mean: 0
         },
         {
-          condition_marker: "rank_32_dropout_0_05",
+          condition_marker: "candidate_condition_f5",
           label: "rank 32 / dropout 0.05",
           lora_rank: 32,
           lora_dropout: 0.05,
@@ -3299,17 +3299,17 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank-Dropout Preflight",
+      title: "Condition-Parameter Preflight",
       abstract:
         "In the archived main run, the best observed condition was rank 32 with dropout 0.05, which improved average accuracy from 0.333334 to 0.416666, an absolute gain of 0.083332 over the baseline and above the prespecified +0.01 target.",
       keywords: ["LoRA"],
       sections: [
-        { heading: "Introduction", paragraphs: ["We study a fixed-budget LoRA rank/dropout preflight."] },
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
         { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
         {
           heading: "Results",
           paragraphs: [
-            "The leading rank-32/dropout-0.05 condition reached mean average accuracy 0.416666, compared with 0.333334 for the locked baseline."
+            "The leading observed condition reached mean average accuracy 0.416666, compared with 0.333334 for the locked baseline."
           ]
         },
         { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
@@ -3336,7 +3336,7 @@ describe("scientificWriting", () => {
   it("keeps resource values separate from nearby sequence length and dataset names", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout preflight";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.resultAnalysis = {
       ...(bundle.resultAnalysis as any),
@@ -3349,13 +3349,13 @@ describe("scientificWriting", () => {
     } as any;
     bundle.latestResults = {
       protocol: {
-        datasets: ["ARC-Challenge", "HellaSwag"],
+        datasets: ["Benchmark Task A", "Benchmark Task B"],
         condition_count: 8,
         executed_condition_count: 8
       },
       condition_summaries: [
         {
-          condition_marker: "rank_8_dropout_0_0",
+          condition_marker: "baseline_condition",
           label: "rank 8 / dropout 0 (baseline)",
           lora_rank: 8,
           lora_dropout: 0,
@@ -3366,11 +3366,11 @@ describe("scientificWriting", () => {
           train_loss_mean: 1.462,
           runtime_seconds_mean: 5.339,
           peak_memory_mb_mean: 4278.951936,
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.166667
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.166667
         },
         {
-          condition_marker: "rank_32_dropout_0_05",
+          condition_marker: "candidate_condition_f5",
           label: "rank 32 / dropout 0.05",
           lora_rank: 32,
           lora_dropout: 0.05,
@@ -3381,8 +3381,8 @@ describe("scientificWriting", () => {
           train_loss_mean: 1.5242,
           runtime_seconds_mean: 5.339,
           peak_memory_mb_mean: 4278.951936,
-          arc_challenge_accuracy: 0.5,
-          hellaswag_accuracy: 0.333333
+          benchmark_task_a_accuracy: 0.5,
+          benchmark_task_b_accuracy: 0.333333
         }
       ]
     } as any;
@@ -3392,7 +3392,7 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank-Dropout Preflight",
+      title: "Condition-Parameter Preflight",
       abstract:
         "The intended sweep crossed ranks {4, 8, 16, 32} and dropout {0.0, 0.05}, with average accuracy as the endpoint. The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. In the main recorded sweep, the best reported condition, rank 32 with dropout 0.05, achieved 0.4167 average accuracy compared with 0.3333 for the baseline, a gain of 0.0833. The best reported comparison, rank 32 with dropout 0.05 versus the baseline, achieved average accuracy 0.416666 versus 0.333334, a gain of 0.083332 that exceeds the prespecified 0.01 improvement target. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation. Condition-level 95% intervals overlap substantially, and each interval is based on only 12 predictions.",
       keywords: ["LoRA"],
@@ -3400,7 +3400,7 @@ describe("scientificWriting", () => {
         {
           heading: "Introduction",
           paragraphs: [
-            "We study a fixed-budget LoRA rank/dropout preflight. In a related low-budget study, LoRA-based reasoning training was executed on a single 48 GB GPU within 24 hours."
+            "We study a fixed-budget condition-parameter preflight. In a related low-budget study, LoRA-based reasoning training was executed on a single 48 GB GPU within 24 hours."
           ]
         },
         {
@@ -3418,8 +3418,8 @@ describe("scientificWriting", () => {
             "The baseline train loss is 1.461996, whereas the best reported condition has a higher train loss of 1.524199 despite better evaluation accuracy.",
             "The higher-accuracy condition did not coincide with lower training loss: the baseline is reported at 1.4620, whereas the best-accuracy setting is reported at 1.5242.",
             "Training loss moved in the opposite direction, rising from 1.462 to 1.524, so the favorable accuracy result was not accompanied by a lower reported loss.",
-            "In the best condition-to-baseline comparison, ARC-Challenge accuracy stayed at 0.50 for both settings, while HellaSwag increased from 0.1667 to 0.3333.",
-            "ARC-Challenge accuracy is reported as 0.500000 for both the baseline and the best condition, so there is no observed improvement on that benchmark.",
+            "In the best condition-to-baseline comparison, Benchmark Task A accuracy stayed at 0.50 for both settings, while Benchmark Task B increased from 0.1667 to 0.3333.",
+            "Benchmark Task A accuracy is reported as 0.500000 for both the baseline and the best condition, so there is no observed improvement on that benchmark.",
             "The artifact reports 8 requested and 8 completed conditions, 45.687 s wall-clock runtime, and peak CUDA allocation of approximately 4.28 GB.",
             "Reported wall-clock time was 45.687 seconds, peak CUDA allocation was 4,278,951,936 bytes (about 4.28 GB), and the experiment remained well within the 1,800-second budget.",
             "At this preflight scale, the execution reports 45.687 seconds of wall-clock time and 4,278,951,936 bytes of peak allocated CUDA memory.",
@@ -3435,7 +3435,7 @@ describe("scientificWriting", () => {
         {
           heading: "Conclusion",
           paragraphs: [
-            "The gain was concentrated in HellaSwag, and the full eight-cell sweep remained cheap to execute at under a minute, roughly 4.28 GB of peak GPU memory, and an accuracy delta of 0.0833 over the baseline."
+            "The gain was concentrated in Benchmark Task B, and the full eight-cell sweep remained cheap to execute at under a minute, roughly 4.28 GB of peak GPU memory, and an accuracy delta of 0.0833 over the baseline."
           ]
         }
       ],
@@ -3483,8 +3483,8 @@ describe("scientificWriting", () => {
           || /cites 0\.5, but the current artifacts do not expose a comparable structured numeric fact for accuracy_delta/iu.test(issue.message)
           || /Results cites 0\.5, but the comparable structured results support .*accuracy/iu.test(issue.message)
           || /Abstract cites 0\.05, but the comparable structured results support .*accuracy/iu.test(issue.message)
-          || /Results and Figure 1 report conflicting ARC-Challenge accuracy values/iu.test(issue.message)
-          || /Results and Figure 1 report conflicting HellaSwag accuracy values/iu.test(issue.message)
+          || /Results and Figure 1 report conflicting Benchmark Task A accuracy values/iu.test(issue.message)
+          || /Results and Figure 1 report conflicting Benchmark Task B accuracy values/iu.test(issue.message)
           || /Appendix Table \d+ cites 12, but the comparable structured results support .*accuracy/iu.test(issue.message)
           || /Supplementary Boundary Notes cites 45\.687, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
           || /Abstract and Results report conflicting aggregate runtime seconds values/iu.test(issue.message)
@@ -3501,13 +3501,13 @@ describe("scientificWriting", () => {
   it("does not treat condition-cluster table prose as a conflicting single aggregate accuracy", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout preflight";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = {
-      baseline_marker: "rank_8_dropout_0_0",
+      baseline_marker: "baseline_condition",
       condition_summaries: [
         {
-          condition_marker: "rank_8_dropout_0_0",
+          condition_marker: "baseline_condition",
           label: "rank 8 / dropout 0 (baseline)",
           lora_rank: 8,
           lora_dropout: 0,
@@ -3517,7 +3517,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline_mean: 0
         },
         {
-          condition_marker: "rank_32_dropout_0_05",
+          condition_marker: "candidate_condition_f5",
           label: "rank 32 / dropout 0.05",
           lora_rank: 32,
           lora_dropout: 0.05,
@@ -3540,11 +3540,11 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "LoRA Rank-Dropout Preflight",
-      abstract: "We report a bounded LoRA rank/dropout preflight.",
+      title: "Condition-Parameter Preflight",
+      abstract: "We report a bounded condition-parameter preflight.",
       keywords: ["LoRA"],
       sections: [
-        { heading: "Introduction", paragraphs: ["We study a fixed-budget LoRA rank/dropout preflight."] },
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
         { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
         {
           heading: "Results",
@@ -3608,13 +3608,13 @@ describe("scientificWriting", () => {
   it("can re-apply evidence-grounded paper-scale strengthening after manuscript repair", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout repeated-seed benchmark";
-    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = {
-      baseline_marker: "rank_8_dropout_0_0",
+      baseline_marker: "baseline_condition",
       condition_summaries: [
         {
-          condition_marker: "rank_8_dropout_0_0",
+          condition_marker: "baseline_condition",
           lora_rank: 8,
           lora_dropout: 0,
           completed_seed_count: 5,
@@ -3622,7 +3622,7 @@ describe("scientificWriting", () => {
           accuracy_delta_vs_baseline_mean: 0
         },
         {
-          condition_marker: "rank_32_dropout_0_05",
+          condition_marker: "candidate_condition_f5",
           lora_rank: 32,
           lora_dropout: 0.05,
           completed_seed_count: 5,
@@ -3663,7 +3663,7 @@ describe("scientificWriting", () => {
       abstract: "The study-level delta relative to baseline was +0.0448.",
       keywords: ["LoRA"],
       sections: [
-        { heading: "Introduction", paragraphs: ["We study LoRA rank and dropout under a fixed local budget."] },
+        { heading: "Introduction", paragraphs: ["We study condition parameters under a fixed local budget."] },
         { heading: "Related Work", paragraphs: ["QLoRA and PEFT benchmarks motivate the local adapter question."] },
         { heading: "Method", paragraphs: ["The protocol uses a rank-8 no-dropout baseline and a higher-rank comparison."] },
         { heading: "Results", paragraphs: ["The rank 32 dropout 0.05 cell had the strongest mean delta."] },
@@ -3692,8 +3692,8 @@ describe("scientificWriting", () => {
         {
           heading: "Method",
           paragraphs: [
-            "The preserved manuscript bundle identifies the executed study only as a small-backbone local preflight and does not cleanly disambiguate whether the as-run model was the planned Qwen/Qwen2.5-1.5B backbone or the TinyLlama/TinyLlama-1.1B-Chat-v1.0 fallback.",
-            "The preferred backbone was Qwen/Qwen2.5-1.5B [Qwen2.5], with TinyLlama/TinyLlama-1.1B-Chat-v1.0 [TinyLlama] reserved as a fallback. Supervised instruction tuning used an Alpaca Clean subset capped at 10,000 examples [Alpaca Clean]. Evaluation used ARC-Challenge and HellaSwag [ARC-Challenge; HellaSwag].",
+            "The preserved manuscript bundle identifies the executed study only as a small-backbone local preflight and does not cleanly disambiguate whether the as-run model was the planned the selected backbone backbone or the the configured fallback backbone fallback.",
+            "The preferred backbone was the selected backbone [selected backbone], with the configured fallback backbone [fallback backbone] reserved as a fallback. Supervised instruction tuning used an training dataset subset capped at 10,000 examples [training dataset]. Evaluation used Benchmark Task A and Benchmark Task B [Benchmark Task A; Benchmark Task B].",
             "The fixed search space includes LoRA target modules were q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, and down_proj., Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, weight decay 0, max gradient norm 1, and 6 optimizer steps., and The inspected seed-level record reports 32 training examples and 5068 train dataset tokens for the inspected seed-level record."
           ]
         },
@@ -3710,7 +3710,7 @@ describe("scientificWriting", () => {
           paragraphs: [
             "The first P6 run uses a cached, locally runnable small LLM target so the validation focuses on real training, result-table integrity, review gating, and paper-readiness audit rather than on new model access.",
             "Accordingly, the present evidence is most useful as a cautious benchmark note for a fixed-budget pilot.",
-            "The practical implication is limited but useful. The current evidence is most actionable as a cautious benchmark note for this fixed-budget LoRA rank/dropout pilot."
+            "The practical implication is limited but useful. The current evidence is most actionable as a cautious benchmark note for this fixed-budget condition-parameter pilot."
           ]
         },
         {
@@ -3734,8 +3734,8 @@ describe("scientificWriting", () => {
     const strengthened = strengthenPaperScaleManuscript(manuscript, context);
     const text = strengthened.sections.flatMap((section) => section.paragraphs).join(" ");
 
-    expect(text).toContain("Qwen/Qwen2.5-1.5B as the selected small-backbone model");
-    expect(text).toContain("rank-16, dropout-0.0 condition");
+    expect(text).toContain("selected backbone");
+    expect(text).toContain("comparison condition condition");
     expect(text).toContain("best observed higher-rank LoRA cell is worth testing");
     expect(text).toContain("local small-model preflight");
     expect(text).toContain("secondary diagnostics rather than as a condition-level efficiency ranking");
@@ -3748,7 +3748,7 @@ describe("scientificWriting", () => {
     expect((text.match(/cautious benchmark note/g) || [])).toHaveLength(1);
     expect(text).not.toMatch(/manuscript bundle|manuscript-facing bundle|condition summaries \//i);
     expect(text).not.toMatch(/can be competitive under a strict local instruction-tuning budget/i);
-    expect(text).not.toMatch(/\[(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|ARC-Challenge|HellaSwag)/i);
+    expect(text).not.toMatch(/\[(?:Qwen2?\.?5?)/i);
     expect(text).not.toMatch(/Objective metric met|includes LoRA target modules were|for the inspected seed-level record|paper-ready claim/i);
     expect(text).not.toMatch(/including optimizer, learning rate, batch structure/i);
     expect(text).not.toMatch(/learning-rate schedule, batch structure/i);
@@ -3760,10 +3760,10 @@ describe("scientificWriting", () => {
       choosePaperTitle({
         candidateTitle:
           "Plan 1: Adding a Pre-Registered Result-Gating System That Enforces Benchmark-Ba...",
-        runTitle: "LoRA rank and dropout under fixed budget instruction tuning",
+        runTitle: "condition parameters under fixed budget instruction tuning",
         fallbackTitle: "Plan 2: Workflow audit for paper-readiness"
       })
-    ).toBe("LoRA Rank and Dropout under Fixed-Budget Instruction Tuning");
+    ).toBe("adapter Rank and Dropout under Fixed-Budget Instruction Tuning");
 
     const bundle = makeRichBundle();
     const scientific = applyScientificWritingPolicy({
@@ -3788,7 +3788,7 @@ describe("scientificWriting", () => {
             "The task scope is fixed around dataset_to_be_selected. The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search. That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned. The same point would need to be revised if later artifacts changed the comparator, table, or execution status.",
             "Model selection and reporting focus on average accuracy, task-level accuracy, training loss, resource diagnostics, condition completion, failed-run visibility, and conservative downgrade correctness.",
             "Resource diagnostics are explicitly measured in the evaluation outputs.",
-            "The fixed search space is the LoRA rank/dropout grid described above.",
+            "The fixed search space is the condition-parameter grid described above.",
             "The executed condition-level summaries are the comparison unit for this local preflight: means are compared against the locked baseline, while individual seed outcomes are used to expose variation rather than to select a favorable example. The preserved protocol notes, so the method description distinguishes the planned budget from the executed repeated comparison.",
             "Preprocessing follows this order:, and Artifact text references clean. Model selection and reporting focus on average_accuracy."
           ]
@@ -3797,7 +3797,7 @@ describe("scientificWriting", () => {
           heading: "Results",
           paragraphs: [
             "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01.",
-            "rank 32 dropout 0 05 vs rank 8 dropout 0 0 accuracy_delta_vs_baseline=0.083332 arc_challenge_accuracy=0.6417 hellaswag_accuracy=0.3133.",
+            "rank 32 dropout 0 05 vs rank 8 dropout 0 0 accuracy_delta_vs_baseline=0.083332 benchmark_task_a_accuracy=0.6417 benchmark_task_b_accuracy=0.3133.",
             "rank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline by 0.0833.",
             "The 95% interval for conditions rank 16 dropout 0 0 average accuracy spans 0.1381 to 0.6094. wall clock runtime sec=45.687. device cuda max memory allocated bytes=4278951936.",
             "The table and figure are therefore used as complementary checks: the table anchors the numeric values, while the figure is retained only when it shows a distinct pattern that is not already obvious from the rows.",
@@ -3807,7 +3807,7 @@ describe("scientificWriting", () => {
         {
           heading: "Discussion",
           paragraphs: [
-            "The current evidence is most actionable as a cautious benchmark note for Study how LoRA rank and dropout interact during parameter-efficient instruction tuning under a fixed local compute budget. The study is framed as a local small-model preflight so that the evidence rests on executed training runs, result-table consistency, and a bounded claim ceiling rather than on access to a larger target model. A 7B-class run is a later scale-up target after preflight is clean., especially where small positive deltas repeat across datasets.",
+            "The current evidence is most actionable as a cautious benchmark note for Study how condition parameters interact during parameter-efficient instruction tuning under a fixed local compute budget. The study is framed as a local small-model preflight so that the evidence rests on executed training runs, result-table consistency, and a bounded claim ceiling rather than on access to a larger target model. A 7B-class run is a later scale-up target after preflight is clean., especially where small positive deltas repeat across datasets.",
             "Several bookkeeping tensions also need resolution: the plan capped training data at 10,000 examples but the analyzed run used 48 samples; the planning brief named seed 42 but the summary reports seed 17; and the surrounding materials mention both three executed trials and a narrower analyzed observation."
           ]
         },
@@ -3845,7 +3845,7 @@ describe("scientificWriting", () => {
           heading: "Appendix: Gate Output",
           paragraphs: [
             "The appendix preserves the manuscript-quality gate output, PDF build report, and page-budget validation for paper-readiness review.",
-            "Supplementary setup details report the repeated LoRA rank/dropout grid and the fixed evaluation harness."
+            "Supplementary setup details report the repeated condition-parameter grid and the fixed evaluation harness."
           ]
         },
         {
@@ -3890,20 +3890,20 @@ describe("scientificWriting", () => {
     ].join(" ");
 
     expect(allText).toContain("Resource diagnostics are explicitly measured");
-    expect(allText).toContain("LoRA rank/dropout grid");
-    expect(allText).toContain("ARC-Challenge and HellaSwag");
-    expect(allText).toContain("run-metadata task labels ARC-Challenge and HellaSwag");
+    expect(allText).toContain("condition-parameter grid");
+    expect(allText).toContain("Benchmark Task A and Benchmark Task B");
+    expect(allText).toContain("run-metadata task labels Benchmark Task A and Benchmark Task B");
     expect(allText).toContain("planned and realized execution records should be read conservatively");
     expect(allText).toContain("One reported condition-level 95% interval");
     expect(allText).toContain("local preflight");
     expect(allText).toContain("Figure 1 isolates the task-level contribution");
     expect(allText).toContain("Supplementary setup details");
     expect((manuscript.appendix_sections || []).filter((section) => section.heading === "Supplementary Experimental Details")).toHaveLength(1);
-    expect((allText.match(/run-metadata task labels ARC-Challenge and HellaSwag/g) || [])).toHaveLength(1);
+    expect((allText.match(/run-metadata task labels Benchmark Task A and Benchmark Task B/g) || [])).toHaveLength(1);
     expect(manuscript.tables?.[0]?.rows.filter((row) => /accuracy delta vs baseline/i.test(row.label))).toHaveLength(1);
     expect(manuscript.appendix_tables || []).toHaveLength(1);
     expect(allText).not.toMatch(/Plan 1|Plan 2|Objective metric met|Artifact text references|current_best_baseline|dataset_to_be_selected|manuscript-quality gate|PDF build report|page-budget validation|paper-readiness|paper-scale preflight|manuscript therefore passes|unresolved metadata inconsistencies|wall clock runtime sec|device cuda max memory allocated bytes|small positive deltas repeat across datasets|Across these summaries|Model selection and reporting focus on average accuracy|surrounding materials/i);
-    expect(allText).not.toMatch(/accuracy_delta_vs_baseline=.*arc_challenge_accuracy=.*hellaswag_accuracy/i);
+    expect(allText).not.toMatch(/accuracy_delta_vs_baseline=.*benchmark_task_a_accuracy=.*benchmark_task_b_accuracy/i);
   });
 
   it("LV-016: comma-separated numbers (e.g. 20,789) are not split into phantom matches", () => {

@@ -245,7 +245,7 @@ describe("runBriefParser", () => {
         "",
         "## Objective Metric",
         "",
-        "Average 0-shot accuracy on ARC-Challenge and HellaSwag",
+        "Average 0-shot accuracy on Benchmark Task A and Benchmark Task B",
         "",
         "## Constraints",
         "",
@@ -262,7 +262,7 @@ describe("runBriefParser", () => {
 
     expect(extracted.source).toBe("heuristic_fallback");
     expect(extracted.topic).toBe("Compact instruction tuning recipes for open models.");
-    expect(extracted.objectiveMetric).toBe("Average 0-shot accuracy on ARC-Challenge and HellaSwag");
+    expect(extracted.objectiveMetric).toBe("Average 0-shot accuracy on Benchmark Task A and Benchmark Task B");
     expect(extracted.constraints).toEqual([
       "Use a bounded real experiment.",
       "Keep seed 42 fixed."

@@ -171,7 +171,7 @@ describe("manuscriptQuality style lint", () => {
         ? {
             ...section,
             paragraphs: [
-              "The planned protocol targeted Qwen/Qwen2.5-1.5B as the base model, allowed TinyLlama/TinyLlama-1.1B-Chat-v1.0 only as a fallback, and capped the source dataset at 10,000 Alpaca Clean examples."
+              "The planned protocol targeted the selected backbone as the base model, allowed the configured fallback backbone only as a fallback, and capped the source dataset at 10,000 Alpaca Clean examples."
             ]
           }
         : section

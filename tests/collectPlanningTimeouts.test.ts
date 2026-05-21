@@ -26,7 +26,7 @@ function buildRun(runId: string): RunRecord {
     title: "Timeout regression",
     topic: "LoRA rank dropout interaction",
     constraints: ["Use two GPUs", "Keep a named baseline and real metrics."],
-    objectiveMetric: "ARC-Challenge and HellaSwag mean accuracy",
+    objectiveMetric: "Benchmark Task A and Benchmark Task B mean accuracy",
     status: "running",
     currentNode: "collect_papers",
     latestSummary: undefined,

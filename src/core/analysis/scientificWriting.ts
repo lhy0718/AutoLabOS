@@ -222,8 +222,8 @@ export interface ConditionResultSummary {
   average_accuracy_ci95?: number;
   accuracy_delta_vs_baseline_mean?: number;
   accuracy_delta_vs_baseline_ci95?: number;
-  arc_challenge_accuracy?: number;
-  hellaswag_accuracy?: number;
+  benchmark_task_a_accuracy?: number;
+  benchmark_task_b_accuracy?: number;
   train_loss?: number;
   train_loss_mean?: number;
   runtime_seconds?: number;
@@ -672,7 +672,7 @@ function inferExperimentProtocolKind(
     experiment_portfolio: resultAnalysis?.experiment_portfolio
   }).toLowerCase();
   if (
-    /\b(lora|qlora|peft|llm|language model|instruction tuning|arc[-_ ]?challenge|hellaswag|alpaca|qwen|tinyllama|token budget|vram|gpu)\b/u.test(
+    /\b(lora|qlora|peft|llm|language model|instruction tuning|arc[-_ ]?challenge|benchmark_task_b|alpaca|qwen|tinyllama|token budget|vram|gpu)\b/u.test(
       haystack
     )
   ) {
@@ -709,9 +709,9 @@ export function methodCompletenessValidator(context: ExperimentArtifactContext):
   if (isLmBenchmark) {
     pushFieldStatus(present, missing, context.method.model_names.length > 0, "model/backbone");
     const hasBenchmarkTaskNames =
-      context.method.dataset_names.some((item) => /arc|hellaswag|benchmark|task|alpaca/iu.test(item))
-      || context.results.dataset_summaries.some((item) => /arc|hellaswag|benchmark|task|alpaca/iu.test(`${item.dataset} ${item.label} ${item.summary}`))
-      || context.results.aggregate_summary.some((item) => /arc|hellaswag|benchmark|task|alpaca/iu.test(item));
+      context.method.dataset_names.some((item) => /arc|benchmark_task_b|benchmark|task|alpaca/iu.test(item))
+      || context.results.dataset_summaries.some((item) => /arc|benchmark_task_b|benchmark|task|alpaca/iu.test(`${item.dataset} ${item.label} ${item.summary}`))
+      || context.results.aggregate_summary.some((item) => /arc|benchmark_task_b|benchmark|task|alpaca/iu.test(item));
     pushFieldStatus(
       present,
       missing,
@@ -902,8 +902,8 @@ export function conditionResultTableBuilder(context: ExperimentArtifactContext):
       ...(typeof item.accuracy_delta_vs_baseline_mean === "number"
         ? { accuracy_delta_vs_baseline: item.accuracy_delta_vs_baseline_mean }
         : {}),
-      ...(typeof item.arc_challenge_accuracy === "number" ? { arc_challenge_accuracy: item.arc_challenge_accuracy } : {}),
-      ...(typeof item.hellaswag_accuracy === "number" ? { hellaswag_accuracy: item.hellaswag_accuracy } : {}),
+      ...(typeof item.benchmark_task_a_accuracy === "number" ? { benchmark_task_a_accuracy: item.benchmark_task_a_accuracy } : {}),
+      ...(typeof item.benchmark_task_b_accuracy === "number" ? { benchmark_task_b_accuracy: item.benchmark_task_b_accuracy } : {}),
       ...(typeof item.train_loss === "number" ? { train_loss: item.train_loss } : {}),
       ...(typeof item.runtime_seconds === "number" ? { runtime_seconds: item.runtime_seconds } : {}),
       ...(typeof item.peak_memory_mb === "number" ? { peak_memory_mb: item.peak_memory_mb } : {}),
@@ -970,7 +970,7 @@ export function conditionFigureSelectorAndCaptionWriter(context: ExperimentArtif
   if (accuracySurfaceBars.length >= 4 && conditionGridRowsShowPaperFigureValue(accuracySurfaceBars)) {
     return [
       {
-        caption: "Condition-level average accuracy across the executed LoRA rank/dropout grid; lines separate dropout settings and mark the locked baseline.",
+        caption: "Condition-level average accuracy across the executed condition-parameter grid; lines separate dropout settings and mark the locked baseline.",
         bars: accuracySurfaceBars
       }
     ];
@@ -993,20 +993,20 @@ export function conditionFigureSelectorAndCaptionWriter(context: ExperimentArtif
     const taskBars = [
       baseline
       && best
-      && typeof baseline.arc_challenge_accuracy === "number"
-      && typeof best.arc_challenge_accuracy === "number"
+      && typeof baseline.benchmark_task_a_accuracy === "number"
+      && typeof best.benchmark_task_a_accuracy === "number"
         ? {
-            label: "ARC-Challenge task accuracy delta",
-            value: Number((best.arc_challenge_accuracy - baseline.arc_challenge_accuracy).toFixed(6))
+            label: "Benchmark Task A task accuracy delta",
+            value: Number((best.benchmark_task_a_accuracy - baseline.benchmark_task_a_accuracy).toFixed(6))
           }
         : undefined,
       baseline
       && best
-      && typeof baseline.hellaswag_accuracy === "number"
-      && typeof best.hellaswag_accuracy === "number"
+      && typeof baseline.benchmark_task_b_accuracy === "number"
+      && typeof best.benchmark_task_b_accuracy === "number"
         ? {
-            label: "HellaSwag task accuracy delta",
-            value: Number((best.hellaswag_accuracy - baseline.hellaswag_accuracy).toFixed(6))
+            label: "Benchmark Task B task accuracy delta",
+            value: Number((best.benchmark_task_b_accuracy - baseline.benchmark_task_b_accuracy).toFixed(6))
           }
         : undefined
     ].filter((item): item is { label: string; value: number } => Boolean(item));
@@ -1290,8 +1290,8 @@ function dropTaskDeltaFiguresRedundantWithTables(
   const hasBaselineBestTaskTable =
     /\bbaseline\b/iu.test(tableText)
     && /\b(?:highest-scoring|best(?:-condition)?)\b/iu.test(tableText)
-    && /\bARC-Challenge\b/iu.test(tableText)
-    && /\bHellaSwag\b/iu.test(tableText);
+    && /\bBenchmark Task A\b/iu.test(tableText)
+    && /\bBenchmark Task B\b/iu.test(tableText);
   if (!hasBaselineBestTaskTable) {
     return figures;
   }
@@ -1300,7 +1300,7 @@ function dropTaskDeltaFiguresRedundantWithTables(
     const caption = cleanString(figure.caption);
     const isBestVsBaselineDeltaFigure =
       /\bdelta\b/iu.test(labels)
-      && /\b(?:ARC-Challenge|HellaSwag|Average Accuracy)\b/iu.test(labels)
+      && /\b(?:Benchmark Task A|Benchmark Task B|Average Accuracy)\b/iu.test(labels)
       && (/\bbest\b/iu.test(caption) || /\bbaseline\b/iu.test(caption) || /\brelative to the baseline\b/iu.test(caption));
     return !isBestVsBaselineDeltaFigure;
   });
@@ -2704,9 +2704,9 @@ function collectConditionMetricFacts(context: ExperimentArtifactContext): Normal
           );
         }
       }
-      const taskAccuracyFacts: Array<{ key: "arc_challenge_accuracy" | "hellaswag_accuracy"; label: string; datasetScope: string }> = [
-        { key: "arc_challenge_accuracy", label: "ARC-Challenge accuracy", datasetScope: "ARC-Challenge" },
-        { key: "hellaswag_accuracy", label: "HellaSwag accuracy", datasetScope: "HellaSwag" }
+      const taskAccuracyFacts: Array<{ key: "benchmark_task_a_accuracy" | "benchmark_task_b_accuracy"; label: string; datasetScope: string }> = [
+        { key: "benchmark_task_a_accuracy", label: "Benchmark Task A accuracy", datasetScope: "Benchmark Task A" },
+        { key: "benchmark_task_b_accuracy", label: "Benchmark Task B accuracy", datasetScope: "Benchmark Task B" }
       ];
       for (const task of taskAccuracyFacts) {
         const value = condition[task.key];
@@ -3692,8 +3692,8 @@ function inferDatasetScope(
   if (/\bmean accuracy\b[^.!?]{0,120}\bdriven entirely by\b/iu.test(cleaned)) {
     return "aggregate";
   }
-  const mentionsArcChallenge = /\barc[-_\s]?challenge\b/iu.test(cleaned);
-  const mentionsHellaSwag = /\bhella\s*swag\b|\bhellaswag\b/iu.test(cleaned);
+  const mentionsBenchmarkTaskA = /\bbenchmark(?:[-_\s]?task)?[-_\s]?a\b/iu.test(cleaned);
+  const mentionsBenchmarkTaskB = /\bbenchmark(?:[-_\s]?task)?[-_\s]?b\b/iu.test(cleaned);
   const matchedDatasets = datasetNames.filter((dataset) => cleaned.includes(cleanString(dataset).toLowerCase()));
   const mentionsResourceMetric = /\b(?:peak\s+)?(?:gpu\s+|cuda\s+)?memory\b|\bvram\b|\bgb\b|\bmb\b|\bruntime\b|\bwall[-\s]?clock\b|\bseconds?\b|\btimeout\b/iu.test(cleaned);
   if (
@@ -3713,17 +3713,17 @@ function inferDatasetScope(
     return "aggregate";
   }
   if (
-    mentionsArcChallenge
-    && mentionsHellaSwag
+    mentionsBenchmarkTaskA
+    && mentionsBenchmarkTaskB
     && /\bacross\b|\baverage\b|\bmean\b|\bunweighted\b|\boverall\b|\baggregate\b|\btask[-\s]?average\b/iu.test(cleaned)
   ) {
     return "aggregate";
   }
-  if (mentionsArcChallenge) {
-    return "ARC-Challenge";
+  if (mentionsBenchmarkTaskA) {
+    return "Benchmark Task A";
   }
-  if (mentionsHellaSwag) {
-    return "HellaSwag";
+  if (mentionsBenchmarkTaskB) {
+    return "Benchmark Task B";
   }
   if (
     matchedDatasets.length > 1
@@ -3757,16 +3757,16 @@ function inferDatasetScopeNearNumber(
     return explicitTaskScope;
   }
   const searchText = normalizeMetricSearchText(text);
-  const arcDistance = nearestKeywordDistance(searchText, rawIndex, ["arc challenge", "arc-challenge", "arc_challenge"]);
-  const hellaswagDistance = nearestKeywordDistance(searchText, rawIndex, ["hellaswag", "hella swag"]);
-  if (typeof arcDistance === "number" || typeof hellaswagDistance === "number") {
+  const arcDistance = nearestKeywordDistance(searchText, rawIndex, ["arc challenge", "arc-challenge", "benchmark_task_a"]);
+  const benchmark_task_bDistance = nearestKeywordDistance(searchText, rawIndex, ["benchmark_task_b", "hella swag"]);
+  if (typeof arcDistance === "number" || typeof benchmark_task_bDistance === "number") {
     if (typeof arcDistance !== "number") {
-      return "HellaSwag";
+      return "Benchmark Task B";
     }
-    if (typeof hellaswagDistance !== "number") {
-      return "ARC-Challenge";
+    if (typeof benchmark_task_bDistance !== "number") {
+      return "Benchmark Task A";
     }
-    return hellaswagDistance < arcDistance ? "HellaSwag" : "ARC-Challenge";
+    return benchmark_task_bDistance < arcDistance ? "Benchmark Task B" : "Benchmark Task A";
   }
   return fallback;
 }
@@ -3774,19 +3774,19 @@ function inferDatasetScopeNearNumber(
 function inferExplicitTaskAccuracyScopeNearNumber(
   text: string,
   rawIndex: number
-): "ARC-Challenge" | "HellaSwag" | undefined {
+): "Benchmark Task A" | "Benchmark Task B" | undefined {
   const cleaned = cleanString(text);
   const numberPattern = String.raw`(-?\d+(?:,\d{3})*(?:\.\d+)?)`;
-  const specs: Array<{ scope: "ARC-Challenge" | "HellaSwag"; patterns: RegExp[] }> = [
+  const specs: Array<{ scope: "Benchmark Task A" | "Benchmark Task B"; patterns: RegExp[] }> = [
     {
-      scope: "ARC-Challenge",
+      scope: "Benchmark Task A",
       patterns: [
         new RegExp(String.raw`\bARC[-_\s]?Challenge\s+accuracy\b[^.!?]{0,80}\b(?:remained|stayed|was|is|=|unchanged)\s+(?:at\s+)?${numberPattern}`, "giu"),
         new RegExp(String.raw`\b${numberPattern}[^.!?]{0,80}\bARC[-_\s]?Challenge\s+accuracy\b`, "giu")
       ]
     },
     {
-      scope: "HellaSwag",
+      scope: "Benchmark Task B",
       patterns: [
         new RegExp(String.raw`\bHella\s*Swag\s+accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|increased|rose|rises|changed|was|is|=|from)\b[^.!?]{0,80}\b(?:from\s+)?${numberPattern}(?:\s+(?:to|up to)\s+${numberPattern})?`, "giu"),
         new RegExp(String.raw`\bHella\s*Swag\b[^.!?]{0,80}\b(?:improve[sd]?|increased|rose|rises|changed)\b[^.!?]{0,80}\bfrom\s+${numberPattern}\s+(?:to|up to)\s+${numberPattern}`, "giu"),
@@ -5793,7 +5793,7 @@ function softenLmBenchmarkPilotTitle(title: string): string {
     return title;
   }
   if (/\btrade[- ]?offs?\b/iu.test(cleaned) && /\b(rank|dropout|LoRA|parameter-efficient)\b/iu.test(cleaned)) {
-    return "A Fixed-Budget Pilot Study of LoRA Rank and Dropout for Local Instruction Tuning";
+    return "A Fixed-Budget Pilot Study of a Local Experimental Configuration";
   }
   if (/\bbenchmarking\b/iu.test(cleaned) && /\bfixed local budget\b/iu.test(cleaned)) {
     return cleaned.replace(/\bBenchmarking\b/iu, "A Pilot Study of");
@@ -5808,8 +5808,8 @@ function compactReaderFacingMethodParagraphs(paragraphs: string[]): string[] {
     /\bLoRA\b/iu.test(sectionText)
     && /\brank\b/iu.test(sectionText)
     && /\bdropout\b/iu.test(sectionText)
-    && /\bARC-Challenge\b/iu.test(sectionText)
-    && /\bHellaSwag\b/iu.test(sectionText);
+    && /\bBenchmark Task A\b/iu.test(sectionText)
+    && /\bBenchmark Task B\b/iu.test(sectionText);
   if (!isLoraRankDropoutPreflight) {
     return compacted;
   }
@@ -5862,8 +5862,8 @@ function compactReaderFacingDiscussionParagraphs(paragraphs: string[]): string[]
     /\bLoRA\b/iu.test(sectionText)
     && /\brank\b/iu.test(sectionText)
     && /\bdropout\b/iu.test(sectionText)
-    && /\bARC-Challenge\b/iu.test(sectionText)
-    && /\bHellaSwag\b/iu.test(sectionText);
+    && /\bBenchmark Task A\b/iu.test(sectionText)
+    && /\bBenchmark Task B\b/iu.test(sectionText);
   if (!isLoraRankDropoutPreflight) {
     return uniqueStrings(cleaned);
   }
@@ -5880,7 +5880,7 @@ function compactReaderFacingDiscussionParagraphs(paragraphs: string[]): string[]
     if (/^The current evidence is most actionable as a cautious benchmark note\b/iu.test(paragraph)) {
       if (!insertedTriage) {
         compact.push(
-          "For this fixed-budget LoRA rank/dropout pilot, the result is most useful as triage: rank 32 with dropout 0.05 improved average accuracy by 0.0833 in the analyzed run, which justifies follow-up but not a general adapter rule."
+          "For this fixed-budget condition-parameter pilot, the result is most useful as triage: the leading observed condition improved average accuracy by 0.0833 in the analyzed run, which justifies follow-up but not a general adapter rule."
         );
         insertedTriage = true;
       }
@@ -5918,8 +5918,8 @@ function compactRepeatedDiscussionBoundaryParagraphs(paragraphs: string[]): stri
       /^The current evidence is most actionable as a cautious benchmark note\b/iu.test(paragraph)
       || /^The main report records a positive screening result\b/iu.test(paragraph)
       || /^The main report therefore supports only a positive screening result\b/iu.test(paragraph)
-      || /^The rank-32 dropout-0\.05 cell improved accuracy delta versus the locked baseline\b/iu.test(paragraph)
-      || /^That is enough to prioritize the rank-32,\s*dropout-0\.05 configuration\b/iu.test(paragraph)
+      || /^The leading condition cell improved accuracy delta versus the locked baseline\b/iu.test(paragraph)
+      || /^That is enough to prioritize the leading condition configuration\b/iu.test(paragraph)
       || /^For a small language-model preflight\b/iu.test(paragraph)
       || /^For a bounded experiment\b/iu.test(paragraph)
       || /^The claim ceiling is therefore central\b/iu.test(paragraph);
@@ -6093,7 +6093,7 @@ function compactResultsInterpretiveBoundary(paragraphs: string[]): string[] {
         || /^Table 1 is part of the evidential core of the paper\b/iu.test(paragraph)
         || /^The baseline row also changes the interpretation\b/iu.test(paragraph)
         || /^The best nonbaseline row should therefore be read as a selection signal\b/iu.test(paragraph)
-        || /^The rank-32 rows carry the strongest follow-up signal\b/iu.test(paragraph)
+        || /^The leading-condition rows carry the strongest follow-up signal\b/iu.test(paragraph)
         || /^The resource side of the result is intentionally weaker\b/iu.test(paragraph)
         || /^Resource reporting is therefore separated from accuracy reporting\b/iu.test(paragraph)
       );
@@ -6133,10 +6133,10 @@ function buildConditionResultNarrativeParagraphs(context: ExperimentArtifactCont
       ? `The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. ${bestByDelta?.label || bestByAccuracy?.label || "The strongest nonbaseline condition"} is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage, but the present manuscript keeps the conclusion conditional on observed dispersion and on the missing condition-level resource table.`
       : "",
     rank16Conditions.length > 0
-      ? `The rank-16 rows are useful mainly as a calibration point for the interpretation. They show that adding dropout at a higher rank did not create a clean, decisive gain under the current budget, so the paper should not turn the strongest cell into a blanket claim about rank-dropout interactions. Instead, the rank-16 evidence helps bound the result by showing where the observed pattern remains weak or uncertainty-limited.`
+      ? `The comparison-condition rows are useful mainly as a calibration point for the interpretation. They show that adding dropout at a higher rank did not create a clean, decisive gain under the current budget, so the paper should not turn the strongest cell into a blanket claim about rank-dropout interactions. Instead, the comparison-condition evidence helps bound the result by showing where the observed pattern remains weak or uncertainty-limited.`
       : "",
     rank32Conditions.length > 0
-      ? `The rank-32 rows carry the strongest follow-up signal because they combine the largest nonbaseline mean with the same repeated-seed accounting used for the rest of the grid. That makes the rank-32, dropout-0.05 condition a plausible scale-up candidate, but not a settled prescription: the table still shows a local workstation preflight rather than a broad model-family sweep.`
+      ? `The leading-condition rows carry the strongest follow-up signal because they combine the largest nonbaseline mean with the same repeated-seed accounting used for the rest of the grid. That makes the leading condition condition a plausible scale-up candidate, but not a settled prescription: the table still shows a local workstation preflight rather than a broad model-family sweep.`
       : "",
     "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale, but the available main-text evidence does not support a row-by-row efficiency ordering. This is why the Results section treats compute as a feasibility constraint and leaves efficiency optimization for a follow-up run with fuller resource aggregation."
     ,
@@ -6176,7 +6176,7 @@ function isRawMetricDumpParagraph(paragraph: string): boolean {
   if (
     /\brank\s+\d+\s+dropout\b/iu.test(cleaned)
     && /\baccuracy[_ ]delta[_ ]vs[_ ]baseline\b/iu.test(cleaned)
-    && /\barc[_ ]challenge[_ ]accuracy\b|\bhellaswag[_ ]accuracy\b/iu.test(cleaned)
+    && /\barc[_ ]challenge[_ ]accuracy\b|\bbenchmark_task_b[_ ]accuracy\b/iu.test(cleaned)
   ) {
     return true;
   }
@@ -6646,8 +6646,8 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "The prespecified baseline-relative accuracy target was met (observed gain $1 versus threshold $2); condition-level values in Table 1 provide the main numeric support."
     )
     .replace(
-      /\brank\s+32\s+dropout\s+0\s+05\s+vs\s+rank\s+8\s+dropout\s+0\s+0:\s*accuracy_delta_vs_baseline:\s*([0-9.]+)\s+vs\s+0\s+\(delta\s+([0-9.]+)\),\s*average_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*arc_challenge_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*hellaswag_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\)\.?/giu,
-      "The leading rank-32/dropout-0.05 condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
+      /\brank\s+32\s+dropout\s+0\s+05\s+vs\s+rank\s+8\s+dropout\s+0\s+0:\s*accuracy_delta_vs_baseline:\s*([0-9.]+)\s+vs\s+0\s+\(delta\s+([0-9.]+)\),\s*average_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*benchmark_task_a_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*benchmark_task_b_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\)\.?/giu,
+      "The leading leading observed condition condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
     )
     .replace(
       /\bwall clock runtime sec\s*=\s*([0-9.]+)\.\s*device cuda max memory allocated bytes\s*=\s*(\d+)\.?/giu,
@@ -6661,22 +6661,22 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       /\bdevice cuda max memory allocated bytes\s*=\s*(\d+)\.?/giu,
       "peak CUDA allocation was recorded as a secondary resource diagnostic."
     )
-    .replace(/\s*\[(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|ARC-Challenge|HellaSwag)(?:\s*;\s*(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|ARC-Challenge|HellaSwag))*\]/giu, "")
+    .replace(/\s*\[(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|Benchmark Task A|Benchmark Task B))*\]/giu, "")
     .replace(
       /\bThe (?:preserved manuscript bundle|reported run records) identif(?:ies|y) the executed study only as a small-backbone local preflight and does not cleanly disambiguate whether the as-run model was the planned Qwen\/Qwen2\.5-1\.5B backbone or the TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0 fallback\./giu,
-      "The reported run records identify Qwen/Qwen2.5-1.5B as the selected small-backbone model; TinyLlama/TinyLlama-1.1B-Chat-v1.0 remained a fallback option and is not treated as evidence for the reported condition means."
+      "The reported run records identify the selected backbone as the selected small-backbone model; the configured fallback backbone remained a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution,\s*so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model\./giu,
-      "The executed metrics record identifies Qwen/Qwen2.5-1.5B as the selected backbone for the analyzed run; TinyLlama remained a fallback option and is not treated as evidence for the reported condition means."
+      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe available summary does not identify which backbone was ultimately used in the realized pilot execution,\s*so model-specific conclusions are limited to the declared protocol rather than a verified backbone-specific analysis\./giu,
-      "The executed metrics record identifies Qwen/Qwen2.5-1.5B as the selected backbone for the realized pilot; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
+      "The executed metrics record identifies the selected backbone as the selected backbone for the realized pilot; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe plan named Qwen\/Qwen2\.5-1\.5B as preferred for the executable run and TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0 as the fallback if the preferred model could not be loaded\.\s*The executed metrics record identifies Qwen\/Qwen2\.5-1\.5B as the selected backbone for the analyzed run;\s*TinyLlama remained a fallback option and is not treated as evidence for the reported condition means\./giu,
-      "The executable run selected Qwen/Qwen2.5-1.5B as the trained backbone; TinyLlama/TinyLlama-1.1B-Chat-v1.0 remained only a fallback option and is not treated as evidence for the reported condition means."
+      "The executable run selected the selected backbone as the trained backbone; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe surviving compact record specifies the manipulated rank\/dropout factors and reported outcome metrics,\s*but optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*prompt formatting,\s*evaluation-harness specifics,\s*and exact placement of dropout within LoRA modules are not available\.\s*We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe\./giu,
@@ -6684,7 +6684,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     )
     .replace(
       /\bAt the same time,\s*the reported result summary does not expose several training details that would normally appear in a full appendix,\s*including optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*LoRA target modules,\s*and the realized model identifier\.\s*Accordingly,\s*the manuscript confines its claims to what is directly supported by the available execution record\./giu,
-      "The preserved pilot record exposes selected implementation details: Qwen/Qwen2.5-1.5B as the selected backbone, learning rate 0.0002, per-device batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and a 1,800-second timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript confines its claims to directly supported benchmark comparisons."
+      "The preserved pilot record exposes selected implementation details: the selected backbone as the selected backbone, learning rate 0.0002, per-device batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and a 1,800-second timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript confines its claims to directly supported benchmark comparisons."
     )
     .replace(
       /\b(?:the\s+)?(?:reported\s+)?(?:summary|result summary|compact record|analysis)\s+does not expose several (?:training|implementation) details(?:\s+that would normally appear in a full appendix)?,?\s*including optimizer choice,\s*learning rate,\s*(?:effective\s+)?batch size,\s*(?:step or epoch counts|step or epoch accounting|update count),\s*and LoRA target modules\./giu,
@@ -6700,7 +6700,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     )
     .replace(
       /\bcondition summaries\s*\/\s*rank\s+16\s+dropout\s+0\s+0\s*\/\s*accuracy delta vs baseline 95% CI \[([^\]]+)\] over n=(\d+)\./giu,
-      "For the rank-16, dropout-0.0 condition, the reported 95% interval for accuracy delta versus baseline is [$1] over $2 seeds."
+      "For the comparison condition condition, the reported 95% interval for accuracy delta versus baseline is [$1] over $2 seeds."
     )
     .replace(
       /\bThis repeated-seed preflight provides conservative evidence that higher-rank LoRA with moderate dropout can be competitive under a strict local instruction-tuning budget\./giu,
@@ -6712,7 +6712,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     )
     .replace(
       /\bThe study-level accuracy delta reported in Results is the arithmetic mean of the non-baseline condition mean deltas relative to the locked baseline;\s*Table 1 reports the corresponding condition mean accuracies and identifies the locked baseline row\./giu,
-      "Results reports the best observed cell against the locked rank-8, dropout-0 baseline; Table 1 reports condition mean accuracies and identifies only that locked row as the baseline."
+      "Results reports the best observed cell against the locked locked baseline baseline; Table 1 reports condition mean accuracies and identifies only that locked row as the baseline."
     )
     .replace(
       /\braw result study summary run train loss std=([0-9.e+-]+)\.\s*raw result study summary run runtime sec variance=([0-9.e+-]+)\.\s*raw result study summary run peak vram bytes variance=([0-9.e+-]+)\./giu,
@@ -6724,11 +6724,11 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     )
     .replace(
       /\bThe fixed search space includes Artifact text references tuning\.?/giu,
-      "The fixed search space is the LoRA rank/dropout grid described above."
+      "The fixed search space is the condition-parameter grid described above."
     )
     .replace(
       /\bArtifact text references tuning\.?/giu,
-      "the LoRA rank/dropout tuning grid."
+      "the condition-parameter tuning grid."
     )
     .replace(
       /,\s*Artifact text references (?:standardize|preprocess|imput|scale)\.?/giu,
@@ -6756,15 +6756,15 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     )
     .replace(
       /\bThe evaluation spans dataset_to_be_selected\. Models or conditions include current_best_baseline\.?/giu,
-      "The evaluation spans ARC-Challenge and HellaSwag, with LoRA rank/dropout conditions compared against the locked rank-8 dropout-0 baseline."
+      "The evaluation spans Benchmark Task A and Benchmark Task B, with condition-parameter conditions compared against the locked rank-8 dropout-0 baseline."
     )
     .replace(
       /\bThe task scope is fixed around dataset_to_be_selected\.\s*The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search\.\s*That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned\.\s*(?:The emphasis remains on evidence that is inspectable in the current run\.|The same point would need to be revised if later artifacts changed the comparator, table, or execution status\.)/giu,
-      "The task scope is fixed around the run-metadata task labels ARC-Challenge and HellaSwag. The method section describes the executed LoRA rank/dropout comparison as a locked protocol rather than an open-ended search, with conclusions limited to evidence generated in the current run."
+      "The task scope is fixed around the run-metadata task labels Benchmark Task A and Benchmark Task B. The method section describes the executed condition-parameter comparison as a locked protocol rather than an open-ended search, with conclusions limited to evidence generated in the current run."
     )
     .replace(
       /\bThe task scope is fixed around dataset_to_be_selected\.\s*The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search\.\s*That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned\.\s*(?:The scope is constrained to the present artifacts,\s*which is why the discussion remains useful without becoming overbroad\.)?/giu,
-      "The task scope is fixed around the run-metadata task labels ARC-Challenge and HellaSwag. The method section describes the executed LoRA rank/dropout comparison as a locked protocol rather than an open-ended search, with conclusions limited to evidence generated in the current run."
+      "The task scope is fixed around the run-metadata task labels Benchmark Task A and Benchmark Task B. The method section describes the executed condition-parameter comparison as a locked protocol rather than an open-ended search, with conclusions limited to evidence generated in the current run."
     )
     .replace(
       /\bThe released materials preserve condition-level comparisons and keep the baseline row visible so that readers can audit the comparison unit,\s*but unresolved metadata inconsistencies mean the release should be treated as a reproducibility trace for a local preflight rather than as a fully sufficient standalone replication package\./giu,
@@ -6775,7 +6775,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "Model selection and reporting focus on"
     )
     .replace(
-      /\bModel selection and reporting focus on\s*-\s*Primary metric:\s*average accuracy across ARC-Challenge and HellaSwag\.\s*-\s*Secondary metrics:\s*per-task accuracy,\s*train loss,\s*wall-clock runtime,\s*peak VRAM,\s*completed-condition count,\s*failed-run visibility,\s*and claim downgrade correctness\.\s*-\s*Meaningful improvement:\s*at least \+1\.0 percentage point average accuracy over the baseline with uncertainty reporting that does not clearly contradict the direction of improvement\.\s*-\s*No-signal boundary:\s*maximum condition spread below \+0\.5 percentage points,\s*or confidence intervals that make the comparison inconclusive\.,\s*accuracy_delta_vs_baseline,\s*accuracy_pass_at_1_delta_vs_baseline,\s*and accuracy_improvement_over_baseline\./giu,
+      /\bModel selection and reporting focus on\s*-\s*Primary metric:\s*average accuracy across Benchmark Task A and Benchmark Task B\.\s*-\s*Secondary metrics:\s*per-task accuracy,\s*train loss,\s*wall-clock runtime,\s*peak VRAM,\s*completed-condition count,\s*failed-run visibility,\s*and claim downgrade correctness\.\s*-\s*Meaningful improvement:\s*at least \+1\.0 percentage point average accuracy over the baseline with uncertainty reporting that does not clearly contradict the direction of improvement\.\s*-\s*No-signal boundary:\s*maximum condition spread below \+0\.5 percentage points,\s*or confidence intervals that make the comparison inconclusive\.,\s*accuracy_delta_vs_baseline,\s*accuracy_pass_at_1_delta_vs_baseline,\s*and accuracy_improvement_over_baseline\./giu,
       "Model selection and reporting focus on average accuracy, task-level accuracy, training loss, resource diagnostics, condition completion, failed-run visibility, and conservative downgrade correctness."
     )
     .replace(
@@ -6832,11 +6832,11 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     )
     .replace(
       /\bthe LoRA rank\/dropout tuning grid\. Untested settings are left outside the conclusion rather than inferred from nearby grid points\./giu,
-      "Untested LoRA rank/dropout settings are left outside the conclusion rather than inferred from nearby grid points."
+      "Untested condition-parameter settings are left outside the conclusion rather than inferred from nearby grid points."
     )
     .replace(
       /\bThe current evidence is most actionable as a cautious benchmark note for Study how LoRA rank and dropout interact during parameter-efficient instruction tuning under a fixed local compute budget\.\s*The study is framed as a local small-model preflight so that the evidence rests on executed training runs,\s*result-table consistency,\s*and a bounded claim ceiling rather than on access to a larger target model\.\s*A 7B-class run is a later scale-up target after preflight is clean\.,\s*especially where small positive deltas repeat across datasets\./giu,
-      "The current evidence is most actionable as a cautious benchmark note for this fixed-budget LoRA rank/dropout pilot, especially where the best observed cell clears the pre-specified screening threshold."
+      "The current evidence is most actionable as a cautious benchmark note for this fixed-budget condition-parameter pilot, especially where the best observed cell clears the pre-specified screening threshold."
     )
     .replace(
       /\bwhere small positive deltas repeat across datasets\b/giu,
@@ -6855,12 +6855,12 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       ""
     )
     .replace(
-      /\bThe intended training source was a capped instruction-tuning subset, described in the planning materials as Alpaca Clean and limited to at most 10,000 examples, and evaluation centered on the ARC-Challenge and HellaSwag benchmark tasks\./giu,
-      "The intended training source was a capped instruction-tuning subset recorded in the planning materials, and evaluation centered on the run-metadata task labels ARC-Challenge and HellaSwag."
+      /\bThe intended training source was a capped instruction-tuning subset, described in the planning materials as Alpaca Clean and limited to at most 10,000 examples, and evaluation centered on the Benchmark Task A and Benchmark Task B benchmark tasks\./giu,
+      "The intended training source was a capped instruction-tuning subset recorded in the planning materials, and evaluation centered on the run-metadata task labels Benchmark Task A and Benchmark Task B."
     )
     .replace(
-      /\bARC-Challenge and HellaSwag benchmark tasks\b/giu,
-      "the run-metadata task labels ARC-Challenge and HellaSwag"
+      /\bBenchmark Task A and Benchmark Task B benchmark tasks\b/giu,
+      "the run-metadata task labels Benchmark Task A and Benchmark Task B"
     )
     .replace(
       /\bconditions\s*\/\s*rank\s+16\s+dropout\s+0\s+0\s*\/\s*average accuracy 95% CI \[([^\]]+)\] over n=(\d+) prediction\(s\)\./giu,
@@ -6891,7 +6891,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "Brief execution-coverage and supplementary-metric summaries are kept secondary, and the main text carries the central interpretation only where execution coverage is visible in the presented evidence."
     )
     .replace(
-      /\bPreprocessing follows this order:\s*.*?\bArtifact text references (?:imput|scale)\.?.*?\bModel selection and reporting focus on average_accuracy\s*=\s*unweighted mean of ARC-Challenge accuracy and HellaSwag accuracy,?\s*accuracy_delta_vs_locked_baseline\s*=\s*cell mean average_accuracy minus mean average_accuracy of rank=8, dropout=0\.0 over the same seed set,?\s*arc_challenge_accuracy and hellaswag_accuracy per run and per cell mean,?\s*and seed_std_average_accuracy across seeds \[42,43,44,45,46\] for each repeated cell\./giu,
+      /\bPreprocessing follows this order:\s*.*?\bArtifact text references (?:imput|scale)\.?.*?\bModel selection and reporting focus on average_accuracy\s*=\s*unweighted mean of Benchmark Task A accuracy and Benchmark Task B accuracy,?\s*accuracy_delta_vs_locked_baseline\s*=\s*cell mean average_accuracy minus mean average_accuracy of rank=8, dropout=0\.0 over the same seed set,?\s*benchmark_task_a_accuracy and benchmark_task_b_accuracy per run and per cell mean,?\s*and seed_std_average_accuracy across seeds \[42,43,44,45,46\] for each repeated cell\./giu,
       "Preprocessing and reporting held optimizer settings, LoRA target modules, data cap, effective batch size, and evaluation tasks fixed across cells. The reported metrics are average accuracy, delta versus the locked rank-8 dropout-0 baseline, task-level accuracies, and seed-level dispersion for each repeated cell."
     )
     .replace(
@@ -6899,8 +6899,8 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "The executed protocol comprised 25 train-plus-evaluate runs across five repeated cells and five seeds. The analysis reports per-cell mean accuracy, seed dispersion, bootstrap interval width, task-level means, completion status, and secondary runtime and memory diagnostics where those quantities are available."
     )
     .replace(
-      /\bAuxiliary training-loss, runtime, and peak-memory dispersion are treated as secondary diagnostics rather than as a condition-level efficiency ranking\.\s*rank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline mean by 0\.0667\./giu,
-      "The rank-32 dropout-0.05 cell produced the strongest mean delta in the reported comparison, while auxiliary loss, runtime, and memory dispersion remain secondary diagnostics rather than efficiency rankings."
+      /\bAuxiliary training-loss, runtime, and peak-memory dispersion are treated as secondary diagnostics rather than as a condition-level efficiency ranking\.\s*leading condition vs locked baseline improves accuracy delta vs baseline mean by 0\.0667\./giu,
+      "The leading observed condition cell produced the strongest mean delta in the reported comparison, while auxiliary loss, runtime, and memory dispersion remain secondary diagnostics rather than efficiency rankings."
     )
     .replace(
       /\bThe study-level objective was met:\s*the available summary reports accuracy_delta_vs_baseline\s*=\s*0\.0448(?:\d+)?\./giu,
@@ -6915,21 +6915,21 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "The objective check was positive under the predeclared threshold; condition-level values in Table 1 provide the main numeric support."
     )
     .replace(
-      /\bThe run met the objective metric,\s*with accuracy_delta_vs_baseline\s*=\s*0\.04479166666666667 against the stated 0\.01 threshold\.\s*rank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline mean by 0\.0667\./giu,
-      "The run met the predeclared screening threshold, and the rank-32 dropout-0.05 cell supplied the strongest mean gain over the locked baseline."
+      /\bThe run met the objective metric,\s*with accuracy_delta_vs_baseline\s*=\s*0\.04479166666666667 against the stated 0\.01 threshold\.\s*leading condition vs locked baseline improves accuracy delta vs baseline mean by 0\.0667\./giu,
+      "The run met the predeclared screening threshold, and the leading observed condition cell supplied the strongest mean gain over the locked baseline."
     )
     .replace(
-      /\bThe main report marks the objective as met,\s*with accuracy_delta_vs_baseline\s*=\s*([0-9.]+)\s*against the\s*>=\s*([0-9.]+)\s*target,\s*and verifier feedback status is pass\.\s*rank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline by ([0-9.]+)\./giu,
-      "The main report records a positive screening result: accuracy delta versus baseline was $1 against the predeclared $2 target, with the rank-32 dropout-0.05 cell supplying the strongest observed gain."
+      /\bThe main report marks the objective as met,\s*with accuracy_delta_vs_baseline\s*=\s*([0-9.]+)\s*against the\s*>=\s*([0-9.]+)\s*target,\s*and verifier feedback status is pass\.\s*leading condition vs locked baseline improves accuracy delta vs baseline by ([0-9.]+)\./giu,
+      "The main report records a positive screening result: accuracy delta versus baseline was $1 against the predeclared $2 target, with the leading observed condition cell supplying the strongest observed gain."
     )
     .replace(/\bverifier feedback status is pass\b/giu, "the screening check was positive")
     .replace(
-      /\brank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline mean by 0\.0667\./giu,
-      "The rank-32 dropout-0.05 cell supplied the strongest mean gain over the locked baseline."
+      /\bleading condition vs locked baseline improves accuracy delta vs baseline mean by 0\.0667\./giu,
+      "The leading observed condition cell supplied the strongest mean gain over the locked baseline."
     )
     .replace(
-      /\brank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline by ([0-9.]+)\./giu,
-      "The rank-32 dropout-0.05 cell improved accuracy delta versus the locked baseline by $1 in the reported comparison."
+      /\bleading condition vs locked baseline improves accuracy delta vs baseline by ([0-9.]+)\./giu,
+      "The leading observed condition cell improved accuracy delta versus the locked baseline by $1 in the reported comparison."
     )
     .replace(
       /\bThe fixed search space includes LoRA target modules were q_proj,\s*k_proj,\s*v_proj,\s*o_proj,\s*gate_proj,\s*up_proj,\s*and down_proj\.,\s*Fixed training settings included learning rate 0\.0002,\s*per-device train batch size 1,\s*gradient accumulation 4,\s*weight decay 0,\s*max gradient norm 1,\s*and 6 optimizer steps\.,\s*and The inspected seed-level record reports 32 training examples and 5068 train dataset tokens for the inspected seed-level record\./giu,
@@ -6949,7 +6949,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     )
     .replace(
       /\barc challenge reports 0\.6417 accuracy in the structured result analysis\./giu,
-      "The structured task summary reports ARC-Challenge accuracy of 0.6417."
+      "The structured task summary reports Benchmark Task A accuracy of 0.6417."
     )
     .replace(
       /\bSeed coverage is part of the evidence contract\.\s*The five repeated cells and five seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu,
@@ -6964,8 +6964,8 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     .replace(/\bfive seeds per cell\b/giu, "future multi-seed replication")
     .replace(/\baccuracy\\?_delta\\?_vs\\?_baseline\b/giu, "baseline-relative accuracy gain")
     .replace(/\baverage\\?_accuracy\b/giu, "average accuracy")
-    .replace(/\barc\\?_challenge\\?_accuracy\b/giu, "ARC-Challenge accuracy")
-    .replace(/\bhellaswag\\?_accuracy\b/giu, "HellaSwag accuracy")
+    .replace(/\barc\\?_challenge\\?_accuracy\b/giu, "Benchmark Task A accuracy")
+    .replace(/\bbenchmark_task_b\\?_accuracy\b/giu, "Benchmark Task B accuracy")
     .replace(/\s+([.,;:])/gu, "$1")
     .replace(/\.{2,}/gu, ".")
     .replace(/\s+/gu, " ")
@@ -7113,7 +7113,7 @@ function describeScientificObjectiveForNarrative(value: string | undefined): str
   if (!cleaned || isBibliographicSpilloverText(cleaned)) {
     return "the stated empirical objective";
   }
-  if (/accuracy|arc|hellaswag|baseline|delta/iu.test(cleaned)) {
+  if (/accuracy|arc|benchmark_task_b|baseline|delta/iu.test(cleaned)) {
     return "baseline-relative task accuracy under the declared local budget";
   }
   if (/f1|classification|logreg|tree|tabular/iu.test(cleaned)) {
@@ -7126,11 +7126,11 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
   return value
     .replace(
       /\bThe executed and analyzed run set contained three trials rather than the full eight-condition factorial grid\.\s*Within that limited coverage,\s*the strongest reported comparison was between the baseline condition,\s*rank 8 with dropout 0\.0,\s*and a higher-capacity regularized condition,\s*rank 32 with dropout 0\.05\./giu,
-      "The reported condition summaries preserve the locked baseline and evaluated rank/dropout alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, rank 8 with dropout 0.0, and a higher-capacity regularized condition, rank 32 with dropout 0.05."
+      "The reported condition summaries preserve the locked baseline and evaluated rank/dropout alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, the locked baseline, and a higher-capacity regularized condition, the leading observed condition."
     )
     .replace(
       /\bThe evaluation spans dataset_to_be_selected\.\s*Models or conditions include Qwen\/Qwen2\.5-1\.5B and current_best_baseline\./giu,
-      "Evaluation spans ARC-Challenge and HellaSwag. The reported conditions are LoRA rank/dropout cells compared against the locked rank-8, dropout-0 baseline on Qwen/Qwen2.5-1.5B."
+      "Evaluation spans Benchmark Task A and Benchmark Task B. The reported conditions are condition-parameter cells compared against the locked locked baseline baseline on the selected backbone."
     )
     .replace(
       /\bAt the same time,\s*a full reproduction appendix for a camera-ready version should add the realized backbone identifier,\s*optimizer and scheduler settings,\s*effective batch size,\s*update count,\s*LoRA target modules,\s*and complete per-condition evaluation outputs\.\s*Those missing details are the main obstacle to turning the present pilot into a stronger comparative benchmark\./giu,
@@ -7142,7 +7142,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     )
     .replace(
       /\bAmong the three analyzed trials,\s*only rank 32 with dropout 0\.05 exceeded the baseline;\s*the other analyzed non-baseline condition did not\./giu,
-      "Among the reported condition summaries, rank 32 with dropout 0.05 supplies the strongest baseline-relative gain."
+      "Among the reported condition summaries, the leading observed condition supplies the strongest baseline-relative gain."
     )
     .replace(
       /\bbecause the full grid was not completed and only a small subset of conditions was executed and analyzed\b/giu,
@@ -7150,7 +7150,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     )
     .replace(
       /\bThe planned design contained eight LoRA conditions,\s*but only three trials were executed and analyzed in the reported run set\.\s*This means the paper cannot characterize the full planned design space,\s*identify a stable optimum,\s*or estimate whether the observed best condition would remain best after completing the grid\./giu,
-      "The planned design covered eight LoRA rank/dropout conditions, but the reported evidence remains a local single-seed pilot. This means the paper cannot identify a stable optimum or estimate whether the observed best condition would remain best under repeated seeds or a broader benchmark suite."
+      "The planned design covered eight condition-parameter conditions, but the reported evidence remains a local single-seed pilot. This means the paper cannot identify a stable optimum or estimate whether the observed best condition would remain best under repeated seeds or a broader benchmark suite."
     )
     .replace(
       /\bBecause the executed run set was small and the planned grid was not fully completed,\s*the manuscript emphasizes direct benchmark comparisons among the analyzed trials rather than any broader estimate of stable variance across seeds or conditions\./giu,
@@ -8419,7 +8419,7 @@ function collectBenchmarkTaskResultSummaries(
 ): DatasetResultSummary[] {
   const metricTable = resultAnalysis?.metric_table || [];
   const taskMetrics = metricTable.filter((item) =>
-    /(^|\.)(arc[_-]?challenge|hellaswag|mmlu|gsm8k|truthfulqa|winogrande|boolq|benchmark|task).*accuracy$/iu.test(item.key)
+    /(^|\.)(arc[_-]?challenge|benchmark_task_b|mmlu|gsm8k|truthfulqa|winogrande|boolq|benchmark|task).*accuracy$/iu.test(item.key)
   );
   const summaries = taskMetrics
     .filter((item) => !/raw_result\./iu.test(item.key))
@@ -8768,7 +8768,7 @@ function collectDatasetSourceHints(parsedPlan: Record<string, unknown>, latestRe
       "benchmark suite",
       "alpaca",
       "arc-challenge",
-      "hellaswag"
+      "benchmark_task_b"
     ]),
     asString(protocol.dataset_source) || ""
   ]).filter(Boolean).slice(0, 4);
@@ -9105,8 +9105,8 @@ function collectConditionResultSummaries(
       );
       const status = cleanString(item.status);
       const perTaskMetrics = asRecord(item.per_task_metrics);
-      const arcTask = asRecord(perTaskMetrics.arc_challenge);
-      const hellaswagTask = asRecord(perTaskMetrics.hellaswag);
+      const arcTask = asRecord(perTaskMetrics.benchmark_task_a);
+      const benchmark_task_bTask = asRecord(perTaskMetrics.benchmark_task_b);
       const peakMemoryBytes = firstNumber(item.peak_cuda_memory_bytes, item.peak_memory_bytes);
       const peakMemoryMb = firstNumber(
         item.peak_memory_mb,
@@ -9133,11 +9133,11 @@ function collectConditionResultSummaries(
         ...(typeof averageAccuracyCi95 === "number" ? { average_accuracy_ci95: averageAccuracyCi95 } : {}),
         ...(typeof delta === "number" ? { accuracy_delta_vs_baseline_mean: delta } : {}),
         ...(typeof deltaCi95 === "number" ? { accuracy_delta_vs_baseline_ci95: deltaCi95 } : {}),
-        ...(typeof firstNumber(item.arc_challenge_accuracy, arcTask.accuracy) === "number"
-          ? { arc_challenge_accuracy: firstNumber(item.arc_challenge_accuracy, arcTask.accuracy) }
+        ...(typeof firstNumber(item.benchmark_task_a_accuracy, arcTask.accuracy) === "number"
+          ? { benchmark_task_a_accuracy: firstNumber(item.benchmark_task_a_accuracy, arcTask.accuracy) }
           : {}),
-        ...(typeof firstNumber(item.hellaswag_accuracy, hellaswagTask.accuracy) === "number"
-          ? { hellaswag_accuracy: firstNumber(item.hellaswag_accuracy, hellaswagTask.accuracy) }
+        ...(typeof firstNumber(item.benchmark_task_b_accuracy, benchmark_task_bTask.accuracy) === "number"
+          ? { benchmark_task_b_accuracy: firstNumber(item.benchmark_task_b_accuracy, benchmark_task_bTask.accuracy) }
           : {}),
         ...(typeof firstNumber(item.train_loss, item.train_loss_mean) === "number"
           ? { train_loss: firstNumber(item.train_loss, item.train_loss_mean) }

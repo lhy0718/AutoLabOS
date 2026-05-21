@@ -2689,7 +2689,7 @@ function derivePrimaryMetricFromConditionSummaries(
   if (rows.length === 0) {
     return undefined;
   }
-  const baselineMarker = asString(metrics.baseline_condition_marker) || "rank_8_dropout_0_0";
+  const baselineMarker = asString(metrics.baseline_condition_marker) || inferBaselineConditionMarker(rows);
   const candidateRows =
     primaryMetricKey === "accuracy_delta_vs_baseline"
       ? rows.filter((row) => {
@@ -2704,6 +2704,15 @@ function derivePrimaryMetricFromConditionSummaries(
     return undefined;
   }
   return Math.max(...values);
+}
+
+function inferBaselineConditionMarker(rows: Record<string, unknown>[]): string | undefined {
+  for (const row of rows) {
+    if (row.is_baseline === true) {
+      return asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id) || asString(row.id);
+    }
+  }
+  return undefined;
 }
 
 function countTextOccurrences(text: string, token: string): number {

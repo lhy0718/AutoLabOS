@@ -28,7 +28,7 @@ describe("resultsTableSchema", () => {
     const rows = buildResultsTableSchema(
       [
         "Primary metric within each model: avg_accuracy and delta_avg_accuracy_vs_model_baseline_pp",
-        "Per-task accuracy with raw correct/total counts for ARC-Challenge and HellaSwag",
+        "Per-task accuracy with raw correct/total counts for Benchmark Task A and Benchmark Task B",
         "accuracy_delta_vs_baseline",
         "average_accuracy"
       ],

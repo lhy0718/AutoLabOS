@@ -10056,7 +10056,7 @@ const RECIPE_WORKFLOW_ENTRYPOINT_NAMES = [
   "execute_recipe_execution_and_evaluation_loop",
   "run_recipe_execution_evaluation_loop",
   "run_baseline_first_peft_study",
-  "run_locked_peft_instruction_study",
+  "run_locked_instruction_study",
   "run_locked_peft_study",
   "run_peft_study",
   "run_experiment_rows",
@@ -10072,8 +10072,8 @@ const RECIPE_WORKFLOW_ENTRYPOINT_NAMES = [
   "run_study_with_status",
   "run_full_study_with_status",
   "execute_study_from_args",
-  "run_peft_instruction_study",
-  "execute_peft_instruction_study",
+  "run_study",
+  "execute_study",
   "orchestrate_experiment",
   "orchestrate_study",
   "execute_experiment",
@@ -10256,7 +10256,7 @@ const BENCHMARK_EVALUATOR_ENTRYPOINT_NAMES = [
 const KNOWN_GENERATED_BENCHMARK_EVALUATOR_NAMES = [
   "evaluate_multiple_choice_accuracy",
   "evaluate_candidate_model",
-  "evaluate_arc_challenge_and_hellaswag",
+  "evaluate_multiple_choice_benchmarks",
   "evaluate_recipe_model",
   "evaluate_benchmark",
   "evaluate_zero_shot_benchmarks",
@@ -10287,43 +10287,15 @@ const BENCHMARK_LOADER_ENTRYPOINT_NAMES = [
   "load_benchmarks",
   "prepare_benchmark_tasks",
   "prepare_benchmarks",
-  "load_arc_challenge_subset",
-  "load_arc_challenge",
-  "load_arc_dataset",
-  "load_arc_challenge_examples",
-  "prepare_arc_challenge_examples",
-  "prepare_arc_challenge",
-  "load_hellaswag_subset",
-  "load_hellaswag",
-  "load_hellaswag_dataset",
-  "load_hellaswag_examples",
-  "prepare_hellaswag_examples",
-  "prepare_hellaswag"
+  "load_named_benchmark_subset",
+  "load_named_benchmark_examples"
 ];
 
-const BENCHMARK_ARC_CHALLENGE_LOADER_NAMES = [
-  "load_arc_challenge_subset",
-  "load_arc_challenge",
-  "load_arc_dataset",
-  "load_arc_challenge_examples",
-  "prepare_arc_challenge_examples",
-  "prepare_arc_challenge"
-];
-
-const BENCHMARK_HELLASWAG_LOADER_NAMES = [
-  "load_hellaswag_subset",
-  "load_hellaswag",
-  "load_hellaswag_dataset",
-  "load_hellaswag_examples",
-  "prepare_hellaswag_examples",
-  "prepare_hellaswag"
-];
 
 const BENCHMARK_LOADER_MISSING_MARKERS = [
   "No benchmark examples were provided and no benchmark-loading helper is available",
   "No benchmark dataset loading helper is available",
-  "No benchmark loading helper found for ARC-Challenge and HellaSwag",
-  "No ARC-Challenge/HellaSwag benchmark loaders were defined in earlier sections"
+  "No named benchmark loaders were defined in earlier sections"
 ];
 
 async function detectPythonMissingBenchmarkEvaluatorDispatch(scriptPath?: string): Promise<string | undefined> {
@@ -10416,47 +10388,6 @@ async function detectPythonBenchmarkLoaderDispatchMismatch(scriptPath?: string):
   const definedReferencedLoaders = referencedLoaderNames.filter((name) =>
     pythonSourceDefinesName(source, name)
   );
-  const isArcHellaswagBundleMarker = source.includes(
-    "No ARC-Challenge/HellaSwag benchmark loaders were defined in earlier sections"
-  ) || source.includes("No benchmark loading helper found for ARC-Challenge and HellaSwag");
-  if (isArcHellaswagBundleMarker) {
-    const definedArcLoaders = BENCHMARK_ARC_CHALLENGE_LOADER_NAMES.filter((name) =>
-      pythonSourceDefinesName(source, name)
-    );
-    const definedHellaswagLoaders = BENCHMARK_HELLASWAG_LOADER_NAMES.filter((name) =>
-      pythonSourceDefinesName(source, name)
-    );
-    const referencedArcLoaders = BENCHMARK_ARC_CHALLENGE_LOADER_NAMES.filter(
-      (name) => resolverWindow.includes(`"${name}"`) || resolverWindow.includes(`'${name}'`)
-    );
-    const referencedHellaswagLoaders = BENCHMARK_HELLASWAG_LOADER_NAMES.filter(
-      (name) => resolverWindow.includes(`"${name}"`) || resolverWindow.includes(`'${name}'`)
-    );
-    const missesGeneratedArcLoader =
-      definedArcLoaders.length > 0 &&
-      referencedArcLoaders.length > 0 &&
-      !definedArcLoaders.some((name) => referencedArcLoaders.includes(name));
-    const missesGeneratedHellaswagLoader =
-      definedHellaswagLoaders.length > 0 &&
-      referencedHellaswagLoaders.length > 0 &&
-      !definedHellaswagLoaders.some((name) => referencedHellaswagLoaders.includes(name));
-    if (missesGeneratedArcLoader || missesGeneratedHellaswagLoader) {
-      const visibleReferenced = [
-        ...referencedArcLoaders,
-        ...referencedHellaswagLoaders
-      ].join(", ");
-      const visibleGenerated = [
-        ...definedArcLoaders,
-        ...definedHellaswagLoaders
-      ].slice(0, 6).join(", ");
-      return [
-        "Generated Python runner has a benchmark loader dispatch mismatch.",
-        `ARC/HellaSwag resolver searches for loader helper(s): ${visibleReferenced}.`,
-        `Generated ARC/HellaSwag loader helper(s) exist under different name(s): ${visibleGenerated}.`,
-        "Define one searched ARC and HellaSwag loader helper, or align the resolver lookup with the generated benchmark loaders before handoff."
-      ].join(" ");
-    }
-  }
   if (definedReferencedLoaders.length > 0) {
     return undefined;
   }
@@ -10718,12 +10649,6 @@ async function detectPythonEvaluationSampleDictAccessMismatch(
   const evaluatorSource = evaluatorMatch?.[0] || "";
   const objectBackedLoader =
     /\bdef\s+load_evaluation_samples\s*\([\s\S]*?Dict\s*\[[^\]]*List\s*\[\s*EvaluationSample\s*\]/u.test(
-      source
-    ) ||
-    /\bdef\s+load_arc_challenge_eval_samples\s*\([\s\S]*?\)\s*->\s*List\s*\[\s*EvaluationSample\s*\]/u.test(
-      source
-    ) ||
-    /\bdef\s+load_hellaswag_eval_samples\s*\([\s\S]*?\)\s*->\s*List\s*\[\s*EvaluationSample\s*\]/u.test(
       source
     );
   const evaluatorUsesDictAccess =
@@ -12240,21 +12165,17 @@ function parseFullEvaluationContract(text: string): {
 } {
   const lower = text.toLowerCase();
   const fullEvaluationRequired =
-    /\bfull\b[\s\S]{0,120}\b(?:arc[-\s]?challenge|hellaswag|validation|evaluation)\b/iu.test(text) ||
-    /\b(?:arc[-\s]?challenge|hellaswag)\b[\s\S]{0,120}\bfull\b[\s\S]{0,120}\b(?:validation|evaluation|split|set)s?\b/iu.test(text);
+    /\bfull\b[\s\S]{0,120}\b(?:benchmark|task|validation|evaluation)\b/iu.test(text) ||
+    /\b(?:benchmark|task)\b[\s\S]{0,120}\bfull\b[\s\S]{0,120}\b(?:validation|evaluation|split|set)s?\b/iu.test(text);
   const minimumEvalExamplesPerTask: Record<string, number> = {};
-  const arcCount = extractTaskEvaluationCount(text, ["arc-challenge", "arc_challenge", "arc"]);
-  const hellaswagCount = extractTaskEvaluationCount(text, ["hellaswag", "hella-swag", "hella_swag"]);
-  if (arcCount !== undefined) {
-    minimumEvalExamplesPerTask.arc_challenge = arcCount;
-  }
-  if (hellaswagCount !== undefined) {
-    minimumEvalExamplesPerTask.hellaswag = hellaswagCount;
+  const taskCount = extractTaskEvaluationCount(text, ["benchmark", "task", "evaluation"]);
+  if (taskCount !== undefined) {
+    minimumEvalExamplesPerTask.benchmark_task = taskCount;
   }
   if (
     /\bfull\b/u.test(lower) &&
     (Object.keys(minimumEvalExamplesPerTask).length > 0 ||
-      /\b(?:arc[-\s]?challenge|hellaswag)\b[\s\S]{0,160}\bvalidation\s+(?:sets?|splits?)\b/iu.test(text))
+      /\b(?:benchmark|task)\b[\s\S]{0,160}\bvalidation\s+(?:sets?|splits?)\b/iu.test(text))
   ) {
     return { fullEvaluationRequired: true, minimumEvalExamplesPerTask };
   }
@@ -18740,12 +18661,12 @@ export async function repairPythonMetricsPayloadMappingResultSurface(
 
   const metricPathRepairs: Array<[RegExp, string]> = [
     [
-      /\(\("arc_challenge_accuracy",\),\s*\("arc_accuracy",\),\s*\("metrics",\s*"arc_challenge_accuracy"\)\)/u,
-      '(\n                ("arc_challenge_accuracy",),\n                ("arc_accuracy",),\n                ("evaluation", "arc_challenge_accuracy"),\n                ("evaluation", "arc_accuracy"),\n                ("evaluation", "per_benchmark_accuracy", "arc_challenge"),\n                ("evaluation", "benchmark_results", "arc_challenge", "accuracy"),\n                ("metrics", "arc_challenge_accuracy"),\n            )'
+      /\(\("benchmark_task_a_accuracy",\),\s*\("task_a_accuracy",\),\s*\("metrics",\s*"benchmark_task_a_accuracy"\)\)/u,
+      '(\n                ("benchmark_task_a_accuracy",),\n                ("task_a_accuracy",),\n                ("evaluation", "benchmark_task_a_accuracy"),\n                ("evaluation", "task_a_accuracy"),\n                ("evaluation", "per_benchmark_accuracy", "benchmark_task_a"),\n                ("evaluation", "benchmark_results", "benchmark_task_a", "accuracy"),\n                ("metrics", "benchmark_task_a_accuracy"),\n            )'
     ],
     [
-      /\(\("hellaswag_accuracy",\),\s*\("metrics",\s*"hellaswag_accuracy"\)\)/u,
-      '(\n                ("hellaswag_accuracy",),\n                ("evaluation", "hellaswag_accuracy"),\n                ("evaluation", "per_benchmark_accuracy", "hellaswag"),\n                ("evaluation", "benchmark_results", "hellaswag", "accuracy"),\n                ("metrics", "hellaswag_accuracy"),\n            )'
+      /\(\("benchmark_task_b_accuracy",\),\s*\("metrics",\s*"benchmark_task_b_accuracy"\)\)/u,
+      '(\n                ("benchmark_task_b_accuracy",),\n                ("evaluation", "benchmark_task_b_accuracy"),\n                ("evaluation", "per_benchmark_accuracy", "benchmark_task_b"),\n                ("evaluation", "benchmark_results", "benchmark_task_b", "accuracy"),\n                ("metrics", "benchmark_task_b_accuracy"),\n            )'
     ],
     [
       /\(\("mean_zero_shot_accuracy",\),\s*\("primary_metric",\),\s*\("metrics",\s*"mean_zero_shot_accuracy"\)\)/u,
@@ -19781,7 +19702,7 @@ export async function repairPythonConditionTrainEvalHelperBridgeSurface(
     "                    with contextlib.suppress(Exception):",
     "                        max_eval_examples = max(",
     "                            int(runtime.get(\"arc_eval_examples\") or 0),",
-    "                            int(runtime.get(\"hellaswag_eval_examples\") or 0),",
+    "                            int(runtime.get(\"task_b_eval_examples\") or 0),",
     "                        ) or None",
     "                train_result = dict(evaluate_condition_result(",
     "                    train_result,",
@@ -19861,7 +19782,7 @@ export async function repairPythonConditionTrainEvalHelperBridgeSurface(
     "            value = runtime.get(key)",
     "            if value:",
     "                return str(value)",
-    "    return str(globals().get(\"PREFERRED_BASE_MODEL_ID\") or globals().get(\"PREFERRED_MODEL_ID\") or \"Qwen/Qwen2.5-1.5B\")",
+    "    return str(globals().get(\"PREFERRED_BASE_MODEL_ID\") or globals().get(\"PREFERRED_MODEL_ID\") or globals().get(\"DEFAULT_BASE_MODEL\") or \"\")",
     "",
     "def run_baseline_condition(context=None, run_context=None, condition=None, condition_spec=None, spec=None, selected_model_id=None, preflight_result=None, logger=None, **kwargs):",
     "    active_context = context if context is not None else run_context",
@@ -20964,9 +20885,9 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
   const hasEvaluationLoaderBridge = source.includes("def _autolabos_call_evaluation_loader(");
   const hasEntrypointDatasetFailureMarker =
     source.includes("No evaluation dataset loader is available in the materialized script") ||
-    source.includes("No ARC-Challenge/HellaSwag benchmark loaders were defined in earlier sections") ||
-    source.includes("No benchmark loading helper found for ARC-Challenge and HellaSwag") ||
-    source.includes("no ARC-Challenge/HellaSwag evaluation dataset helper is available") ||
+    source.includes("No benchmark task pair benchmark loaders were defined in earlier sections") ||
+    source.includes("No benchmark loading helper found for Benchmark Task A and Benchmark Task B") ||
+    source.includes("no benchmark task pair evaluation dataset helper is available") ||
     (source.includes("Missing required dataset helper(s)") && source.includes("evaluation dataset loader"));
   const searchedCombinedNames = [
     "load_evaluation_datasets",
@@ -20985,8 +20906,8 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
     "load_public_evaluation_datasets",
     "load_public_benchmark_datasets",
     "load_bounded_public_benchmark_datasets",
-    "load_arc_hellaswag_public_datasets",
-    "load_arc_and_hellaswag_datasets",
+    "load_benchmark_pair_public_datasets",
+    "load_benchmark_pair_datasets",
     "load_evaluation_examples",
     "load_eval_examples"
   ];
@@ -21000,31 +20921,31 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
     "load_bounded_eval_datasets"
   ];
   const searchedArcNames = [
-    "load_arc_challenge_examples",
-    "load_arc_challenge_dataset",
-    "load_arc_challenge",
-    "load_arc_dataset"
+    "load_benchmark_task_a_examples",
+    "load_benchmark_task_a_dataset",
+    "load_benchmark_task_a",
+    "load_benchmark_task_a_dataset"
   ];
   const generatedArcNames = [
-    "load_arc_challenge_eval_dataset",
-    "load_arc_challenge_raw_dataset",
-    "load_public_arc_challenge_dataset",
-    "load_bounded_arc_challenge_dataset",
-    "load_arc_challenge_public_dataset",
-    "load_arc_challenge_raw_examples"
+    "load_benchmark_task_a_eval_dataset",
+    "load_benchmark_task_a_raw_dataset",
+    "load_public_benchmark_task_a_dataset",
+    "load_bounded_benchmark_task_a_dataset",
+    "load_benchmark_task_a_public_dataset",
+    "load_benchmark_task_a_raw_examples"
   ];
   const searchedHellaswagNames = [
-    "load_hellaswag_examples",
-    "load_hellaswag_dataset",
-    "load_hellaswag"
+    "load_benchmark_task_b_examples",
+    "load_benchmark_task_b_dataset",
+    "load_benchmark_task_b"
   ];
   const generatedHellaswagNames = [
-    "load_hellaswag_eval_dataset",
-    "load_hellaswag_raw_dataset",
-    "load_public_hellaswag_dataset",
-    "load_bounded_hellaswag_dataset",
-    "load_hellaswag_public_dataset",
-    "load_hellaswag_raw_examples"
+    "load_benchmark_task_b_eval_dataset",
+    "load_benchmark_task_b_raw_dataset",
+    "load_public_task_b_dataset",
+    "load_bounded_task_b_dataset",
+    "load_benchmark_task_b_public_dataset",
+    "load_benchmark_task_b_raw_examples"
   ];
 
   const definesAny = (names: string[]) =>
@@ -21164,8 +21085,8 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
       "        \"load_public_evaluation_datasets\",",
       "        \"load_public_benchmark_datasets\",",
       "        \"load_bounded_public_benchmark_datasets\",",
-      "        \"load_arc_hellaswag_public_datasets\",",
-      "        \"load_arc_and_hellaswag_datasets\",",
+      "        \"load_benchmark_pair_public_datasets\",",
+      "        \"load_benchmark_pair_datasets\",",
       "        \"load_evaluation_examples\",",
       "        \"load_eval_examples\",",
       "    ):",
@@ -21200,14 +21121,14 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
 
   if (needsArcAlias) {
     alias.push(
-      "def load_arc_challenge_examples(*positional, **keyword):",
+      "def load_benchmark_task_a_examples(*positional, **keyword):",
       "    for _autolabos_loader_name in (",
-      "        \"load_arc_challenge_eval_dataset\",",
-      "        \"load_arc_challenge_raw_dataset\",",
-      "        \"load_public_arc_challenge_dataset\",",
-      "        \"load_bounded_arc_challenge_dataset\",",
-      "        \"load_arc_challenge_public_dataset\",",
-      "        \"load_arc_challenge_raw_examples\",",
+      "        \"load_benchmark_task_a_eval_dataset\",",
+      "        \"load_benchmark_task_a_raw_dataset\",",
+      "        \"load_public_benchmark_task_a_dataset\",",
+      "        \"load_bounded_benchmark_task_a_dataset\",",
+      "        \"load_benchmark_task_a_public_dataset\",",
+      "        \"load_benchmark_task_a_raw_examples\",",
       "    ):",
       "        _autolabos_loader = globals().get(_autolabos_loader_name)",
       "        if callable(_autolabos_loader):",
@@ -21215,21 +21136,21 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
       "            if isinstance(_autolabos_result, tuple) and _autolabos_result:",
       "                return _autolabos_result[0]",
       "            return _autolabos_result",
-      "    raise RuntimeError(\"No generated ARC-Challenge evaluation dataset loader was available.\")",
+      "    raise RuntimeError(\"No generated Benchmark Task A evaluation dataset loader was available.\")",
       ""
     );
   }
 
   if (needsHellaswagAlias) {
     alias.push(
-      "def load_hellaswag_examples(*positional, **keyword):",
+      "def load_benchmark_task_b_examples(*positional, **keyword):",
       "    for _autolabos_loader_name in (",
-      "        \"load_hellaswag_eval_dataset\",",
-      "        \"load_hellaswag_raw_dataset\",",
-      "        \"load_public_hellaswag_dataset\",",
-      "        \"load_bounded_hellaswag_dataset\",",
-      "        \"load_hellaswag_public_dataset\",",
-      "        \"load_hellaswag_raw_examples\",",
+      "        \"load_benchmark_task_b_eval_dataset\",",
+      "        \"load_benchmark_task_b_raw_dataset\",",
+      "        \"load_public_task_b_dataset\",",
+      "        \"load_bounded_task_b_dataset\",",
+      "        \"load_benchmark_task_b_public_dataset\",",
+      "        \"load_benchmark_task_b_raw_examples\",",
       "    ):",
       "        _autolabos_loader = globals().get(_autolabos_loader_name)",
       "        if callable(_autolabos_loader):",
@@ -21237,7 +21158,7 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
       "            if isinstance(_autolabos_result, tuple) and _autolabos_result:",
       "                return _autolabos_result[0]",
       "            return _autolabos_result",
-      "    raise RuntimeError(\"No generated HellaSwag evaluation dataset loader was available.\")",
+      "    raise RuntimeError(\"No generated Benchmark Task B evaluation dataset loader was available.\")",
       ""
     );
   }
@@ -21282,11 +21203,11 @@ export async function repairPythonEvaluationDatasetLoaderArgumentAliasSurface(
   }
 
   const hasEvaluationLoaderWithSampleLimit =
-    /\ndef\s+load_(?:arc_challenge|hellaswag)[\s\S]{0,600}\b(?:max_examples|requested_examples|sample_size|max_samples)\b/u.test(
+    /\ndef\s+load_(?:benchmark_task_a|benchmark_task_b)[\s\S]{0,600}\b(?:max_examples|requested_examples|sample_size|max_samples)\b/u.test(
       source
     );
   const hasSampleLimitBridgeCall =
-    /\b_invoke_with_supported_kwargs\s*\([\s\S]{0,1200}\b(?:sample_size|max_samples|max_eval_examples|max_eval_examples_per_benchmark|max_examples_per_benchmark|eval_samples|arc_eval_samples|hellaswag_eval_samples)\s*=/u.test(
+    /\b_invoke_with_supported_kwargs\s*\([\s\S]{0,1200}\b(?:sample_size|max_samples|max_eval_examples|max_eval_examples_per_benchmark|max_examples_per_benchmark|eval_samples|task_a_eval_samples|task_b_eval_samples)\s*=/u.test(
       source
     );
   if (!hasEvaluationLoaderWithSampleLimit || !hasSampleLimitBridgeCall) {
@@ -21296,10 +21217,10 @@ export async function repairPythonEvaluationDatasetLoaderArgumentAliasSurface(
   const aliasPatch = [
     "    kwargs = dict(kwargs)",
     "    _autolabos_sample_limit_aliases = (",
-    "        (\"max_examples\", (\"max_examples\", \"requested_examples\", \"sample_size\", \"max_samples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"arc_eval_samples\", \"hellaswag_eval_samples\")),",
-    "        (\"requested_examples\", (\"requested_examples\", \"max_examples\", \"sample_size\", \"max_samples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"arc_eval_samples\", \"hellaswag_eval_samples\")),",
-    "        (\"sample_size\", (\"sample_size\", \"max_examples\", \"requested_examples\", \"max_samples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"arc_eval_samples\", \"hellaswag_eval_samples\")),",
-    "        (\"max_samples\", (\"max_samples\", \"max_examples\", \"requested_examples\", \"sample_size\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"arc_eval_samples\", \"hellaswag_eval_samples\")),",
+    "        (\"max_examples\", (\"max_examples\", \"requested_examples\", \"sample_size\", \"max_samples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"task_a_eval_samples\", \"task_b_eval_samples\")),",
+    "        (\"requested_examples\", (\"requested_examples\", \"max_examples\", \"sample_size\", \"max_samples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"task_a_eval_samples\", \"task_b_eval_samples\")),",
+    "        (\"sample_size\", (\"sample_size\", \"max_examples\", \"requested_examples\", \"max_samples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"task_a_eval_samples\", \"task_b_eval_samples\")),",
+    "        (\"max_samples\", (\"max_samples\", \"max_examples\", \"requested_examples\", \"sample_size\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"task_a_eval_samples\", \"task_b_eval_samples\")),",
     "    )",
     "    for _autolabos_target_key, _autolabos_source_keys in _autolabos_sample_limit_aliases:",
     "        if _autolabos_target_key not in parameters or _autolabos_target_key in kwargs:",
@@ -21373,11 +21294,11 @@ export async function repairPythonSupportedSignatureKwargAliasSurface(
     "        return dict(call_kwargs)",
     "    _autolabos_filtered = dict(call_kwargs)",
     "    _autolabos_sample_limit_aliases = (",
-    "        (\"limit\", (\"limit\", \"max_examples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"sample_size\", \"max_samples\", \"requested_examples\", \"arc_eval_samples\", \"hellaswag_eval_samples\")),",
-    "        (\"max_examples\", (\"max_examples\", \"limit\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"sample_size\", \"max_samples\", \"requested_examples\", \"arc_eval_samples\", \"hellaswag_eval_samples\")),",
-    "        (\"sample_size\", (\"sample_size\", \"limit\", \"max_examples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"max_samples\", \"requested_examples\", \"arc_eval_samples\", \"hellaswag_eval_samples\")),",
-    "        (\"max_samples\", (\"max_samples\", \"limit\", \"max_examples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"sample_size\", \"requested_examples\", \"arc_eval_samples\", \"hellaswag_eval_samples\")),",
-    "        (\"requested_examples\", (\"requested_examples\", \"limit\", \"max_examples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"sample_size\", \"max_samples\", \"arc_eval_samples\", \"hellaswag_eval_samples\")),",
+    "        (\"limit\", (\"limit\", \"max_examples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"sample_size\", \"max_samples\", \"requested_examples\", \"task_a_eval_samples\", \"task_b_eval_samples\")),",
+    "        (\"max_examples\", (\"max_examples\", \"limit\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"sample_size\", \"max_samples\", \"requested_examples\", \"task_a_eval_samples\", \"task_b_eval_samples\")),",
+    "        (\"sample_size\", (\"sample_size\", \"limit\", \"max_examples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"max_samples\", \"requested_examples\", \"task_a_eval_samples\", \"task_b_eval_samples\")),",
+    "        (\"max_samples\", (\"max_samples\", \"limit\", \"max_examples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"sample_size\", \"requested_examples\", \"task_a_eval_samples\", \"task_b_eval_samples\")),",
+    "        (\"requested_examples\", (\"requested_examples\", \"limit\", \"max_examples\", \"max_eval_examples\", \"max_eval_examples_per_benchmark\", \"max_examples_per_benchmark\", \"eval_samples\", \"sample_size\", \"max_samples\", \"task_a_eval_samples\", \"task_b_eval_samples\")),",
     "    )",
     "    for _autolabos_target_key, _autolabos_source_keys in _autolabos_sample_limit_aliases:",
     "        if _autolabos_target_key not in _autolabos_parameters or _autolabos_target_key in _autolabos_filtered:",
@@ -21414,8 +21335,8 @@ export async function repairPythonSupportedSignatureKwargAliasSurface(
     "        \"sample_size\",",
     "        \"max_samples\",",
     "        \"requested_examples\",",
-    "        \"arc_eval_samples\",",
-    "        \"hellaswag_eval_samples\",",
+    "        \"task_a_eval_samples\",",
+    "        \"task_b_eval_samples\",",
     "    }",
     "    attempts = [",
     "        (args, kwargs),",
@@ -21887,14 +21808,14 @@ export async function repairPythonEntrypointConditionLoopBridgeSurface(
     "    _autolabos_loader = globals().get(\"load_benchmark_samples\")",
     "    if callable(_autolabos_loader):",
     "        return {",
-    "            \"arc_challenge\": _autolabos_entrypoint_condition_loop_bridge_call_helper(_autolabos_loader, {",
-    "                \"benchmark\": \"arc_challenge\",",
-    "                \"sample_cap\": getattr(args, \"max_arc_examples\", getattr(args, \"arc_eval_samples\", None)),",
+    "            \"benchmark_task_a\": _autolabos_entrypoint_condition_loop_bridge_call_helper(_autolabos_loader, {",
+    "                \"benchmark\": \"benchmark_task_a\",",
+    "                \"sample_cap\": getattr(args, \"max_task_a_examples\", getattr(args, \"task_a_eval_samples\", None)),",
     "                \"seed\": getattr(args, \"seed\", None),",
     "            }),",
-    "            \"hellaswag\": _autolabos_entrypoint_condition_loop_bridge_call_helper(_autolabos_loader, {",
-    "                \"benchmark\": \"hellaswag\",",
-    "                \"sample_cap\": getattr(args, \"max_hellaswag_examples\", getattr(args, \"hellaswag_eval_samples\", None)),",
+    "            \"benchmark_task_b\": _autolabos_entrypoint_condition_loop_bridge_call_helper(_autolabos_loader, {",
+    "                \"benchmark\": \"benchmark_task_b\",",
+    "                \"sample_cap\": getattr(args, \"max_task_b_examples\", getattr(args, \"task_b_eval_samples\", None)),",
     "                \"seed\": getattr(args, \"seed\", None),",
     "            }),",
     "        }",
@@ -22660,7 +22581,7 @@ export async function repairPythonRunConditionsFromConfigRunnerBridgeSurface(
     "run_condition_study",
     "run_experiment_conditions",
     "execute_baseline_first_condition_study",
-    "run_peft_instruction_study"
+    "run_study"
   ];
   const generatedComparisonNames = [
     "run_baseline_first_condition_comparison",
@@ -23431,7 +23352,7 @@ export async function repairPythonBaselineFirstConditionSequenceEntrypointFacade
   const searchedEntrypointNames = [
     "run_baseline_first_experiment",
     "run_baseline_first_study",
-    "run_peft_instruction_study",
+    "run_study",
     "orchestrate_baseline_first_experiment"
   ];
   const aliasesToCreate = searchedEntrypointNames.filter((name) => !pythonSourceDefinesOrImportsName(source, name));
@@ -24569,7 +24490,7 @@ export async function repairPythonBenchmarkEvaluatorAliasSurface(
     "evaluate_model_zero_shot",
     "evaluate_benchmark_zero_shot",
     "evaluate_multiple_choice_accuracy",
-    "evaluate_arc_challenge_and_hellaswag",
+    "evaluate_multiple_choice_benchmarks",
     "evaluate_recipe_model",
     "evaluate_benchmark",
     "evaluate_candidate_model"
@@ -24617,34 +24538,34 @@ export async function repairPythonBenchmarkEvaluatorAliasSurface(
     "        or _autolabos_value_from_config_or_args(config, args, \"dataset_cache_dir\")",
     "        or _autolabos_value_from_config_or_args(config, args, \"data_cache_dir\")",
     "    )",
-    "    _autolabos_arc_limit = (",
-    "        keyword.get(\"arc_challenge_eval_examples\")",
-    "        or keyword.get(\"arc_eval_samples\")",
-    "        or _autolabos_value_from_config_or_args(config, args, \"arc_challenge_eval_examples\")",
-    "        or _autolabos_value_from_config_or_args(config, args, \"arc_eval_samples\")",
+    "    _autolabos_task_a_limit = (",
+    "        keyword.get(\"task_a_eval_examples\")",
+    "        or keyword.get(\"task_a_eval_samples\")",
+    "        or _autolabos_value_from_config_or_args(config, args, \"task_a_eval_examples\")",
+    "        or _autolabos_value_from_config_or_args(config, args, \"task_a_eval_samples\")",
     "        or _autolabos_value_from_config_or_args(config, args, \"eval_examples_per_benchmark\")",
     "    )",
-    "    _autolabos_hellaswag_limit = (",
-    "        keyword.get(\"hellaswag_eval_examples\")",
-    "        or keyword.get(\"hellaswag_eval_samples\")",
-    "        or _autolabos_value_from_config_or_args(config, args, \"hellaswag_eval_examples\")",
-    "        or _autolabos_value_from_config_or_args(config, args, \"hellaswag_eval_samples\")",
+    "    _autolabos_task_b_limit = (",
+    "        keyword.get(\"task_b_eval_examples\")",
+    "        or keyword.get(\"task_b_eval_samples\")",
+    "        or _autolabos_value_from_config_or_args(config, args, \"task_b_eval_examples\")",
+    "        or _autolabos_value_from_config_or_args(config, args, \"task_b_eval_samples\")",
     "        or _autolabos_value_from_config_or_args(config, args, \"eval_examples_per_benchmark\")",
     "    )",
     "    _autolabos_generic_limit = (",
     "        keyword.get(\"eval_examples_per_benchmark\")",
     "        or keyword.get(\"max_examples_per_benchmark\")",
     "        or _autolabos_value_from_config_or_args(config, args, \"eval_examples_per_benchmark\")",
-    "        or _autolabos_arc_limit",
-    "        or _autolabos_hellaswag_limit",
+    "        or _autolabos_task_a_limit",
+    "        or _autolabos_task_b_limit",
     "    )",
     "    for _autolabos_key, _autolabos_value in (",
     "        (\"seed\", _autolabos_seed),",
     "        (\"dataset_cache_dir\", _autolabos_data_cache),",
     "        (\"data_cache_dir\", _autolabos_data_cache),",
     "        (\"cache_dir\", _autolabos_data_cache),",
-    "        (\"arc_challenge_eval_examples\", _autolabos_arc_limit),",
-    "        (\"hellaswag_eval_examples\", _autolabos_hellaswag_limit),",
+    "        (\"task_a_eval_examples\", _autolabos_task_a_limit),",
+    "        (\"task_b_eval_examples\", _autolabos_task_b_limit),",
     "        (\"eval_examples_per_benchmark\", _autolabos_generic_limit),",
     "        (\"eval_batch_size\", keyword.get(\"eval_batch_size\", _autolabos_value_from_config_or_args(config, args, \"eval_batch_size\"))),",
     "    ):",
@@ -25190,8 +25111,8 @@ export async function repairPythonBaselineEvaluatorArgumentSurface(
   ].join("\n");
 
   const insertionMatch =
-    source.match(/\ndef\s+run_peft_instruction_study\s*\(/u) ||
-    source.match(/\ndef\s+execute_peft_instruction_study\s*\(/u) ||
+    source.match(/\ndef\s+run_study\s*\(/u) ||
+    source.match(/\ndef\s+execute_study\s*\(/u) ||
     source.match(/\ndef\s+main\s*\(/u);
   const insertionIndex = insertionMatch?.index ?? source.length;
   const indent = baselineCallMatch[1] || "\n";
@@ -25239,7 +25160,7 @@ export async function repairPythonBaselineFirstConditionLoopInvocationSurface(
     !invocationMatch ||
     source.includes("_autolabos_baseline_first_loop_inputs") ||
     !source.includes("def execute_baseline_first_condition_loop(") ||
-    !source.includes("def run_peft_instruction_study(")
+    !source.includes("def run_study(")
   ) {
     return { repaired: false };
   }
@@ -25362,7 +25283,7 @@ export async function repairPythonBaselineFirstConditionLoopInvocationSurface(
     ""
   ].join("\n");
 
-  const insertionMatch = source.match(/\ndef\s+run_peft_instruction_study\s*\(/u);
+  const insertionMatch = source.match(/\ndef\s+run_study\s*\(/u);
   const insertionIndex = insertionMatch?.index ?? 0;
   const nextSourceWithHelper = `${source.slice(0, insertionIndex)}${helper}${source.slice(insertionIndex)}`;
   const nextSource = nextSourceWithHelper.replace(
@@ -27635,14 +27556,14 @@ export async function repairPythonEntrypointConditionDatasetInputMaterialization
     "    if callable(_autolabos_bundle_loader):",
     "        _autolabos_bundle = _autolabos_call_loader(_autolabos_bundle_loader)",
     "        _autolabos_train = _autolabos_get(_autolabos_bundle, (\"train\", \"train_dataset\", \"instruction_dataset\", \"train_examples\", \"instruction_examples\"))",
-    "        _autolabos_arc = _autolabos_get(_autolabos_bundle, (\"arc_challenge\", \"arc\", \"arc_dataset\"))",
-    "        _autolabos_hellaswag = _autolabos_get(_autolabos_bundle, (\"hellaswag\", \"hellaswag_dataset\"))",
-    "        if _autolabos_arc is not None or _autolabos_hellaswag is not None:",
+    "        _autolabos_task_a = _autolabos_get(_autolabos_bundle, (\"benchmark_task_a\", \"task_a\", \"task_a_dataset\"))",
+    "        _autolabos_task_b = _autolabos_get(_autolabos_bundle, (\"benchmark_task_b\", \"task_b_dataset\"))",
+    "        if _autolabos_task_a is not None or _autolabos_task_b is not None:",
     "            _autolabos_eval = {}",
-    "            if _autolabos_arc is not None:",
-    "                _autolabos_eval[\"arc_challenge\"] = _autolabos_arc",
-    "            if _autolabos_hellaswag is not None:",
-    "                _autolabos_eval[\"hellaswag\"] = _autolabos_hellaswag",
+    "            if _autolabos_task_a is not None:",
+    "                _autolabos_eval[\"benchmark_task_a\"] = _autolabos_task_a",
+    "            if _autolabos_task_b is not None:",
+    "                _autolabos_eval[\"benchmark_task_b\"] = _autolabos_task_b",
     "        else:",
     "            _autolabos_eval = _autolabos_get(_autolabos_bundle, (\"eval_datasets\", \"benchmark_datasets\", \"benchmark_samples\", \"evaluation_sets\"))",
     "",
@@ -27658,14 +27579,14 @@ export async function repairPythonEntrypointConditionDatasetInputMaterialization
     "                    break",
     "",
     "    if _autolabos_eval is None:",
-    "        _autolabos_arc_loader = globals().get(\"load_arc_challenge_subset\")",
-    "        _autolabos_hellaswag_loader = globals().get(\"load_hellaswag_subset\")",
-    "        if callable(_autolabos_arc_loader) or callable(_autolabos_hellaswag_loader):",
+    "        _autolabos_task_a_loader = globals().get(\"load_benchmark_task_a_subset\")",
+    "        _autolabos_task_b_loader = globals().get(\"load_benchmark_task_b_subset\")",
+    "        if callable(_autolabos_task_a_loader) or callable(_autolabos_task_b_loader):",
     "            _autolabos_eval = {}",
-    "            if callable(_autolabos_arc_loader):",
-    "                _autolabos_eval[\"arc_challenge\"] = _autolabos_get(_autolabos_call_loader(_autolabos_arc_loader), (\"dataset\", \"examples\", \"arc_challenge\"))",
-    "            if callable(_autolabos_hellaswag_loader):",
-    "                _autolabos_eval[\"hellaswag\"] = _autolabos_get(_autolabos_call_loader(_autolabos_hellaswag_loader), (\"dataset\", \"examples\", \"hellaswag\"))",
+    "            if callable(_autolabos_task_a_loader):",
+    "                _autolabos_eval[\"benchmark_task_a\"] = _autolabos_get(_autolabos_call_loader(_autolabos_task_a_loader), (\"dataset\", \"examples\", \"benchmark_task_a\"))",
+    "            if callable(_autolabos_task_b_loader):",
+    "                _autolabos_eval[\"benchmark_task_b\"] = _autolabos_get(_autolabos_call_loader(_autolabos_task_b_loader), (\"dataset\", \"examples\", \"benchmark_task_b\"))",
     "        else:",
     "            for _autolabos_name in (\"load_eval_datasets\", \"load_evaluation_datasets\", \"load_benchmark_datasets\", \"prepare_benchmark_datasets\"):",
     "                _autolabos_loader = globals().get(_autolabos_name)",
@@ -28721,7 +28642,7 @@ export async function repairPythonRankDropoutStudyCallableBridgeSurface(
 
   const beforeCandidate = nextSource;
   nextSource = nextSource.replace(
-    /(\s*candidate_names = \(\n)(\s*['"]run_locked_lora_rank_dropout_study['"],)/u,
+    /(\s*candidate_names = \(\n)(\s*['"]run_locked_study_sweep['"],)/u,
     "$1        'run_locked_lora_rank_dropout_sweep',\n$2"
   );
   if (nextSource !== beforeCandidate) {
@@ -29487,16 +29408,16 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
     "    \"run_study_sweep\",",
     "    \"run_baseline_first_sweep\",",
     "    \"orchestrate_study_sweep\",",
-    "    \"run_locked_lora_rank_dropout_study\",",
-    "    \"run_lora_rank_dropout_study\",",
-    "    \"execute_lora_rank_dropout_study\",",
+    "    \"run_locked_study_sweep\",",
+    "    \"run_study_sweep\",",
+    "    \"execute_study_sweep\",",
     "    \"run_rank_dropout_study\",",
     "    \"execute_rank_dropout_study\",",
-    "    \"run_lora_study\",",
-    "    \"execute_lora_study\",",
+    "    \"run_study\",",
+    "    \"execute_study\",",
     "    \"run_governed_study\",",
     "    \"execute_governed_study\",",
-    "    \"run_locked_rank_dropout_study\",",
+    "    \"run_locked_study_sweep\",",
     "    \"run_locked_study\",",
     "    \"run_locked_experiment\",",
     "    \"execute_locked_experiment\",",
@@ -29872,7 +29793,7 @@ export async function repairPythonOrchestrationTrainEvalConditionBridgeSurface(
   const marker = "_autolabos_orchestration_train_eval_condition_bridge_marker";
   if (
     source.includes(marker) ||
-    !source.includes("def run_locked_lora_rank_dropout_study(") ||
+    !source.includes("def run_locked_study_sweep(") ||
     !source.includes("def _orchestration_find_helper(") ||
     !source.includes("class StudyCondition") ||
     !source.includes("def preflight_and_select_model(") ||
@@ -29884,7 +29805,7 @@ export async function repairPythonOrchestrationTrainEvalConditionBridgeSurface(
     return { repaired: false };
   }
 
-  const insertionMatch = source.match(/\ndef\s+run_locked_lora_rank_dropout_study\s*\(/u);
+  const insertionMatch = source.match(/\ndef\s+run_locked_study_sweep\s*\(/u);
   if (!insertionMatch || insertionMatch.index === undefined) {
     return { repaired: false };
   }
@@ -31077,7 +30998,7 @@ export async function repairPythonModelSelectionPlanScalarFallbackSurface(
       ", globals().get(" +
       JSON.stringify("FALLBACK_BASE_MODEL") +
       ", " +
-      JSON.stringify("TinyLlama/TinyLlama-1.1B-Chat-v1.0") +
+      JSON.stringify("the configured fallback backbone") +
       "))",
     "        model_candidates = [",
     "            {\"label\": \"preferred\", \"model_name\": model_candidates},",
@@ -31230,7 +31151,7 @@ export async function repairPythonStudyConditionRuntimeInputMaterializationSurfa
   if (
     source.includes("_autolabos_study_condition_runtime_inputs_marker") ||
     !source.includes("def _build_study_execution_context(") ||
-    !source.includes("def run_locked_lora_rank_dropout_study(") ||
+    !source.includes("def run_locked_study_sweep(") ||
     !source.includes("runner_kwargs = {") ||
     !source.includes('"dataset_bundle": execution_context.get("dataset_bundle"),') ||
     !source.includes("def load_instruction_training_records(") ||
@@ -31333,7 +31254,7 @@ export async function repairPythonStudyConditionRuntimeInputMaterializationSurfa
     "        globals().get('DEFAULT_MAX_EVAL_EXAMPLES_PER_TASK', 0),",
     "    )",
     "    eval_loader = globals().get('load_eval_task_examples')",
-    "    task_names = list(globals().get('TASK_NAMES') or ('arc_challenge', 'hellaswag'))",
+    "    task_names = list(globals().get('TASK_NAMES') or ())",
     "    eval_examples_by_task = {}",
     "    eval_meta_by_task = {}",
     "    if callable(eval_loader):",
@@ -31673,7 +31594,7 @@ export async function repairPythonMetricsPayloadProjectionSurface(
     "            failed.append(row)",
     "        elif status in (\"skipped\", \"dry_run\"):",
     "            skipped.append(row)",
-    "    baseline_marker = str(payload.get(\"baseline_condition_marker\") or payload.get(\"baseline_marker\") or globals().get(\"LOCKED_BASELINE_CONDITION_MARKER\", \"rank_8_dropout_0_0\"))",
+    "    baseline_marker = str(payload.get(\"baseline_condition_marker\") or payload.get(\"baseline_marker\") or globals().get(\"LOCKED_BASELINE_CONDITION_MARKER\", \"\"))",
     "    baseline = None",
     "    for row in completed:",
     "        marker = _autolabos_metrics_payload_projection_marker(row)",
@@ -32255,7 +32176,7 @@ export async function repairPythonHighLevelConditionSweepDispatchSurface(
       "        'run_baseline_first_condition_sweep',",
       "        'run_baseline_first_condition_study',",
       "        'run_baseline_and_tuned_condition_sweep',",
-      "        'run_lora_rank_dropout_study',",
+      "        'run_study_sweep',",
       "    ))",
       "    if high_level_sweep is not None:",
       "        runtime_device = None",
@@ -32698,7 +32619,7 @@ export async function repairPythonLoraStudyEntrypointContextSurface(
   }
 
   if (
-    !source.includes("def execute_lora_rank_dropout_study(") ||
+    !source.includes("def execute_study_sweep(") ||
     !source.includes("prepared_data: PreparedStudyData") ||
     !source.includes("def prepare_bounded_study_data(") ||
     !source.includes("def prepare_runtime_execution_context(") ||
@@ -32934,7 +32855,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
     source.includes("_invoke_candidate_orchestration") ||
     (
       source.includes("None of the required helper functions are defined:") &&
-      source.includes("execute_peft_instruction_study") &&
+      source.includes("execute_study") &&
       source.includes("run_all_candidates")
     );
   const hasConditionStudyDispatcher =
@@ -33025,8 +32946,8 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
     ? [
         "run_locked_baseline_first_study",
         "execute_locked_baseline_first_study",
-        "run_peft_instruction_study",
-        "execute_peft_instruction_study",
+        "run_study",
+        "execute_study",
         "run_condition_study",
         "execute_condition_study",
         "run_all_conditions",
@@ -33054,9 +32975,9 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
       ]
     : hasChunk5cConditionExecutionDispatcher
     ? [
-        "run_locked_peft_instruction_study",
-        "run_peft_instruction_study",
-        "execute_locked_peft_instruction_study",
+        "run_locked_instruction_study",
+        "run_study",
+        "execute_locked_instruction_study",
         "execute_locked_study",
         "run_locked_condition_study",
         "run_all_conditions",
@@ -33077,7 +32998,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
     ? [
         "run_locked_peft_study",
         "run_experiment",
-        "run_peft_instruction_study",
+        "run_study",
         "run_full_experiment",
         "execute_experiment",
         "execute_study",
@@ -33099,7 +33020,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
           "run_study_workflow"
         ]
       : [
-          "run_peft_instruction_study",
+          "run_study",
           "run_baseline_first_peft_comparison",
           "run_peft_variant_comparison_loop",
           "run_peft_comparison_study",
@@ -33108,8 +33029,8 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         ]
     : hasCandidateOrchestrationDispatcher
     ? [
-        "execute_peft_instruction_study",
-        "run_peft_instruction_study",
+        "execute_study",
+        "run_study",
         "execute_experiment",
         "run_experiment",
         "execute_study",
@@ -33125,7 +33046,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         "run_candidate_execution_orchestration",
         "run_candidate_experiments",
         "execute_candidate_experiments",
-        "execute_peft_instruction_study",
+        "execute_study",
         "run_peft_candidate_study",
         "run_study_orchestration",
         "run_experiment_orchestration"
@@ -33175,7 +33096,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
           "run_baseline_first_conditions",
           "execute_baseline_first_conditions",
           "run_locked_condition_study",
-          "run_peft_instruction_study"
+          "run_study"
         ]
       : hasCliConditionRunnerDispatcher
       ? [
@@ -33501,10 +33422,10 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         "",
         "if \"execute_locked_baseline_first_study\" not in globals():",
         "    execute_locked_baseline_first_study = run_locked_baseline_first_study",
-        "if \"run_peft_instruction_study\" not in globals():",
-        "    run_peft_instruction_study = run_locked_baseline_first_study",
-        "if \"execute_peft_instruction_study\" not in globals():",
-        "    execute_peft_instruction_study = run_locked_baseline_first_study",
+        "if \"run_study\" not in globals():",
+        "    run_study = run_locked_baseline_first_study",
+        "if \"execute_study\" not in globals():",
+        "    execute_study = run_locked_baseline_first_study",
         "if \"run_condition_study\" not in globals():",
         "    run_condition_study = run_locked_baseline_first_study",
         "if \"execute_condition_study\" not in globals():",
@@ -33637,7 +33558,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
     : hasChunk5cConditionExecutionDispatcher
     ? [
         "",
-        "def run_locked_peft_instruction_study(*positional, **keyword):",
+        "def run_locked_instruction_study(*positional, **keyword):",
         `    target = ${implementationName}`,
         "    _autolabos_config = keyword.get(\"config\")",
         "    _autolabos_args = keyword.get(\"args\")",
@@ -33699,24 +33620,24 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         "        return target(**_autolabos_supported)",
         "    return target(_autolabos_args, _autolabos_device)",
         "",
-        "if \"run_peft_instruction_study\" not in globals():",
-        "    run_peft_instruction_study = run_locked_peft_instruction_study",
-        "if \"execute_locked_peft_instruction_study\" not in globals():",
-        "    execute_locked_peft_instruction_study = run_locked_peft_instruction_study",
+        "if \"run_study\" not in globals():",
+        "    run_study = run_locked_instruction_study",
+        "if \"execute_locked_instruction_study\" not in globals():",
+        "    execute_locked_instruction_study = run_locked_instruction_study",
         "if \"execute_locked_study\" not in globals():",
-        "    execute_locked_study = run_locked_peft_instruction_study",
+        "    execute_locked_study = run_locked_instruction_study",
         "if \"run_locked_condition_study\" not in globals():",
-        "    run_locked_condition_study = run_locked_peft_instruction_study",
+        "    run_locked_condition_study = run_locked_instruction_study",
         "if \"run_all_conditions\" not in globals():",
-        "    run_all_conditions = run_locked_peft_instruction_study",
+        "    run_all_conditions = run_locked_instruction_study",
         "if \"execute_all_conditions\" not in globals():",
-        "    execute_all_conditions = run_locked_peft_instruction_study",
+        "    execute_all_conditions = run_locked_instruction_study",
         "if \"run_condition_execution_plan\" not in globals():",
-        "    run_condition_execution_plan = run_locked_peft_instruction_study",
+        "    run_condition_execution_plan = run_locked_instruction_study",
         "if \"run_experiment_conditions\" not in globals():",
-        "    run_experiment_conditions = run_locked_peft_instruction_study",
+        "    run_experiment_conditions = run_locked_instruction_study",
         "if \"run_experiment\" not in globals():",
-        "    run_experiment = run_locked_peft_instruction_study",
+        "    run_experiment = run_locked_instruction_study",
         ""
       ].join("\n")
     : hasLockedExperimentRunnerDispatcher
@@ -33844,8 +33765,8 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         "            return dict(_autolabos_payload)",
         "    return {\"status\": \"completed\", \"condition_results\": _autolabos_condition_results, \"metrics\": _autolabos_aggregate}",
         "",
-        "if \"run_peft_instruction_study\" not in globals():",
-        "    run_peft_instruction_study = run_experiment",
+        "if \"run_study\" not in globals():",
+        "    run_study = run_experiment",
         "if \"run_full_experiment\" not in globals():",
         "    run_full_experiment = run_experiment",
         "if \"execute_experiment\" not in globals():",
@@ -33863,7 +33784,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
     : hasFinalWorkflowDispatcher
     ? [
         "",
-        "def run_peft_instruction_study(config=None, args=None, experiment_config=None, **keyword):",
+        "def run_study(config=None, args=None, experiment_config=None, **keyword):",
         `    target = ${implementationName}`,
         "    _autolabos_config = config if config is not None else experiment_config",
         "    if _autolabos_config is None:",
@@ -33893,27 +33814,27 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         "    return target()",
         "",
         "if \"run_baseline_first_experiment_workflow\" not in globals():",
-        "    run_baseline_first_experiment_workflow = run_peft_instruction_study",
+        "    run_baseline_first_experiment_workflow = run_study",
         "if \"run_baseline_first_workflow\" not in globals():",
-        "    run_baseline_first_workflow = run_peft_instruction_study",
+        "    run_baseline_first_workflow = run_study",
         "if \"run_experiment_workflow\" not in globals():",
-        "    run_experiment_workflow = run_peft_instruction_study",
+        "    run_experiment_workflow = run_study",
         "if \"execute_experiment_workflow\" not in globals():",
-        "    execute_experiment_workflow = run_peft_instruction_study",
+        "    execute_experiment_workflow = run_study",
         "if \"orchestrate_experiment_workflow\" not in globals():",
-        "    orchestrate_experiment_workflow = run_peft_instruction_study",
+        "    orchestrate_experiment_workflow = run_study",
         "if \"run_full_experiment\" not in globals():",
-        "    run_full_experiment = run_peft_instruction_study",
+        "    run_full_experiment = run_study",
         "if \"run_locked_experiment\" not in globals():",
-        "    run_locked_experiment = run_peft_instruction_study",
+        "    run_locked_experiment = run_study",
         "if \"run_study_workflow\" not in globals():",
-        "    run_study_workflow = run_peft_instruction_study",
+        "    run_study_workflow = run_study",
         ""
       ].join("\n")
     : hasCandidateOrchestrationDispatcher
     ? [
         "",
-        "def execute_peft_instruction_study(args=None, metrics_path=None, output_dir=None, **keyword):",
+        "def execute_study(args=None, metrics_path=None, output_dir=None, **keyword):",
         `    target = ${implementationName}`,
         "    _autolabos_kwargs = {",
         "        \"args\": args,",
@@ -34152,7 +34073,7 @@ export async function repairPythonEntrypointComposableWorkflowAliasSurface(
   }
 
   const expectedEntrypointNames = [
-    "run_peft_instruction_study",
+    "run_study",
     "run_experiment_workflow",
     "run_condition_workflow",
     "execute_condition_workflow",
@@ -34287,7 +34208,7 @@ export async function repairPythonEntrypointComposableWorkflowAliasSurface(
     "            return _autolabos_entrypoint_composable_call(helper, controls, controls=controls)",
     "    return {}",
     "",
-    "def run_peft_instruction_study(config=None, args=None, experiment_config=None, device_info=None, runtime_device_info=None, device=None, metrics_path=None, seed=None, output_dir=None, **keyword):",
+    "def run_study(config=None, args=None, experiment_config=None, device_info=None, runtime_device_info=None, device=None, metrics_path=None, seed=None, output_dir=None, **keyword):",
     "    args_obj = _autolabos_entrypoint_composable_args(args if args is not None else config if config is not None else experiment_config)",
     "    _autolabos_entrypoint_composable_set(args_obj, \"metrics_path\", metrics_path or keyword.get(\"metrics_path\"))",
     "    _autolabos_entrypoint_composable_set(args_obj, \"output_dir\", output_dir or keyword.get(\"output_dir\"))",
@@ -34367,15 +34288,15 @@ export async function repairPythonEntrypointComposableWorkflowAliasSurface(
     "    return {\"status\": \"completed\", \"condition_results\": condition_results, \"device_info\": runtime_device_info}",
     "",
     "if \"run_experiment_workflow\" not in globals():",
-    "    run_experiment_workflow = run_peft_instruction_study",
+    "    run_experiment_workflow = run_study",
     "if \"run_condition_workflow\" not in globals():",
-    "    run_condition_workflow = run_peft_instruction_study",
+    "    run_condition_workflow = run_study",
     "if \"execute_condition_workflow\" not in globals():",
-    "    execute_condition_workflow = run_peft_instruction_study",
+    "    execute_condition_workflow = run_study",
     "if \"run_all_conditions\" not in globals():",
-    "    run_all_conditions = run_peft_instruction_study",
+    "    run_all_conditions = run_study",
     "if \"execute_study\" not in globals():",
-    "    execute_study = run_peft_instruction_study",
+    "    execute_study = run_study",
     ""
   ].join("\n");
 
@@ -34832,7 +34753,7 @@ export async function repairPythonConditionEvaluationMetricsAssemblyBridgeSurfac
     "        \"max_eval_examples\",",
     "        \"eval_subset_size\",",
     "        \"arc_eval_examples\",",
-    "        \"hellaswag_eval_examples\",",
+    "        \"task_b_eval_examples\",",
     "    ):",
     "        value = getattr(args, key, None)",
     "        if value is not None:",
@@ -39791,8 +39712,8 @@ export async function repairPythonLockedSweepRuntimeKwargBridgeSurface(scriptPat
         '                        "base_model_id": context.get("base_model_id") or context.get("model_id") or context.get("selected_model_id"),\n' +
         '                        "selected_model_id": context.get("selected_model_id") or context.get("model_id") or context.get("base_model_id"),\n' +
         '                        "train_data": context.get("train_data") or context.get("train_dataset"),\n' +
-        '                        "arc_data": context.get("arc_data") or _coerce_mapping(context.get("eval_datasets")).get("arc_challenge"),\n' +
-        '                        "hellaswag_data": context.get("hellaswag_data") or _coerce_mapping(context.get("eval_datasets")).get("hellaswag"),\n'
+        '                        "task_a_data": context.get("task_a_data") or _coerce_mapping(context.get("eval_datasets")).get("benchmark_task_a"),\n' +
+        '                        "task_b_data": context.get("task_b_data") or _coerce_mapping(context.get("eval_datasets")).get("benchmark_task_b"),\n'
     );
     repaired = true;
   }
@@ -39826,8 +39747,8 @@ export async function repairPythonLockedSweepRuntimeKwargBridgeSurface(scriptPat
       `            )`,
       `            run_context["eval_datasets"] = _autolabos_eval_datasets`,
       `            if hasattr(_autolabos_eval_datasets, "get"):`,
-      `                run_context["arc_data"] = _autolabos_eval_datasets.get("arc_challenge")`,
-      `                run_context["hellaswag_data"] = _autolabos_eval_datasets.get("hellaswag")`,
+      `                run_context["task_a_data"] = _autolabos_eval_datasets.get("benchmark_task_a")`,
+      `                run_context["task_b_data"] = _autolabos_eval_datasets.get("benchmark_task_b")`,
       `            run_context.setdefault("dataset_metadata", {})["eval"] = _autolabos_eval_meta`,
       `        _autolabos_model_id = (`,
       `            run_context.get("selected_model_id")`,
@@ -39847,8 +39768,8 @@ export async function repairPythonLockedSweepRuntimeKwargBridgeSurface(scriptPat
       `            "train_data": run_context.get("train_data"),`,
       `            "train_dataset": run_context.get("train_dataset"),`,
       `            "eval_datasets": run_context.get("eval_datasets"),`,
-      `            "arc_data": run_context.get("arc_data"),`,
-      `            "hellaswag_data": run_context.get("hellaswag_data"),`,
+      `            "task_a_data": run_context.get("task_a_data"),`,
+      `            "task_b_data": run_context.get("task_b_data"),`,
       `        })`,
       ``
     ].join("\n");
@@ -40134,7 +40055,7 @@ export async function repairPythonFinalCliLockedGridResolverSurface(scriptPath?:
 
   const coreNamesNeedle =
     "    candidate_names = (\n" +
-    '        "run_locked_lora_rank_dropout_study",\n';
+    '        "run_locked_study_sweep",\n';
   if (
     nextSource.includes(coreNamesNeedle) &&
     !/candidate_names\s*=\s*\(\s*\n\s*"run_baseline_first_locked_grid"/u.test(nextSource)
@@ -40143,7 +40064,7 @@ export async function repairPythonFinalCliLockedGridResolverSurface(scriptPath?:
       coreNamesNeedle,
       "    candidate_names = (\n" +
         '        "run_baseline_first_locked_grid",\n' +
-        '        "run_locked_lora_rank_dropout_study",\n'
+        '        "run_locked_study_sweep",\n'
     );
     repaired = true;
   }

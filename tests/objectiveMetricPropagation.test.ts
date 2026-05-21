@@ -2107,8 +2107,8 @@ describe("objective metric propagation", () => {
               peft_type: "none",
               status: "completed",
               mean_accuracy: 0.546875,
-              arc_challenge_accuracy: 0.53125,
-              hellaswag_accuracy: 0.5625,
+              benchmark_task_a_accuracy: 0.53125,
+              benchmark_task_b_accuracy: 0.5625,
               accuracy_delta_vs_baseline: 0
             },
             {
@@ -2116,8 +2116,8 @@ describe("objective metric propagation", () => {
               peft_type: "lora",
               status: "completed",
               mean_accuracy: 0.546875,
-              arc_challenge_accuracy: 0.53125,
-              hellaswag_accuracy: 0.5625,
+              benchmark_task_a_accuracy: 0.53125,
+              benchmark_task_b_accuracy: 0.5625,
               accuracy_delta_vs_baseline: 0
             }
           ]
@@ -2212,7 +2212,7 @@ describe("objective metric propagation", () => {
       JSON.stringify(
         {
           best_recipe: "unmodified_baseline",
-          primary_metric: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
+          primary_metric: "mean_zero_shot_accuracy_benchmark_tasks",
           baseline_comparisons_bootstrap: {
             broader_target_lora_rank16_alpha32_dropout005_q_k_v_o_mlp: {
               mean_delta: -0.015625,
@@ -2225,24 +2225,24 @@ describe("objective metric propagation", () => {
               status: "completed",
               training: { trained: false, trainable_parameters: 0 },
               evaluation: {
-                arc_challenge: { accuracy: 0.23958333333333334, correct: 23, total: 96 },
-                hellaswag: { accuracy: 0.5, correct: 48, total: 96 }
+                benchmark_task_a: { accuracy: 0.23958333333333334, correct: 23, total: 96 },
+                benchmark_task_b: { accuracy: 0.5, correct: 48, total: 96 }
               }
             },
             standard_lora_rank16_alpha32_dropout005_q_v_baseline: {
               status: "completed",
               training: { trained: true, trainable_parameters: 2252800 },
               evaluation: {
-                arc_challenge: { accuracy: 0.16666666666666666, correct: 16, total: 96 },
-                hellaswag: { accuracy: 0.5, correct: 48, total: 96 }
+                benchmark_task_a: { accuracy: 0.16666666666666666, correct: 16, total: 96 },
+                benchmark_task_b: { accuracy: 0.5, correct: 48, total: 96 }
               }
             },
             broader_target_lora_rank16_alpha32_dropout005_q_k_v_o_mlp: {
               status: "completed",
               training: { trained: true, trainable_parameters: 12615680 },
               evaluation: {
-                arc_challenge: { accuracy: 0.22916666666666666, correct: 22, total: 96 },
-                hellaswag: { accuracy: 0.4791666666666667, correct: 46, total: 96 }
+                benchmark_task_a: { accuracy: 0.22916666666666666, correct: 22, total: 96 },
+                benchmark_task_b: { accuracy: 0.4791666666666667, correct: 46, total: 96 }
               }
             }
           }
@@ -2267,7 +2267,7 @@ describe("objective metric propagation", () => {
           abort_condition: "Abort if accuracy regresses",
           keep_or_discard_rule: "Keep if improved",
           baselines: ["unmodified_baseline"],
-          metrics: ["mean_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+          metrics: ["mean_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
           results_table_schema: [
             {
               metric: "mean_accuracy",
@@ -2335,7 +2335,7 @@ describe("objective metric propagation", () => {
     const run = {
       ...makeRun(runId),
       currentNode: "analyze_results" as const,
-      objectiveMetric: "mean_zero_shot_accuracy_arc_challenge_hellaswag >= 0.01"
+      objectiveMetric: "mean_zero_shot_accuracy_benchmark_tasks >= 0.01"
     };
     run.graph.currentNode = "analyze_results";
 
@@ -2346,25 +2346,25 @@ describe("objective metric propagation", () => {
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
-          mean_zero_shot_accuracy_arc_challenge_hellaswag: 0.313533,
+          mean_zero_shot_accuracy_benchmark_tasks: 0.313533,
           best_tuned_condition_id: "lora_r16_attention_mlp",
           result_rows: [
             {
               condition_id: "reference_base_model",
               recipe_type: "reference",
               is_baseline_reference: true,
-              mean_zero_shot_accuracy_arc_challenge_hellaswag: 0.27919
+              mean_zero_shot_accuracy_benchmark_tasks: 0.27919
             },
             {
               condition_id: "locked_lora_baseline_r8",
               recipe_type: "locked_baseline",
               is_locked_lora_baseline: true,
-              mean_zero_shot_accuracy_arc_challenge_hellaswag: 0.304353
+              mean_zero_shot_accuracy_benchmark_tasks: 0.304353
             },
             {
               condition_id: "lora_r16_attention_mlp",
               recipe_type: "candidate",
-              mean_zero_shot_accuracy_arc_challenge_hellaswag: 0.313533
+              mean_zero_shot_accuracy_benchmark_tasks: 0.313533
             }
           ]
         },
@@ -2388,10 +2388,10 @@ describe("objective metric propagation", () => {
           abort_condition: "Abort if accuracy regresses",
           keep_or_discard_rule: "Keep if improved",
           baselines: ["locked_lora_baseline_r8"],
-          metrics: ["mean_zero_shot_accuracy_arc_challenge_hellaswag"],
+          metrics: ["mean_zero_shot_accuracy_benchmark_tasks"],
           results_table_schema: [
             {
-              metric: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
+              metric: "mean_zero_shot_accuracy_benchmark_tasks",
               baseline: null,
               comparator: null,
               delta: null,
@@ -2430,7 +2430,7 @@ describe("objective metric propagation", () => {
     expect(analysisRaw.results_table).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          metric: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
+          metric: "mean_zero_shot_accuracy_benchmark_tasks",
           baseline: 0.304353,
           comparator: 0.313533
         })
@@ -2465,8 +2465,8 @@ describe("objective metric propagation", () => {
               evaluation: {
                 mean_zero_shot_accuracy: 0.53125,
                 per_benchmark_accuracy: {
-                  arc_challenge: 0.375,
-                  hellaswag: 0.6875
+                  benchmark_task_a: 0.375,
+                  benchmark_task_b: 0.6875
                 }
               }
             },
@@ -2475,8 +2475,8 @@ describe("objective metric propagation", () => {
               evaluation: {
                 mean_zero_shot_accuracy: 0.53125,
                 per_benchmark_accuracy: {
-                  arc_challenge: 0.375,
-                  hellaswag: 0.6875
+                  benchmark_task_a: 0.375,
+                  benchmark_task_b: 0.6875
                 }
               }
             },
@@ -2485,8 +2485,8 @@ describe("objective metric propagation", () => {
               evaluation: {
                 mean_zero_shot_accuracy: 0.5,
                 per_benchmark_accuracy: {
-                  arc_challenge: 0.3125,
-                  hellaswag: 0.6875
+                  benchmark_task_a: 0.3125,
+                  benchmark_task_b: 0.6875
                 }
               }
             }
@@ -2597,8 +2597,8 @@ describe("objective metric propagation", () => {
               eval_metrics: {
                 mean_accuracy: 0.390625,
                 benchmarks: {
-                  arc_challenge: { accuracy: 0.3125 },
-                  hellaswag: { accuracy: 0.46875 }
+                  benchmark_task_a: { accuracy: 0.3125 },
+                  benchmark_task_b: { accuracy: 0.46875 }
                 }
               }
             },
@@ -2609,8 +2609,8 @@ describe("objective metric propagation", () => {
               eval_metrics: {
                 mean_accuracy: 0.359375,
                 benchmarks: {
-                  arc_challenge: { accuracy: 0.265625 },
-                  hellaswag: { accuracy: 0.453125 }
+                  benchmark_task_a: { accuracy: 0.265625 },
+                  benchmark_task_b: { accuracy: 0.453125 }
                 }
               },
               train_metrics: { train_loss: 1.9787727832794189 }
@@ -2622,8 +2622,8 @@ describe("objective metric propagation", () => {
               eval_metrics: {
                 mean_accuracy: 0.375,
                 benchmarks: {
-                  arc_challenge: { accuracy: 0.28125 },
-                  hellaswag: { accuracy: 0.46875 }
+                  benchmark_task_a: { accuracy: 0.28125 },
+                  benchmark_task_b: { accuracy: 0.46875 }
                 }
               },
               train_metrics: { train_loss: 1.9052058219909669 }
@@ -2727,13 +2727,13 @@ describe("objective metric propagation", () => {
           conditions: [
             {
               baseline: true,
-              condition_marker: "rank_8_dropout_0_0",
+              condition_marker: "baseline_condition",
               status: "completed",
               average_accuracy: 0.6458333333333333,
               accuracy_delta_vs_baseline: 0,
               task_accuracies: {
-                arc_challenge: 0.7916666666666666,
-                hellaswag: 0.5
+                benchmark_task_a: 0.7916666666666666,
+                benchmark_task_b: 0.5
               }
             },
             {
@@ -2743,8 +2743,8 @@ describe("objective metric propagation", () => {
               average_accuracy: 0.6666666666666667,
               accuracy_delta_vs_baseline: 0.02083333333333348,
               task_accuracies: {
-                arc_challenge: 0.8333333333333334,
-                hellaswag: 0.5
+                benchmark_task_a: 0.8333333333333334,
+                benchmark_task_b: 0.5
               }
             }
           ]
@@ -2768,8 +2768,8 @@ describe("objective metric propagation", () => {
           expected_metric_effect: "Higher average accuracy than baseline",
           abort_condition: "Abort on missing baseline/comparator rows",
           keep_or_discard_rule: "Keep if improved",
-          baselines: ["rank_8_dropout_0_0"],
-          metrics: ["average_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+          baselines: ["baseline_condition"],
+          metrics: ["average_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
           results_table_schema: [
             {
               metric: "average_accuracy",
@@ -2779,14 +2779,14 @@ describe("objective metric propagation", () => {
               direction: "higher_better"
             },
             {
-              metric: "arc_challenge_accuracy",
+              metric: "benchmark_task_a_accuracy",
               baseline: null,
               comparator: null,
               delta: null,
               direction: "higher_better"
             },
             {
-              metric: "hellaswag_accuracy",
+              metric: "benchmark_task_b_accuracy",
               baseline: null,
               comparator: null,
               delta: null,
@@ -2834,13 +2834,13 @@ describe("objective metric propagation", () => {
           delta: 0.0208
         }),
         expect.objectContaining({
-          metric: "arc_challenge_accuracy",
+          metric: "benchmark_task_a_accuracy",
           baseline: 0.7917,
           comparator: 0.8333,
           delta: 0.0416
         }),
         expect.objectContaining({
-          metric: "hellaswag_accuracy",
+          metric: "benchmark_task_b_accuracy",
           baseline: 0.5,
           comparator: 0.5,
           delta: 0
@@ -2869,14 +2869,14 @@ describe("objective metric propagation", () => {
       JSON.stringify(
         {
           status: "success",
-          baseline_condition_marker: "rank_8_dropout_0_0",
+          baseline_condition_marker: "baseline_condition",
           completed_condition_count: 3,
           failed_condition_count: 0,
-          best_condition_marker: "rank_8_dropout_0_05",
+          best_condition_marker: "baseline_condition5",
           accuracy_delta_vs_baseline: 0,
           conditions: [
             {
-              marker: "rank_8_dropout_0_0",
+              marker: "baseline_condition",
               rank: 8,
               dropout: 0,
               status: "success",
@@ -2885,7 +2885,7 @@ describe("objective metric propagation", () => {
               train_loss: 0.502391
             },
             {
-              marker: "rank_8_dropout_0_05",
+              marker: "baseline_condition5",
               rank: 8,
               dropout: 0.05,
               status: "success",
@@ -2894,7 +2894,7 @@ describe("objective metric propagation", () => {
               train_loss: 0.494569
             },
             {
-              marker: "rank_32_dropout_0_0",
+              marker: "candidate_condition_f",
               rank: 32,
               dropout: 0,
               status: "success",
@@ -2923,7 +2923,7 @@ describe("objective metric propagation", () => {
           expected_metric_effect: "Higher average accuracy than baseline",
           abort_condition: "Abort on missing baseline/comparator rows",
           keep_or_discard_rule: "Keep if improved",
-          baselines: ["rank_8_dropout_0_0"],
+          baselines: ["baseline_condition"],
           metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "train_loss"],
           results_table_schema: [
             {
@@ -3014,8 +3014,8 @@ describe("objective metric propagation", () => {
           status: "ok",
           accuracy_delta_vs_baseline: 0.083332,
           summary: {
-            baseline_condition_marker: "rank_8_dropout_0_0",
-            best_condition_marker: "rank_32_dropout_0_05",
+            baseline_condition_marker: "baseline_condition",
+            best_condition_marker: "candidate_condition_f5",
             baseline_average_accuracy: 0.333334,
             best_average_accuracy: 0.416666,
             best_accuracy_delta_vs_baseline: 0.083332,
@@ -3024,30 +3024,30 @@ describe("objective metric propagation", () => {
           },
           conditions: [
             {
-              marker: "rank_8_dropout_0_0",
+              marker: "baseline_condition",
               rank: 8,
               dropout: 0,
               status: "ok",
               average_accuracy: 0.333334,
-              arc_challenge_accuracy: 0.5,
-              hellaswag_accuracy: 0.166667,
+              benchmark_task_a_accuracy: 0.5,
+              benchmark_task_b_accuracy: 0.166667,
               per_task_metrics: {
-                arc_challenge: { accuracy: 0.5, correct: 3, total: 6 },
-                hellaswag: { accuracy: 0.166667, correct: 1, total: 6 }
+                benchmark_task_a: { accuracy: 0.5, correct: 3, total: 6 },
+                benchmark_task_b: { accuracy: 0.166667, correct: 1, total: 6 }
               },
               accuracy_delta_vs_baseline: 0
             },
             {
-              marker: "rank_32_dropout_0_05",
+              marker: "candidate_condition_f5",
               rank: 32,
               dropout: 0.05,
               status: "ok",
               average_accuracy: 0.416666,
-              arc_challenge_accuracy: 0.5,
-              hellaswag_accuracy: 0.333333,
+              benchmark_task_a_accuracy: 0.5,
+              benchmark_task_b_accuracy: 0.333333,
               per_task_metrics: {
-                arc_challenge: { accuracy: 0.5, correct: 3, total: 6 },
-                hellaswag: { accuracy: 0.333333, correct: 2, total: 6 }
+                benchmark_task_a: { accuracy: 0.5, correct: 3, total: 6 },
+                benchmark_task_b: { accuracy: 0.333333, correct: 2, total: 6 }
               },
               accuracy_delta_vs_baseline: 0.083332
             }
@@ -3072,8 +3072,8 @@ describe("objective metric propagation", () => {
           expected_metric_effect: "Higher average accuracy than baseline",
           abort_condition: "Abort on missing baseline/comparator rows",
           keep_or_discard_rule: "Keep if improved",
-          baselines: ["rank_8_dropout_0_0"],
-          metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+          baselines: ["baseline_condition"],
+          metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
           results_table_schema: [
             {
               metric: "accuracy_delta_vs_baseline",
@@ -3144,7 +3144,7 @@ describe("objective metric propagation", () => {
     );
     expect(
       analysisRaw.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key === "conditions.rank_32_dropout_0_05.average_accuracy" &&
+        item.metric_key === "conditions.candidate_condition_f5.average_accuracy" &&
         item.sample_size === 12 &&
         item.lower < item.upper
       )
@@ -3171,28 +3171,28 @@ describe("objective metric propagation", () => {
       JSON.stringify(
         {
           status: "success",
-          baseline_condition_marker: "rank_8_dropout_0_0",
+          baseline_condition_marker: "baseline_condition",
           completed_condition_count: 2,
           best_condition: {
-            marker: "rank_4_dropout_0_0",
+            marker: "candidate_condition_a",
             average_accuracy: 0.75,
             accuracy_delta_vs_baseline: 0.25
           },
           condition_results: [
             {
-              marker: "rank_8_dropout_0_0",
+              marker: "baseline_condition",
               status: "completed",
               average_accuracy: 0.5,
               accuracy_delta_vs_baseline: 0,
               evaluation: {
-                arc_challenge: {
+                benchmark_task_a: {
                   accuracy: 0.5,
                   predictions: [
                     { correct: true },
                     { correct: false }
                   ]
                 },
-                hellaswag: {
+                benchmark_task_b: {
                   accuracy: 0.5,
                   predictions: [
                     { correct: true },
@@ -3202,19 +3202,19 @@ describe("objective metric propagation", () => {
               }
             },
             {
-              marker: "rank_4_dropout_0_0",
+              marker: "candidate_condition_a",
               status: "completed",
               average_accuracy: 0.75,
               accuracy_delta_vs_baseline: 0.25,
               evaluation: {
-                arc_challenge: {
+                benchmark_task_a: {
                   accuracy: 1,
                   predictions: [
                     { correct: true },
                     { correct: true }
                   ]
                 },
-                hellaswag: {
+                benchmark_task_b: {
                   accuracy: 0.5,
                   predictions: [
                     { correct: true },
@@ -3244,7 +3244,7 @@ describe("objective metric propagation", () => {
           expected_metric_effect: "Higher average accuracy than baseline",
           abort_condition: "Abort on missing confidence intervals",
           keep_or_discard_rule: "Keep if improved with visible uncertainty",
-          baselines: ["rank_8_dropout_0_0"],
+          baselines: ["baseline_condition"],
           metrics: ["accuracy_delta_vs_baseline", "average_accuracy"],
           results_table_schema: [
             {
@@ -3293,7 +3293,7 @@ describe("objective metric propagation", () => {
     };
     expect(
       analysisRaw.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key === "condition_results.rank_4_dropout_0_0.average_accuracy" &&
+        item.metric_key === "condition_results.candidate_condition_a.average_accuracy" &&
         item.sample_size === 4 &&
         item.lower < item.upper
       )
@@ -3332,45 +3332,45 @@ describe("objective metric propagation", () => {
             status: "success",
             average_accuracy: 0.5625,
             tasks: {
-              arc_challenge: { accuracy: 1.0 },
-              hellaswag: { accuracy: 0.125 }
+              benchmark_task_a: { accuracy: 1.0 },
+              benchmark_task_b: { accuracy: 0.125 }
             }
           },
           best_tuned_condition: {
-            condition_name: "rank_8_dropout_0_0_seed_42",
+            condition_name: "baseline_condition_seed_42",
             status: "success",
             average_accuracy: 0.625,
             accuracy_delta_vs_baseline: 0.0625,
             rank: 8,
             dropout: 0,
             tasks: {
-              arc_challenge: { accuracy: 0.875 },
-              hellaswag: { accuracy: 0.375 }
+              benchmark_task_a: { accuracy: 0.875 },
+              benchmark_task_b: { accuracy: 0.375 }
             }
           },
           conditions: [
             {
-              condition_name: "rank_4_dropout_0_0_seed_42",
+              condition_name: "candidate_condition_a_seed_42",
               status: "success",
               average_accuracy: 0.5625,
               accuracy_delta_vs_baseline: 0,
               rank: 4,
               dropout: 0,
               tasks: {
-                arc_challenge: { accuracy: 0.75 },
-                hellaswag: { accuracy: 0.375 }
+                benchmark_task_a: { accuracy: 0.75 },
+                benchmark_task_b: { accuracy: 0.375 }
               }
             },
             {
-              condition_name: "rank_8_dropout_0_0_seed_42",
+              condition_name: "baseline_condition_seed_42",
               status: "success",
               average_accuracy: 0.625,
               accuracy_delta_vs_baseline: 0.0625,
               rank: 8,
               dropout: 0,
               tasks: {
-                arc_challenge: { accuracy: 0.875 },
-                hellaswag: { accuracy: 0.375 }
+                benchmark_task_a: { accuracy: 0.875 },
+                benchmark_task_b: { accuracy: 0.375 }
               }
             }
           ]
@@ -3502,8 +3502,8 @@ describe("objective metric propagation", () => {
                   mean: 0.4765625
                 },
                 tasks: {
-                  arc_challenge: { accuracy: 0.453125 },
-                  hellaswag: { accuracy: 0.5 }
+                  benchmark_task_a: { accuracy: 0.453125 },
+                  benchmark_task_b: { accuracy: 0.5 }
                 }
               }
             },
@@ -3519,8 +3519,8 @@ describe("objective metric propagation", () => {
                   mean: 0.4921875
                 },
                 tasks: {
-                  arc_challenge: { accuracy: 0.46875 },
-                  hellaswag: { accuracy: 0.515625 }
+                  benchmark_task_a: { accuracy: 0.46875 },
+                  benchmark_task_b: { accuracy: 0.515625 }
                 }
               }
             },
@@ -3536,8 +3536,8 @@ describe("objective metric propagation", () => {
                   mean: 0.5
                 },
                 tasks: {
-                  arc_challenge: { accuracy: 0.484375 },
-                  hellaswag: { accuracy: 0.515625 }
+                  benchmark_task_a: { accuracy: 0.484375 },
+                  benchmark_task_b: { accuracy: 0.515625 }
                 }
               }
             },
@@ -3553,8 +3553,8 @@ describe("objective metric propagation", () => {
                   mean: 0.5078125
                 },
                 tasks: {
-                  arc_challenge: { accuracy: 0.484375 },
-                  hellaswag: { accuracy: 0.53125 }
+                  benchmark_task_a: { accuracy: 0.484375 },
+                  benchmark_task_b: { accuracy: 0.53125 }
                 }
               }
             }
@@ -3664,8 +3664,8 @@ describe("objective metric propagation", () => {
           status: "completed",
           best_condition: {
             name: "base_unmodified",
-            arc_challenge_accuracy: 0.296875,
-            hellaswag_accuracy: 0.5078125,
+            benchmark_task_a_accuracy: 0.296875,
+            benchmark_task_b_accuracy: 0.5078125,
             mean_zero_shot_accuracy: 0.40234375,
             bootstrap_mean_ci: {
               ci_low: 0.296875,
@@ -3677,8 +3677,8 @@ describe("objective metric propagation", () => {
           condition_summaries: [
             {
               name: "base_unmodified",
-              arc_challenge_accuracy: 0.296875,
-              hellaswag_accuracy: 0.5078125,
+              benchmark_task_a_accuracy: 0.296875,
+              benchmark_task_b_accuracy: 0.5078125,
               mean_zero_shot_accuracy: 0.40234375,
               bootstrap_mean_ci: {
                 ci_low: 0.296875,
@@ -3690,16 +3690,16 @@ describe("objective metric propagation", () => {
             },
             {
               name: "lora_r8",
-              arc_challenge_accuracy: 0.2734375,
-              hellaswag_accuracy: 0.5234375,
+              benchmark_task_a_accuracy: 0.2734375,
+              benchmark_task_b_accuracy: 0.5234375,
               mean_zero_shot_accuracy: 0.3984375,
               trainable_params: 6307840,
               training_wall_time_sec: 431.3
             },
             {
               name: "lora_r16",
-              arc_challenge_accuracy: 0.265625,
-              hellaswag_accuracy: 0.53125,
+              benchmark_task_a_accuracy: 0.265625,
+              benchmark_task_b_accuracy: 0.53125,
               mean_zero_shot_accuracy: 0.3984375,
               trainable_params: 12615680,
               training_wall_time_sec: 433.3
@@ -3710,8 +3710,8 @@ describe("objective metric propagation", () => {
               name: "base_unmodified",
               condition_type: "baseline_unmodified_checkpoint",
               evaluation: {
-                arc_challenge: { accuracy: 0.296875 },
-                hellaswag: { accuracy: 0.5078125 }
+                benchmark_task_a: { accuracy: 0.296875 },
+                benchmark_task_b: { accuracy: 0.5078125 }
               },
               training: { trainable_params: 0, wall_time_sec: 0 }
             },
@@ -3719,8 +3719,8 @@ describe("objective metric propagation", () => {
               name: "lora_r8",
               condition_type: "peft_lora_instruction_tuned",
               evaluation: {
-                arc_challenge: { accuracy: 0.2734375 },
-                hellaswag: { accuracy: 0.5234375 }
+                benchmark_task_a: { accuracy: 0.2734375 },
+                benchmark_task_b: { accuracy: 0.5234375 }
               },
               training: { trainable_params: 6307840, wall_time_sec: 431.3 }
             },
@@ -3728,8 +3728,8 @@ describe("objective metric propagation", () => {
               name: "lora_r16",
               condition_type: "peft_lora_instruction_tuned",
               evaluation: {
-                arc_challenge: { accuracy: 0.265625 },
-                hellaswag: { accuracy: 0.53125 }
+                benchmark_task_a: { accuracy: 0.265625 },
+                benchmark_task_b: { accuracy: 0.53125 }
               },
               training: { trainable_params: 12615680, wall_time_sec: 433.3 }
             }
@@ -3755,10 +3755,10 @@ describe("objective metric propagation", () => {
           abort_condition: "Abort if accuracy regresses",
           keep_or_discard_rule: "Keep if improved",
           baselines: ["base_unmodified"],
-          metrics: ["mean_zero_shot_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+          metrics: ["mean_zero_shot_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
           results_table_schema: [
             {
-              metric: "primary_mean_zero_shot_accuracy=(arc_challenge_accuracy+hellaswag_accuracy)/2",
+              metric: "primary_mean_zero_shot_accuracy=(benchmark_task_a_accuracy+benchmark_task_b_accuracy)/2",
               baseline: null,
               comparator: null,
               delta: null,
@@ -3855,16 +3855,16 @@ describe("objective metric propagation", () => {
               condition_name: "unmodified_base",
               condition_marker: "unmodified_base",
               status: "completed",
-              arc_challenge_accuracy: 0.3125,
-              hellaswag_accuracy: 0.4375,
+              benchmark_task_a_accuracy: 0.3125,
+              benchmark_task_b_accuracy: 0.4375,
               mean_zero_shot_accuracy: 0.375
             },
             {
               condition_name: "vanilla_lora_max_seq_length_1024_epochs_1_effective_batch_size_8",
               condition_marker: "vanilla_lora|max_seq_length_1024_epochs_1_effective_batch_siz",
               status: "completed",
-              arc_challenge_accuracy: 0.3125,
-              hellaswag_accuracy: 0.4375,
+              benchmark_task_a_accuracy: 0.3125,
+              benchmark_task_b_accuracy: 0.4375,
               mean_zero_shot_accuracy: 0.375,
               accuracy_delta_vs_baseline: 0
             },
@@ -3872,8 +3872,8 @@ describe("objective metric propagation", () => {
               condition_name: "rslora_max_seq_length_1024_epochs_1_effective_batch_size_8",
               condition_marker: "rslora|max_seq_length_1024_epochs_1_effective_batch_siz",
               status: "completed",
-              arc_challenge_accuracy: 0.296875,
-              hellaswag_accuracy: 0.453125,
+              benchmark_task_a_accuracy: 0.296875,
+              benchmark_task_b_accuracy: 0.453125,
               mean_zero_shot_accuracy: 0.375,
               accuracy_delta_vs_baseline: 0
             }
@@ -3905,10 +3905,10 @@ describe("objective metric propagation", () => {
           abort_condition: "Abort if accuracy regresses",
           keep_or_discard_rule: "Keep if improved",
           baselines: ["unmodified_base"],
-          metrics: ["mean_zero_shot_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+          metrics: ["mean_zero_shot_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
           results_table_schema: [
             {
-              metric: "primary_mean_zero_shot_accuracy = (arc_challenge_accuracy + hellaswag_accuracy) / 2",
+              metric: "primary_mean_zero_shot_accuracy = (benchmark_task_a_accuracy + benchmark_task_b_accuracy) / 2",
               baseline: null,
               comparator: null,
               delta: null,
@@ -3986,30 +3986,30 @@ describe("objective metric propagation", () => {
         {
           status: "completed",
           primary_metric_key: "accuracy_delta_vs_baseline",
-          baseline_condition_marker: "rank_8_dropout_0_0",
-          best_condition_marker: "rank_32_dropout_0_0",
+          baseline_condition_marker: "baseline_condition",
+          best_condition_marker: "candidate_condition_f",
           baseline_average_accuracy: 0.48125,
           best_condition_average_accuracy: 0.49375,
           accuracy_delta_vs_baseline: 0.0125,
           condition_order: [
-            "rank_8_dropout_0_0",
-            "rank_16_dropout_0_0",
-            "rank_32_dropout_0_0"
+            "baseline_condition",
+            "candidate_condition_d",
+            "candidate_condition_f"
           ],
           condition_statuses: {
-            rank_8_dropout_0_0: "success",
-            rank_16_dropout_0_0: "success",
-            rank_32_dropout_0_0: "success"
+            baseline_condition: "success",
+            candidate_condition_d: "success",
+            candidate_condition_f: "success"
           },
           per_condition_average_accuracy: {
-            rank_8_dropout_0_0: 0.48125,
-            rank_16_dropout_0_0: 0.4875,
-            rank_32_dropout_0_0: 0.49375
+            baseline_condition: 0.48125,
+            candidate_condition_d: 0.4875,
+            candidate_condition_f: 0.49375
           },
           per_condition_train_loss: {
-            rank_8_dropout_0_0: null,
-            rank_16_dropout_0_0: null,
-            rank_32_dropout_0_0: null
+            baseline_condition: null,
+            candidate_condition_d: null,
+            candidate_condition_f: null
           },
           failure_reasons: []
         },
@@ -4032,7 +4032,7 @@ describe("objective metric propagation", () => {
           expected_metric_effect: "Higher average accuracy than locked rank=8 baseline",
           abort_condition: "Abort if required conditions do not complete.",
           keep_or_discard_rule: "Keep if the best tuned condition improves by at least one point.",
-          baselines: ["rank_8_dropout_0_0"],
+          baselines: ["baseline_condition"],
           metrics: ["average_accuracy", "accuracy_delta_vs_baseline"],
           results_table_schema: [
             {
@@ -4131,30 +4131,30 @@ describe("objective metric propagation", () => {
         {
           status: "completed",
           primary_metric_key: "accuracy_delta_vs_baseline",
-          selected_condition_marker: "rank_16_dropout_0_05",
+          selected_condition_marker: "candidate_condition_d5",
           study_contract: {
-            baseline_condition_marker: "rank_8_dropout_0_0"
+            baseline_condition_marker: "baseline_condition"
           },
           baseline_mean_accuracy: 0.8307,
           accuracy_delta_vs_baseline: 0.0166,
           per_condition: [
             {
-              condition_marker: "rank_8_dropout_0_0",
+              condition_marker: "baseline_condition",
               status: "completed",
               average_accuracy: 0.8307,
               mean_accuracy: 0.8307,
               accuracy_delta_vs_baseline: 0,
-              arc_challenge_accuracy_mean: 0.6676,
-              hellaswag_accuracy_mean: 0.9937
+              benchmark_task_a_accuracy_mean: 0.6676,
+              benchmark_task_b_accuracy_mean: 0.9937
             },
             {
-              condition_marker: "rank_16_dropout_0_05",
+              condition_marker: "candidate_condition_d5",
               status: "completed",
               average_accuracy: 0.8473,
               mean_accuracy: 0.8473,
               accuracy_delta_vs_baseline: 0.0166,
-              arc_challenge_accuracy_mean: 0.6945,
-              hellaswag_accuracy_mean: 1
+              benchmark_task_a_accuracy_mean: 0.6945,
+              benchmark_task_b_accuracy_mean: 1
             }
           ],
           failure_reasons: []
@@ -4173,12 +4173,12 @@ describe("objective metric propagation", () => {
           created_at: new Date().toISOString(),
           hypothesis: "A LoRA condition should improve average accuracy over the locked baseline.",
           causal_mechanism: "Adapter configuration affects instruction-tuning transfer.",
-          single_change: "LoRA rank/dropout grid",
+          single_change: "condition-parameter grid",
           confounded: false,
           expected_metric_effect: "Higher average accuracy than locked rank=8 baseline",
           abort_condition: "Abort if required baseline or comparator rows are missing.",
           keep_or_discard_rule: "Keep only with populated baseline/comparator evidence.",
-          baselines: ["rank_8_dropout_0_0"],
+          baselines: ["baseline_condition"],
           metrics: ["average_accuracy", "accuracy_delta_vs_baseline"],
           results_table_schema: [
             {
@@ -5919,7 +5919,7 @@ describe("objective metric propagation", () => {
       ...makeRun(runId),
       currentNode: "analyze_results" as const,
       objectiveMetric:
-        "Mean zero-shot accuracy across ARC-Challenge and HellaSwag; meaningful improvement >= 0.015."
+        "Mean zero-shot accuracy across Benchmark Task A and Benchmark Task B; meaningful improvement >= 0.015."
     };
     run.graph.currentNode = "analyze_results";
 

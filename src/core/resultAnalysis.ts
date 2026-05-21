@@ -2086,41 +2086,53 @@ function readResultRowsFromMetrics(metrics: Record<string, unknown>): {
 
 function enrichResultRow(row: Record<string, unknown>): Record<string, unknown> {
   const next = { ...row };
-  const evaluation = asRecord(next.evaluation);
-  const taskAccuracies = asRecord(next.task_accuracies);
-  const taskReports = asRecord(next.task_reports);
-  const tasks = asRecord(next.tasks);
-  const arcAccuracy =
-    firstNumber(asRecord(evaluation.arc_challenge), ["accuracy"]) ??
-    firstNumber(taskAccuracies, ["arc_challenge", "arc_challenge_accuracy", "arc", "ARC-Challenge"]) ??
-    firstNumber(asRecord(taskReports.arc_challenge), ["accuracy"]) ??
-    firstNumber(asRecord(tasks.arc_challenge), ["accuracy"]);
-  const hellaswagAccuracy =
-    firstNumber(asRecord(evaluation.hellaswag), ["accuracy"]) ??
-    firstNumber(taskAccuracies, ["hellaswag", "hellaswag_accuracy", "HellaSwag"]) ??
-    firstNumber(asRecord(taskReports.hellaswag), ["accuracy"]) ??
-    firstNumber(asRecord(tasks.hellaswag), ["accuracy"]);
-  if (arcAccuracy !== undefined && next.arc_challenge_accuracy === undefined) {
-    next.arc_challenge_accuracy = arcAccuracy;
+  const taskAccuracies = extractTaskAccuracies(next);
+  if (taskAccuracies.length >= 2 && next.mean_accuracy === undefined) {
+    next.mean_accuracy = meanRounded(taskAccuracies.map((entry) => entry.accuracy));
   }
-  if (hellaswagAccuracy !== undefined && next.hellaswag_accuracy === undefined) {
-    next.hellaswag_accuracy = hellaswagAccuracy;
-  }
-  if (
-    arcAccuracy !== undefined &&
-    hellaswagAccuracy !== undefined &&
-    next.mean_accuracy === undefined
-  ) {
-    next.mean_accuracy = Number(((arcAccuracy + hellaswagAccuracy) / 2).toFixed(6));
-  }
-  if (
-    arcAccuracy !== undefined &&
-    hellaswagAccuracy !== undefined &&
-    next.mean_zero_shot_accuracy === undefined
-  ) {
-    next.mean_zero_shot_accuracy = Number(((arcAccuracy + hellaswagAccuracy) / 2).toFixed(6));
+  if (taskAccuracies.length >= 2 && next.mean_zero_shot_accuracy === undefined) {
+    next.mean_zero_shot_accuracy = meanRounded(taskAccuracies.map((entry) => entry.accuracy));
   }
   return next;
+}
+
+function extractTaskAccuracies(row: Record<string, unknown>): Array<{ task: string; accuracy: number }> {
+  const entries: Array<{ task: string; accuracy: number }> = [];
+  const seen = new Set<string>();
+  const add = (task: string, value: unknown) => {
+    const normalizedTask = task.trim();
+    if (!normalizedTask || seen.has(normalizedTask)) {
+      return;
+    }
+    const accuracy = asNumber(value);
+    if (accuracy === undefined) {
+      return;
+    }
+    seen.add(normalizedTask);
+    entries.push({ task: normalizedTask, accuracy });
+  };
+
+  for (const container of [
+    asRecord(row.evaluation),
+    asRecord(row.task_accuracies),
+    asRecord(row.task_reports),
+    asRecord(row.tasks)
+  ]) {
+    for (const [task, value] of Object.entries(container)) {
+      const record = asRecord(value);
+      if (Object.keys(record).length > 0) {
+        add(task, record.accuracy);
+      } else if (/accuracy/iu.test(task)) {
+        add(task.replace(/_?accuracy$/iu, ""), value);
+      }
+    }
+  }
+
+  return entries;
+}
+
+function meanRounded(values: number[]): number {
+  return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(6));
 }
 
 function enrichConditionRow(row: Record<string, unknown>): Record<string, unknown> {
@@ -2180,8 +2192,6 @@ function buildResultArrayPreferredKeys(
     "accuracy_delta_vs_baseline",
     "mean_zero_shot_accuracy",
     "mean_accuracy",
-    "arc_challenge_accuracy",
-    "hellaswag_accuracy",
     "trainable_params",
     "training_wall_time_sec",
     "wall_clock_seconds",

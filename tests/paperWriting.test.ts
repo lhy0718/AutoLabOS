@@ -176,14 +176,14 @@ describe("paperWriting related-work support", () => {
       ],
       condition_comparisons: [
         {
-          baseline_condition: "rank_8_dropout_0_0",
-          comparator_condition: "rank_32_dropout_0_05",
+          baseline_condition: "baseline_condition",
+          comparator_condition: "candidate_condition_f5",
           metric_key: "accuracy_delta_vs_baseline_mean",
           baseline_value: 0,
           comparator_value: 0.0667,
           delta: 0.0667,
           direction: "higher_better",
-          summary: "rank_32_dropout_0_05 exceeded the locked baseline."
+          summary: "candidate_condition_f5 exceeded the locked baseline."
         }
       ],
       execution_summary: {
@@ -192,7 +192,7 @@ describe("paperWriting related-work support", () => {
         success_count: 25,
         failure_count: 0
       },
-      primary_findings: ["rank_32_dropout_0_05 had the best mean average accuracy."],
+      primary_findings: ["candidate_condition_f5 had the best mean average accuracy."],
       limitations: ["The study is scoped to one small model and bounded evaluation slices."],
       warnings: [],
       paper_claims: [
@@ -245,7 +245,7 @@ describe("paperWriting related-work support", () => {
 
     expect(prompt.length).toBeLessThan(60_000);
     expect(prompt).toContain("accuracy_delta_vs_baseline_mean");
-    expect(prompt).toContain("rank_32_dropout_0_05");
+    expect(prompt).toContain("candidate_condition_f5");
     expect(prompt).toContain("raw_metrics_omitted");
     expect(prompt).not.toContain("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
   });
@@ -357,7 +357,7 @@ describe("paperWriting related-work support", () => {
                 citation_paper_ids: ["paper_1"]
               },
               {
-                text: "The closest prior work includes Chain-of-LoRA. The present paper positions itself around - Primary metric: average accuracy across ARC-Challenge and HellaSwag. - Secondary metrics: per-task accuracy and runtime. while keeping claims limited to the available artifacts.",
+                text: "The closest prior work includes Chain-of-LoRA. The present paper positions itself around - Primary metric: average accuracy across Benchmark Task A and Benchmark Task B. - Secondary metrics: per-task accuracy and runtime. while keeping claims limited to the available artifacts.",
                 evidence_ids: ["ev_1"],
                 citation_paper_ids: ["paper_2"]
               }

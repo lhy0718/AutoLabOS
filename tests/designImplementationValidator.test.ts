@@ -214,12 +214,12 @@ describe("validateDesignImplementationAlignment", () => {
     writeFileSync(
       scriptPath,
       [
-        "BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
+        "BASELINE_CONDITION_MARKER = 'baseline_condition'",
         "REQUIRED_SEEDS = (42, 43, 44)",
         "REQUIRED_CONDITION_MARKERS = (",
-        "  'rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_4_dropout_0_05',",
-        "  'rank_8_dropout_0_05', 'rank_16_dropout_0_0', 'rank_16_dropout_0_05',",
-        "  'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+        "  'baseline_condition', 'candidate_condition_a', 'candidate_condition_a5',",
+        "  'baseline_condition5', 'candidate_condition_d', 'candidate_condition_d5',",
+        "  'candidate_condition_f', 'candidate_condition_f5',",
         ")",
         "REQUIRED_CONDITION_COUNT = 8",
         "REQUIRED_RUN_COUNT = 24",
@@ -255,16 +255,16 @@ describe("validateDesignImplementationAlignment", () => {
         required_condition_count: 8,
         required_run_count: 24,
         seed_schedule: [42, 43, 44],
-        baseline_condition_marker: "rank_8_dropout_0_0",
+        baseline_condition_marker: "baseline_condition",
         required_condition_markers: [
-          "rank_8_dropout_0_0",
-          "rank_4_dropout_0_0",
-          "rank_4_dropout_0_05",
-          "rank_8_dropout_0_05",
-          "rank_16_dropout_0_0",
-          "rank_16_dropout_0_05",
-          "rank_32_dropout_0_0",
-          "rank_32_dropout_0_05"
+          "baseline_condition",
+          "candidate_condition_a",
+          "candidate_condition_a5",
+          "baseline_condition5",
+          "candidate_condition_d",
+          "candidate_condition_d5",
+          "candidate_condition_f",
+          "candidate_condition_f5"
         ]
       },
       attempt: {
@@ -419,7 +419,7 @@ describe("validateDesignImplementationAlignment", () => {
       [
         "REQUIRED_CONDITION_COUNT = 5",
         "DEFAULT_SEED = 17",
-        "PLANNED_CONDITIONS = ['rank_8_dropout_0_0', 'rank_8_dropout_0_1', 'rank_16_dropout_0_0', 'rank_16_dropout_0_1', 'rank_32_dropout_0_0']",
+        "PLANNED_CONDITIONS = ['baseline_condition', 'candidate_condition_h', 'candidate_condition_d', 'candidate_condition_i', 'candidate_condition_f']",
         "print('baseline and comparator runner')"
       ].join("\n"),
       "utf8"
@@ -430,7 +430,7 @@ describe("validateDesignImplementationAlignment", () => {
       selectedDesign: {
         id: "design-planned",
         hypothesis_ids: ["h1"],
-        baselines: ["rank_8_dropout_0_0"]
+        baselines: ["baseline_condition"]
       },
       objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
       managedBundleSupported: false
@@ -443,16 +443,16 @@ describe("validateDesignImplementationAlignment", () => {
         required_run_count: 24,
         minimum_seeds_per_condition: 3,
         seed_schedule: [42, 43, 44],
-        baseline_condition_marker: "rank_8_dropout_0_0",
+        baseline_condition_marker: "baseline_condition",
         required_condition_markers: [
-          "rank_4_dropout_0_0",
-          "rank_4_dropout_0_05",
-          "rank_8_dropout_0_0",
-          "rank_8_dropout_0_05",
-          "rank_16_dropout_0_0",
-          "rank_16_dropout_0_05",
-          "rank_32_dropout_0_0",
-          "rank_32_dropout_0_05"
+          "candidate_condition_a",
+          "candidate_condition_a5",
+          "baseline_condition",
+          "baseline_condition5",
+          "candidate_condition_d",
+          "candidate_condition_d5",
+          "candidate_condition_f",
+          "candidate_condition_f5"
         ]
       },
       attempt: {
@@ -498,8 +498,8 @@ describe("validateDesignImplementationAlignment", () => {
       scriptPath,
       [
         "PLANNED_CONDITION_MARKERS = (",
-        "  'rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
-        "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+        "  'baseline_condition', 'candidate_condition_a', 'candidate_condition_a5', 'baseline_condition5',",
+        "  'candidate_condition_d', 'candidate_condition_d5', 'candidate_condition_f', 'candidate_condition_f5',",
         ")",
         "REQUIRED_CONDITION_COUNT = 8",
         "REQUIRED_RUN_COUNT = 32",
@@ -512,10 +512,10 @@ describe("validateDesignImplementationAlignment", () => {
       readmePath,
       [
         "Planned tuned conditions:",
-        "- rank_8_dropout_0_0",
-        "- rank_4_dropout_0_0",
-        "- rank_16_dropout_0_0",
-        "- rank_32_dropout_0_0",
+        "- baseline_condition",
+        "- candidate_condition_a",
+        "- candidate_condition_d",
+        "- candidate_condition_f",
         "",
         "Planned run count:",
         "- 22 total runs"
@@ -528,7 +528,7 @@ describe("validateDesignImplementationAlignment", () => {
       selectedDesign: {
         id: "design-public-doc",
         hypothesis_ids: ["h1"],
-        baselines: ["rank_8_dropout_0_0"]
+        baselines: ["baseline_condition"]
       },
       objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
       managedBundleSupported: false
@@ -540,16 +540,16 @@ describe("validateDesignImplementationAlignment", () => {
         required_condition_count: 8,
         required_run_count: 32,
         seed_schedule: [42, 43, 44, 45],
-        baseline_condition_marker: "rank_8_dropout_0_0",
+        baseline_condition_marker: "baseline_condition",
         required_condition_markers: [
-          "rank_8_dropout_0_0",
-          "rank_4_dropout_0_0",
-          "rank_4_dropout_0_05",
-          "rank_8_dropout_0_05",
-          "rank_16_dropout_0_0",
-          "rank_16_dropout_0_05",
-          "rank_32_dropout_0_0",
-          "rank_32_dropout_0_05"
+          "baseline_condition",
+          "candidate_condition_a",
+          "candidate_condition_a5",
+          "baseline_condition5",
+          "candidate_condition_d",
+          "candidate_condition_d5",
+          "candidate_condition_f",
+          "candidate_condition_f5"
         ]
       },
       attempt: {
@@ -590,8 +590,8 @@ describe("validateDesignImplementationAlignment", () => {
       scriptPath,
       [
         "PLANNED_CONDITION_MARKERS = (",
-        "  'rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
-        "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+        "  'baseline_condition', 'candidate_condition_a', 'candidate_condition_a5', 'baseline_condition5',",
+        "  'candidate_condition_d', 'candidate_condition_d5', 'candidate_condition_f', 'candidate_condition_f5',",
         ")",
         "REQUIRED_CONDITION_COUNT = 8",
         "REQUIRED_RUN_COUNT = 32",
@@ -620,7 +620,7 @@ describe("validateDesignImplementationAlignment", () => {
       selectedDesign: {
         id: "design-missing-per-run-helper",
         hypothesis_ids: ["h1"],
-        baselines: ["rank_8_dropout_0_0"]
+        baselines: ["baseline_condition"]
       },
       objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
       managedBundleSupported: false
@@ -632,16 +632,16 @@ describe("validateDesignImplementationAlignment", () => {
         required_condition_count: 8,
         required_run_count: 32,
         seed_schedule: [42, 43, 44, 45],
-        baseline_condition_marker: "rank_8_dropout_0_0",
+        baseline_condition_marker: "baseline_condition",
         required_condition_markers: [
-          "rank_8_dropout_0_0",
-          "rank_4_dropout_0_0",
-          "rank_4_dropout_0_05",
-          "rank_8_dropout_0_05",
-          "rank_16_dropout_0_0",
-          "rank_16_dropout_0_05",
-          "rank_32_dropout_0_0",
-          "rank_32_dropout_0_05"
+          "baseline_condition",
+          "candidate_condition_a",
+          "candidate_condition_a5",
+          "baseline_condition5",
+          "candidate_condition_d",
+          "candidate_condition_d5",
+          "candidate_condition_f",
+          "candidate_condition_f5"
         ]
       },
       attempt: {
@@ -679,8 +679,8 @@ describe("validateDesignImplementationAlignment", () => {
       scriptPath,
       [
         "PLANNED_CONDITION_MARKERS = (",
-        "  'rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
-        "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+        "  'baseline_condition', 'candidate_condition_a', 'candidate_condition_a5', 'baseline_condition5',",
+        "  'candidate_condition_d', 'candidate_condition_d5', 'candidate_condition_f', 'candidate_condition_f5',",
         ")",
         "REQUIRED_CONDITION_COUNT = 8",
         "REQUIRED_RUN_COUNT = 32",
@@ -712,16 +712,16 @@ describe("validateDesignImplementationAlignment", () => {
         required_condition_count: 8,
         required_run_count: 32,
         seed_schedule: [42, 43, 44, 45],
-        baseline_condition_marker: "rank_8_dropout_0_0",
+        baseline_condition_marker: "baseline_condition",
         required_condition_markers: [
-          "rank_8_dropout_0_0",
-          "rank_4_dropout_0_0",
-          "rank_4_dropout_0_05",
-          "rank_8_dropout_0_05",
-          "rank_16_dropout_0_0",
-          "rank_16_dropout_0_05",
-          "rank_32_dropout_0_0",
-          "rank_32_dropout_0_05"
+          "baseline_condition",
+          "candidate_condition_a",
+          "candidate_condition_a5",
+          "baseline_condition5",
+          "candidate_condition_d",
+          "candidate_condition_d5",
+          "candidate_condition_f",
+          "candidate_condition_f5"
         ]
       },
       attempt: {
@@ -901,7 +901,7 @@ describe("validateDesignImplementationAlignment", () => {
       scriptPath,
       [
         "LOCKED_BUDGET = dict(max_eval_examples_per_task=96)",
-        "PLANNED_CONDITION_MARKERS = ('rank_8_dropout_0_0', 'rank_4_dropout_0_0')",
+        "PLANNED_CONDITION_MARKERS = ('baseline_condition', 'candidate_condition_a')",
         "REQUIRED_RUN_COUNT = 8",
         "SEED_SCHEDULE = [42, 43, 44, 45]",
         "print('baseline and comparator runner')"
@@ -914,7 +914,7 @@ describe("validateDesignImplementationAlignment", () => {
       selectedDesign: {
         id: "design-full-eval",
         hypothesis_ids: ["h1"],
-        baselines: ["rank_8_dropout_0_0"]
+        baselines: ["baseline_condition"]
       },
       objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
       managedBundleSupported: false
@@ -926,12 +926,12 @@ describe("validateDesignImplementationAlignment", () => {
         required_condition_count: 2,
         required_run_count: 8,
         seed_schedule: [42, 43, 44, 45],
-        baseline_condition_marker: "rank_8_dropout_0_0",
-        required_condition_markers: ["rank_8_dropout_0_0", "rank_4_dropout_0_0"],
+        baseline_condition_marker: "baseline_condition",
+        required_condition_markers: ["baseline_condition", "candidate_condition_a"],
         full_evaluation_required: true,
         minimum_eval_examples_per_task: {
-          arc_challenge: 299,
-          hellaswag: 10042
+          benchmark_task_a: 299,
+          benchmark_task_b: 10042
         }
       },
       attempt: {
@@ -969,14 +969,14 @@ describe("validateDesignImplementationAlignment", () => {
       scriptPath,
       [
         "PLANNED_CONDITION_MARKERS = (",
-        "  'rank_4_dropout_0_0',",
-        "  'rank_4_dropout_0_05',",
-        "  'rank_8_dropout_0_0',",
-        "  'rank_8_dropout_0_05',",
-        "  'rank_16_dropout_0_0',",
-        "  'rank_16_dropout_0_05',",
-        "  'rank_32_dropout_0_0',",
-        "  'rank_32_dropout_0_05',",
+        "  'candidate_condition_a',",
+        "  'candidate_condition_a5',",
+        "  'baseline_condition',",
+        "  'baseline_condition5',",
+        "  'candidate_condition_d',",
+        "  'candidate_condition_d5',",
+        "  'candidate_condition_f',",
+        "  'candidate_condition_f5',",
         ")",
         "REQUIRED_CONDITION_COUNT = 8",
         "REQUIRED_RUN_COUNT = 24",
@@ -991,7 +991,7 @@ describe("validateDesignImplementationAlignment", () => {
       selectedDesign: {
         id: "design-baseline-order",
         hypothesis_ids: ["h1"],
-        baselines: ["rank_8_dropout_0_0"]
+        baselines: ["baseline_condition"]
       },
       objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
       managedBundleSupported: false
@@ -1003,16 +1003,16 @@ describe("validateDesignImplementationAlignment", () => {
         required_condition_count: 8,
         required_run_count: 24,
         seed_schedule: [42, 43, 44],
-        baseline_condition_marker: "rank_8_dropout_0_0",
+        baseline_condition_marker: "baseline_condition",
         required_condition_markers: [
-          "rank_8_dropout_0_0",
-          "rank_4_dropout_0_0",
-          "rank_4_dropout_0_05",
-          "rank_8_dropout_0_05",
-          "rank_16_dropout_0_0",
-          "rank_16_dropout_0_05",
-          "rank_32_dropout_0_0",
-          "rank_32_dropout_0_05"
+          "baseline_condition",
+          "candidate_condition_a",
+          "candidate_condition_a5",
+          "baseline_condition5",
+          "candidate_condition_d",
+          "candidate_condition_d5",
+          "candidate_condition_f",
+          "candidate_condition_f5"
         ]
       },
       attempt: {
