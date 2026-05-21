@@ -792,8 +792,13 @@ export class ImplementSessionManager {
 
       let result: RunTurnResult;
       const commandRepairFeedback = isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback);
+      const runnerFeedbackDiagnosticText = await readRunVerifierReportDiagnosticText(
+        promptTaskSpec.context.runner_feedback,
+        isolation.workspaceRoot
+      );
       const deterministicBundleRepairFeedback = isRecoverableBundleDeterministicRepairFeedback(
-        promptTaskSpec.context.runner_feedback
+        promptTaskSpec.context.runner_feedback,
+        runnerFeedbackDiagnosticText
       );
       if (commandRepairFeedback) {
         const previousScriptPath = await runContext.get<string>("implement_experiments.script");
@@ -828,19 +833,27 @@ export class ImplementSessionManager {
           hasPaperCritiqueFeedback: Boolean(promptTaskSpec.context.paper_critique_feedback),
           commandRepairFeedback: commandRepairFeedback || deterministicBundleRepairFeedback
         }),
-        runnerFeedback: promptTaskSpec.context.runner_feedback
+        runnerFeedback: promptTaskSpec.context.runner_feedback,
+        runnerFeedbackDiagnosticText
       });
       const commandRepairRecovery =
         Boolean(recoveredBeforeTurn) &&
         isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback);
+      const deterministicRepairRecovery = Boolean(recoveredBeforeTurn) && deterministicBundleRepairFeedback;
       if (
         recoveredBeforeTurn &&
-        (commandRepairRecovery || (await hasRecoverableExecutionEvidence(isolation.publicDir, isolation.metricsPath)))
+        (
+          commandRepairRecovery ||
+          deterministicRepairRecovery ||
+          (await hasRecoverableExecutionEvidence(isolation.publicDir, isolation.metricsPath))
+        )
       ) {
         emitImplementObservation(
           "codex",
           commandRepairRecovery
             ? "Reused the existing governed experiment bundle after deterministic command-wrapper repair instead of re-entering Codex."
+            : deterministicRepairRecovery
+              ? "Reused the existing governed experiment bundle after deterministic runner-entrypoint repair instead of re-entering Codex."
             : "Reused the existing governed experiment bundle and execution evidence instead of re-entering Codex.",
           {
             attempt,
@@ -848,6 +861,10 @@ export class ImplementSessionManager {
             publicDir: isolation.publicDir
           }
         );
+        if (commandRepairRecovery || deterministicRepairRecovery) {
+          await runContext.put("implement_experiments.runner_feedback", null);
+          await runContext.put("run_experiments.feedback_for_implementer", null);
+        }
         result = recoveredBeforeTurn;
       } else {
         try {
@@ -996,6 +1013,14 @@ export class ImplementSessionManager {
             isRetryableImplementStagedLlmMaterializationError(error) &&
             isProviderTerminatedStagedLlmError(error);
           const commandRepairFeedback = isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback);
+          const runnerFeedbackDiagnosticText = await readRunVerifierReportDiagnosticText(
+            promptTaskSpec.context.runner_feedback,
+            isolation.workspaceRoot
+          );
+          const deterministicBundleRepairFeedback = isRecoverableBundleDeterministicRepairFeedback(
+            promptTaskSpec.context.runner_feedback,
+            runnerFeedbackDiagnosticText
+          );
           const recovered = await recoverStructuredResultFromPublicBundle({
             publicDir: isolation.publicDir,
             runDir: isolation.runDir,
@@ -1011,9 +1036,10 @@ export class ImplementSessionManager {
                 planChanged: Boolean(promptTaskSpec.context.plan_changed),
                 hasRunnerFeedback: Boolean(promptTaskSpec.context.runner_feedback),
                 hasPaperCritiqueFeedback: Boolean(promptTaskSpec.context.paper_critique_feedback),
-                commandRepairFeedback
+                commandRepairFeedback: commandRepairFeedback || deterministicBundleRepairFeedback
               }),
-            runnerFeedback: promptTaskSpec.context.runner_feedback
+            runnerFeedback: promptTaskSpec.context.runner_feedback,
+            runnerFeedbackDiagnosticText
           });
           if (!recovered) {
             if (isRetryableImplementStagedLlmMaterializationError(error) && attempt < MAX_IMPLEMENT_ATTEMPTS) {
@@ -9123,6 +9149,8 @@ export class ImplementSessionManager {
       await repairPythonCallContextInvokerBridgeSurface(executionScriptPath);
     const studyConditionRuntimeInputRepair =
       await repairPythonStudyConditionRuntimeInputMaterializationSurface(executionScriptPath);
+    const baselineFirstConditionRuntimeInputRepair =
+      await repairPythonBaselineFirstConditionRuntimeInputSurface(executionScriptPath);
     const trainLossHelperArityRepair =
       await repairPythonTrainLossHelperAritySurface(executionScriptPath);
     const conditionSuccessStatusAliasRepair =
@@ -9287,6 +9315,8 @@ export class ImplementSessionManager {
       await repairPythonDataCollatorPrecomputedLabelReturnSurface(executionScriptPath);
     const dataclassEvaluationRecordCoercionRepair =
       await repairPythonDataclassEvaluationRecordCoercionSurface(executionScriptPath);
+    const dataclassTrainingExampleCoercionRepair =
+      await repairPythonDataclassTrainingExampleCoercionSurface(executionScriptPath);
     const conditionMarkerDefaultKwargRepair =
       await repairPythonConditionMarkerDefaultKwargSurface(executionScriptPath);
     const conditionTrainEvalHelperBridgeRepair =
@@ -9339,6 +9369,7 @@ export class ImplementSessionManager {
       allowModelDownloadDefaultRepair,
       callContextInvokerBridgeRepair,
       studyConditionRuntimeInputRepair,
+      baselineFirstConditionRuntimeInputRepair,
       trainLossHelperArityRepair,
       conditionSuccessStatusAliasRepair,
       terminalMetricsExistingConditionCountRepair,
@@ -9421,6 +9452,7 @@ export class ImplementSessionManager {
         dataCollatorTokenizerArgumentRepair,
         dataCollatorPrecomputedLabelReturnRepair,
         dataclassEvaluationRecordCoercionRepair,
+        dataclassTrainingExampleCoercionRepair,
         conditionMarkerDefaultKwargRepair,
         conditionTrainEvalHelperBridgeRepair,
         evaluationAnswerLabelAliasRepair,
@@ -13049,12 +13081,16 @@ async function recoverStructuredResultFromPublicBundle(params: {
   materializedAfterMs?: number;
   requireFreshPlanAlignment?: boolean;
   runnerFeedback?: RunVerifierReport;
+  runnerFeedbackDiagnosticText?: string;
 }): Promise<RunTurnResult | undefined> {
   if (params.requireFreshPlanAlignment) {
     return undefined;
   }
   const commandRepairFeedback = isRecoverableBundleCommandRepairFeedback(params.runnerFeedback);
-  const deterministicRepairFeedback = isRecoverableBundleDeterministicRepairFeedback(params.runnerFeedback);
+  const deterministicRepairFeedback = isRecoverableBundleDeterministicRepairFeedback(
+    params.runnerFeedback,
+    params.runnerFeedbackDiagnosticText
+  );
   const candidateDirs = [
     { dir: params.publicDir, snapshot: false },
     ...(
@@ -13115,13 +13151,25 @@ async function recoverStructuredResultFromPublicBundle(params: {
         }) ?? path.join(params.publicDir, path.basename(scriptPath));
     }
     if (deterministicRepairFeedback) {
+      const alreadyRepaired = hasRecoverableBundleDeterministicRepairMarker(
+        await fs.readFile(scriptPath, "utf8").catch(() => "")
+      );
       const repairs = [
         await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(scriptPath),
         await repairPythonEntrypointLockedConditionSeedSweepCandidateSurface(scriptPath),
+        await repairPythonBaselineFirstConditionRuntimeInputSurface(scriptPath),
+        await repairPythonDataclassTrainingExampleCoercionSurface(scriptPath),
+        await repairPythonConditionSuccessStatusAliasSurface(scriptPath),
+        await repairPythonMetricsPayloadProjectionSurface(scriptPath),
         await repairPythonFinalOrchestrationHelperSurface(scriptPath),
         await repairPythonMainFindCallableStudyResolverSurface(scriptPath)
       ];
-      if (!repairs.some((repair) => repair.repaired)) {
+      const repairedSource = await fs.readFile(scriptPath, "utf8").catch(() => "");
+      if (
+        !alreadyRepaired &&
+        !repairs.some((repair) => repair.repaired) &&
+        !hasRecoverableBundleDeterministicRepairMarker(repairedSource)
+      ) {
         continue;
       }
     }
@@ -13580,7 +13628,27 @@ function isRecoverableBundleCommandRepairFeedback(report: RunVerifierReport | un
   );
 }
 
-function isRecoverableBundleDeterministicRepairFeedback(report: RunVerifierReport | undefined): boolean {
+async function readRunVerifierReportDiagnosticText(
+  report: RunVerifierReport | undefined,
+  workspaceRoot: string
+): Promise<string> {
+  if (!report?.log_file) {
+    return "";
+  }
+  const logPath = path.isAbsolute(report.log_file)
+    ? report.log_file
+    : path.join(workspaceRoot, report.log_file);
+  const logText = await fs.readFile(logPath, "utf8").catch(() => "");
+  if (!logText) {
+    return "";
+  }
+  return logText.slice(-16_000);
+}
+
+function isRecoverableBundleDeterministicRepairFeedback(
+  report: RunVerifierReport | undefined,
+  diagnosticText = ""
+): boolean {
   if (!report) {
     return false;
   }
@@ -13588,15 +13656,33 @@ function isRecoverableBundleDeterministicRepairFeedback(report: RunVerifierRepor
     report.summary,
     report.stderr_excerpt,
     report.stdout_excerpt,
-    report.suggested_next_action
+    report.suggested_next_action,
+    diagnosticText
   ].filter((value): value is string => Boolean(value)).join("\n");
   return (
     /No study sweep entrypoint was found/u.test(summary) ||
     /No study execution helper was found/u.test(summary) ||
     /No study sweep runner or single-run helper was found/u.test(summary) ||
+    /missing \d+ required positional arguments?: .*base_model_id.*train_examples/u.test(summary) ||
+    /missing \d+ required positional arguments?: .*train_examples.*base_model_id/u.test(summary) ||
+    /AttributeError:\s*['"][^'"]+['"] object has no attribute ['"]get['"]/u.test(summary) ||
+    /status=failed; completed=0\/\d+; baseline_first=True/u.test(summary) ||
+    /Experiment metrics payload reports success=false/u.test(summary) ||
     /Unable to locate (?:a |the )study (?:runner|execution) function/u.test(summary) ||
     /Unable to locate the experiment sweep runner callable/u.test(summary)
   );
+}
+
+function hasRecoverableBundleDeterministicRepairMarker(source: string): boolean {
+  return [
+    "_autolabos_baseline_first_locked_sweep_study_runner_alias_marker",
+    "_autolabos_baseline_first_condition_runtime_inputs_marker",
+    "_autolabos_dataclass_training_example_coercion_marker",
+    "_autolabos_condition_success_status_alias_marker",
+    "_autolabos_entrypoint_locked_condition_seed_sweep_candidate_marker",
+    "_autolabos_final_orchestration_helper_marker",
+    "_autolabos_skip_callable_classes_marker"
+  ].some((marker) => source.includes(marker));
 }
 
 export function shouldApplyRecoveredBundleStaticPythonGuards(
@@ -19467,6 +19553,69 @@ export async function repairPythonDataclassEvaluationRecordCoercionSurface(
   return {
     repaired: true,
     message: `Coerced dataclass evaluation records to plain dictionaries in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonDataclassTrainingExampleCoercionSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_dataclass_training_example_coercion_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _extract_prompt_and_target_text(") ||
+    !source.includes("example.get(")
+  ) {
+    return { repaired: false };
+  }
+
+  const functionMatch = source.match(/\ndef\s+_extract_prompt_and_target_text\s*\([^)]*\)\s*(?:->\s*[^:]+)?:\n/u);
+  if (!functionMatch || functionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const helperBlock = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_plain_training_example(example):",
+    "    if hasattr(example, 'get'):",
+    "        return example",
+    "    if hasattr(example, '__dataclass_fields__'):",
+    "        try:",
+    "            import dataclasses as _autolabos_dataclasses",
+    "            return _autolabos_dataclasses.asdict(example)",
+    "        except Exception:",
+    "            pass",
+    "    if hasattr(example, '__dict__'):",
+    "        return dict(vars(example))",
+    "    return example",
+    ""
+  ].join("\n");
+
+  let nextSource = `${source.slice(0, functionMatch.index)}${helperBlock}${source.slice(functionMatch.index)}`;
+  nextSource = nextSource.replace(
+    /(\ndef\s+_extract_prompt_and_target_text\s*\([^)]*\)\s*(?:->\s*[^:]+)?:\n)/u,
+    "$1    example = _autolabos_plain_training_example(example)\n"
+  );
+
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Coerced dataclass training examples before prompt/target extraction in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -26804,32 +26953,53 @@ export async function repairPythonConditionSuccessStatusAliasSurface(
   }
 
   const marker = "_autolabos_condition_success_status_alias_marker";
-  if (
-    source.includes(marker) ||
-    !source.includes('result["status"] = "succeeded"') ||
-    !source.includes('result.get("status") == "completed"')
-  ) {
+  if (source.includes(marker)) {
     return { repaired: false };
   }
 
   let insertedMarker = false;
-  const nextSource = source.replace(
-    /^([ \t]*)result\["status"\]\s*=\s*"succeeded"\s*$/gmu,
-    (_match, indent: string) => {
-      const statusLine = `${indent}result["status"] = "completed"`;
-      if (insertedMarker) {
-        return statusLine;
+  let nextSource = source;
+
+  if (
+    nextSource.includes('result["status"] = "succeeded"') &&
+    nextSource.includes('result.get("status") == "completed"')
+  ) {
+    nextSource = nextSource.replace(
+      /^([ \t]*)result\["status"\]\s*=\s*"succeeded"\s*$/gmu,
+      (_match, indent: string) => {
+        const statusLine = `${indent}result["status"] = "completed"`;
+        if (insertedMarker) {
+          return statusLine;
+        }
+        insertedMarker = true;
+        return `${indent}# ${marker}\n${statusLine}`;
       }
-      insertedMarker = true;
-      return `${indent}# ${marker}\n${statusLine}`;
-    }
-  );
+    );
+  }
+
+  if (
+    /status\.lower\(\)\s+in\s+\{[^}]*"completed"[^}]*"success"[^}]*"ok"[^}]*"finished"[^}]*\}/u.test(nextSource) &&
+    !/status\.lower\(\)\s+in\s+\{[^}]*"succeeded"[^}]*\}/u.test(nextSource)
+  ) {
+    nextSource = nextSource.replace(
+      /^([ \t]*completed_flag\s*=\s*status is None or status\.lower\(\)\s+in\s+\{[^}]*"completed"[^}]*"success"[^}]*"ok"[^}]*"finished"[^}]*\})\s*$/mu,
+      (_match, line: string) => {
+        const patchedLine = line.replace('"success", "ok"', '"success", "succeeded", "ok"');
+        if (insertedMarker) {
+          return patchedLine;
+        }
+        const indent = line.match(/^([ \t]*)/u)?.[1] ?? "";
+        insertedMarker = true;
+        return `${indent}# ${marker}\n${patchedLine}`;
+      }
+    );
+  }
 
   if (
     nextSource === source ||
     !insertedMarker ||
     !nextSource.includes(marker) ||
-    nextSource.includes('result["status"] = "succeeded"')
+    (source.includes('result["status"] = "succeeded"') && nextSource.includes('result["status"] = "succeeded"'))
   ) {
     return { repaired: false };
   }
@@ -31200,6 +31370,158 @@ export async function repairPythonStudyConditionRuntimeInputMaterializationSurfa
   };
 }
 
+export async function repairPythonBaselineFirstConditionRuntimeInputSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_baseline_first_condition_runtime_inputs_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def run_baseline_first_condition_sweep(") ||
+    !source.includes("def _execute_single_condition(") ||
+    !source.includes("common_kwargs = {") ||
+    !source.includes("def train_single_condition(") ||
+    !source.includes("base_model_id") ||
+    !source.includes("train_examples") ||
+    !source.includes("def prepare_study_data(")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const helperBlock = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_baseline_first_runtime_get(source, key, default=None):",
+    "    if source is None:",
+    "        return default",
+    "    if hasattr(source, 'get'):",
+    "        try:",
+    "            return source.get(key, default)",
+    "        except Exception:",
+    "            pass",
+    "    return getattr(source, key, default)",
+    "",
+    "def _autolabos_baseline_first_model_id(study_config, runtime_context=None):",
+    "    for source in (runtime_context, study_config, _autolabos_baseline_first_runtime_get(study_config, 'model', None)):",
+    "        for key in ('base_model_id', 'model_id', 'selected_model_id', 'preferred_model_id'):",
+    "            value = _autolabos_baseline_first_runtime_get(source, key, None)",
+    "            if value:",
+    "                return str(value)",
+    "    return str(globals().get('PREFERRED_MODEL_ID') or globals().get('DEFAULT_BASE_MODEL') or '')",
+    "",
+    "def _autolabos_prepare_baseline_first_runtime_context(study_config, paths, budget, runtime_context, logger=None):",
+    "    if runtime_context is not None and _autolabos_baseline_first_runtime_get(runtime_context, 'train_examples', None) is not None:",
+    "        return runtime_context",
+    "    payload = dict(runtime_context) if hasattr(runtime_context, 'items') else {}",
+    "    prepared_data = _autolabos_baseline_first_runtime_get(runtime_context, 'prepared_data', None)",
+    "    if prepared_data is None:",
+    "        try:",
+    "            prepared_data = prepare_study_data(paths, budget)",
+    "        except Exception as exc:",
+    "            if logger is not None:",
+    "                logger.warning('AutoLabOS could not prepare study data for condition runtime inputs: %s', exc)",
+    "            prepared_data = None",
+    "    if prepared_data is not None:",
+    "        payload['prepared_data'] = prepared_data",
+    "        train_examples = _autolabos_baseline_first_runtime_get(prepared_data, 'train_examples', None)",
+    "        if train_examples is not None:",
+    "            payload['train_examples'] = train_examples",
+    "            payload['instruction_examples'] = train_examples",
+    "            payload['train_data'] = train_examples",
+    "        eval_examples = _autolabos_baseline_first_runtime_get(prepared_data, 'evaluation_examples_by_task', None)",
+    "        if eval_examples is not None:",
+    "            payload['evaluation_examples_by_task'] = eval_examples",
+    "            payload['eval_examples_by_task'] = eval_examples",
+    "            payload['task_eval_examples'] = eval_examples",
+    "    model_id = _autolabos_baseline_first_model_id(study_config, payload)",
+    "    if model_id:",
+    "        payload.setdefault('base_model_id', model_id)",
+    "        payload.setdefault('model_id', model_id)",
+    "        payload.setdefault('selected_model_id', model_id)",
+    "    return payload",
+    "",
+    "def _autolabos_evaluate_condition_from_training_bundle(train_result=None, training_result=None, evaluation_examples_by_task=None, eval_examples_by_task=None, budget=None, budget_config=None, device=None, **kwargs):",
+    "    evaluator = globals().get('evaluate_model_on_benchmarks')",
+    "    if not callable(evaluator):",
+    "        return {}",
+    "    bundle = train_result if train_result is not None else training_result if training_result is not None else {}",
+    "    model = _autolabos_baseline_first_runtime_get(bundle, 'model', None)",
+    "    tokenizer = _autolabos_baseline_first_runtime_get(bundle, 'tokenizer', None)",
+    "    examples = evaluation_examples_by_task if evaluation_examples_by_task is not None else eval_examples_by_task",
+    "    if examples is None:",
+    "        examples = _autolabos_baseline_first_runtime_get(kwargs.get('runtime_context'), 'evaluation_examples_by_task', None)",
+    "    active_budget = budget if budget is not None else budget_config",
+    "    return evaluator(model, tokenizer, examples, budget_config=active_budget, device=device)",
+    "",
+    "if 'evaluate_condition' not in globals() and 'evaluate_model_on_benchmarks' in globals():",
+    "    evaluate_condition = _autolabos_evaluate_condition_from_training_bundle",
+    "if 'evaluate_single_condition' not in globals() and 'evaluate_model_on_benchmarks' in globals():",
+    "    evaluate_single_condition = _autolabos_evaluate_condition_from_training_bundle",
+    ""
+  ].join("\n");
+
+  const executeMatch = nextSource.match(/\ndef\s+_execute_single_condition\s*\(/u);
+  if (!executeMatch || executeMatch.index === undefined) {
+    return { repaired: false };
+  }
+  nextSource = `${nextSource.slice(0, executeMatch.index)}${helperBlock}${nextSource.slice(executeMatch.index)}`;
+  repaired = true;
+
+  const beforeRuntimeContext = nextSource;
+  nextSource = nextSource.replace(
+    /(\n\s*resolved_paths\.[^\n]+\n\s*budget = _get_value\(study_config, ["']budget["'], ["']budget_config["'], default=study_config\)\n)/u,
+    [
+      "$1",
+      "    runtime_context = _autolabos_prepare_baseline_first_runtime_context(",
+      "study_config, resolved_paths, budget, runtime_context, logger=logger",
+      ")\n"
+    ].join("")
+  );
+  if (nextSource !== beforeRuntimeContext) {
+    repaired = true;
+  }
+
+  const beforeCommonKwargs = nextSource;
+  nextSource = nextSource.replace(
+    /(\n\s*["']budget_config["']:\s*budget,\n)/u,
+    [
+      "$1",
+      "        \"base_model_id\": _autolabos_baseline_first_runtime_get(runtime_context, \"base_model_id\", _autolabos_baseline_first_model_id(study_config, runtime_context)),\n",
+      "        \"model_id\": _autolabos_baseline_first_runtime_get(runtime_context, \"model_id\", _autolabos_baseline_first_model_id(study_config, runtime_context)),\n",
+      "        \"train_examples\": _autolabos_baseline_first_runtime_get(runtime_context, \"train_examples\", []),\n",
+      "        \"instruction_examples\": _autolabos_baseline_first_runtime_get(runtime_context, \"instruction_examples\", []),\n",
+      "        \"evaluation_examples_by_task\": _autolabos_baseline_first_runtime_get(runtime_context, \"evaluation_examples_by_task\", {}),\n",
+      "        \"eval_examples_by_task\": _autolabos_baseline_first_runtime_get(runtime_context, \"eval_examples_by_task\", {}),\n"
+    ].join("")
+  );
+  if (nextSource !== beforeCommonKwargs) {
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Materialized baseline-first condition train/eval runtime inputs in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonMetricsPayloadProjectionSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
@@ -31215,8 +31537,22 @@ export async function repairPythonMetricsPayloadProjectionSurface(
   }
 
   const marker = "_autolabos_metrics_payload_projection_marker";
+  const oldCompletedStatuses = 'status in ("completed", "success", "ok", "passed")';
+  const newCompletedStatuses = 'status in ("completed", "success", "succeeded", "ok", "passed")';
+  if (source.includes(marker)) {
+    if (source.includes(oldCompletedStatuses) && !source.includes(newCompletedStatuses)) {
+      const nextSource = source.replace(oldCompletedStatuses, newCompletedStatuses);
+      if (nextSource !== source) {
+        await fs.writeFile(scriptPath, nextSource, "utf8");
+        return {
+          repaired: true,
+          message: `Extended metrics payload projection success statuses in ${path.basename(scriptPath)} before handoff.`
+        };
+      }
+    }
+    return { repaired: false };
+  }
   if (
-    source.includes(marker) ||
     !pythonSourceDefinesOrImportsName(source, "build_metrics_payload") ||
     !source.includes("condition_results")
   ) {
@@ -31267,7 +31603,7 @@ export async function repairPythonMetricsPayloadProjectionSurface(
     "    for row in rows:",
     "        status = str(_autolabos_metrics_payload_projection_get(row, \"status\", \"\") or \"\").lower()",
     "        success = bool(_autolabos_metrics_payload_projection_get(row, \"success\", False))",
-    "        if status in (\"completed\", \"success\", \"ok\", \"passed\") or success:",
+    "        if status in (\"completed\", \"success\", \"succeeded\", \"ok\", \"passed\") or success:",
     "            completed.append(row)",
     "        elif status in (\"failed\", \"error\") or bool(_autolabos_metrics_payload_projection_get(row, \"failed\", False)):",
     "            failed.append(row)",

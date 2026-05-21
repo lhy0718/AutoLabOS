@@ -71,6 +71,7 @@ import {
   repairPythonAllowModelDownloadDefaultSurface,
   repairPythonCallContextInvokerBridgeSurface,
   repairPythonStudyConditionRuntimeInputMaterializationSurface,
+  repairPythonBaselineFirstConditionRuntimeInputSurface,
   repairPythonTrainLossHelperAritySurface,
   repairPythonConditionSuccessStatusAliasSurface,
   repairPythonTerminalMetricsExistingConditionCountSurface,
@@ -158,6 +159,7 @@ import {
   repairPythonDataCollatorPrecomputedLabelReturnSurface,
   repairPythonDataCollatorTokenizerArgumentSurface,
   repairPythonDataclassEvaluationRecordCoercionSurface,
+  repairPythonDataclassTrainingExampleCoercionSurface,
   repairPythonEvaluationAnswerLabelAliasSurface,
   repairPythonModelLoaderDeviceInfoAliasSurface,
   repairPythonNeftuneEmbeddingForwardHookSurface,
@@ -5204,6 +5206,60 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("coerces dataclass training examples before prompt and target extraction", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-dataclass-train-examples-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, Mapping",
+        "",
+        "@dataclass(frozen=True)",
+        "class InstructionExample:",
+        "    instruction: str",
+        "    input: str",
+        "    output: str",
+        "",
+        "def _extract_prompt_and_target_text(example: Mapping[str, Any]) -> tuple[str, str]:",
+        "    prompt_candidates = [",
+        "        example.get('prompt_text'),",
+        "        example.get('prompt'),",
+        "        example.get('instruction'),",
+        "    ]",
+        "    target_candidates = [",
+        "        example.get('target_text'),",
+        "        example.get('response'),",
+        "        example.get('output'),",
+        "    ]",
+        "    prompt = next((str(value) for value in prompt_candidates if value not in (None, '')), '')",
+        "    target = next((str(value) for value in target_candidates if value not in (None, '')), '')",
+        "    return prompt.strip(), target.strip()",
+        "",
+        "def main():",
+        "    prompt, target = _extract_prompt_and_target_text(InstructionExample('Say A', '', 'A'))",
+        "    assert (prompt, target) == ('Say A', 'A')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/has no attribute 'get'/);
+
+    const repair = await repairPythonDataclassTrainingExampleCoercionSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_dataclass_training_example_coercion_marker");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("allows default keyword on late condition marker helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-marker-default-"));
     tempDirs.push(workspace);
@@ -7216,7 +7272,7 @@ describe("ImplementSessionManager", () => {
     await memory.put("implement_experiments.thread_id", "thread-stale-entrypoint-repair");
     run.nodeThreads.implement_experiments = "thread-stale-entrypoint-repair";
     await runStore.updateRun(run);
-    await memory.put("implement_experiments.runner_feedback", {
+    const runnerFeedback = {
       source: "run_experiments",
       status: "fail",
       trigger: "auto_handoff",
@@ -7227,7 +7283,8 @@ describe("ImplementSessionManager", () => {
       metrics_path: metricsPath,
       suggested_next_action: "Expose the generated baseline-first condition sweep under the final study sweep entrypoint names.",
       recorded_at: "2026-05-21T02:00:00.000Z"
-    });
+    } as const;
+    await memory.put("implement_experiments.runner_feedback", runnerFeedback);
 
     let callCount = 0;
     const codex = {
@@ -7253,6 +7310,8 @@ describe("ImplementSessionManager", () => {
     expect(callCount).toBe(0);
     expect(result.scriptPath).toBe(scriptPath);
     expect(result.rawResponse).toContain("Recovered implement result from a materialized public experiment bundle");
+    expect(await memory.get("implement_experiments.runner_feedback")).toBeNull();
+    expect(await memory.get("run_experiments.feedback_for_implementer")).toBeNull();
     expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
     expect(JSON.parse(readFileSync(path.join(publicDir, "executed.json"), "utf8"))).toMatchObject({
       status: "completed",
@@ -7389,7 +7448,7 @@ describe("ImplementSessionManager", () => {
     await memory.put("implement_experiments.thread_id", "thread-stale-snapshot-entrypoint-repair");
     run.nodeThreads.implement_experiments = "thread-stale-snapshot-entrypoint-repair";
     await runStore.updateRun(run);
-    await memory.put("implement_experiments.runner_feedback", {
+    const runnerFeedback = {
       source: "run_experiments",
       status: "fail",
       trigger: "auto_handoff",
@@ -7400,7 +7459,8 @@ describe("ImplementSessionManager", () => {
       metrics_path: metricsPath,
       suggested_next_action: "Expose the generated baseline-first condition sweep under the final study sweep entrypoint names.",
       recorded_at: "2026-05-21T02:00:00.000Z"
-    });
+    } as const;
+    await memory.put("implement_experiments.runner_feedback", runnerFeedback);
 
     let callCount = 0;
     const codex = {
@@ -7425,6 +7485,7 @@ describe("ImplementSessionManager", () => {
 
     expect(callCount).toBe(0);
     expect(result.scriptPath).toBe(scriptPath);
+    expect(await memory.get("implement_experiments.runner_feedback")).toBeNull();
     expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
     expect(repairedSource).not.toContain("partial.txt");
     expect(JSON.parse(readFileSync(path.join(publicDir, "executed.json"), "utf8"))).toMatchObject({
@@ -7432,6 +7493,13 @@ describe("ImplementSessionManager", () => {
       runner: "run_baseline_first_condition_sweep",
       study_name: "snapshot-study"
     });
+
+    rmSync(metricsPath, { force: true });
+    await memory.put("implement_experiments.runner_feedback", runnerFeedback);
+    const secondResult = await manager.run(run);
+
+    expect(callCount).toBe(0);
+    expect(secondResult.scriptPath).toBe(scriptPath);
   });
 
   it("recovers current-attempt public artifacts after terminated staged materialization despite runner feedback", async () => {
@@ -20847,6 +20915,43 @@ describe("ImplementSessionManager", () => {
     });
   });
 
+  it("treats succeeded status as completed in final metrics normalization", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-succeeded-status-normalizer-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def _normalize_condition_result(record):",
+        "    status = str(record.get('status')) if record.get('status') is not None else None",
+        "    completed_flag = record.get('completed', record.get('success'))",
+        "    if completed_flag is None:",
+        "        completed_flag = status is None or status.lower() in {\"completed\", \"success\", \"ok\", \"finished\"}",
+        "    return {'completed': bool(completed_flag), 'status': status}",
+        "",
+        "def main():",
+        "    row = _normalize_condition_result({'status': 'succeeded'})",
+        "    assert row['completed'] is True",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonConditionSuccessStatusAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_condition_success_status_alias_marker");
+    expect(repairedSource).toContain('"succeeded"');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("preserves existing completed condition counts during terminal metrics finalization", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-terminal-metrics-count-preserve-"));
     tempDirs.push(workspace);
@@ -26396,7 +26501,7 @@ describe("ImplementSessionManager", () => {
         "    payload = build_metrics_payload(condition_results=[",
         "        {'marker': 'rank_8_dropout_0_0', 'condition_id': 'rank_8_dropout_0_0', 'status': 'success', 'success': True, 'is_baseline': True, 'average_accuracy': 0.8, 'accuracy_delta_vs_baseline': 0.0},",
         "        {'marker': 'rank_8_dropout_0_05', 'condition_id': 'rank_8_dropout_0_05', 'status': 'success', 'success': True, 'average_accuracy': 0.83, 'accuracy_delta_vs_baseline': 0.03},",
-        "        {'marker': 'rank_8_dropout_0_1', 'condition_id': 'rank_8_dropout_0_1', 'status': 'success', 'success': True, 'average_accuracy': 0.82, 'accuracy_delta_vs_baseline': 0.02},",
+        "        {'marker': 'rank_8_dropout_0_1', 'condition_id': 'rank_8_dropout_0_1', 'status': 'succeeded', 'average_accuracy': 0.82, 'accuracy_delta_vs_baseline': 0.02},",
         "    ])",
         "    assert payload['status'] == 'completed'",
         "    assert payload['completed_condition_count'] == 3",
@@ -26419,6 +26524,22 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_metrics_payload_projection_marker");
+    expect(repairedSource).toContain('"succeeded"');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+
+    writeFileSync(
+      scriptPath,
+      repairedSource.replace(
+        'status in ("completed", "success", "succeeded", "ok", "passed")',
+        'status in ("completed", "success", "ok", "passed")'
+      ),
+      "utf8"
+    );
+    const upgradeRepair = await repairPythonMetricsPayloadProjectionSurface(scriptPath);
+    const upgradedSource = readFileSync(scriptPath, "utf8");
+
+    expect(upgradeRepair.repaired).toBe(true);
+    expect(upgradedSource).toContain('status in ("completed", "success", "succeeded", "ok", "passed")');
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
@@ -26849,6 +26970,151 @@ describe("ImplementSessionManager", () => {
       device: "cpu"
     });
     expect(afterOutput.setup_warnings.join("\n")).toContain("dataset_bundle_helper_skipped_missing_required:tokenizer");
+  });
+
+  it("materializes baseline-first condition train and eval inputs for split train/evaluate helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-runtime-inputs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "import logging",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "from typing import Any, Mapping, Sequence",
+        "",
+        "PREFERRED_MODEL_ID = 'Qwen/Qwen2.5-1.5B'",
+        "DEFAULT_TIMEOUT_SEC = 30",
+        "DEVICE = 'cpu'",
+        "",
+        "@dataclass",
+        "class ConditionSpec:",
+        "    marker: str",
+        "    rank: int = 8",
+        "    lora_dropout: float = 0.0",
+        "    is_baseline: bool = True",
+        "",
+        "@dataclass",
+        "class Paths:",
+        "    condition_artifacts_dir: Path = Path('conditions')",
+        "",
+        "@dataclass",
+        "class Budget:",
+        "    timeout_sec: int = 30",
+        "",
+        "@dataclass",
+        "class PreparedData:",
+        "    train_examples: list",
+        "    evaluation_examples_by_task: dict",
+        "",
+        "def _get_value(source: Any, *names: str, default: Any = None) -> Any:",
+        "    if source is None:",
+        "        return default",
+        "    for name in names:",
+        "        if isinstance(source, Mapping) and name in source:",
+        "            return source[name]",
+        "        if hasattr(source, name):",
+        "            return getattr(source, name)",
+        "    return default",
+        "",
+        "def _resolve_callable_from_sources(names, *sources):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _call_with_supported_kwargs(fn: Any, **candidate_kwargs: Any) -> Any:",
+        "    import inspect",
+        "    signature = inspect.signature(fn)",
+        "    supported_kwargs = {name: value for name, value in candidate_kwargs.items() if name in signature.parameters}",
+        "    return fn(**supported_kwargs)",
+        "",
+        "def _coerce_result_mapping(value: Any) -> dict:",
+        "    return dict(value or {})",
+        "",
+        "def prepare_study_data(paths, budget):",
+        "    return PreparedData(",
+        "        train_examples=[{'instruction': 'i', 'output': 'o'}],",
+        "        evaluation_examples_by_task={'arc_challenge': [{'answer': 'A'}], 'hellaswag': [{'answer': 'B'}]},",
+        "    )",
+        "",
+        "def train_single_condition(condition, base_model_id: str, train_examples: Sequence[Mapping[str, Any]], budget, paths, logger=None):",
+        "    return {'status': 'completed', 'model': 'm', 'tokenizer': 't', 'base_model_id': base_model_id, 'train_count': len(train_examples)}",
+        "",
+        "def evaluate_model_on_benchmarks(model, tokenizer, evaluation_examples_by_task, budget_config=None, device=None):",
+        "    return {'status': 'completed', 'average_accuracy': 0.5, 'per_task_accuracy': {key: 0.5 for key in evaluation_examples_by_task}}",
+        "",
+        "def _execute_single_condition(condition, study_config, paths, runtime_context, logger, sweep_state, condition_dir, deadline_unix, remaining_time_sec):",
+        "    budget = _get_value(study_config, 'budget', 'budget_config', default=study_config)",
+        "    common_kwargs = {",
+        "        'condition': condition,",
+        "        'study_config': study_config,",
+        "        'paths': paths,",
+        "        'runtime_context': runtime_context,",
+        "        'budget': budget,",
+        "        'budget_config': budget,",
+        "        'device': DEVICE,",
+        "        'logger': logger,",
+        "        'condition_dir': condition_dir,",
+        "        'sweep_state': sweep_state,",
+        "    }",
+        "    train_fn = _resolve_callable_from_sources(('train_condition', 'train_single_condition'), runtime_context, study_config)",
+        "    eval_fn = _resolve_callable_from_sources(('evaluate_condition', 'evaluate_single_condition'), runtime_context, study_config)",
+        "    train_result = _coerce_result_mapping(_call_with_supported_kwargs(train_fn, **common_kwargs))",
+        "    eval_kwargs = dict(common_kwargs)",
+        "    eval_kwargs.update({'train_result': train_result})",
+        "    eval_result = _coerce_result_mapping(_call_with_supported_kwargs(eval_fn, **eval_kwargs)) if eval_fn else {}",
+        "    return {**train_result, **eval_result}",
+        "",
+        "def run_baseline_first_condition_sweep(study_config: Any, paths: Paths | None = None, runtime_context: Any = None, logger: logging.Logger | None = None) -> dict:",
+        "    logger = logger or logging.getLogger(__name__)",
+        "    resolved_paths = paths or Paths()",
+        "    resolved_paths.condition_artifacts_dir.mkdir(parents=True, exist_ok=True)",
+        "    budget = _get_value(study_config, 'budget', 'budget_config', default=study_config)",
+        "    condition = ConditionSpec('rank_8_dropout_0_0')",
+        "    raw_result = _execute_single_condition(",
+        "        condition=condition,",
+        "        study_config=study_config,",
+        "        paths=resolved_paths,",
+        "        runtime_context=runtime_context,",
+        "        logger=logger,",
+        "        sweep_state={},",
+        "        condition_dir=resolved_paths.condition_artifacts_dir / condition.marker,",
+        "        deadline_unix=0.0,",
+        "        remaining_time_sec=30.0,",
+        "    )",
+        "    Path('result.json').write_text(json.dumps(raw_result), encoding='utf-8')",
+        "    return raw_result",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(0 if run_baseline_first_condition_sweep({'budget': Budget()}).get('average_accuracy') == 0.5 else 1)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /base_model_id.*train_examples|train_examples.*base_model_id/
+    );
+
+    const repair = await repairPythonBaselineFirstConditionRuntimeInputSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_condition_runtime_inputs_marker");
+    expect(repairedSource).toContain("base_model_id");
+    expect(repairedSource).toContain("evaluate_condition = _autolabos_evaluate_condition_from_training_bundle");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "result.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      base_model_id: "Qwen/Qwen2.5-1.5B",
+      train_count: 1,
+      average_accuracy: 0.5
+    });
   });
 
   it("accepts choice_texts and correct_label fields from multiple-choice dataclass examples", async () => {
