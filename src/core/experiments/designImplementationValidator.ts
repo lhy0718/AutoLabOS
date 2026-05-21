@@ -406,6 +406,20 @@ function validatePlannedConditionImplementationSurface(input: {
         evidence: incompatibleRuntimeEntrypointEvidence
       });
     }
+
+    const lockedConditionResolverMismatchEvidence = findLockedConditionResolverMismatchEvidence(
+      input.scriptText,
+      requiredMarkers
+    );
+    if (lockedConditionResolverMismatchEvidence) {
+      findings.push({
+        code: "PLANNED_LOCKED_CONDITION_RESOLVER_MISMATCH",
+        severity: "block",
+        message:
+          "The implementation declares the locked condition catalog, but its runtime resolver cannot discover that catalog and can collapse to zero conditions.",
+        evidence: lockedConditionResolverMismatchEvidence
+      });
+    }
   }
 
   const minimumEvalExamples = Object.values(input.contract.minimum_eval_examples_per_task || {})
@@ -447,62 +461,55 @@ const PER_RUN_EXECUTION_HELPER_NAMES = [
   "execute_training_condition"
 ];
 
-const AUTOLABOS_ARGS_ENTRYPOINT_NAMES = [
-  "run_lora_rank_dropout_study",
-  "run_peft_instruction_study",
-  "execute_peft_instruction_study",
-  "run_locked_experiment",
-  "run_candidate_execution_orchestration",
-  "run_baseline_first_conditions",
-  "run_condition_workflow",
-  "execute_condition_workflow",
-  "run_all_conditions",
-  "execute_study"
-];
+const PUBLIC_STUDY_ENTRYPOINT_PATTERN =
+  /^(?:run|execute|orchestrate)_[A-Za-z0-9_]*(?:study|experiment|workflow|orchestration|pipeline|matrix|schedule|conditions)$/u;
 
 function findRuntimeEntrypointMissingArgsKwargEvidence(scriptText: string): string | undefined {
   if (!scriptText) {
     return undefined;
   }
-  for (const entrypointName of AUTOLABOS_ARGS_ENTRYPOINT_NAMES) {
-    const signature = extractPythonFunctionSignature(scriptText, entrypointName);
-    if (!signature) {
+  for (const signature of extractPublicStudyEntrypointSignatures(scriptText)) {
+    if (pythonSignatureAcceptsKeyword(signature.parameters, "args")) {
       continue;
     }
-    const parameters = splitPythonParameterList(signature.parameters);
-    const acceptsArgsKeyword = parameters.some((parameter) => {
-      const trimmed = parameter.trim();
-      if (trimmed.startsWith("**")) {
-        return true;
-      }
-      const bareName = trimmed
-        .replace(/^\*/u, "")
-        .split("=")[0]
-        .split(":")[0]
-        ?.trim();
-      return bareName === "args";
-    });
-    if (acceptsArgsKeyword) {
-      continue;
-    }
-    return `entrypoint=${entrypointName}; line=${signature.line}; signature=${entrypointName}(${signature.parameters.trim()})`;
+    return `entrypoint=${signature.name}; line=${signature.line}; signature=${signature.name}(${signature.parameters.trim()})`;
   }
   return undefined;
 }
 
-function extractPythonFunctionSignature(
-  scriptText: string,
-  functionName: string
-): { parameters: string; line: number } | undefined {
-  const escaped = escapeRegExp(functionName);
-  const match = new RegExp(`^\\s*(?:async\\s+)?def\\s+${escaped}\\s*\\(([^)]*)\\)\\s*(?:->\\s*[^:\\n]+)?\\s*:`, "mu").exec(scriptText);
-  if (!match) {
-    return undefined;
+function extractPublicStudyEntrypointSignatures(
+  scriptText: string
+): Array<{ name: string; parameters: string; line: number }> {
+  const signatures: Array<{ name: string; parameters: string; line: number }> = [];
+  for (const match of scriptText.matchAll(
+    /^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:->\s*[^:\n]+)?\s*:/gmu
+  )) {
+    const name = match[1] || "";
+    if (!PUBLIC_STUDY_ENTRYPOINT_PATTERN.test(name) || PER_RUN_EXECUTION_HELPER_NAMES.includes(name)) {
+      continue;
+    }
+    signatures.push({
+      name,
+      parameters: match[2] || "",
+      line: scriptText.slice(0, match.index).split(/\r?\n/u).length
+    });
   }
-  return {
-    parameters: match[1] || "",
-    line: scriptText.slice(0, match.index).split(/\r?\n/u).length
-  };
+  return signatures;
+}
+
+function pythonSignatureAcceptsKeyword(parameters: string, keyword: string): boolean {
+  return splitPythonParameterList(parameters).some((parameter) => {
+    const trimmed = parameter.trim();
+    if (trimmed.startsWith("**")) {
+      return true;
+    }
+    const bareName = trimmed
+      .replace(/^\*/u, "")
+      .split("=")[0]
+      .split(":")[0]
+      ?.trim();
+    return bareName === keyword;
+  });
 }
 
 function splitPythonParameterList(parameters: string): string[] {
@@ -541,6 +548,52 @@ function splitPythonParameterList(parameters: string): string[] {
     parts.push(current);
   }
   return parts;
+}
+
+function findLockedConditionResolverMismatchEvidence(scriptText: string, requiredMarkers: string[]): string | undefined {
+  if (!scriptText || !/No locked conditions are available to select from/iu.test(scriptText)) {
+    return undefined;
+  }
+  const resolverBody =
+    extractTopLevelPythonFunctionBlock(scriptText, "_get_locked_condition_specs") ||
+    extractTopLevelPythonFunctionBlock(scriptText, "get_locked_condition_specs") ||
+    extractTopLevelPythonFunctionBlock(scriptText, "_resolve_locked_condition_specs") ||
+    extractTopLevelPythonFunctionBlock(scriptText, "resolve_locked_condition_specs");
+  if (!resolverBody) {
+    return undefined;
+  }
+  const visibleCatalogNames = [
+    "LOCKED_CONDITION_SPECS",
+    "STUDY_CONDITION_SPECS",
+    "REQUIRED_CONDITION_SPECS",
+    "PLANNED_CONDITION_SPECS"
+  ].filter((name) => new RegExp(`\\b${escapeRegExp(name)}\\b`, "u").test(scriptText));
+  if (visibleCatalogNames.length === 0) {
+    return undefined;
+  }
+  const resolverLiterals = new Set(extractPythonStringLiterals(resolverBody));
+  const missingCatalogNames = visibleCatalogNames.filter((name) => !resolverLiterals.has(name));
+  if (missingCatalogNames.length === 0) {
+    return undefined;
+  }
+  const expectedMarkersVisible = requiredMarkers.filter((marker) => hasMarkerSignal(scriptText, marker)).length;
+  if (expectedMarkersVisible === 0) {
+    return undefined;
+  }
+  const resolverNames = [...resolverLiterals].filter((literal) => /(?:CONDITION|CONDITIONS|SCHEDULE|SPECS)/u.test(literal));
+  return `declared_catalog=${visibleCatalogNames.join(", ")}; resolver_candidates=${resolverNames.join(", ") || "none"}; missing_from_resolver=${missingCatalogNames.join(", ")}`;
+}
+
+function extractTopLevelPythonFunctionBlock(scriptText: string, functionName: string): string | undefined {
+  const escaped = escapeRegExp(functionName);
+  const match = new RegExp(`^\\s*def\\s+${escaped}\\s*\\([^)]*\\)\\s*(?:->\\s*[^:\\n]+)?\\s*:`, "mu").exec(scriptText);
+  if (!match) {
+    return undefined;
+  }
+  const start = match.index;
+  const rest = scriptText.slice(start + match[0].length);
+  const nextTopLevel = /\n(?=\S)/u.exec(rest);
+  return nextTopLevel ? scriptText.slice(start, start + match[0].length + nextTopLevel.index) : scriptText.slice(start);
 }
 
 function findMissingPerRunExecutionHelperEvidence(scriptText: string): string | undefined {

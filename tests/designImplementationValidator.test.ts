@@ -158,7 +158,7 @@ describe("validateDesignImplementationAlignment", () => {
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
     const wrapperPath = path.join(publicDir, "run_command.sh");
     const metricsPath = path.join(workspace, ".autolabos", "runs", "run-public-wrapper-pass", "metrics.json");
     writeFileSync(scriptPath, "print('baseline and adaptive evaluation')\n", "utf8");
@@ -168,7 +168,7 @@ describe("validateDesignImplementationAlignment", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-        'python "${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py" --metrics-path "${PWD}/metrics.json"'
+        'python "${SCRIPT_DIR}/current_study_runner.py" --metrics-path "${PWD}/metrics.json"'
       ].join("\n"),
       "utf8"
     );
@@ -208,7 +208,7 @@ describe("validateDesignImplementationAlignment", () => {
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
     const wrapperPath = path.join(publicDir, "run_command.sh");
     const metricsPath = path.join(workspace, ".autolabos", "runs", "run-wrapper-surface", "metrics.json");
     writeFileSync(
@@ -233,7 +233,7 @@ describe("validateDesignImplementationAlignment", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-        'exec python "${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py" --metrics-path "${PWD}/metrics.json"'
+        'exec python "${SCRIPT_DIR}/current_study_runner.py" --metrics-path "${PWD}/metrics.json"'
       ].join("\n"),
       "utf8"
     );
@@ -287,8 +287,8 @@ describe("validateDesignImplementationAlignment", () => {
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
-    const staleScriptPath = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
+    const staleScriptPath = path.join(publicDir, "stale_study_runner.py");
     const wrapperPath = path.join(publicDir, "run_command.sh");
     const metricsPath = path.join(workspace, ".autolabos", "runs", "run-public-wrapper-stale", "metrics.json");
     writeFileSync(scriptPath, "REQUIRED_CONDITION_COUNT = 8\nprint('baseline and adaptive evaluation')\n", "utf8");
@@ -299,7 +299,7 @@ describe("validateDesignImplementationAlignment", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-        'python "${SCRIPT_DIR}/run_lora_rank_dropout_study.py" --metrics-path "${PWD}/metrics.json"'
+        'python "${SCRIPT_DIR}/stale_study_runner.py" --metrics-path "${PWD}/metrics.json"'
       ].join("\n"),
       "utf8"
     );
@@ -345,7 +345,7 @@ describe("validateDesignImplementationAlignment", () => {
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
     const wrapperPath = path.join(publicDir, "run_command.sh");
     const metricsPath = path.join(workspace, ".autolabos", "runs", "run-public-wrapper-flags", "metrics.json");
     writeFileSync(
@@ -365,7 +365,7 @@ describe("validateDesignImplementationAlignment", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-        'python "${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py" --experiment-dir "${SCRIPT_DIR}" --metrics-path "${PWD}/metrics.json"'
+        'python "${SCRIPT_DIR}/current_study_runner.py" --experiment-dir "${SCRIPT_DIR}" --metrics-path "${PWD}/metrics.json"'
       ].join("\n"),
       "utf8"
     );
@@ -584,7 +584,7 @@ describe("validateDesignImplementationAlignment", () => {
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
     const metricsPath = path.join(workspace, ".autolabos", "runs", "run-missing-per-run-helper", "metrics.json");
     writeFileSync(
       scriptPath,
@@ -673,7 +673,7 @@ describe("validateDesignImplementationAlignment", () => {
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
     const metricsPath = path.join(workspace, ".autolabos", "runs", "run-runnable-helper", "metrics.json");
     writeFileSync(
       scriptPath,
@@ -748,19 +748,28 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
-  it("blocks planned runners whose public study entrypoint cannot accept run_experiments args keyword", async () => {
+  it("blocks public study entrypoints that cannot accept run_experiments args keyword", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-entrypoint-args-"));
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const scriptPath = path.join(publicDir, "study_runner.py");
     const metricsPath = path.join(workspace, ".autolabos", "runs", "run-entrypoint-args", "metrics.json");
+    const markers = [
+      "baseline_condition",
+      "candidate_condition_a",
+      "candidate_condition_b",
+      "candidate_condition_c",
+      "candidate_condition_d",
+      "candidate_condition_e",
+      "candidate_condition_f",
+      "candidate_condition_g"
+    ];
     writeFileSync(
       scriptPath,
       [
         "PLANNED_CONDITION_MARKERS = (",
-        "  'rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
-        "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+        ...markers.map((marker) => `  '${marker}',`),
         ")",
         "REQUIRED_CONDITION_COUNT = 8",
         "REQUIRED_RUN_COUNT = 32",
@@ -768,10 +777,10 @@ describe("validateDesignImplementationAlignment", () => {
         "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
         "def run_single_condition_seed(condition, seed, output_dir):",
         "    return {'condition_marker': condition, 'seed': seed, 'accuracy_delta_vs_baseline': 0.0}",
-        "def run_lora_rank_dropout_study(config):",
+        "def run_public_study(config):",
         "    return {'completed_run_count': 32, 'accuracy_delta_vs_baseline': 0.0}",
         "def main():",
-        "    return run_lora_rank_dropout_study(config={})"
+        "    return run_public_study(config={})"
       ].join("\n"),
       "utf8"
     );
@@ -781,17 +790,8 @@ describe("validateDesignImplementationAlignment", () => {
         required_condition_count: 8,
         required_run_count: 32,
         seed_schedule: [42, 43, 44, 45],
-        baseline_condition_marker: "rank_8_dropout_0_0",
-        required_condition_markers: [
-          "rank_8_dropout_0_0",
-          "rank_4_dropout_0_0",
-          "rank_4_dropout_0_05",
-          "rank_8_dropout_0_05",
-          "rank_16_dropout_0_0",
-          "rank_16_dropout_0_05",
-          "rank_32_dropout_0_0",
-          "rank_32_dropout_0_05"
-        ]
+        baseline_condition_marker: markers[0],
+        required_condition_markers: markers
       },
       attempt: {
         runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
@@ -811,7 +811,80 @@ describe("validateDesignImplementationAlignment", () => {
         expect.objectContaining({
           code: "PLANNED_RUNTIME_ENTRYPOINT_ARGS_INCOMPATIBLE",
           severity: "block",
-          evidence: expect.stringContaining("run_lora_rank_dropout_study(config)")
+          evidence: expect.stringContaining("run_public_study(config)")
+        })
+      ])
+    );
+  });
+
+  it("blocks locked condition resolvers that cannot discover the declared condition catalog", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-locked-resolver-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "study_runner.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-locked-resolver", "metrics.json");
+    const markers = [
+      "baseline_condition",
+      "candidate_condition_a",
+      "candidate_condition_b",
+      "candidate_condition_c",
+      "candidate_condition_d",
+      "candidate_condition_e",
+      "candidate_condition_f",
+      "candidate_condition_g"
+    ];
+    writeFileSync(
+      scriptPath,
+      [
+        "LOCKED_CONDITION_SPECS = (",
+        ...markers.map((marker, index) => `  {'marker': '${marker}', 'order': ${index}},`),
+        ")",
+        "REQUIRED_CONDITION_COUNT = 8",
+        "REQUIRED_RUN_COUNT = 32",
+        "SEED_SCHEDULE = [42, 43, 44, 45]",
+        "def run_single_condition_seed(condition, seed, output_dir):",
+        "    return {'condition_marker': condition['marker'], 'seed': seed}",
+        "def _first_present_global(names, default):",
+        "    return default",
+        "def _get_locked_condition_specs():",
+        "    raw = _first_present_global(('LOCKED_CONDITIONS', 'PLANNED_CONDITIONS', 'CONDITION_SCHEDULE', 'CONDITIONS'), [])",
+        "    if not raw:",
+        "        raise ValueError('No locked conditions are available to select from.')",
+        "    return list(raw)",
+        "def run_public_study(args=None):",
+        "    return {'completed_run_count': 32}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 8,
+        required_run_count: 32,
+        seed_schedule: [42, 43, 44, 45],
+        baseline_condition_marker: markers[0],
+        required_condition_markers: markers
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_LOCKED_CONDITION_RESOLVER_MISMATCH",
+          severity: "block",
+          evidence: expect.stringContaining("LOCKED_CONDITION_SPECS")
         })
       ])
     );
@@ -1009,7 +1082,7 @@ describe("validateDesignImplementationAlignment", () => {
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
     const wrapperPath = path.join(publicDir, "run_command.sh");
     writeFileSync(scriptPath, "print('baseline evaluation ready')\n", "utf8");
     writeFileSync(
@@ -1018,7 +1091,7 @@ describe("validateDesignImplementationAlignment", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-        'exec "${PYTHON_BIN:-python3}" "${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py" "$@"'
+        'exec "${PYTHON_BIN:-python3}" "${SCRIPT_DIR}/current_study_runner.py" "$@"'
       ].join("\n"),
       "utf8"
     );
