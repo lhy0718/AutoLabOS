@@ -38964,7 +38964,23 @@ describe("ImplementSessionManager", () => {
       runTurnStream: async ({ prompt, threadId }: { prompt?: string; threadId?: string }) => {
         seenThreadIds.push(threadId);
         capturedPrompt = prompt || "";
-        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
+        writeFileSync(
+          scriptPath,
+          [
+            "PLANNED_CONDITION_MARKERS = (",
+            "  'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_0', 'rank_8_dropout_0_05',",
+            "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+            ")",
+            "REQUIRED_CONDITION_COUNT = 8",
+            "REQUIRED_RUN_COUNT = 24",
+            "SEED_SCHEDULE = [1]",
+            "def run_single_condition_seed(condition, seed, output_dir):",
+            "    return {'condition': condition, 'seed': seed}",
+            "def main():",
+            "    return {'completed_run_count': 8}"
+          ].join("\n"),
+          "utf8"
+        );
         return {
           threadId: "thread-fresh-after-contract",
           finalText: JSON.stringify({

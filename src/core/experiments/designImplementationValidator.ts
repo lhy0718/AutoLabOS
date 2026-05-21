@@ -395,6 +395,17 @@ function validatePlannedConditionImplementationSurface(input: {
         evidence: `${missingPerRunHelperEvidence}; required_runs=${requiredRunCount}`
       });
     }
+
+    const incompatibleRuntimeEntrypointEvidence = findRuntimeEntrypointMissingArgsKwargEvidence(input.scriptText);
+    if (incompatibleRuntimeEntrypointEvidence) {
+      findings.push({
+        code: "PLANNED_RUNTIME_ENTRYPOINT_ARGS_INCOMPATIBLE",
+        severity: "block",
+        message:
+          "The implementation exposes a study entrypoint that run_experiments can call with args=, but the function signature cannot accept that keyword.",
+        evidence: incompatibleRuntimeEntrypointEvidence
+      });
+    }
   }
 
   const minimumEvalExamples = Object.values(input.contract.minimum_eval_examples_per_task || {})
@@ -435,6 +446,102 @@ const PER_RUN_EXECUTION_HELPER_NAMES = [
   "run_lora_condition",
   "execute_training_condition"
 ];
+
+const AUTOLABOS_ARGS_ENTRYPOINT_NAMES = [
+  "run_lora_rank_dropout_study",
+  "run_peft_instruction_study",
+  "execute_peft_instruction_study",
+  "run_locked_experiment",
+  "run_candidate_execution_orchestration",
+  "run_baseline_first_conditions",
+  "run_condition_workflow",
+  "execute_condition_workflow",
+  "run_all_conditions",
+  "execute_study"
+];
+
+function findRuntimeEntrypointMissingArgsKwargEvidence(scriptText: string): string | undefined {
+  if (!scriptText) {
+    return undefined;
+  }
+  for (const entrypointName of AUTOLABOS_ARGS_ENTRYPOINT_NAMES) {
+    const signature = extractPythonFunctionSignature(scriptText, entrypointName);
+    if (!signature) {
+      continue;
+    }
+    const parameters = splitPythonParameterList(signature.parameters);
+    const acceptsArgsKeyword = parameters.some((parameter) => {
+      const trimmed = parameter.trim();
+      if (trimmed.startsWith("**")) {
+        return true;
+      }
+      const bareName = trimmed
+        .replace(/^\*/u, "")
+        .split("=")[0]
+        .split(":")[0]
+        ?.trim();
+      return bareName === "args";
+    });
+    if (acceptsArgsKeyword) {
+      continue;
+    }
+    return `entrypoint=${entrypointName}; line=${signature.line}; signature=${entrypointName}(${signature.parameters.trim()})`;
+  }
+  return undefined;
+}
+
+function extractPythonFunctionSignature(
+  scriptText: string,
+  functionName: string
+): { parameters: string; line: number } | undefined {
+  const escaped = escapeRegExp(functionName);
+  const match = new RegExp(`^\\s*(?:async\\s+)?def\\s+${escaped}\\s*\\(([^)]*)\\)\\s*(?:->\\s*[^:\\n]+)?\\s*:`, "mu").exec(scriptText);
+  if (!match) {
+    return undefined;
+  }
+  return {
+    parameters: match[1] || "",
+    line: scriptText.slice(0, match.index).split(/\r?\n/u).length
+  };
+}
+
+function splitPythonParameterList(parameters: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let depth = 0;
+  let quote: string | null = null;
+  for (let index = 0; index < parameters.length; index += 1) {
+    const char = parameters[index] || "";
+    const previous = parameters[index - 1] || "";
+    if (quote) {
+      current += char;
+      if (char === quote && previous !== "\\") {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === "(" || char === "[" || char === "{") {
+      depth += 1;
+    } else if ((char === ")" || char === "]" || char === "}") && depth > 0) {
+      depth -= 1;
+    }
+    if (char === "," && depth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim().length > 0) {
+    parts.push(current);
+  }
+  return parts;
+}
 
 function findMissingPerRunExecutionHelperEvidence(scriptText: string): string | undefined {
   if (!scriptText) {

@@ -748,6 +748,75 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("blocks planned runners whose public study entrypoint cannot accept run_experiments args keyword", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-entrypoint-args-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-entrypoint-args", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = (",
+        "  'rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
+        "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+        ")",
+        "REQUIRED_CONDITION_COUNT = 8",
+        "REQUIRED_RUN_COUNT = 32",
+        "SEED_SCHEDULE = [42, 43, 44, 45]",
+        "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
+        "def run_single_condition_seed(condition, seed, output_dir):",
+        "    return {'condition_marker': condition, 'seed': seed, 'accuracy_delta_vs_baseline': 0.0}",
+        "def run_lora_rank_dropout_study(config):",
+        "    return {'completed_run_count': 32, 'accuracy_delta_vs_baseline': 0.0}",
+        "def main():",
+        "    return run_lora_rank_dropout_study(config={})"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 8,
+        required_run_count: 32,
+        seed_schedule: [42, 43, 44, 45],
+        baseline_condition_marker: "rank_8_dropout_0_0",
+        required_condition_markers: [
+          "rank_8_dropout_0_0",
+          "rank_4_dropout_0_0",
+          "rank_4_dropout_0_05",
+          "rank_8_dropout_0_05",
+          "rank_16_dropout_0_0",
+          "rank_16_dropout_0_05",
+          "rank_32_dropout_0_0",
+          "rank_32_dropout_0_05"
+        ]
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_RUNTIME_ENTRYPOINT_ARGS_INCOMPATIBLE",
+          severity: "block",
+          evidence: expect.stringContaining("run_lora_rank_dropout_study(config)")
+        })
+      ])
+    );
+  });
+
   it("blocks hard evaluation caps below a full-validation contract", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-full-eval-"));
     tempDirs.push(workspace);
