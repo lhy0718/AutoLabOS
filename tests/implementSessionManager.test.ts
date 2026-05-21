@@ -8505,6 +8505,8 @@ describe("ImplementSessionManager", () => {
         '    - "Baseline condition: rank=8, dropout=0.0."',
         '    - "Use LoRA ranks {4, 8, 16, 32} and dropouts {0.0, 0.05}; total training conditions per seed = 8"',
         '    - "Use seeds 42, 43, and 44; do not alter condition order."',
+        "  evaluation_steps:",
+        '    - "Evaluate every completed checkpoint on the full ARC-Challenge validation split (n=299) and full HellaSwag validation split (n=10042)."',
         "  resource_notes:",
         '    - "Total planned train/eval jobs: 24"'
       ].join("\n"),
@@ -8576,6 +8578,10 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 3');
     expect(capturedPrompt).toContain('"baseline_condition_marker": "rank_8_dropout_0_0"');
     expect(capturedPrompt).toContain('"seed_schedule":');
+    expect(capturedPrompt).toContain('"full_evaluation_required": true');
+    expect(capturedPrompt).toContain('"minimum_eval_examples_per_task":');
+    expect(capturedPrompt).toContain('"arc_challenge": 299');
+    expect(capturedPrompt).toContain('"hellaswag": 10042');
     expect(capturedPrompt).toContain("42");
     expect(capturedPrompt).toContain("43");
     expect(capturedPrompt).toContain("44");

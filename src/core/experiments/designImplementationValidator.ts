@@ -33,6 +33,8 @@ export interface PlannedConditionImplementationContract {
   baseline_condition_marker?: string;
   required_condition_markers?: string[];
   primary_metric_key?: string;
+  full_evaluation_required?: boolean;
+  minimum_eval_examples_per_task?: Record<string, number>;
 }
 
 export async function validateDesignImplementationAlignment(input: {
@@ -55,6 +57,10 @@ export async function validateDesignImplementationAlignment(input: {
   const testCommandPaths = extractCommandPaths(input.attempt.testCommand || "", input.attempt.workingDir);
   const allCommandPaths = dedupeStrings([...commandPaths, ...testCommandPaths]);
   const scriptText = await readImplementationSurfaceText(input.attempt.scriptPath);
+  const publicContractText = await readPublicContractSurfaceText(
+    input.attempt.publicDir,
+    input.attempt.publicArtifacts
+  );
 
   checkedItems.push("run_command_paths");
   if (input.attempt.scriptPath) {
@@ -164,6 +170,7 @@ export async function validateDesignImplementationAlignment(input: {
     const plannedFindings = validatePlannedConditionImplementationSurface({
       contract: input.plannedConditionContract,
       scriptText,
+      publicContractText,
       runCommand: input.attempt.runCommand,
       testCommand: input.attempt.testCommand || ""
     });
@@ -281,11 +288,13 @@ export function validateVerificationCommandSurface(input: {
 function validatePlannedConditionImplementationSurface(input: {
   contract: PlannedConditionImplementationContract;
   scriptText: string;
+  publicContractText: string;
   runCommand: string;
   testCommand: string;
 }): ExperimentDesignImplementationValidationFinding[] {
   const findings: ExperimentDesignImplementationValidationFinding[] = [];
   const implementationSignal = `${input.runCommand}\n${input.testCommand}\n${input.scriptText}`;
+  const publicSignal = input.publicContractText;
   const requiredMarkers = dedupeStrings(input.contract.required_condition_markers || []);
   const baselineMarker = input.contract.baseline_condition_marker || requiredMarkers[0];
   if (requiredMarkers.length > 0) {
@@ -323,6 +332,17 @@ function validatePlannedConditionImplementationSurface(input: {
         evidence: `declared=${declaredConditionCount}; required=${requiredConditionCount}`
       });
     }
+    const publicMarkerCount = extractRankDropoutMarkersFromText(publicSignal).filter((marker) =>
+      requiredMarkers.includes(marker)
+    ).length;
+    if (publicMarkerCount > 0 && publicMarkerCount < requiredConditionCount) {
+      findings.push({
+        code: "PUBLIC_CONDITION_MARKERS_CONTRACTED",
+        severity: "block",
+        message: "Published implementation docs expose fewer planned condition markers than the approved design contract.",
+        evidence: `public_markers=${publicMarkerCount}; required=${requiredConditionCount}`
+      });
+    }
   }
 
   const seedSchedule = (input.contract.seed_schedule || [])
@@ -352,6 +372,36 @@ function validatePlannedConditionImplementationSurface(input: {
         severity: "block",
         message: "The implementation exposes fewer condition-by-seed runs than the approved design contract.",
         evidence: `visible=${bestVisibleRunCount}; required=${requiredRunCount}`
+      });
+    }
+    const publicRunCounts = extractDeclaredRunCounts(publicSignal);
+    const contractedPublicRunCounts = publicRunCounts.filter((count) => count < requiredRunCount);
+    if (contractedPublicRunCounts.length > 0) {
+      findings.push({
+        code: "PUBLIC_RUN_COUNT_CONTRACTED",
+        severity: "block",
+        message: "Published implementation docs declare fewer runs than the approved design contract.",
+        evidence: `public_declared=${Math.max(...contractedPublicRunCounts)}; required=${requiredRunCount}`
+      });
+    }
+  }
+
+  const minimumEvalExamples = Object.values(input.contract.minimum_eval_examples_per_task || {})
+    .map((value) => normalizePositiveInteger(value))
+    .filter((value): value is number => value !== undefined);
+  const requiredEvalMinimum =
+    input.contract.full_evaluation_required && minimumEvalExamples.length > 0
+      ? Math.max(...minimumEvalExamples)
+      : undefined;
+  if (requiredEvalMinimum !== undefined) {
+    const declaredEvalLimits = extractDeclaredEvaluationLimits(implementationSignal);
+    const contractedEvalLimits = declaredEvalLimits.filter((limit) => limit > 0 && limit < requiredEvalMinimum);
+    if (contractedEvalLimits.length > 0) {
+      findings.push({
+        code: "PLANNED_FULL_EVAL_CONTRACTED",
+        severity: "block",
+        message: "The implementation exposes a hard evaluation-example cap below the approved full-validation contract.",
+        evidence: `declared_cap=${Math.min(...contractedEvalLimits)}; required_minimum=${requiredEvalMinimum}`
       });
     }
   }
@@ -389,9 +439,20 @@ function extractDeclaredConditionCount(text: string, requiredMarkers: string[]):
 }
 
 function extractDeclaredRunCount(text: string): number | undefined {
+  const counts = extractDeclaredRunCounts(text);
+  return counts.length > 0 ? Math.max(...counts) : undefined;
+}
+
+function extractDeclaredRunCounts(text: string): number[] {
   const counts: number[] = [];
   for (const match of text.matchAll(/\b(?:required|planned|total)?_?run_?count\b\s*[:=]\s*(\d+)/giu)) {
     const parsed = normalizePositiveInteger(Number.parseInt(match[1] || "", 10));
+    if (parsed !== undefined) {
+      counts.push(parsed);
+    }
+  }
+  for (const match of text.matchAll(/\b(\d+)\s+total\s+runs?\b|\btotal\s+runs?\s*[:=]\s*(\d+)\b/giu)) {
+    const parsed = normalizePositiveInteger(Number.parseInt(match[1] || match[2] || "", 10));
     if (parsed !== undefined) {
       counts.push(parsed);
     }
@@ -402,7 +463,24 @@ function extractDeclaredRunCount(text: string): number | undefined {
       counts.push(parsed);
     }
   }
-  return counts.length > 0 ? Math.max(...counts) : undefined;
+  return counts;
+}
+
+function extractDeclaredEvaluationLimits(text: string): number[] {
+  const limits: number[] = [];
+  const patterns = [
+    /\b(?:max_eval_examples_per_task|max_eval_samples_per_task|max_eval_examples|max_eval_samples|eval_examples_per_task|eval_samples_per_task)\b\s*[:=]\s*(\d+)/giu,
+    /\b(?:max[-\s]?eval[-\s]?(?:examples|samples)(?:[-\s]?per[-\s]?task)?)\b\s*[:=]\s*(\d+)/giu
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const parsed = normalizePositiveInteger(Number.parseInt(match[1] || "", 10));
+      if (parsed !== undefined) {
+        limits.push(parsed);
+      }
+    }
+  }
+  return limits;
 }
 
 function extractDeclaredConditionMarkerOrder(text: string): string[] {
@@ -468,6 +546,21 @@ async function readImplementationSurfaceText(scriptPath: string | undefined): Pr
     }
   }
   return [directText, ...targetTexts].join("\n");
+}
+
+async function readPublicContractSurfaceText(publicDir: string, publicArtifacts: string[]): Promise<string> {
+  const artifactNames = new Set(publicArtifacts.map((artifactPath) => path.basename(artifactPath)));
+  const candidateNames = [
+    "README.md",
+    "README_study_report.md",
+    "bootstrap_contract.json",
+    "locked_condition_contract.json",
+    "experiment_plan.yaml",
+    "study_spec.json"
+  ].filter((name) => artifactNames.size === 0 || artifactNames.has(name) || name === "README.md" || name.endsWith(".json"));
+  const candidatePaths = dedupeStrings(candidateNames.map((name) => path.join(publicDir, name)));
+  const texts = await Promise.all(candidatePaths.map((candidatePath) => safeReadText(candidatePath)));
+  return texts.filter(Boolean).join("\n");
 }
 
 function extractCommandPaths(command: string, cwd: string): string[] {

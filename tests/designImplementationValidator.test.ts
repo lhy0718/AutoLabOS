@@ -486,6 +486,167 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("blocks stale public docs that contradict the approved full-grid run contract", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-public-doc-contract-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-public-doc", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = (",
+        "  'rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
+        "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+        ")",
+        "REQUIRED_CONDITION_COUNT = 8",
+        "REQUIRED_RUN_COUNT = 32",
+        "SEED_SCHEDULE = [42, 43, 44, 45]",
+        "print('baseline and comparator runner')"
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      readmePath,
+      [
+        "Planned tuned conditions:",
+        "- rank_8_dropout_0_0",
+        "- rank_4_dropout_0_0",
+        "- rank_16_dropout_0_0",
+        "- rank_32_dropout_0_0",
+        "",
+        "Planned run count:",
+        "- 22 total runs"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-public-doc", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "design-public-doc",
+        hypothesis_ids: ["h1"],
+        baselines: ["rank_8_dropout_0_0"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = await validateDesignImplementationAlignment({
+      comparisonContract: contract,
+      plannedConditionContract: {
+        required_condition_count: 8,
+        required_run_count: 32,
+        seed_schedule: [42, 43, 44, 45],
+        baseline_condition_marker: "rank_8_dropout_0_0",
+        required_condition_markers: [
+          "rank_8_dropout_0_0",
+          "rank_4_dropout_0_0",
+          "rank_4_dropout_0_05",
+          "rank_8_dropout_0_05",
+          "rank_16_dropout_0_0",
+          "rank_16_dropout_0_05",
+          "rank_32_dropout_0_0",
+          "rank_32_dropout_0_05"
+        ]
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath, readmePath],
+        publicArtifacts: [scriptPath, readmePath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PUBLIC_CONDITION_MARKERS_CONTRACTED",
+          severity: "block"
+        }),
+        expect.objectContaining({
+          code: "PUBLIC_RUN_COUNT_CONTRACTED",
+          severity: "block"
+        })
+      ])
+    );
+  });
+
+  it("blocks hard evaluation caps below a full-validation contract", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-full-eval-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-full-eval", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "LOCKED_BUDGET = dict(max_eval_examples_per_task=96)",
+        "PLANNED_CONDITION_MARKERS = ('rank_8_dropout_0_0', 'rank_4_dropout_0_0')",
+        "REQUIRED_RUN_COUNT = 8",
+        "SEED_SCHEDULE = [42, 43, 44, 45]",
+        "print('baseline and comparator runner')"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-full-eval", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "design-full-eval",
+        hypothesis_ids: ["h1"],
+        baselines: ["rank_8_dropout_0_0"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = await validateDesignImplementationAlignment({
+      comparisonContract: contract,
+      plannedConditionContract: {
+        required_condition_count: 2,
+        required_run_count: 8,
+        seed_schedule: [42, 43, 44, 45],
+        baseline_condition_marker: "rank_8_dropout_0_0",
+        required_condition_markers: ["rank_8_dropout_0_0", "rank_4_dropout_0_0"],
+        full_evaluation_required: true,
+        minimum_eval_examples_per_task: {
+          arc_challenge: 299,
+          hellaswag: 10042
+        }
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_FULL_EVAL_CONTRACTED",
+          severity: "block",
+          evidence: expect.stringContaining("declared_cap=96")
+        })
+      ])
+    );
+  });
+
   it("blocks when the full condition grid is present but the locked baseline is not first", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-baseline-order-"));
     tempDirs.push(workspace);

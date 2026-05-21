@@ -307,6 +307,8 @@ interface PlannedConditionContract {
   tuned_only: boolean;
   required_condition_markers: string[];
   primary_metric_key?: string;
+  full_evaluation_required?: boolean;
+  minimum_eval_examples_per_task?: Record<string, number>;
   notes: string[];
 }
 
@@ -12010,6 +12012,7 @@ function derivePlannedConditionContract(input: {
 
   const repeatedRunContract = parseRepeatedSeedRunContract(text);
   const seedSchedule = extractSeedSchedule(text);
+  const evaluationContract = parseFullEvaluationContract(text);
   const baselineConditionMarker =
     extractBaselineRankDropoutMarker(text) ||
     (planHasSpecificContract ? extractBaselineRankDropoutMarker(fullContractText) : undefined);
@@ -12063,6 +12066,11 @@ function derivePlannedConditionContract(input: {
     tuned_only: markerList.some((marker) => marker !== "unmodified_base"),
     required_condition_markers: markerList,
     primary_metric_key: primaryMetricKey,
+    full_evaluation_required: evaluationContract.fullEvaluationRequired || undefined,
+    minimum_eval_examples_per_task:
+      Object.keys(evaluationContract.minimumEvalExamplesPerTask).length > 0
+        ? evaluationContract.minimumEvalExamplesPerTask
+        : undefined,
     notes
   };
 }
@@ -12215,6 +12223,50 @@ function extractSeedSchedule(text: string): number[] {
     }
   }
   return [...seeds].sort((left, right) => left - right);
+}
+
+function parseFullEvaluationContract(text: string): {
+  fullEvaluationRequired: boolean;
+  minimumEvalExamplesPerTask: Record<string, number>;
+} {
+  const lower = text.toLowerCase();
+  const fullEvaluationRequired =
+    /\bfull\b[\s\S]{0,120}\b(?:arc[-\s]?challenge|hellaswag|validation|evaluation)\b/iu.test(text) ||
+    /\b(?:arc[-\s]?challenge|hellaswag)\b[\s\S]{0,120}\bfull\b[\s\S]{0,120}\b(?:validation|evaluation|split|set)s?\b/iu.test(text);
+  const minimumEvalExamplesPerTask: Record<string, number> = {};
+  const arcCount = extractTaskEvaluationCount(text, ["arc-challenge", "arc_challenge", "arc"]);
+  const hellaswagCount = extractTaskEvaluationCount(text, ["hellaswag", "hella-swag", "hella_swag"]);
+  if (arcCount !== undefined) {
+    minimumEvalExamplesPerTask.arc_challenge = arcCount;
+  }
+  if (hellaswagCount !== undefined) {
+    minimumEvalExamplesPerTask.hellaswag = hellaswagCount;
+  }
+  if (
+    /\bfull\b/u.test(lower) &&
+    (Object.keys(minimumEvalExamplesPerTask).length > 0 ||
+      /\b(?:arc[-\s]?challenge|hellaswag)\b[\s\S]{0,160}\bvalidation\s+(?:sets?|splits?)\b/iu.test(text))
+  ) {
+    return { fullEvaluationRequired: true, minimumEvalExamplesPerTask };
+  }
+  return { fullEvaluationRequired, minimumEvalExamplesPerTask };
+}
+
+function extractTaskEvaluationCount(text: string, taskAliases: string[]): number | undefined {
+  const aliasPattern = taskAliases.map((alias) => alias.replace(/[-_]/gu, "[-_\\s]?")).join("|");
+  const patterns = [
+    new RegExp(`\\b(?:${aliasPattern})\\b[\\s\\S]{0,120}?\\bn\\s*=\\s*(\\d+)\\b`, "iu"),
+    new RegExp(`\\b(?:${aliasPattern})\\b[\\s\\S]{0,120}?\\b(\\d+)\\s+(?:validation|evaluation)\\s+examples?\\b`, "iu"),
+    new RegExp(`\\b(\\d+)\\s+(?:validation|evaluation)\\s+examples?\\b[\\s\\S]{0,120}?\\b(?:${aliasPattern})\\b`, "iu")
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const parsed = match ? Number.parseInt(match[1] || "", 10) : NaN;
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
 }
 
 function extractRankDropoutConditionMarkers(text: string): string[] {
