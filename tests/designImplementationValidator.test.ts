@@ -579,6 +579,95 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("blocks planned runners that declare a full schedule but resolve only missing per-run helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-missing-per-run-helper-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-missing-per-run-helper", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = (",
+        "  'rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
+        "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+        ")",
+        "REQUIRED_CONDITION_COUNT = 8",
+        "REQUIRED_RUN_COUNT = 32",
+        "SEED_SCHEDULE = [42, 43, 44, 45]",
+        "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
+        "def _resolve_global_callable(names):",
+        "    return None",
+        "def _resolve_run_callable():",
+        "    run_callable = _resolve_global_callable([",
+        "        'run_condition_seed',",
+        "        'run_condition_seed_experiment',",
+        "        'execute_condition_seed_run',",
+        "        'train_and_evaluate_condition',",
+        "    ])",
+        "    if run_callable is None:",
+        "        raise RuntimeError('No callable per-run execution helper was found in the current script.')",
+        "    return run_callable",
+        "def main():",
+        "    return {'completed_run_count': 0, 'accuracy_delta_vs_baseline': None}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-missing-per-run-helper", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "design-missing-per-run-helper",
+        hypothesis_ids: ["h1"],
+        baselines: ["rank_8_dropout_0_0"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = await validateDesignImplementationAlignment({
+      comparisonContract: contract,
+      plannedConditionContract: {
+        required_condition_count: 8,
+        required_run_count: 32,
+        seed_schedule: [42, 43, 44, 45],
+        baseline_condition_marker: "rank_8_dropout_0_0",
+        required_condition_markers: [
+          "rank_8_dropout_0_0",
+          "rank_4_dropout_0_0",
+          "rank_4_dropout_0_05",
+          "rank_8_dropout_0_05",
+          "rank_16_dropout_0_0",
+          "rank_16_dropout_0_05",
+          "rank_32_dropout_0_0",
+          "rank_32_dropout_0_05"
+        ]
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_PER_RUN_EXECUTION_HELPER_MISSING",
+          severity: "block",
+          evidence: expect.stringContaining("required_runs=32")
+        })
+      ])
+    );
+  });
+
   it("blocks hard evaluation caps below a full-validation contract", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-full-eval-"));
     tempDirs.push(workspace);

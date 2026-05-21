@@ -15854,8 +15854,11 @@ function buildImplementationContractFeedback(
     summary: verifyReport.summary,
     stderr_excerpt: verifyReport.stderr_excerpt,
     blocking_findings: blockingFindings.slice(0, 12),
-    suggested_next_action:
-      "Regenerate the implementation so static validation can see every approved condition and every condition-by-seed run before run_experiments executes it.",
+    suggested_next_action: blockingFindings.some(
+      (finding) => finding.code === "PLANNED_PER_RUN_EXECUTION_HELPER_MISSING"
+    )
+      ? "Regenerate the runnable experiment script so the baseline-first 32-run condition-by-seed loop calls a concrete per-run execution helper; metrics-only shells or resolvers that search only missing helpers must not pass implement_experiments."
+      : "Regenerate the implementation so static validation can see every approved condition and every condition-by-seed run before run_experiments executes it.",
     recorded_at: new Date().toISOString()
   };
 }

@@ -384,6 +384,17 @@ function validatePlannedConditionImplementationSurface(input: {
         evidence: `public_declared=${Math.max(...contractedPublicRunCounts)}; required=${requiredRunCount}`
       });
     }
+
+    const missingPerRunHelperEvidence = findMissingPerRunExecutionHelperEvidence(input.scriptText);
+    if (missingPerRunHelperEvidence) {
+      findings.push({
+        code: "PLANNED_PER_RUN_EXECUTION_HELPER_MISSING",
+        severity: "block",
+        message:
+          "The implementation declares the planned condition-by-seed schedule but its runner resolver cannot call any concrete per-run execution helper.",
+        evidence: `${missingPerRunHelperEvidence}; required_runs=${requiredRunCount}`
+      });
+    }
   }
 
   const minimumEvalExamples = Object.values(input.contract.minimum_eval_examples_per_task || {})
@@ -407,6 +418,83 @@ function validatePlannedConditionImplementationSurface(input: {
   }
 
   return findings;
+}
+
+const PER_RUN_EXECUTION_HELPER_NAMES = [
+  "run_condition_seed",
+  "run_condition_seed_experiment",
+  "execute_condition_seed_run",
+  "execute_single_run",
+  "run_single_study_cell",
+  "run_single_condition_seed",
+  "train_and_evaluate_condition",
+  "run_one_condition",
+  "run_condition_experiment",
+  "run_single_condition",
+  "execute_condition",
+  "run_lora_condition",
+  "execute_training_condition"
+];
+
+function findMissingPerRunExecutionHelperEvidence(scriptText: string): string | undefined {
+  if (!scriptText) {
+    return undefined;
+  }
+  const hasPerRunResolverFailure =
+    /No callable per-run execution helper was found/iu.test(scriptText) ||
+    /No (?:condition[-\s]?seed|per[-\s]?run|condition) (?:execution )?helper (?:was )?found/iu.test(scriptText);
+  if (!hasPerRunResolverFailure) {
+    return undefined;
+  }
+  const referencedHelpers = extractPerRunResolverCandidateNames(scriptText);
+  const candidateNames = referencedHelpers.length > 0
+    ? referencedHelpers
+    : PER_RUN_EXECUTION_HELPER_NAMES;
+  const missingCandidates = candidateNames.filter((name) => !hasPythonCallableDefinitionSignal(scriptText, name));
+  if (missingCandidates.length < candidateNames.length) {
+    return undefined;
+  }
+  const renderedCandidates = candidateNames.slice(0, 10).join(", ");
+  return `missing_callable_candidates=${renderedCandidates}`;
+}
+
+function extractPerRunResolverCandidateNames(scriptText: string): string[] {
+  const names: string[] = [];
+  const failureMatches = [
+    ...scriptText.matchAll(/No callable per-run execution helper was found/giu),
+    ...scriptText.matchAll(/No (?:condition[-\s]?seed|per[-\s]?run|condition) (?:execution )?helper (?:was )?found/giu)
+  ];
+  for (const match of failureMatches) {
+    const start = Math.max(0, (match.index || 0) - 1600);
+    const windowText = scriptText.slice(start, match.index || 0);
+    for (const literal of extractPythonStringLiterals(windowText)) {
+      if (PER_RUN_EXECUTION_HELPER_NAMES.includes(literal) || /(?:run|execute|train).*condition|condition.*seed/iu.test(literal)) {
+        names.push(literal);
+      }
+    }
+  }
+  return dedupeStrings(names);
+}
+
+function extractPythonStringLiterals(text: string): string[] {
+  const literals: string[] = [];
+  for (const match of text.matchAll(/["']([A-Za-z_][A-Za-z0-9_]*)["']/gu)) {
+    if (match[1]) {
+      literals.push(match[1]);
+    }
+  }
+  return literals;
+}
+
+function hasPythonCallableDefinitionSignal(scriptText: string, name: string): boolean {
+  const escaped = escapeRegExp(name);
+  const patterns = [
+    new RegExp(`^\\s*(?:async\\s+)?def\\s+${escaped}\\s*\\(`, "mu"),
+    new RegExp(`^\\s*class\\s+${escaped}\\s*\\(`, "mu"),
+    new RegExp(`^\\s*${escaped}\\s*=\\s*(?:lambda\\b|functools\\.partial\\b|partial\\b)`, "mu"),
+    new RegExp(`^\\s*from\\s+[A-Za-z0-9_.]+\\s+import\\s+(?:[^\\n#]*,\\s*)?${escaped}(?:\\s*,|\\s+as\\s+|\\s*(?:#.*)?$)`, "mu")
+  ];
+  return patterns.some((pattern) => pattern.test(scriptText));
 }
 
 function hasMarkerSignal(text: string, marker: string): boolean {
