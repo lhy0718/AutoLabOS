@@ -563,6 +563,31 @@ describe("ImplementSessionManager", () => {
     expect(paths).not.toContain(helpPath);
   });
 
+  it("extracts workspace paths from nested bash -lc verification commands without treating the command string as an artifact", () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-shell-c-paths-"));
+    tempDirs.push(workspace);
+    const runnerPath = path.join(workspace, "outputs", "experiment", "run_lora_rank_dropout_experiment.py");
+    const wrapperPath = path.join(workspace, "outputs", "experiment", "run_lora_rank_dropout_study.py");
+    const shellPath = path.join(workspace, "outputs", "experiment", "run_command.sh");
+    mkdirSync(path.dirname(runnerPath), { recursive: true });
+    writeFileSync(runnerPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
+    writeFileSync(wrapperPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
+    writeFileSync(shellPath, "#!/usr/bin/env bash\ntrue\n", "utf8");
+
+    const nestedCommand =
+      `python -m py_compile ${JSON.stringify(runnerPath)} ${JSON.stringify(wrapperPath)} && bash -n ${JSON.stringify(shellPath)}`;
+    const paths = extractWorkspacePathsFromCommand(
+      `bash -lc '${nestedCommand}'`,
+      workspace,
+      workspace
+    );
+
+    expect(paths).toContain(runnerPath);
+    expect(paths).toContain(wrapperPath);
+    expect(paths).toContain(shellPath);
+    expect(paths.some((candidate) => candidate.includes("py_compile"))).toBe(false);
+  });
+
   it("persists thread id and run command from Codex session", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-session-"));
     tempDirs.push(workspace);
@@ -7085,6 +7110,328 @@ describe("ImplementSessionManager", () => {
     expect(callCount).toBe(1);
     expect(result.threadId).toBe("thread-fresh-after-runner-feedback");
     expect(result.rawResponse).toContain("Fresh repair turn after runner feedback");
+  });
+
+  it("repairs recoverable study-entrypoint runner feedback on the existing public bundle before Codex", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runner-entrypoint-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Runner Entrypoint Repair",
+      topic: "repair missing sweep entrypoint alias",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_entrypoint_alias\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(metricsPath, "{\"status\":\"failed\"}\n", "utf8");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "def run_baseline_first_condition_sweep(study_config: Any, paths: Any = None, runtime_context: Any = None, logger: Any = None) -> dict:",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'runner': 'run_baseline_first_condition_sweep',",
+        "        'study_name': study_config['name'],",
+        "        'paths_root': paths['root'],",
+        "    }",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _invoke_callable(func, *, study_config, args, paths, budget, logger):",
+        "    signature = inspect.signature(func)",
+        "    available_kwargs = {",
+        "        'study_config': study_config,",
+        "        'config': study_config,",
+        "        'args': args,",
+        "        'paths': paths,",
+        "        'budget': budget,",
+        "        'logger': logger,",
+        "    }",
+        "    return func(**{name: available_kwargs[name] for name in signature.parameters if name in available_kwargs})",
+        "",
+        "def _run_sweep(study_config: Any, args: argparse.Namespace, paths: Any, budget: Any, logger: Any) -> Any:",
+        "    candidate_names = (",
+        "        'run_study_sweep',",
+        "        'run_baseline_first_sweep',",
+        "        'orchestrate_study_sweep',",
+        "        'orchestrate_study',",
+        "        'run_rank_dropout_study',",
+        "        'run_lora_rank_dropout_study',",
+        "        'execute_study',",
+        "        'run_experiment',",
+        "        'run_study',",
+        "    )",
+        "    for candidate_name in candidate_names:",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return _invoke_callable(candidate, study_config=study_config, args=args, paths=paths, budget=budget, logger=logger)",
+        "    raise RuntimeError('No study sweep entrypoint was found. Expected one of: ' + ', '.join(candidate_names))",
+        "",
+        "def main() -> int:",
+        "    result = _run_sweep({'name': 'locked-study'}, argparse.Namespace(), {'root': 'out'}, {'timeout_sec': 17}, None)",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        `python ${toWorkspaceRelative(workspace, scriptPath)}`,
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.thread_id", "thread-stale-entrypoint-repair");
+    run.nodeThreads.implement_experiments = "thread-stale-entrypoint-repair";
+    await runStore.updateRun(run);
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "metrics",
+      summary:
+        "Experiment metrics payload reports failed status: RuntimeError: No study sweep entrypoint was found. Expected one of: run_study_sweep, run_baseline_first_sweep, orchestrate_study_sweep, orchestrate_study, run_rank_dropout_study, run_lora_rank_dropout_study, execute_study, run_experiment, run_study",
+      command: `python ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+      metrics_path: metricsPath,
+      suggested_next_action: "Expose the generated baseline-first condition sweep under the final study sweep entrypoint names.",
+      recorded_at: "2026-05-21T02:00:00.000Z"
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        throw new Error("Codex should not be used for deterministic entrypoint repair");
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    execFileSync("python3", [scriptPath], { cwd: publicDir });
+
+    expect(callCount).toBe(0);
+    expect(result.scriptPath).toBe(scriptPath);
+    expect(result.rawResponse).toContain("Recovered implement result from a materialized public experiment bundle");
+    expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
+    expect(JSON.parse(readFileSync(path.join(publicDir, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "run_baseline_first_condition_sweep",
+      study_name: "locked-study"
+    });
+  });
+
+  it("restores a recoverable attempt snapshot when the current public runner was overwritten", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-snapshot-entrypoint-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Snapshot Runner Entrypoint Repair",
+      topic: "restore interrupted runner snapshot",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - restore_snapshot_entrypoint\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(metricsPath, "{\"status\":\"failed\"}\n", "utf8");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "",
+        "def main() -> int:",
+        "    Path('partial.txt').write_text('overwritten', encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(readmePath, "# Interrupted Bundle\n", "utf8");
+
+    const snapshotDir = path.join(
+      runDir,
+      "implement_experiments",
+      "attempt_snapshots",
+      "attempt_1",
+      "captured",
+      "1"
+    );
+    mkdirSync(snapshotDir, { recursive: true });
+    const snapshotScriptPath = path.join(snapshotDir, "run_lora_rank_dropout_study.py");
+    writeFileSync(
+      snapshotScriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "def run_baseline_first_condition_sweep(study_config: Any, paths: Any = None, runtime_context: Any = None, logger: Any = None) -> dict:",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'runner': 'run_baseline_first_condition_sweep',",
+        "        'study_name': study_config['name'],",
+        "        'paths_root': paths['root'],",
+        "    }",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _invoke_callable(func, *, study_config, args, paths, budget, logger):",
+        "    signature = inspect.signature(func)",
+        "    available_kwargs = {",
+        "        'study_config': study_config,",
+        "        'config': study_config,",
+        "        'args': args,",
+        "        'paths': paths,",
+        "        'budget': budget,",
+        "        'logger': logger,",
+        "    }",
+        "    return func(**{name: available_kwargs[name] for name in signature.parameters if name in available_kwargs})",
+        "",
+        "def _run_sweep(study_config: Any, args: argparse.Namespace, paths: Any, budget: Any, logger: Any) -> Any:",
+        "    candidate_names = (",
+        "        'run_study_sweep',",
+        "        'run_baseline_first_sweep',",
+        "        'orchestrate_study_sweep',",
+        "        'orchestrate_study',",
+        "        'run_rank_dropout_study',",
+        "        'run_lora_rank_dropout_study',",
+        "        'execute_study',",
+        "        'run_experiment',",
+        "        'run_study',",
+        "    )",
+        "    for candidate_name in candidate_names:",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return _invoke_callable(candidate, study_config=study_config, args=args, paths=paths, budget=budget, logger=logger)",
+        "    raise RuntimeError('No study sweep entrypoint was found. Expected one of: ' + ', '.join(candidate_names))",
+        "",
+        "def main() -> int:",
+        "    result = _run_sweep({'name': 'snapshot-study'}, argparse.Namespace(), {'root': 'restored'}, {'timeout_sec': 17}, None)",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(snapshotDir, "README.md"),
+      ["# Snapshot Bundle", "", "```bash", `python ${toWorkspaceRelative(workspace, scriptPath)}`, "```"].join("\n"),
+      "utf8"
+    );
+    const snapshotMtime = new Date(Date.now() + 5000);
+    utimesSync(snapshotScriptPath, snapshotMtime, snapshotMtime);
+    utimesSync(path.join(snapshotDir, "README.md"), snapshotMtime, snapshotMtime);
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.thread_id", "thread-stale-snapshot-entrypoint-repair");
+    run.nodeThreads.implement_experiments = "thread-stale-snapshot-entrypoint-repair";
+    await runStore.updateRun(run);
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "metrics",
+      summary:
+        "Experiment metrics payload reports failed status: RuntimeError: No study sweep entrypoint was found. Expected one of: run_study_sweep, run_baseline_first_sweep, orchestrate_study_sweep, orchestrate_study, run_rank_dropout_study, run_lora_rank_dropout_study, execute_study, run_experiment, run_study",
+      command: `python ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+      metrics_path: metricsPath,
+      suggested_next_action: "Expose the generated baseline-first condition sweep under the final study sweep entrypoint names.",
+      recorded_at: "2026-05-21T02:00:00.000Z"
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        throw new Error("Codex should not be used when a matching attempt snapshot can be restored");
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    execFileSync("python3", [scriptPath], { cwd: publicDir });
+
+    expect(callCount).toBe(0);
+    expect(result.scriptPath).toBe(scriptPath);
+    expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
+    expect(repairedSource).not.toContain("partial.txt");
+    expect(JSON.parse(readFileSync(path.join(publicDir, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "run_baseline_first_condition_sweep",
+      study_name: "snapshot-study"
+    });
   });
 
   it("recovers current-attempt public artifacts after terminated staged materialization despite runner feedback", async () => {
@@ -24224,6 +24571,208 @@ describe("ImplementSessionManager", () => {
       status: "completed",
       runner: "run_baseline_first_locked_sweep",
       metrics_path: "metrics.json",
+      runtime_context_seen: true
+    });
+  });
+
+  it("aliases baseline-first locked condition loops into run_experiments-recognized study helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-condition-loop-study-helper-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Mapping, MutableMapping, Optional, Sequence",
+        "",
+        "CONDITION_SPECS = [{'marker': 'rank_8_dropout_0_0'}, {'marker': 'rank_4_dropout_0_0'}]",
+        "",
+        "def execute_condition_run(condition, shared_context=None):",
+        "    return {'status': 'completed', 'marker': condition['marker']}",
+        "",
+        "def run_baseline_first_locked_condition_loop(",
+        "    condition_runner: Any,",
+        "    *,",
+        "    conditions: Optional[Sequence[Any]] = None,",
+        "    shared_context: Optional[MutableMapping[str, Any]] = None,",
+        "    runtime_budget_seconds: float = 30.0,",
+        ") -> dict:",
+        "    rows = [condition_runner(condition, shared_context or {}) for condition in (conditions or CONDITION_SPECS)]",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'completed_condition_count': len(rows),",
+        "        'condition_results': rows,",
+        "        'runner': 'run_baseline_first_locked_condition_loop',",
+        "        'runtime_budget_seconds': runtime_budget_seconds,",
+        "    }",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _runner_call_helper(helper, options: Mapping[str, Any], **context: Any):",
+        "    return helper(options=options, **context)",
+        "",
+        "def _runner_invoke_first(candidate_names, options, **context):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return name, _runner_call_helper(candidate, options, **context)",
+        "    return None, None",
+        "",
+        "def run_experiment(run_options=None):",
+        "    study_name, study_result = _runner_invoke_first(",
+        "        (",
+        "            'run_locked_study',",
+        "            'run_locked_condition_study',",
+        "            'execute_locked_condition_schedule',",
+        "            'run_baseline_first_locked_study',",
+        "            'run_lora_rank_dropout_study',",
+        "            'execute_study',",
+        "            'run_condition_study',",
+        "            'train_and_evaluate_study',",
+        "        ),",
+        "        run_options or {},",
+        "        metrics_path='metrics.json',",
+        "        condition_specs=CONDITION_SPECS,",
+        "        timeout_sec=17,",
+        "    )",
+        "    if not study_name:",
+        "        raise RuntimeError('No study execution helper was found. Expected one of: run_locked_study, run_locked_condition_study, execute_locked_condition_schedule, run_baseline_first_locked_study, run_lora_rank_dropout_study, execute_study, run_condition_study, train_and_evaluate_study.')",
+        "    return study_result",
+        "",
+        "def main() -> int:",
+        "    result = run_experiment({'metrics_path': 'metrics.json'})",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No study execution helper/
+    );
+
+    const repair = await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
+    expect(repairedSource).toContain("run_locked_study");
+    expect(repairedSource).toContain("condition_runner");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      completed_condition_count: 2,
+      runner: "run_baseline_first_locked_condition_loop",
+      runtime_budget_seconds: 17
+    });
+  });
+
+  it("aliases generated condition sweeps into final _run_sweep entrypoint candidates", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-sweep-condition-entrypoint-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "def run_baseline_first_condition_sweep(",
+        "    study_config: Any,",
+        "    paths: Any = None,",
+        "    runtime_context: Any = None,",
+        "    logger: Any = None,",
+        ") -> dict:",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'runner': 'run_baseline_first_condition_sweep',",
+        "        'study_name': study_config['name'],",
+        "        'paths_root': paths['root'],",
+        "        'runtime_context_seen': runtime_context is not None,",
+        "    }",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _invoke_callable(func, *, study_config, args, paths, budget, logger):",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    available_kwargs = {",
+        "        'study_config': study_config,",
+        "        'config': study_config,",
+        "        'args': args,",
+        "        'paths': paths,",
+        "        'budget': budget,",
+        "        'logger': logger,",
+        "    }",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        return func(**available_kwargs)",
+        "    named_kwargs = {name: available_kwargs[name] for name in parameters if name in available_kwargs}",
+        "    if named_kwargs:",
+        "        return func(**named_kwargs)",
+        "    return func()",
+        "",
+        "def _run_sweep(study_config: Any, args: argparse.Namespace, paths: Any, budget: Any, logger: Any) -> Any:",
+        "    candidate_names = (",
+        "        'run_study_sweep',",
+        "        'run_baseline_first_sweep',",
+        "        'orchestrate_study_sweep',",
+        "        'orchestrate_study',",
+        "        'run_rank_dropout_study',",
+        "        'run_lora_rank_dropout_study',",
+        "        'execute_study',",
+        "        'run_experiment',",
+        "        'run_study',",
+        "    )",
+        "    for candidate_name in candidate_names:",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return _invoke_callable(",
+        "                candidate,",
+        "                study_config=study_config,",
+        "                args=args,",
+        "                paths=paths,",
+        "                budget=budget,",
+        "                logger=logger,",
+        "            )",
+        "    raise RuntimeError('No study sweep entrypoint was found. Expected one of: ' + ', '.join(candidate_names))",
+        "",
+        "def main() -> int:",
+        "    result = _run_sweep({'name': 'locked-study'}, argparse.Namespace(), {'root': 'out'}, {'timeout_sec': 17}, None)",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No study sweep entrypoint/
+    );
+
+    const repair = await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
+    expect(repairedSource).toContain("run_study_sweep");
+    expect(repairedSource).toContain('"study_config": context.get("study_config") or runtime_context');
+    expect(repairedSource).toContain('"paths": context.get("paths")');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "run_baseline_first_condition_sweep",
+      study_name: "locked-study",
+      paths_root: "out",
       runtime_context_seen: true
     });
   });

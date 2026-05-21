@@ -792,6 +792,9 @@ export class ImplementSessionManager {
 
       let result: RunTurnResult;
       const commandRepairFeedback = isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback);
+      const deterministicBundleRepairFeedback = isRecoverableBundleDeterministicRepairFeedback(
+        promptTaskSpec.context.runner_feedback
+      );
       if (commandRepairFeedback) {
         const previousScriptPath = await runContext.get<string>("implement_experiments.script");
         const previousRunCommand = await runContext.get<string>("implement_experiments.run_command");
@@ -823,7 +826,7 @@ export class ImplementSessionManager {
           planChanged: Boolean(promptTaskSpec.context.plan_changed),
           hasRunnerFeedback: Boolean(promptTaskSpec.context.runner_feedback),
           hasPaperCritiqueFeedback: Boolean(promptTaskSpec.context.paper_critique_feedback),
-          commandRepairFeedback
+          commandRepairFeedback: commandRepairFeedback || deterministicBundleRepairFeedback
         }),
         runnerFeedback: promptTaskSpec.context.runner_feedback
       });
@@ -12967,6 +12970,58 @@ export function selectRecoveredPublicBundleScriptPath(params: {
   return prioritizeImplementationContractFocus(candidatePaths, feedbackText)[0];
 }
 
+async function listRecoveredBundleSnapshotDirs(params: {
+  runDir: string;
+  publicDir: string;
+}): Promise<string[]> {
+  const snapshotsRoot = path.join(params.runDir, "implement_experiments", "attempt_snapshots");
+  const attempts = await fs.readdir(snapshotsRoot, { withFileTypes: true }).catch(() => []);
+  const candidates: Array<{ path: string; mtimeMs: number }> = [];
+  for (const attempt of attempts) {
+    if (!attempt.isDirectory()) {
+      continue;
+    }
+    const capturedRoot = path.join(snapshotsRoot, attempt.name, "captured");
+    const capturedEntries = await fs.readdir(capturedRoot, { withFileTypes: true }).catch(() => []);
+    for (const capturedEntry of capturedEntries) {
+      if (!capturedEntry.isDirectory()) {
+        continue;
+      }
+      const capturedPath = path.join(capturedRoot, capturedEntry.name);
+      if (isPathInsideOrEqual(params.publicDir, capturedPath)) {
+        continue;
+      }
+      const entries = await fs.readdir(capturedPath).catch(() => []);
+      if (!entries.some((entry) => /\.(py|js|sh|mjs|cjs)$/iu.test(entry))) {
+        continue;
+      }
+      const stat = await fs.stat(capturedPath).catch(() => undefined);
+      candidates.push({ path: capturedPath, mtimeMs: stat?.mtimeMs ?? 0 });
+    }
+  }
+  return candidates
+    .sort((left, right) => right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path))
+    .map((candidate) => candidate.path);
+}
+
+async function restoreRecoveredSnapshotBundle(params: {
+  snapshotDir: string;
+  publicDir: string;
+}): Promise<void> {
+  await fs.rm(params.publicDir, { recursive: true, force: true });
+  await ensureDir(params.publicDir);
+  const entries = await fs.readdir(params.snapshotDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(params.snapshotDir, entry.name);
+    const targetPath = path.join(params.publicDir, entry.name);
+    if (entry.isDirectory()) {
+      await fs.cp(sourcePath, targetPath, { recursive: true });
+    } else if (entry.isFile()) {
+      await fs.copyFile(sourcePath, targetPath);
+    }
+  }
+}
+
 async function inferRecoveredBundleWrapperRunCommand(params: {
   wrapperPath: string;
   scriptPath: string;
@@ -12998,33 +13053,85 @@ async function recoverStructuredResultFromPublicBundle(params: {
   if (params.requireFreshPlanAlignment) {
     return undefined;
   }
-  const entries = await fs.readdir(params.publicDir).catch(() => []);
-  const scriptPath = selectRecoveredPublicBundleScriptPath({
-    publicDir: params.publicDir,
-    entries,
-    runnerFeedback: params.runnerFeedback
-  });
-  if (!scriptPath) {
-    return undefined;
-  }
   const commandRepairFeedback = isRecoverableBundleCommandRepairFeedback(params.runnerFeedback);
-  if (typeof params.materializedAfterMs === "number" && Number.isFinite(params.materializedAfterMs)) {
-    const scriptStats = await fs.stat(scriptPath).catch(() => undefined);
-    if (!scriptStats || scriptStats.mtimeMs + 1000 < params.materializedAfterMs) {
-      return undefined;
+  const deterministicRepairFeedback = isRecoverableBundleDeterministicRepairFeedback(params.runnerFeedback);
+  const candidateDirs = [
+    { dir: params.publicDir, snapshot: false },
+    ...(
+      deterministicRepairFeedback
+        ? await listRecoveredBundleSnapshotDirs({ runDir: params.runDir, publicDir: params.publicDir })
+        : []
+    ).map((dir) => ({ dir, snapshot: true }))
+  ];
+  for (const candidate of candidateDirs) {
+    const entries = await fs.readdir(candidate.dir).catch(() => []);
+    let scriptPath = selectRecoveredPublicBundleScriptPath({
+      publicDir: candidate.dir,
+      entries,
+      runnerFeedback: params.runnerFeedback
+    });
+    if (!scriptPath) {
+      continue;
     }
-  }
-  const scriptContent = await fs.readFile(scriptPath, "utf8").catch(() => "");
-  if (!hasSubstantiveMaterializedContent(scriptContent, scriptPath)) {
-    return undefined;
-  }
+    if (
+      !candidate.snapshot &&
+      typeof params.materializedAfterMs === "number" &&
+      Number.isFinite(params.materializedAfterMs)
+    ) {
+      const scriptStats = await fs.stat(scriptPath).catch(() => undefined);
+      if (!scriptStats || scriptStats.mtimeMs + 1000 < params.materializedAfterMs) {
+        continue;
+      }
+    }
+    const scriptContent = await fs.readFile(scriptPath, "utf8").catch(() => "");
+    if (!hasSubstantiveMaterializedContent(scriptContent, scriptPath)) {
+      continue;
+    }
+    if (candidate.snapshot) {
+      const candidateReadmePath = path.join(candidate.dir, "README.md");
+      const candidateFrozenConfigPath = path.join(candidate.dir, "frozen_config.json");
+      if (
+        shouldCheckRecoveredBundlePlanFreshness(commandRepairFeedback || deterministicRepairFeedback) &&
+        !(await recoveredBundleMatchesCurrentPlan({
+          runDir: params.runDir,
+          publicDir: candidate.dir,
+          scriptPath,
+          readmePath: candidateReadmePath,
+          frozenConfigPath: candidateFrozenConfigPath
+        }))
+      ) {
+        continue;
+      }
+      await restoreRecoveredSnapshotBundle({
+        snapshotDir: candidate.dir,
+        publicDir: params.publicDir
+      });
+      const restoredEntries = await fs.readdir(params.publicDir).catch(() => []);
+      scriptPath =
+        selectRecoveredPublicBundleScriptPath({
+          publicDir: params.publicDir,
+          entries: restoredEntries,
+          runnerFeedback: params.runnerFeedback
+        }) ?? path.join(params.publicDir, path.basename(scriptPath));
+    }
+    if (deterministicRepairFeedback) {
+      const repairs = [
+        await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(scriptPath),
+        await repairPythonEntrypointLockedConditionSeedSweepCandidateSurface(scriptPath),
+        await repairPythonFinalOrchestrationHelperSurface(scriptPath),
+        await repairPythonMainFindCallableStudyResolverSurface(scriptPath)
+      ];
+      if (!repairs.some((repair) => repair.repaired)) {
+        continue;
+      }
+    }
   const readmePath = path.join(params.publicDir, "README.md");
   const frozenConfigPath = path.join(params.publicDir, "frozen_config.json");
   const baselineSummaryPath = path.join(params.publicDir, "baseline_summary.json");
   const experimentPlanPath = path.join(params.publicDir, "experiment_plan.yaml");
   const wrapperPath = path.join(params.publicDir, "run_command.sh");
   if (
-    shouldCheckRecoveredBundlePlanFreshness(commandRepairFeedback) &&
+    shouldCheckRecoveredBundlePlanFreshness(commandRepairFeedback || deterministicRepairFeedback) &&
     !(await recoveredBundleMatchesCurrentPlan({
       runDir: params.runDir,
       publicDir: params.publicDir,
@@ -13175,6 +13282,9 @@ async function recoverStructuredResultFromPublicBundle(params: {
     }),
     events: []
   };
+  }
+
+  return undefined;
 }
 
 async function hasRecoverableExecutionEvidence(publicDir: string, metricsPath: string): Promise<boolean> {
@@ -13467,6 +13577,25 @@ function isRecoverableBundleCommandRepairFeedback(report: RunVerifierReport | un
     /(?:--metrics-path|metrics path) is required for a live run/u.test(summary) ||
     /unrecognized arguments?:\s+--[a-z0-9_-]+/u.test(summary) ||
     /unsupported (?:cli )?(?:argument|option|flag)/u.test(summary)
+  );
+}
+
+function isRecoverableBundleDeterministicRepairFeedback(report: RunVerifierReport | undefined): boolean {
+  if (!report) {
+    return false;
+  }
+  const summary = [
+    report.summary,
+    report.stderr_excerpt,
+    report.stdout_excerpt,
+    report.suggested_next_action
+  ].filter((value): value is string => Boolean(value)).join("\n");
+  return (
+    /No study sweep entrypoint was found/u.test(summary) ||
+    /No study execution helper was found/u.test(summary) ||
+    /No study sweep runner or single-run helper was found/u.test(summary) ||
+    /Unable to locate (?:a |the )study (?:runner|execution) function/u.test(summary) ||
+    /Unable to locate the experiment sweep runner callable/u.test(summary)
   );
 }
 
@@ -14037,7 +14166,13 @@ async function createImplementAttemptSnapshot(params: {
   const orphanedResiduePaths: string[] = [];
   try {
     await fs.access(snapshotRoot);
-    orphanedResiduePaths.push(snapshotRoot);
+    const preservedSnapshotRoot = path.join(
+      path.dirname(snapshotRoot),
+      `${path.basename(snapshotRoot)}.orphaned-${Date.now()}`
+    );
+    await fs.rm(preservedSnapshotRoot, { recursive: true, force: true });
+    await fs.rename(snapshotRoot, preservedSnapshotRoot);
+    orphanedResiduePaths.push(preservedSnapshotRoot);
   } catch {
     // no prior residue
   }
@@ -15614,9 +15749,23 @@ export function extractWorkspacePathsFromCommand(command: string, cwd: string, w
   const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) || [];
   const paths = new Set<string>();
   let skipNextOutputRedirectTarget = false;
+  let parseNextShellCommandString = false;
   for (const token of tokens) {
     if (skipNextOutputRedirectTarget) {
       skipNextOutputRedirectTarget = false;
+      continue;
+    }
+    if (parseNextShellCommandString) {
+      parseNextShellCommandString = false;
+      const nestedCommand = token.replace(/^['"]|['"]$/g, "");
+      for (const nestedPath of extractWorkspacePathsFromCommand(nestedCommand, cwd, workspaceRoot)) {
+        paths.add(nestedPath);
+      }
+      continue;
+    }
+    const shellOptionToken = token.trim();
+    if (/^-[a-z]*c[a-z]*$/iu.test(shellOptionToken)) {
+      parseNextShellCommandString = true;
       continue;
     }
     const outputRedirection = classifyShellOutputRedirectionToken(token);
@@ -28929,7 +29078,16 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
   const hasLockedStudyOrchestratorResolver =
     source.includes("Could not locate a locked-study orchestrator helper in the current script globals") &&
     source.includes("run_full_locked_study");
+  const hasRunExperimentStudyHelperResolver =
+    source.includes("No study execution helper was found. Expected one of:") &&
+    source.includes("def _runner_invoke_first(") &&
+    source.includes("def run_experiment(");
+  const hasStudySweepEntrypointResolver =
+    source.includes("No study sweep entrypoint was found. Expected one of:") &&
+    source.includes("def _run_sweep(") &&
+    source.includes("run_study_sweep");
   const sweepTargetName = [
+    "run_baseline_first_locked_condition_loop",
     "run_baseline_first_condition_sweep",
     "execute_baseline_first_condition_sweep",
     "run_locked_condition_sweep",
@@ -28956,7 +29114,9 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
       !hasStage3bRunnerResolver &&
       !hasChunk3bRunnerResolver &&
       !hasRuntimeOptionsRunnerResolver &&
-      !hasLockedStudyOrchestratorResolver
+      !hasLockedStudyOrchestratorResolver &&
+      !hasRunExperimentStudyHelperResolver &&
+      !hasStudySweepEntrypointResolver
     ) ||
     !sweepTargetName ||
     source.includes("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker")
@@ -28978,7 +29138,11 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
               source.match(/\ndef\s+_run_locked_study_orchestrator\s*\(/u) ||
               source.match(/\ndef\s+main\s*\(/u)
             )
-        : source.match(/\ndef\s+main\s*\(/u);
+          : hasRunExperimentStudyHelperResolver
+          ? source.match(/\ndef\s+run_experiment\s*\(/u)
+          : hasStudySweepEntrypointResolver
+            ? source.match(/\ndef\s+_run_sweep\s*\(/u)
+            : source.match(/\ndef\s+main\s*\(/u);
   if (!insertionMatch || insertionMatch.index === undefined) {
     return { repaired: false };
   }
@@ -29014,6 +29178,9 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
     "        \"runtime_config\": runtime_context,",
     "        \"runtime_context\": runtime_context,",
     "        \"config\": runtime_context,",
+    "        \"study_config\": context.get(\"study_config\") or runtime_context,",
+    "        \"paths\": context.get(\"paths\"),",
+    "        \"budget\": context.get(\"budget\"),",
     "        \"output_dir\": context.get(\"output_dir\") or getattr(options, \"output_dir\", None),",
     "        \"public_dir\": context.get(\"public_dir\") or context.get(\"output_dir\") or getattr(options, \"output_dir\", None),",
     "        \"metrics_path\": context.get(\"metrics_path\") or getattr(options, \"metrics_path\", None),",
@@ -29022,13 +29189,17 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
     "        \"condition_results_csv_path\": context.get(\"condition_results_csv_path\") or getattr(options, \"condition_results_csv_path\", None),",
     "        \"condition_markers\": context.get(\"condition_markers\") or context.get(\"required_condition_markers\"),",
     "        \"required_condition_markers\": context.get(\"required_condition_markers\") or context.get(\"condition_markers\"),",
+    "        \"conditions\": context.get(\"conditions\") or context.get(\"condition_specs\") or context.get(\"sweep_conditions\") or globals().get(\"LOCKED_CONDITION_SPECS\") or globals().get(\"CONDITION_SPECS\"),",
     "        \"seed_schedule\": context.get(\"seed_schedule\") or context.get(\"seeds\"),",
     "        \"seeds\": context.get(\"seeds\") or context.get(\"seed_schedule\"),",
     "        \"condition_specs\": context.get(\"condition_specs\"),",
     "        \"sweep_conditions\": context.get(\"condition_specs\") or context.get(\"sweep_conditions\"),",
+    "        \"condition_runner\": context.get(\"condition_runner\") or globals().get(\"execute_condition_run\") or globals().get(\"run_condition\") or globals().get(\"run_single_condition\") or globals().get(\"train_and_evaluate_condition\"),",
+    "        \"shared_context\": context.get(\"shared_context\") or context.get(\"runtime_context\") or context.get(\"config\") or runtime_context,",
     "        \"device\": _autolabos_device,",
     "        \"seed\": context.get(\"seed\") if context.get(\"seed\") is not None else getattr(options, \"seed\", None),",
     "        \"timeout_sec\": context.get(\"timeout_sec\") if context.get(\"timeout_sec\") is not None else getattr(options, \"timeout_sec\", None),",
+    "        \"runtime_budget_seconds\": context.get(\"runtime_budget_seconds\") if context.get(\"runtime_budget_seconds\") is not None else (context.get(\"timeout_sec\") if context.get(\"timeout_sec\") is not None else getattr(options, \"timeout_sec\", None)),",
     "        \"max_train_samples\": context.get(\"max_train_samples\") if context.get(\"max_train_samples\") is not None else getattr(options, \"max_train_samples\", None),",
     "        \"max_eval_samples_per_task\": context.get(\"max_eval_samples_per_task\") if context.get(\"max_eval_samples_per_task\") is not None else getattr(options, \"max_eval_samples_per_task\", None),",
     "        \"max_seq_length\": context.get(\"max_seq_length\") if context.get(\"max_seq_length\") is not None else getattr(options, \"max_seq_length\", None),",
@@ -29053,7 +29224,15 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
     "    }",
     "    return target(**supported_kwargs)",
     "",
-    "def _autolabos_run_baseline_first_locked_sweep_study(options=None, runtime_config=None, args=None, *unused_args, **context):",
+    "def _autolabos_run_baseline_first_locked_sweep_study(options=None, runtime_config=None, args=None, study_config=None, paths=None, budget=None, logger=None, *unused_args, **context):",
+    "    if study_config is not None:",
+    "        context.setdefault(\"study_config\", study_config)",
+    "    if paths is not None:",
+    "        context.setdefault(\"paths\", paths)",
+    "    if budget is not None:",
+    "        context.setdefault(\"budget\", budget)",
+    "    if logger is not None:",
+    "        context.setdefault(\"logger\", logger)",
     "    active_args = args if args is not None else context.get(\"args\")",
     "    if options is None:",
     "        options = context.get(\"options\")",
@@ -29061,7 +29240,7 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
     "        active_args = runtime_config",
     "    if active_args is None and isinstance(options, argparse.Namespace):",
     "        active_args = options",
-    "    runtime_context = context.get(\"runtime_context\") or context.get(\"config\") or context.get(\"runtime_config\") or runtime_config or options",
+    "    runtime_context = context.get(\"runtime_context\") or context.get(\"config\") or context.get(\"runtime_config\") or context.get(\"study_config\") or runtime_config or options",
     "    if active_args is None:",
     "        active_args = runtime_context",
     "    target = _autolabos_get_baseline_first_locked_sweep_target()",
@@ -29071,6 +29250,9 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
     "    return _autolabos_call_baseline_first_locked_sweep_target(target, active_args, runtime_context=runtime_context, options=options, **call_context)",
     "",
     "for _autolabos_study_runner_alias_name in (",
+    "    \"run_study_sweep\",",
+    "    \"run_baseline_first_sweep\",",
+    "    \"orchestrate_study_sweep\",",
     "    \"run_locked_lora_rank_dropout_study\",",
     "    \"run_lora_rank_dropout_study\",",
     "    \"execute_lora_rank_dropout_study\",",
