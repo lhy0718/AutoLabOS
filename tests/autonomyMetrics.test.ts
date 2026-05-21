@@ -125,6 +125,39 @@ describe("audit autonomy metrics", () => {
     expect(metrics.claim_violation_count.value).toBe(2);
     expect(metrics.reproducibility_score.value).toBe(0.8);
   });
+
+  it("handles large durable timelines without spreading timestamps onto the call stack", () => {
+    const entries = Array.from({ length: 120000 }, (_, index) => ({
+      id: `evt-`,
+      source: "event" as const,
+      kind: "NODE_STARTED",
+      title: "node started",
+      timestamp: new Date(Date.UTC(2026, 4, 5, 0, 0, Math.floor(index / 1000))).toISOString(),
+      event_type: "NODE_STARTED" as const
+    }));
+
+    const metrics = computeAuditAutonomyMetrics({
+      timeline: {
+        version: 1,
+        generated_at: "2026-05-05T00:00:00.000Z",
+        measured: true,
+        status: "available",
+        event_count: entries.length,
+        checkpoint_count: 0,
+        artifact_entry_count: 0,
+        entries,
+        policy_note: "test"
+      },
+      blockerCount: 0,
+      unsupportedClaimCount: 0,
+      citationSupportIssueCount: 0,
+      requiredOutputCount: 1,
+      presentOutputCount: 1
+    });
+
+    expect(metrics.autonomy_span.measured).toBe(true);
+    expect(metrics.human_intervention_count.value).toBe(0);
+  });
 });
 
 function makeRun(): RunRecord {

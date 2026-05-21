@@ -31,8 +31,16 @@ export function computeAuditAutonomyMetrics(input: {
   const timestamps = eventEntries
     .map((entry) => entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN)
     .filter((value) => Number.isFinite(value));
-  const first = Math.min(...timestamps);
-  const last = Math.max(...timestamps);
+  let first = Number.POSITIVE_INFINITY;
+  let last = Number.NEGATIVE_INFINITY;
+  for (const timestamp of timestamps) {
+    if (timestamp < first) {
+      first = timestamp;
+    }
+    if (timestamp > last) {
+      last = timestamp;
+    }
+  }
   const autonomySpanMeasured = timestamps.length >= 2 && Number.isFinite(first) && Number.isFinite(last) && last >= first;
   const rollbackCount = eventEntries.filter((entry) => entry.event_type === "NODE_ROLLBACK" || entry.event_type === "NODE_JUMP").length;
   const rollbackRecoveredCount = rollbackCount > 0 && eventEntries.some((entry) => entry.event_type === "NODE_COMPLETED")
