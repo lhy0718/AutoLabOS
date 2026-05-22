@@ -448,6 +448,7 @@ function validatePlannedConditionImplementationSurface(input: {
 const PER_RUN_EXECUTION_HELPER_NAMES = [
   "run_condition_seed",
   "run_condition_seed_experiment",
+  "run_single_condition_seed_experiment",
   "execute_condition_seed_run",
   "execute_single_run",
   "run_single_study_cell",
