@@ -2368,6 +2368,10 @@ export class ImplementSessionManager {
     let lastDeltaObservationAt = 0;
     let lastDeltaObservationChars = 0;
     let heartbeatTimer: NodeJS.Timeout | undefined;
+    const progressStallTimeoutMs = getImplementLlmProgressStallTimeoutMs();
+    const progressStallController = progressStallTimeoutMs > 0 ? new AbortController() : undefined;
+    let progressStallTimer: NodeJS.Timeout | undefined;
+    let progressStalled = false;
     const persistPartialSnapshot = async () => {
       if (!partialText.trim()) {
         return;
@@ -2419,11 +2423,42 @@ export class ImplementSessionManager {
     const timeoutId = timeoutController
       ? setTimeout(() => timeoutController.abort(), input.timeoutMs)
       : undefined;
-    const llmAbortSignal = timeoutController
-      ? input.abortSignal
-        ? AbortSignal.any([input.abortSignal, timeoutController.signal])
-        : timeoutController.signal
-      : input.abortSignal;
+    const abortSignals = [input.abortSignal, timeoutController?.signal, progressStallController?.signal].filter(
+      (signal): signal is AbortSignal => Boolean(signal)
+    );
+    const llmAbortSignal =
+      abortSignals.length === 0
+        ? undefined
+        : abortSignals.length === 1
+          ? abortSignals[0]
+          : AbortSignal.any(abortSignals);
+    const clearProgressStallTimer = () => {
+      if (progressStallTimer) {
+        clearTimeout(progressStallTimer);
+        progressStallTimer = undefined;
+      }
+    };
+    const scheduleProgressStallTimer = () => {
+      if (!progressStallController || progressStallController.signal.aborted) {
+        return;
+      }
+      clearProgressStallTimer();
+      progressStallTimer = setTimeout(() => {
+        const silenceMs = Date.now() - lastProgressAt;
+        const silenceSec = Math.max(1, Math.floor(silenceMs / 1000));
+        progressStalled = true;
+        input.emitImplementObservation(
+          "codex",
+          `staged_llm provider stalled for ${silenceSec}s without progress; aborting bounded request.`,
+          {
+            attempt: input.attempt,
+            threadId: input.threadId,
+            publicDir: input.publicDir
+          }
+        );
+        progressStallController.abort();
+      }, progressStallTimeoutMs);
+    };
     if (heartbeatMs > 0) {
       heartbeatTimer = setInterval(() => {
         const silenceMs = Date.now() - lastProgressAt;
@@ -2442,32 +2477,38 @@ export class ImplementSessionManager {
       let completion: { text: string; threadId?: string } | undefined;
       for (let requestAttempt = 1; requestAttempt <= IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_MAX_ATTEMPTS; requestAttempt += 1) {
         try {
-          completion = await this.deps.llm!.complete(input.prompt, {
-            threadId: input.threadId,
-            systemPrompt: input.systemPrompt,
-            reasoningEffort: input.reasoningEffort,
-            abortSignal: llmAbortSignal,
-            onProgress: (event) => {
-              const text = event.text.trim();
-              lastProgressAt = Date.now();
-              sawProgressEvent = true;
-              if (!text) {
-                return;
+          scheduleProgressStallTimer();
+          try {
+            completion = await this.deps.llm!.complete(input.prompt, {
+              threadId: input.threadId,
+              systemPrompt: input.systemPrompt,
+              reasoningEffort: input.reasoningEffort,
+              abortSignal: llmAbortSignal,
+              onProgress: (event) => {
+                const text = event.text.trim();
+                lastProgressAt = Date.now();
+                sawProgressEvent = true;
+                scheduleProgressStallTimer();
+                if (!text) {
+                  return;
+                }
+                if (event.type === "delta") {
+                  sawDeltaEvent = true;
+                  partialText += `${text}\n`;
+                  void maybePersistPartialSnapshot();
+                  emitDeltaProgressSummary();
+                  return;
+                }
+                input.emitImplementObservation("codex", text, {
+                  attempt: input.attempt,
+                  threadId: input.threadId,
+                  publicDir: input.publicDir
+                });
               }
-              if (event.type === "delta") {
-                sawDeltaEvent = true;
-                partialText += `${text}\n`;
-                void maybePersistPartialSnapshot();
-                emitDeltaProgressSummary();
-                return;
-              }
-              input.emitImplementObservation("codex", text, {
-                attempt: input.attempt,
-                threadId: input.threadId,
-                publicDir: input.publicDir
-              });
-            }
-          });
+            });
+          } finally {
+            clearProgressStallTimer();
+          }
           break;
         } catch (error) {
           const canRetryTransient =
@@ -2521,6 +2562,21 @@ export class ImplementSessionManager {
       };
     } catch (error) {
       await persistPartialSnapshot();
+      if (progressStallController?.signal.aborted && progressStalled && !input.abortSignal?.aborted) {
+        const timeoutMessage = sawDeltaEvent
+          ? `staged_llm stall timeout preserved ${partialText.trim().length} chars of partial output in ${formatArtifactPath(partialResponsePath)}.`
+          : sawProgressEvent
+            ? `staged_llm stalled after provider progress without any text delta; partial snapshot remains empty.`
+            : `staged_llm stalled before any provider progress was observed.`;
+        input.emitImplementObservation("codex", timeoutMessage, {
+          attempt: input.attempt,
+          threadId: input.threadId,
+          publicDir: input.publicDir
+        });
+        throw new Error(
+          `implement_experiments staged_llm request timed out after ${progressStallTimeoutMs}ms without provider progress`
+        );
+      }
       if (timeoutController?.signal.aborted && !input.abortSignal?.aborted) {
         const timeoutMessage = sawDeltaEvent
           ? `staged_llm timeout preserved ${partialText.trim().length} chars of partial output in ${formatArtifactPath(partialResponsePath)}.`
@@ -2542,6 +2598,7 @@ export class ImplementSessionManager {
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
+      clearProgressStallTimer();
     }
   }
 
@@ -13577,6 +13634,7 @@ function stripDryRunFlag(command: string | undefined): string | undefined {
 }
 
 const DEFAULT_IMPLEMENT_LLM_TIMEOUT_MS = 1_800_000;
+const DEFAULT_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS = 300_000;
 
 export function getImplementLlmTimeoutMs(config: AppConfig): number {
   const raw = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS?.trim();
@@ -13588,6 +13646,17 @@ export function getImplementLlmTimeoutMs(config: AppConfig): number {
   }
   void config;
   return DEFAULT_IMPLEMENT_LLM_TIMEOUT_MS;
+}
+
+export function getImplementLlmProgressStallTimeoutMs(): number {
+  const raw = process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS?.trim();
+  if (raw) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS;
 }
 
 function isDryRunMetricsRepairFeedback(report: RunVerifierReport | undefined): boolean {

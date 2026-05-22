@@ -21,6 +21,7 @@ import {
   evaluateImplementBootstrapContract,
   parseImplementBootstrapContractFromText,
   getImplementLlmTimeoutMs,
+  getImplementLlmProgressStallTimeoutMs,
   ImplementSessionManager,
   shouldSkipAttemptSnapshotPath,
   isMalformedJsonStagedLlmChunkError,
@@ -8063,6 +8064,110 @@ describe("ImplementSessionManager", () => {
     }
   });
 
+  it("fails the staged_llm implementation turn when provider progress stalls", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-openai-stall-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const originalTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+    const originalStallTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS;
+    const originalHeartbeat = process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_HEARTBEAT_MS;
+    process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS = "1000";
+    process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS = "10";
+    process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_HEARTBEAT_MS = "1";
+
+    try {
+      const runStore = new RunStore(paths);
+      const run = await runStore.createRun({
+        title: "Implementation OpenAI Stall Run",
+        topic: "small model reasoning",
+        constraints: ["recent"],
+        objectiveMetric: "accuracy"
+      });
+
+      const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+      const codex = {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used when llm_mode=openai_api");
+        }
+      } as unknown as CodexNativeClient;
+      const llm = {
+        complete: async (_prompt: string, opts?: { abortSignal?: AbortSignal; onProgress?: (event: { type: "status" | "delta"; text: string }) => void }) =>
+          await new Promise((_, reject) => {
+            opts?.onProgress?.({ type: "delta", text: "partial implementation draft" });
+            const signal = opts?.abortSignal;
+            if (!signal) {
+              return;
+            }
+            signal.addEventListener(
+              "abort",
+              () => reject(new Error("aborted by stall watchdog")),
+              { once: true }
+            );
+          })
+      };
+
+      const config = createTestConfig();
+      config.providers.llm_mode = "openai_api";
+      const manager = new ImplementSessionManager({
+        config,
+        codex,
+        llm: llm as any,
+        aci: new LocalAciAdapter(),
+        eventStream: new InMemoryEventStream(),
+        runStore,
+        workspaceRoot: workspace
+      });
+
+      await expect(manager.run(run)).rejects.toThrow(
+        "implement_experiments staged_llm request timed out after 10ms without provider progress"
+      );
+      const status = JSON.parse(readFileSync(path.join(runDir, "implement_experiments", "status.json"), "utf8")) as {
+        status: string;
+        stage: string;
+        message: string;
+      };
+      const partialText = readFileSync(
+        path.join(runDir, "implement_experiments", "partial_response.txt"),
+        "utf8"
+      );
+      const progressLog = readFileSync(
+        path.join(runDir, "implement_experiments", "progress.jsonl"),
+        "utf8"
+      );
+
+      expect(status).toMatchObject({
+        status: "failed",
+        stage: "failed"
+      });
+      expect(status.message).toContain("without provider progress");
+      expect(partialText).toContain("partial implementation draft");
+      expect(progressLog).toContain("staged_llm provider stalled");
+      expect(progressLog).toContain("staged_llm stall timeout preserved");
+    } finally {
+      if (originalTimeout === undefined) {
+        delete process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+      } else {
+        process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS = originalTimeout;
+      }
+      if (originalStallTimeout === undefined) {
+        delete process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS;
+      } else {
+        process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS = originalStallTimeout;
+      }
+      if (originalHeartbeat === undefined) {
+        delete process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_HEARTBEAT_MS;
+      } else {
+        process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_HEARTBEAT_MS = originalHeartbeat;
+      }
+    }
+  });
+
   it("applies a bounded staged_llm timeout by default", () => {
     const config = createTestConfig();
     config.providers.llm_mode = "openai_api";
@@ -8078,6 +8183,34 @@ describe("ImplementSessionManager", () => {
         delete process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
       } else {
         process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS = originalTimeout;
+      }
+    }
+  });
+
+  it("applies a bounded staged_llm provider progress stall timeout by default", () => {
+    const originalStallTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS;
+    delete process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS;
+    try {
+      expect(getImplementLlmProgressStallTimeoutMs()).toBe(300_000);
+    } finally {
+      if (originalStallTimeout === undefined) {
+        delete process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS;
+      } else {
+        process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS = originalStallTimeout;
+      }
+    }
+  });
+
+  it("allows explicitly disabling the staged_llm provider progress stall timeout with zero", () => {
+    const originalStallTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS;
+    process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS = "0";
+    try {
+      expect(getImplementLlmProgressStallTimeoutMs()).toBe(0);
+    } finally {
+      if (originalStallTimeout === undefined) {
+        delete process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS;
+      } else {
+        process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_STALL_TIMEOUT_MS = originalStallTimeout;
       }
     }
   });
