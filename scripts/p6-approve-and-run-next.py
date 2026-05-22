@@ -346,7 +346,8 @@ def wait_for_stop_boundary(
     run_id: str,
     node: str,
     initial_signature: tuple[str, str, str, str] | None = None,
-    stable_seconds: float = STOP_BOUNDARY_STABLE_SECONDS
+    stable_seconds: float = STOP_BOUNDARY_STABLE_SECONDS,
+    accept_live_prompt_boundary: bool = True
 ) -> str:
     deadline = time.time() + timeout
     regex = re.compile(pattern, re.MULTILINE)
@@ -396,7 +397,11 @@ def wait_for_stop_boundary(
             record = try_load_run_record(workspace, run_id)
             if should_accept_node_status_error_text(record, node, initial_signature):
                 return joined
-        if observed_target_running and re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, searchable_after_target_running, re.MULTILINE):
+        if (
+            accept_live_prompt_boundary
+            and observed_target_running
+            and re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, searchable_after_target_running, re.MULTILINE)
+        ):
             return joined
         if regex.search(searchable):
             record = try_load_run_record(workspace, run_id)
@@ -711,6 +716,9 @@ def run_selftest() -> int:
     ):
         print("FAIL: text command override placeholders were not expanded")
         return 1
+    if command_override_replaces_continue_command("  Steer implement_experiments for run-p6"):
+        print("FAIL: indented text steering override was incorrectly treated as a command replacement")
+        return 1
     print("PASS: p6 continue command selection self-test")
     return 0
 
@@ -765,6 +773,7 @@ def main() -> int:
 
     buffer_text = ""
     sent_command_override = False
+    sent_text_command_override = False
     try:
         buffer_text = wait_for(
             master_fd,
@@ -784,6 +793,7 @@ def main() -> int:
                 command = expand_command_override(command_override, run_id, wait_node)
                 send_line(master_fd, command)
                 sent_command_override = True
+                sent_text_command_override = not command_override_replaces_continue_command(command_override)
                 print(f"INFO: {wait_node} is already running; sent command override and observing until the next stop boundary.")
             else:
                 print(f"INFO: {wait_node} is already running; observing until the next stop boundary.")
@@ -802,6 +812,7 @@ def main() -> int:
             initial_signature = record_boundary_signature(record_before_command, wait_node)
             send_line(master_fd, command)
             sent_command_override = bool(command_override and command_override_replaces_continue_command(command_override))
+            sent_text_command_override = False
         buffer_text = wait_for_stop_boundary(
             master_fd,
             stop_pattern_for_node(wait_node),
@@ -810,7 +821,8 @@ def main() -> int:
             workspace=workspace,
             run_id=run_id,
             node=wait_node,
-            initial_signature=initial_signature
+            initial_signature=initial_signature,
+            accept_live_prompt_boundary=not sent_text_command_override
         )
         observed_handoffs = 0
         while observed_handoffs < 3:
@@ -837,6 +849,7 @@ def main() -> int:
                 command = expand_command_override(command_override, run_id, wait_node)
                 send_line(master_fd, command)
                 sent_command_override = True
+                sent_text_command_override = not command_override_replaces_continue_command(command_override)
                 print(f"INFO: {wait_node} is already running after the prior boundary; sent command override and observing the handoff.")
             else:
                 print(f"INFO: {wait_node} is already running after the prior boundary; observing the handoff.")
@@ -848,7 +861,8 @@ def main() -> int:
                 workspace=workspace,
                 run_id=run_id,
                 node=wait_node,
-                initial_signature=initial_signature
+                initial_signature=initial_signature,
+                accept_live_prompt_boundary=not sent_text_command_override
             )
         send_line(master_fd, "/quit")
         try:
