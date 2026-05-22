@@ -75,6 +75,12 @@ class QueueProgressThenHangLLMClient extends MockLLMClient {
   }
 }
 
+class FailIfCalledLLMClient extends MockLLMClient {
+  override async complete(): Promise<{ text: string }> {
+    throw new Error("LLM should not be called");
+  }
+}
+
 afterEach(() => {
   delete process.env.AUTOLABOS_HYPOTHESIS_TIMEOUT_MS;
   process.chdir(ORIGINAL_CWD);
@@ -960,6 +966,73 @@ describe("normalizeGenerateHypothesesRequest", () => {
     await expect(runContext.get("generate_hypotheses.source")).resolves.toBe("blocked_low_quality_fallback");
     expect(statusText).toContain("operational dataset/metric/testability contract");
     expect(logText).toContain("operational dataset/metric/testability contract");
+  });
+
+  it("blocks post-review hypothesis generation before LLM calls when all evidence is weak", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-preflight-gating-"));
+    process.chdir(root);
+
+    const runId = "run-hypothesis-preflight-gating";
+    const run = makeRun(runId);
+    run.graph.transitionHistory.push({
+      action: "backtrack_to_hypotheses",
+      sourceNode: "review",
+      fromNode: "review",
+      toNode: "generate_hypotheses",
+      reason: "Pre-draft critique classified manuscript as research_memo: claims outpace measured outcome.",
+      confidence: 0.8,
+      autoExecutable: true,
+      appliedAt: new Date().toISOString()
+    });
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "evidence_store.jsonl"),
+      Array.from({ length: 6 }, (_, index) =>
+        JSON.stringify({
+          evidence_id: `ev_${index + 1}`,
+          paper_id: `paper_${index + 1}`,
+          claim: "Abstract-only fallback evidence; no structured evidence could be grounded.",
+          source_type: "abstract",
+          confidence: 0.2,
+          confidence_reason: "abstract-only fallback evidence; no structured evidence could be grounded"
+        })
+      ).join("\n") + "\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      Array.from({ length: 6 }, (_, index) =>
+        JSON.stringify({ paper_id: `paper_${index + 1}`, title: `Paper ${index + 1}` })
+      ).join("\n") + "\n",
+      "utf8"
+    );
+
+    const llm = new FailIfCalledLLMClient();
+    const node = createGenerateHypothesesNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      pdfTextLlm: llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    const statusText = await readFile(path.join(runDir, "hypothesis_generation", "status.json"), "utf8");
+    const logText = await readFile(path.join(runDir, "hypothesis_generation", "progress.jsonl"), "utf8");
+
+    expect(result.status).toBe("failure");
+    expect(result.summary).toContain("all available evidence items are weak");
+    await expect(access(path.join(runDir, "hypotheses.jsonl"))).rejects.toThrow();
+    await expect(runContext.get("generate_hypotheses.source")).resolves.toBe("blocked_weak_evidence_preflight");
+    expect(statusText).toContain('"stage": "evidence_quality"');
+    expect(logText).toContain("all available evidence items are weak");
   });
 
   it("fails fast when no evidence items are available", async () => {

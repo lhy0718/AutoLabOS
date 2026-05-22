@@ -133,6 +133,38 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         );
       }
 
+      const evidencePreflightBlock = evaluateEvidencePreflightQualityBlock(run, evidenceRows.length, weakEvidenceCount);
+      if (evidencePreflightBlock) {
+        emitLog(evidencePreflightBlock);
+        await flushProgressUpdates();
+        await runContextMemory.put("generate_hypotheses.top_k", 0);
+        await runContextMemory.put("generate_hypotheses.candidate_count", 0);
+        await runContextMemory.put("generate_hypotheses.source", "blocked_weak_evidence_preflight");
+        await runContextMemory.put("generate_hypotheses.pipeline", "evidence_quality");
+        await runContextMemory.put("generate_hypotheses.summary", evidencePreflightBlock);
+        await writeHypothesisProgressStatus(run, runContextMemory, {
+          status: "failed",
+          stage: "evidence_quality",
+          message: evidencePreflightBlock,
+          startedAt,
+          updatedAt: new Date().toISOString(),
+          evidenceCount: evidenceRows.length,
+          weakEvidenceCount,
+          request,
+          progressCount,
+          pipeline: "evidence_quality",
+          candidateCount: 0,
+          selectedCount: 0,
+          artifactPaths: [HYPOTHESIS_PROGRESS_STATUS_ARTIFACT, HYPOTHESIS_PROGRESS_LOG_ARTIFACT]
+        });
+        return {
+          status: "failure",
+          summary: evidencePreflightBlock,
+          error: evidencePreflightBlock,
+          toolCallsUsed: 0
+        };
+      }
+
       emitLog(
         `Generating hypotheses from ${evidenceRows.length} evidence item(s) with branchCount=${request.branchCount} and topK=${request.topK}.`
       );
@@ -363,7 +395,7 @@ interface HypothesisProgressStatus {
   weakEvidenceCount: number;
   request: GenerateHypothesesRequest;
   progressCount: number;
-  pipeline?: "staged" | "single_pass" | "fallback" | "missing_evidence";
+  pipeline?: "staged" | "single_pass" | "fallback" | "missing_evidence" | "evidence_quality";
   source?: "llm" | "fallback";
   fallbackReason?: string;
   candidateCount?: number;
@@ -606,6 +638,39 @@ function evaluateFallbackHypothesisQualityBlock(
   }
 
   return "Hypothesis generation blocked: the selected fallback hypotheses are supported by a single low-confidence, caveated paper. Strengthen analyze_papers before designing experiments.";
+}
+
+function evaluateEvidencePreflightQualityBlock(
+  run: RunRecord,
+  evidenceCount: number,
+  weakEvidenceCount: number
+): string | undefined {
+  if (evidenceCount < 5 || weakEvidenceCount < evidenceCount) {
+    return undefined;
+  }
+  if (!hasRecentHypothesisBacktrackFromQualityGate(run)) {
+    return undefined;
+  }
+  return "Hypothesis generation blocked: all available evidence items are weak after a review or analysis backtrack. Strengthen analyze_papers with full-text, baseline, metric, and limitation evidence before generating another hypothesis set.";
+}
+
+function hasRecentHypothesisBacktrackFromQualityGate(run: RunRecord): boolean {
+  const history = Array.isArray(run.graph.transitionHistory) ? run.graph.transitionHistory : [];
+  const latest = [...history].reverse().find((item) => item.toNode === "generate_hypotheses");
+  if (!latest) {
+    return false;
+  }
+  const source = latest.sourceNode;
+  if (source === "review" || source === "analyze_results") {
+    return true;
+  }
+  const reason = String(latest.reason || "").toLowerCase();
+  return (
+    reason.includes("research_memo") ||
+    reason.includes("claims outpace") ||
+    reason.includes("outcomes do not support") ||
+    reason.includes("evidence")
+  );
 }
 
 function isWeakEvidenceSeed(evidence: EvidenceRow): boolean {
