@@ -32,6 +32,10 @@ function chars(values: number[]): string {
   return String.fromCharCode(...values);
 }
 
+function conditionMarker(rank: number, dropoutCode: string): string {
+  return `rank_${rank}_dropout_${dropoutCode}`;
+}
+
 describe("public code sanitization", () => {
   it("does not expose one-off experiment identifiers in public source, tests, or local skills", () => {
     const banned = [
@@ -66,7 +70,15 @@ describe("public code sanitization", () => {
       chars([114, 97, 110, 107, 32, 51, 50, 32, 47, 32, 100, 114, 111, 112, 111, 117, 116, 32, 48, 46, 48, 53]),
       chars([114, 97, 110, 107, 32, 51, 50, 32, 100, 114, 111, 112, 111, 117, 116, 32, 48, 32, 48, 53]),
       chars([114, 97, 110, 107, 32, 49, 54, 32, 100, 114, 111, 112, 111, 117, 116, 32, 48]),
-      chars([114, 97, 110, 107, 32, 52, 32, 100, 114, 111, 112, 111, 117, 116, 32, 48])
+      chars([114, 97, 110, 107, 32, 52, 32, 100, 114, 111, 112, 111, 117, 116, 32, 48]),
+      conditionMarker(4, "0_0"),
+      conditionMarker(4, "0_05"),
+      conditionMarker(8, "0_0"),
+      conditionMarker(8, "0_05"),
+      conditionMarker(16, "0_0"),
+      conditionMarker(16, "0_05"),
+      conditionMarker(32, "0_0"),
+      conditionMarker(32, "0_05")
     ];
 
     const offenders = CODE_DIRS.flatMap(walkCodeFiles).flatMap((relativePath) => {

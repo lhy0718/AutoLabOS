@@ -904,6 +904,51 @@ describe("StateGraphRuntime", () => {
     );
   });
 
+  it("rolls back generate_hypotheses immediately when deterministic fallback lacks an operational contract", async () => {
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => ({
+          status: "failure",
+          error:
+            "Hypothesis generation blocked: selected deterministic fallback hypotheses lack an operational dataset/metric/testability contract. Strengthen analyze_papers or rerun hypothesis generation before designing experiments.",
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Hypothesis rollback",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.currentNode).toBe("analyze_papers");
+    expect(updated.status).toBe("running");
+    expect(updated.graph.retryCounters.generate_hypotheses).toBe(0);
+    expect(updated.graph.rollbackCounters.generate_hypotheses).toBe(1);
+    expect(updated.graph.nodeStates.analyze_papers.status).toBe("running");
+    expect(updated.graph.nodeStates.analyze_papers.note).toContain(
+      "Auto rollback from generate_hypotheses after 3/3 failed attempts"
+    );
+    expect(updated.latestSummary).toContain(
+      "Auto rollback from generate_hypotheses after 3/3 failed attempts"
+    );
+  });
+
   it("fails design_experiments without retry or rollback when the brief contract blocks progression", async () => {
     const registry = new Registry({
       design_experiments: {

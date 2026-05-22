@@ -1400,11 +1400,7 @@ function shouldSkipAutoRetryForFailure(node: GraphNodeId, errorMessage: string):
   }
 
   if (node === "generate_hypotheses") {
-    return (
-      normalized.includes("hypothesis generation blocked:") &&
-      normalized.includes("single low-confidence, caveated paper") &&
-      normalized.includes("strengthen analyze_papers before designing experiments")
-    );
+    return normalized.includes("hypothesis generation blocked:");
   }
 
   if (node === "implement_experiments") {
