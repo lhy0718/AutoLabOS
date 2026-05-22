@@ -37454,6 +37454,22 @@ async function repairPythonRunCommandArgparseAliases(
     {
       commandFlag: "--baseline-condition",
       parserFlag: "--baseline"
+    },
+    {
+      commandFlag: "--baseline-marker",
+      parserFlag: "--baseline-condition-marker"
+    },
+    {
+      commandFlag: "--baseline-marker",
+      parserFlag: "--baseline_condition_marker"
+    },
+    {
+      commandFlag: "--baseline-marker",
+      parserFlag: "--baseline-condition"
+    },
+    {
+      commandFlag: "--baseline-marker",
+      parserFlag: "--baseline"
     }
   ].filter((pair) => commandFlags.has(pair.commandFlag));
   const runtimeOptions = [

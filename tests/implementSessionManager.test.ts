@@ -27761,7 +27761,7 @@ describe("ImplementSessionManager", () => {
       {
         verifyReport: { status: "not_run" },
         testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
-        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)} --disable-progress-bars --fallback-model the configured fallback backbone --base-model the selected backbone --baseline-condition baseline_condition --seeds 11 13 --levels 2 4 --rates 0.0 0.1 --tasks task_a task_b --budget-timeout-sec 1800`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)} --disable-progress-bars --fallback-model the configured fallback backbone --base-model the selected backbone --baseline-condition baseline_condition --baseline-marker baseline_marker --seeds 11 13 --levels 2 4 --rates 0.0 0.1 --tasks task_a task_b --budget-timeout-sec 1800`,
         scriptPath,
         workingDir: publicDir,
         workspaceRoot: workspace,
@@ -27780,7 +27780,9 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("parser.add_argument('--disable-progress-bar', \"--disable-progress-bars\"");
     expect(repairedSource).toContain("parser.add_argument('--fallback-base-model', \"--fallback-model\"");
     expect(repairedSource).toContain("parser.add_argument('--base-model-id', \"--base-model\"");
-    expect(repairedSource).toContain("parser.add_argument('--baseline-condition-marker', \"--baseline-condition\"");
+    expect(repairedSource).toContain("parser.add_argument('--baseline-condition-marker'");
+    expect(repairedSource).toContain("\"--baseline-condition\"");
+    expect(repairedSource).toContain("\"--baseline-marker\"");
     expect(repairedSource).toContain("parser.add_argument('--seed-list', \"--seeds\"");
     expect(repairedSource).toContain("parser.add_argument('--condition-levels', \"--levels\"");
     expect(repairedSource).toContain("parser.add_argument('--regularization-rates', \"--rates\"");
@@ -27802,6 +27804,8 @@ describe("ImplementSessionManager", () => {
         "the selected backbone",
         "--baseline-condition",
         "baseline_condition",
+        "--baseline-marker",
+        "baseline_marker",
         "--seeds",
         "11",
         "13",
@@ -27823,7 +27827,7 @@ describe("ImplementSessionManager", () => {
       disable_progress_bar: true,
       fallback_base_model: "the configured fallback backbone",
       base_model_id: "the selected backbone",
-      baseline_condition_marker: "baseline_condition",
+      baseline_condition_marker: "baseline_marker",
       seed_list: [11, 13],
       condition_levels: [2, 4],
       regularization_rates: [0, 0.1],
