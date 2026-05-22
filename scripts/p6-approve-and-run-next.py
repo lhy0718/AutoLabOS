@@ -347,7 +347,7 @@ def wait_for_stop_boundary(
     node: str,
     initial_signature: tuple[str, str, str, str] | None = None,
     stable_seconds: float = STOP_BOUNDARY_STABLE_SECONDS,
-    accept_live_prompt_boundary: bool = True
+    accept_live_prompt_boundary: bool = False
 ) -> str:
     deadline = time.time() + timeout
     regex = re.compile(pattern, re.MULTILINE)
@@ -822,7 +822,7 @@ def main() -> int:
             run_id=run_id,
             node=wait_node,
             initial_signature=initial_signature,
-            accept_live_prompt_boundary=not sent_text_command_override
+            accept_live_prompt_boundary=False
         )
         observed_handoffs = 0
         while observed_handoffs < 3:
@@ -862,7 +862,7 @@ def main() -> int:
                 run_id=run_id,
                 node=wait_node,
                 initial_signature=initial_signature,
-                accept_live_prompt_boundary=not sent_text_command_override
+                accept_live_prompt_boundary=False
             )
         send_line(master_fd, "/quit")
         try:
