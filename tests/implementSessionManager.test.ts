@@ -133,6 +133,7 @@ import {
   repairPythonConditionEvaluationMetricsAssemblyBridgeSurface,
   repairPythonFinalMetricsSchemaCompatibilitySurface,
   repairPythonMainMetricsRawResultsAliasSurface,
+  repairPythonExperimentConfigMetadataSurface,
   repairPythonPeftRecipeConfigMetadataAliasSurface,
   repairPythonJsonSafeHelperAlias,
   repairPythonEntrypointDatasetLoaderAliasSurface,
@@ -28887,6 +28888,52 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("from dataclasses import field");
     expect(repairedSource).toContain("metadata: Dict[str, Any] = field(default_factory=dict)");
     expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("anchors ExperimentConfig metadata repair to the real top-level class", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metadata-anchor-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "\"\"\"Recovered prompt fragment, not executable source:",
+        "class ExperimentConfig:",
+        "    comparison_contract: Dict[str, Any] = field(default_factory=dict)",
+        "metadata={'source': 'prompt'}",
+        "\"\"\"",
+        "",
+        "from dataclasses import dataclass",
+        "from typing import Any, Dict",
+        "",
+        "@dataclass",
+        "class ExperimentConfig:",
+        "    study_name: str",
+        "    objective: Dict[str, Any] = field(default_factory=dict)",
+        "    comparison_contract: Dict[str, Any] = field(default_factory=dict)",
+        "",
+        "def build_config():",
+        "    return ExperimentConfig(",
+        "        study_name='demo',",
+        "        objective={},",
+        "        comparison_contract={},",
+        "        metadata={'ok': True},",
+        "    )",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonExperimentConfigMetadataSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    const realClassSection = repairedSource.slice(repairedSource.indexOf("@dataclass"));
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("from dataclasses import field");
+    expect(realClassSection).toContain("metadata: Dict[str, Any] = field(default_factory=dict)");
+    expect(() => execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace })).not.toThrow();
   });
 
   it("repairs PEFTRecipeConfig metadata aliases before module-level locked recipe projection", async () => {

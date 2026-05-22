@@ -10843,6 +10843,40 @@ function ensurePythonDataclassesFieldImport(source: string): string {
   return insertPythonTopLevelHelperAfterImports(source, "from dataclasses import field\n");
 }
 
+async function pythonSourceParsesForRepair(source: string, scriptPath: string): Promise<boolean> {
+  const tempPath = `${scriptPath}.autolabos-syntax-check-${process.pid}-${Date.now()}.tmp.py`;
+  try {
+    await fs.writeFile(tempPath, source, "utf8");
+    await execFile(
+      "python3",
+      [
+        "-c",
+        "import ast, pathlib, sys\nast.parse(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))",
+        tempPath
+      ],
+      { timeout: 10_000 }
+    );
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await fs.unlink(tempPath).catch(() => undefined);
+  }
+}
+
+function isLikelyInsidePythonTripleQuotedString(source: string, offset: number): boolean {
+  let singleQuoteTriples = 0;
+  let doubleQuoteTriples = 0;
+  for (const match of source.slice(0, offset).matchAll(/'''|"""/gu)) {
+    if (match[0] === "'''") {
+      singleQuoteTriples += 1;
+    } else {
+      doubleQuoteTriples += 1;
+    }
+  }
+  return singleQuoteTriples % 2 === 1 || doubleQuoteTriples % 2 === 1;
+}
+
 function insertPythonTopLevelHelperAfterImports(source: string, helper: string): string {
   const lines = source.split("\n");
   let offset = 0;
@@ -37655,7 +37689,7 @@ function extractLongOptionFlagsWithValues(command: string): string[] {
   return flags;
 }
 
-async function repairPythonExperimentConfigMetadataSurface(scriptPath?: string): Promise<{
+export async function repairPythonExperimentConfigMetadataSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
 }> {
@@ -37677,16 +37711,33 @@ async function repairPythonExperimentConfigMetadataSurface(scriptPath?: string):
     return { repaired: false };
   }
 
-  const classStart = source.indexOf("class ExperimentConfig:\n");
-  if (classStart < 0) {
+  const classMatch = [...source.matchAll(/^class ExperimentConfig:\s*$/gmu)].find(
+    (match) => !isLikelyInsidePythonTripleQuotedString(source, match.index ?? 0)
+  );
+  if (!classMatch) {
     return { repaired: false };
   }
-  const bodyStart = classStart + "class ExperimentConfig:\n".length;
-  const nextDecorator = source.indexOf("\n@dataclass", bodyStart);
-  const nextClass = source.indexOf("\nclass ", bodyStart);
-  const nextDef = source.indexOf("\ndef ", bodyStart);
-  const bodyEndCandidates = [nextDecorator, nextClass, nextDef].filter((value) => value >= 0);
-  const bodyEnd = bodyEndCandidates.length > 0 ? Math.min(...bodyEndCandidates) : source.length;
+  const classLineEnd = source.indexOf("\n", classMatch.index);
+  if (classLineEnd < 0) {
+    return { repaired: false };
+  }
+  const bodyStart = classLineEnd + 1;
+  let bodyEnd = source.length;
+  const bodyTail = source.slice(bodyStart);
+  let offset = bodyStart;
+  for (const lineMatch of bodyTail.matchAll(/.*(?:\n|$)/gu)) {
+    const line = lineMatch[0] || "";
+    if (line.length === 0) {
+      break;
+    }
+    const withoutNewline = line.replace(/\n$/u, "");
+    const trimmed = withoutNewline.trim();
+    if (trimmed.length > 0 && !withoutNewline.startsWith(" ") && !withoutNewline.startsWith("\t")) {
+      bodyEnd = offset;
+      break;
+    }
+    offset += line.length;
+  }
   const classBody = source.slice(bodyStart, bodyEnd);
   if (/\n\s+metadata\s*:\s*/u.test(`\n${classBody}`)) {
     return { repaired: false };
@@ -37704,6 +37755,9 @@ async function repairPythonExperimentConfigMetadataSurface(scriptPath?: string):
     `${source.slice(0, bodyStart)}${nextBody}${source.slice(bodyEnd)}`
   );
   if (nextSource === source) {
+    return { repaired: false };
+  }
+  if (!(await pythonSourceParsesForRepair(nextSource, scriptPath))) {
     return { repaired: false };
   }
 
