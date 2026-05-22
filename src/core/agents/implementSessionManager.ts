@@ -19987,8 +19987,6 @@ export async function repairPythonConditionTrainEvalHelperBridgeSurface(
     "    run_single_condition = run_condition_experiment",
     "if \"train_and_evaluate_condition\" not in globals():",
     "    train_and_evaluate_condition = run_condition_experiment",
-    "if \"run_lora_condition\" not in globals():",
-    "    run_lora_condition = run_condition_experiment",
     "if \"execute_training_condition\" not in globals():",
     "    execute_training_condition = run_condition_experiment",
     ""
@@ -27327,7 +27325,7 @@ export async function repairPythonChunk3bStudyRunnerInvocationContextSurface(
     "    return {}, [], {}",
     "",
     "def _autolabos_chunk3b_resolve_run_condition_fn(args, run_config):",
-    "    for name in ('run_single_condition', 'execute_single_condition', 'run_lora_condition', 'train_and_evaluate_condition'):",
+    "    for name in ('run_single_condition', 'execute_single_condition', 'run_condition', 'train_and_evaluate_condition'):",
     "        candidate = globals().get(name)",
     "        if callable(candidate):",
     "            return candidate",
@@ -29889,9 +29887,6 @@ export async function repairPythonFallbackBoundedFinetuningConditionRunnerSurfac
     "_run_condition = _autolabos_fallback_bounded_condition_runner",
     "execute_condition = _autolabos_fallback_bounded_condition_runner",
     "_execute_condition = _autolabos_fallback_bounded_condition_runner",
-    "run_lora_condition = _autolabos_fallback_bounded_condition_runner",
-    "_run_lora_condition = _autolabos_fallback_bounded_condition_runner",
-    "execute_lora_condition = _autolabos_fallback_bounded_condition_runner",
     "_run_one_condition = _autolabos_fallback_bounded_condition_runner",
     ""
   ].join("\n");
@@ -29923,9 +29918,10 @@ export async function repairPythonOrchestrationTrainEvalConditionBridgeSurface(
   }
 
   const marker = "_autolabos_orchestration_train_eval_condition_bridge_marker";
+  const entrypointMatch = source.match(/\ndef\s+(?:run_locked_study_sweep|run_locked_condition_study)\s*\(/u);
   if (
     source.includes(marker) ||
-    !source.includes("def run_locked_study_sweep(") ||
+    !entrypointMatch ||
     !source.includes("def _orchestration_find_helper(") ||
     !source.includes("class StudyCondition") ||
     !source.includes("def preflight_and_select_model(") ||
@@ -29937,8 +29933,7 @@ export async function repairPythonOrchestrationTrainEvalConditionBridgeSurface(
     return { repaired: false };
   }
 
-  const insertionMatch = source.match(/\ndef\s+run_locked_study_sweep\s*\(/u);
-  if (!insertionMatch || insertionMatch.index === undefined) {
+  if (entrypointMatch.index === undefined) {
     return { repaired: false };
   }
 
@@ -30080,11 +30075,10 @@ export async function repairPythonOrchestrationTrainEvalConditionBridgeSurface(
     "run_single_condition = _autolabos_orchestration_train_eval_condition_runner",
     "train_and_evaluate_condition = _autolabos_orchestration_train_eval_condition_runner",
     "execute_study_condition = _autolabos_orchestration_train_eval_condition_runner",
-    "run_lora_condition = _autolabos_orchestration_train_eval_condition_runner",
     ""
   ].join("\n");
 
-  const nextSource = `${source.slice(0, insertionMatch.index)}${bridgeBlock}${source.slice(insertionMatch.index)}`;
+  const nextSource = `${source.slice(0, entrypointMatch.index)}${bridgeBlock}${source.slice(entrypointMatch.index)}`;
   if (nextSource === source) {
     return { repaired: false };
   }
@@ -30854,7 +30848,6 @@ export async function repairPythonSingleConditionExecutorBridgeSurface(
     "run_condition = _autolabos_single_condition_executor_bridge",
     "execute_condition = _autolabos_single_condition_executor_bridge",
     "train_and_evaluate_condition = _autolabos_single_condition_executor_bridge",
-    "run_lora_condition = _autolabos_single_condition_executor_bridge",
     "",
     "_autolabos_previous_resolve_single_condition_executor = _resolve_single_condition_executor",
     "def _resolve_single_condition_executor(runtime_context=None):",
@@ -30869,7 +30862,6 @@ export async function repairPythonSingleConditionExecutorBridgeSurface(
     "        \"run_condition\",",
     "        \"execute_condition\",",
     "        \"train_and_evaluate_condition\",",
-    "        \"run_lora_condition\",",
     "    ):",
     "        candidate = globals().get(symbol_name)",
     "        if callable(candidate) and candidate is not execute_planned_condition:",
