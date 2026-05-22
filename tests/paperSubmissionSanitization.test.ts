@@ -207,7 +207,7 @@ describe("paper submission sanitization", () => {
             caption: "Condition-level mean accuracy across the executed rank/dropout grid.",
             rows: [
               {
-                label: "rank 8 / dropout 0 (baseline)",
+                label: "baseline condition",
                 value: 0.333334,
                 lora_rank: 8,
                 lora_dropout: 0,
@@ -228,7 +228,7 @@ describe("paper submission sanitization", () => {
                 benchmark_task_b_accuracy: 0.166667
               },
               {
-                label: "rank 16 / dropout 0.05",
+                label: "candidate condition a",
                 value: 0.333334,
                 lora_rank: 16,
                 lora_dropout: 0.05,
@@ -238,7 +238,7 @@ describe("paper submission sanitization", () => {
                 benchmark_task_b_accuracy: 0.166667
               },
               {
-                label: "rank 32 / dropout 0.05",
+                label: "candidate condition b",
                 value: 0.416666,
                 lora_rank: 32,
                 lora_dropout: 0.05,
@@ -260,7 +260,7 @@ describe("paper submission sanitization", () => {
     expect(tex).toContain("\\begin{table*}[t]");
     expect(tex).toContain("Condition & Rank & Dropout & Avg. acc. & $\\Delta$ avg. & ARC-C & Benchmark Task B");
     expect(tex).toContain("Locked baseline & 8 & 0 & 0.3333 & 0 & 0.5 & 0.1667");
-    expect(tex).toContain("rank 32 / dropout 0.05 & 32 & 0.05 & 0.4167 & +0.0833 & 0.5 & 0.3333");
+    expect(tex).toContain("candidate condition b & 32 & 0.05 & 0.4167 & +0.0833 & 0.5 & 0.3333");
     expect(tex).not.toContain("Metric & Value");
   });
 
@@ -838,7 +838,7 @@ describe("paper submission sanitization", () => {
             heading: "Method",
             paragraphs: [
               "The fixed search space includes Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and 1800-second timeout., reported run details records 48 training examples for the reported pilot., and the condition-parameter tuning grid.",
-              "Results reports the best observed cell against the locked rank-8, dropout-0 baseline; Table 1 reports condition mean accuracies and identifies only that locked row as the baseline."
+              "Results reports the best observed cell against the locked baseline condition; Table 1 reports condition mean accuracies and identifies only that locked row as the baseline."
             ]
           },
           {
@@ -846,7 +846,7 @@ describe("paper submission sanitization", () => {
             paragraphs: [
               "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 rank/dropout preflight.",
               "The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform QLoRA, MAPLE, or adapter-variant methods.",
-              "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked rank-8, no-dropout condition inside the executed run, not a literature result. Prior PEFT papers instead define why the local rank/dropout question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
+              "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior PEFT papers instead define why the local rank/dropout question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
               "Accordingly, external PEFT papers serve as framing comparators rather than numerical baselines for this manuscript. The relevant baseline here is the locked locked baseline condition inside the executed run. Prior work motivates why the question matters but differences in model scale, task mix, adapter family, and evaluation objective prevent direct superiority claims."
             ]
           },
@@ -926,7 +926,7 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("Results reports the best observed cell");
     expect(text).not.toContain("did not reproduce");
     expect(text).not.toContain("claim ceiling");
-    expect(text.match(/locked rank-8/g)?.length || 0).toBeLessThan(5);
+    expect(text.match(/locked baseline condition/g)?.length || 0).toBeLessThan(5);
     expect(text).not.toContain("most important limitation is scale");
     expect(manuscript.figures).toBeUndefined();
     expect(manuscript.sections.find((section) => section.heading === "Discussion")?.paragraphs).toHaveLength(2);
@@ -969,7 +969,7 @@ describe("paper submission sanitization", () => {
           {
             heading: "Method",
             paragraphs: [
-              "Accordingly, the analysis was defined as a within-run comparison of condition-parameter cells against the locked rank-8, dropout-0 baseline, using the cited Benchmark Task A and Benchmark Task B benchmark pair."
+              "Accordingly, the analysis was defined as a within-run comparison of condition-parameter cells against the locked baseline condition, using the cited Benchmark Task A and Benchmark Task B benchmark pair."
             ]
           },
           {
@@ -1022,8 +1022,8 @@ describe("paper submission sanitization", () => {
         {
           heading: "Method",
           paragraphs: [
-            "The study was designed as a 4 x 2 factorial sweep over condition parameters under a fixed local compute budget. Rank took values {4, 8, 16, 32}, dropout took values {0.0, 0.05}, and rank 8 with dropout 0.0 was locked in advance as the baseline condition.",
-            "The study was designed as a fixed-budget 4 x 2 factorial sweep over LoRA rank {4, 8, 16, 32} and dropout {0.0, 0.05}, with rank 8 and dropout 0.0 designated in advance as the locked baseline.",
+            "The study was designed as a 4 x 2 factorial sweep over condition parameters under a fixed local compute budget. Rank took values {4, 8, 16, 32}, dropout took values {0.0, 0.05}, and baseline condition was locked in advance as the baseline condition.",
+            "The study was designed as a fixed-budget 4 x 2 factorial sweep over condition parameters, with baseline condition designated in advance as the locked baseline.",
             "The planned backbone preference was the selected backbone, with the configured fallback backbone reserved as a fallback if the preferred model failed preflight. The retained run summary used for manuscript preparation does not preserve a model identifier that allows the final executed backbone to be verified.",
             "The realized record preserves the data and evaluation settings: training data from the yahma/alpaca-cleaned train split, 48 training examples, evaluation on Benchmark Task A and Benchmark Task B validation slices, and seed 17.",
             "The primary endpoint was average accuracy across Benchmark Task A and Benchmark Task B. Secondary reporting included per-task accuracy, train loss, wall-clock runtime, peak VRAM, and complete accounting of requested conditions.",
@@ -1043,7 +1043,7 @@ describe("paper submission sanitization", () => {
           paragraphs: [
             "Prior PEFT work establishes the broader feasibility and comparison context but not a directly transferable answer to the present rank/dropout question. QLoRA and adapter-variant studies motivate the design.",
             "The closest cited work frames prompting and control, evaluation and benchmarking, and PEFT and LoRA adapter design rather than a condition-matched reproduction of the present run.",
-            "Accordingly, the manuscript's numerical comparator is internal rather than external: rank 8 with dropout 0.0 is the locked baseline inside the completed run."
+            "Accordingly, the manuscript's numerical comparator is internal rather than external: baseline condition is the locked baseline inside the completed run."
           ]
         }
       ]
@@ -1338,10 +1338,10 @@ describe("paper submission sanitization", () => {
           {
             heading: "Results",
             paragraphs: [
-              "rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0.1667).",
+              "candidate condition b vs baseline condition: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0.1667).",
               "In the analyzed run record, the strongest reported cell corresponded to an accuracy\\_delta\\_vs\\_baseline of 0.083332.",
-              "Within that sweep, the strongest reported comparison is rank 32 with dropout 0.05 against the locked baseline of rank 8 with dropout 0.0. Average accuracy increases from 0.333334 to 0.416666, yielding an absolute improvement of 0.083332. By the study's own decision rule, this exceeds the predeclared +0.01 objective threshold.",
-              "The best reported cell is rank 32 with dropout 0.05, which increases average accuracy from 0.3333 in the locked baseline to 0.4167, for an absolute gain of 0.0833."
+              "Within that sweep, the strongest reported comparison is candidate condition b against the locked baseline of baseline condition. Average accuracy increases from 0.333334 to 0.416666, yielding an absolute improvement of 0.083332. By the study's own decision rule, this exceeds the predeclared +0.01 objective threshold.",
+              "The best reported cell is candidate condition b, which increases average accuracy from 0.3333 in the locked baseline to 0.4167, for an absolute gain of 0.0833."
             ]
           }
         ],
@@ -1349,11 +1349,11 @@ describe("paper submission sanitization", () => {
           {
             caption: "Condition-level mean accuracy across the executed rank/dropout grid.",
             rows: [
-              { label: "rank 8 dropout 0 baseline", value: 0.333334 },
-              { label: "rank 4 dropout 0", value: 0.333334 },
-              { label: "rank 4 dropout 0.05", value: 0.333334 },
-              { label: "rank 16 dropout 0", value: 0.333334 },
-              { label: "rank 32 dropout 0.05", value: 0.416666 }
+              { label: "baseline condition", value: 0.333334 },
+              { label: "candidate condition c", value: 0.333334 },
+              { label: "candidate condition d", value: 0.333334 },
+              { label: "candidate condition a", value: 0.333334 },
+              { label: "candidate condition b", value: 0.416666 }
             ]
           }
         ]
@@ -1363,26 +1363,26 @@ describe("paper submission sanitization", () => {
         metrics: {
           condition_summaries: [
             {
-              label: "rank 8 dropout 0 baseline",
+              label: "baseline condition",
               is_baseline: true,
               average_accuracy_mean: 0.333334,
               benchmark_task_a_accuracy_mean: 0.5,
               benchmark_task_b_accuracy_mean: 0.166667
             },
             {
-              label: "rank 4 dropout 0",
+              label: "candidate condition c",
               average_accuracy_mean: 0.333334,
               benchmark_task_a_accuracy_mean: 0.5,
               benchmark_task_b_accuracy_mean: 0.166667
             },
             {
-              label: "rank 16 dropout 0",
+              label: "candidate condition a",
               average_accuracy_mean: 0.333334,
               benchmark_task_a_accuracy_mean: 0.5,
               benchmark_task_b_accuracy_mean: 0.166667
             },
             {
-              label: "rank 32 dropout 0.05",
+              label: "candidate condition b",
               average_accuracy_mean: 0.416666,
               accuracy_delta_vs_baseline_mean: 0.083332,
               benchmark_task_a_accuracy_mean: 0.5,
@@ -1426,7 +1426,7 @@ describe("paper submission sanitization", () => {
             paragraphs: [
               "[warning] consistency: Results cites 0.0833, but the comparable structured results support 0 for accuracy_delta_vs_baseline.",
               "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01.",
-              "rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0)."
+              "candidate condition b vs baseline condition: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0)."
             ]
           }
         ]
@@ -1442,7 +1442,7 @@ describe("paper submission sanitization", () => {
     });
     expect(validation.ok).toBe(true);
     expect(tex).toContain("The prespecified baseline-relative accuracy target was met");
-    expect(tex).toContain("The leading observed condition is the follow-up candidate");
+    expect(tex).toContain("For the leading observed condition");
     expect(tex).toContain("Table 1 reports the condition-level values");
     expect(tex).not.toContain("[warning]");
     expect(tex).not.toContain("average accuracy was 0.4167 versus 0.3333");
@@ -1471,10 +1471,10 @@ describe("paper submission sanitization", () => {
           {
             caption: "Condition-level mean accuracy across the executed rank/dropout grid.",
             rows: [
-              { label: "rank 8 dropout 0 baseline", value: 0.333334 },
-              { label: "rank 4 dropout 0", value: 0.333334 },
-              { label: "rank 16 dropout 0", value: 0.333334 },
-              { label: "rank 32 dropout 0.05", value: 0.416666 }
+              { label: "baseline condition", value: 0.333334 },
+              { label: "candidate condition c", value: 0.333334 },
+              { label: "candidate condition a", value: 0.333334 },
+              { label: "candidate condition b", value: 0.416666 }
             ]
           }
         ],
@@ -1482,10 +1482,10 @@ describe("paper submission sanitization", () => {
           {
             caption: "Baseline-relative mean accuracy gain by evaluated rank/dropout condition.",
             bars: [
-              { label: "rank 8 dropout 0 baseline", value: 0 },
-              { label: "rank 4 dropout 0", value: 0 },
-              { label: "rank 16 dropout 0", value: 0 },
-              { label: "rank 32 dropout 0.05", value: 0.083332 }
+              { label: "baseline condition", value: 0 },
+              { label: "candidate condition c", value: 0 },
+              { label: "candidate condition a", value: 0 },
+              { label: "candidate condition b", value: 0.083332 }
             ]
           },
           {
@@ -1505,26 +1505,26 @@ describe("paper submission sanitization", () => {
       {
         conditionSummaries: [
           {
-            label: "rank 8 dropout 0 baseline",
+            label: "baseline condition",
             is_baseline: true,
             average_accuracy_mean: 0.333334,
             benchmark_task_a_accuracy: 0.5,
             benchmark_task_b_accuracy: 0.166667
           },
           {
-            label: "rank 4 dropout 0",
+            label: "candidate condition c",
             average_accuracy_mean: 0.333334,
             benchmark_task_a_accuracy: 0.5,
             benchmark_task_b_accuracy: 0.166667
           },
           {
-            label: "rank 16 dropout 0",
+            label: "candidate condition a",
             average_accuracy_mean: 0.333334,
             benchmark_task_a_accuracy: 0.5,
             benchmark_task_b_accuracy: 0.166667
           },
           {
-            label: "rank 32 dropout 0.05",
+            label: "candidate condition b",
             average_accuracy_mean: 0.416666,
             accuracy_delta_vs_baseline_mean: 0.083332,
             benchmark_task_a_accuracy: 0.5,
@@ -1628,7 +1628,7 @@ describe("paper submission sanitization", () => {
   it("repairs reader-facing manuscript quality residues after LLM manuscript repair", () => {
     const stabilized = stabilizePaperManuscriptForSubmission({
       title: "A LoRA Benchmark",
-      abstract: "A cautious benchmark. The protocol targeted a 4 x 2 factorial sweep over ranks {4, 8, 16, 32} and dropout values {0.0, 0.05}, with average accuracy across Benchmark Task A and Benchmark Task B as the primary performance measure and rank 8 with no dropout as the locked in-grid baseline. Within that reviewed artifact, the best reported condition, the leading observed condition, improved average accuracy from 0.333334 to 0.416666, a gain of 0.083332 over baseline. The same artifact completed all eight requested conditions, reported 45.687 s wall-clock time, and used approximately 4.28 GB of peak allocated GPU memory. The run also remained inexpensive, completing the eight planned conditions in 45.687 s with about 4.28 GB of peak allocated CUDA memory. The sweep was also lightweight, with 45.687 s wall-clock runtime and 4,278,951,936 bytes of peak allocated memory. The strongest contribution of the study is a reproducible and conservative protocol for comparing configured conditions under explicit budget, reporting, and uncertainty constraints.",
+      abstract: "A cautious benchmark. The protocol targeted a 4 x 2 factorial sweep over condition parameters, with average accuracy across Benchmark Task A and Benchmark Task B as the primary performance measure and locked baseline condition as the locked in-grid baseline. Within that reviewed artifact, the best reported condition, the leading observed condition, improved average accuracy from 0.333334 to 0.416666, a gain of 0.083332 over baseline. The same artifact completed all eight requested conditions, reported 45.687 s wall-clock time, and used approximately 4.28 GB of peak allocated GPU memory. The run also remained inexpensive, completing the eight planned conditions in 45.687 s with about 4.28 GB of peak allocated CUDA memory. The sweep was also lightweight, with 45.687 s wall-clock runtime and 4,278,951,936 bytes of peak allocated memory. The strongest contribution of the study is a reproducible and conservative protocol for comparing configured conditions under explicit budget, reporting, and uncertainty constraints.",
       keywords: ["LoRA"],
       sections: [
         {
@@ -1649,7 +1649,7 @@ describe("paper submission sanitization", () => {
           heading: "Results",
           paragraphs: [
             "No broader replication is reported in the compact main record, and supplementary No broader replication is reported here, so the main gain remains a single-run preflight observation. The documented gain therefore remains a single-run preflight observation.",
-            "The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. rank 32 / dropout 0.05 is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage.",
+            "The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. candidate condition b is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage.",
             "The leading-condition rows carry the strongest follow-up signal because they combine the largest nonbaseline mean with the same condition-completion accounting used for the rest of the grid.",
             "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every LoRA configuration is better than every other configuration.",
             "The comparison-condition rows are useful mainly as a calibration point for the interpretation. They show that adding dropout at a higher rank did not create a clean, decisive gain under the current budget.",
@@ -1660,7 +1660,7 @@ describe("paper submission sanitization", () => {
             "Table 1 is part of the evidential core of the paper because it preserves the executed comparison set.",
             "Runtime and memory records support feasibility for the executed local preflight, but the available evidence does not support a condition-level efficiency ranking.",
             "wall-clock runtime was 45.687. seconds. They support the claim that the comparison was run under the declared budget, but they do not by themselves prove that the strongest accuracy setting is the most efficient setting.",
-            "However, the currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate, such as direct numerical comparisons of rank 32 with and without dropout or rank 8 with and without dropout."
+            "However, the currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate, such as direct numerical comparisons of candidate condition b with and without dropout or baseline condition with and without dropout."
           ]
         },
         {
@@ -1681,7 +1681,7 @@ describe("paper submission sanitization", () => {
         {
           heading: "Supplementary Experimental Details",
           paragraphs: [
-            "The study used a fixed 4x2 grid over ranks 4, 8, 16, and 32 and dropout values 0.0 and 0.05, with rank 8 and dropout 0.0 serving as the locked baseline. The run was designed for a dual-RTX-4090-class local workstation and used seed 42. The preferred backbone in the protocol was the selected backbone, with the configured fallback backbone reserved as a fallback. The training source was the configured training dataset under a cap of 10000 examples, although the summarized preflight reported here used 48 examples."
+            "The study used a fixed 4x2 grid over condition parameters, with baseline condition serving as the locked baseline. The run was designed for a dual-RTX-4090-class local workstation and used seed 42. The preferred backbone in the protocol was the selected backbone, with the configured fallback backbone reserved as a fallback. The training source was the configured training dataset under a cap of 10000 examples, although the summarized preflight reported here used 48 examples."
           ]
         },
         {
@@ -1707,9 +1707,9 @@ describe("paper submission sanitization", () => {
     expect(text).toContain("scheduler details beyond the scalar learning rate");
     expect(text).toContain("executed metrics identify the selected backbone");
     expect(text).toContain("learning rate 0.0002");
-    expect(text).toContain("reports seed 17 with 48 the configured training dataset training examples");
+    expect(text).toContain("realized data and evaluation settings were the configured training dataset train split, 48 training examples");
     expect(text).toContain("Table 1 exposes the eight condition means");
-    expect(text).toContain("provides condition means but not complete per-cell uncertainty");
+    expect(text).toContain("complete per-cell uncertainty and auxiliary metric tables");
     expect(text).toContain("complete per-cell uncertainty and resource tables");
     expect(text).not.toContain("supplementary No broader replication");
     expect(text).not.toContain("does not expose the executed model identifier");
@@ -1735,7 +1735,7 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("wall-clock runtime of 45.687");
     expect(text).not.toContain("45.687 s wall-clock runtime");
     expect(text).not.toContain("dropout values {0.0, 0.05}, with average accuracy");
-    expect(text).not.toContain("rank 32 with dropout 0.05");
+    expect(text).not.toContain("candidate condition b");
     expect(text).not.toContain("reported 45.687 s wall-clock time");
     expect(text).not.toContain("4,278,951,936 bytes of peak allocated memory");
     expect(text).not.toContain("8 requested conditions, 8 recorded conditions, and 8 completed conditions, together with");

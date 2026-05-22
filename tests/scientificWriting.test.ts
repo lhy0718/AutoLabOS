@@ -479,7 +479,7 @@ function makeTerseDraft(): PaperDraft {
 describe("scientificWriting", () => {
   it("removes paper-writing payload and unsupported repeated-seed phrasing from reader-facing prose", () => {
     const cleaned = sanitizePaperNarrativeText(
-      "Because the executed model identifier is not exposed in the writing payload, the paper-writing payload exposes only one explicit condition-to-baseline comparison and a set of per-condition confidence intervals, not the full numeric table for every cell. The present payload cannot establish robustness. The payload also contains an internal inconsistency. The repeated-seed design is therefore used as a screening instrument. The main report marks the objective as met, with accuracy_delta_vs_baseline=0.083332 against the >= 0.01 target, and verifier feedback status is pass. rank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline by 0.0833. The surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution, so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model. The surviving compact record specifies the manipulated rank/dropout factors and reported outcome metrics, but optimizer choice, learning rate, batch size, update count, prompt formatting, evaluation-harness specifics, and exact placement of dropout within LoRA modules are not available. We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe. For a small language-model preflight, the strongest defensible use of the result is triage: it nominates a configuration worth retesting under larger data or broader tasks, but it does not establish a general adapter rule. Consistent with prior compute-constrained LoRA work and with the generalizability limits already noted in nearby resource-constrained studies, the conclusion remains narrow. Seed coverage is part of the evidence contract. The five repeated cells and five seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run. The manuscript does not collapse this structure into a single best seed, and it keeps the baseline row visible so that later readers can audit the comparison unit. Hidden failures would invalidate this ceiling, but the run accounting used here reports scheduled and executed trials explicitly. That reading is consistent with prior PEFT work such as QLoRA and neighboring low-budget adaptation studies. QLoRA-scale efficiency work and broader benchmark papers such as MAPLE both suggest caution."
+      "Because the executed model identifier is not exposed in the writing payload, the paper-writing payload exposes only one explicit condition-to-baseline comparison and a set of per-condition confidence intervals, not the full numeric table for every cell. The present payload cannot establish robustness. The payload also contains an internal inconsistency. The repeated-seed design is therefore used as a screening instrument. The main report marks the objective as met, with accuracy_delta_vs_baseline=0.083332 against the >= 0.01 target, and verifier feedback status is pass. candidate condition b vs baseline condition improves accuracy delta vs baseline by 0.0833. The surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution, so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model. The surviving compact record specifies the manipulated rank/dropout factors and reported outcome metrics, but optimizer choice, learning rate, batch size, update count, prompt formatting, evaluation-harness specifics, and exact placement of dropout within LoRA modules are not available. We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe. For a small language-model preflight, the strongest defensible use of the result is triage: it nominates a configuration worth retesting under larger data or broader tasks, but it does not establish a general adapter rule. Consistent with prior compute-constrained LoRA work and with the generalizability limits already noted in nearby resource-constrained studies, the conclusion remains narrow. Seed coverage is part of the evidence contract. The five repeated cells and five seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run. The manuscript does not collapse this structure into a single best seed, and it keeps the baseline row visible so that later readers can audit the comparison unit. Hidden failures would invalidate this ceiling, but the run accounting used here reports scheduled and executed trials explicitly. That reading is consistent with prior PEFT work such as QLoRA and neighboring low-budget adaptation studies. QLoRA-scale efficiency work and broader benchmark papers such as MAPLE both suggest caution."
     );
 
     expect(cleaned).not.toMatch(/\b(?:writing payload|paper-writing payload|present payload|The payload|repeated-seed design|verifier feedback status|five repeated cells|five seeds per cell|unambiguously identify|evidence contract|audit|Hidden failures)\b/i);
@@ -731,7 +731,7 @@ describe("scientificWriting", () => {
                 ...Array.from({ length: 25 }, (_, index) => ({
                   text:
                     index === 0 && section.heading === "Results"
-                      ? "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01. rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0.1667)."
+                      ? "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01. candidate condition b vs baseline condition: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0.1667)."
                       : index === 1 && section.heading === "Method"
                         ? "The first P6 run uses a cached target so the validation focuses on real training, result-table integrity, review gating, and paper-readiness audit rather than on new model access."
                       : `Restoration note ${index + 1} for ${section.heading}: ${budgetParagraph}`,
@@ -941,7 +941,7 @@ describe("scientificWriting", () => {
         '    - "benchmark_task_a_accuracy"',
         '    - "benchmark_task_b_accuracy"',
         "  baselines:",
-        '    - "rank=8 dropout=0.0 locked baseline"',
+        '    - "locked baseline condition"',
         "  implementation_notes:",
         '    - "Use the selected backbone as the base model with LoRA adapters."',
         '    - "Hold optimizer, token budget, data order, and evaluation harness constant."',
@@ -1010,9 +1010,9 @@ describe("scientificWriting", () => {
       condition_comparisons: [
         {
           id: "rank32_drop005_vs_baseline",
-          label: "rank 32 dropout 0.05 vs rank 8 dropout 0.0",
+          label: "candidate condition b vs baseline condition",
           source: "metrics.condition_summaries",
-          summary: "Rank 32 dropout 0.05 improves average accuracy relative to the locked baseline.",
+          summary: "Candidate condition b improves average accuracy relative to the locked baseline.",
           metrics: [{ key: "accuracy_delta_vs_baseline_mean", value: 0.0667 }]
         }
       ],
@@ -1118,7 +1118,7 @@ describe("scientificWriting", () => {
       condition_summaries: [
         {
           condition_marker: "baseline_condition",
-          label: "rank 8 dropout 0.0",
+          label: "baseline condition",
           is_baseline: true,
           completed_seed_count: 3,
           seed_results: [
@@ -1138,7 +1138,7 @@ describe("scientificWriting", () => {
         },
         {
           condition_marker: "candidate_condition_f5",
-          label: "rank 32 dropout 0.05",
+          label: "candidate condition b",
           completed_seed_count: 3,
           average_accuracy_mean: 0.4775,
           accuracy_delta_vs_baseline_mean: 0.083332
@@ -1166,7 +1166,7 @@ describe("scientificWriting", () => {
       ],
       primary_findings: [
         "Benchmark Task A and Benchmark Task B task accuracies are reported for the LoRA benchmark.",
-        "The rank 32 dropout 0.05 condition improves over the locked baseline."
+        "The candidate condition b condition improves over the locked baseline."
       ],
       figure_specs: [
         {
@@ -1262,7 +1262,7 @@ describe("scientificWriting", () => {
     });
     const candidate: PaperManuscript = {
       title: "Repeated-Seed LoRA Dropout Benchmark",
-      abstract: "The study-level average-accuracy improvement was 0.04479166666666667, and the strongest exposed comparison was rank 32 with dropout 0.05, with mean delta 0.0667.",
+      abstract: "The study-level average-accuracy improvement was 0.04479166666666667, and the strongest exposed comparison was candidate condition b, with mean delta 0.0667.",
       keywords: ["LoRA", "instruction tuning"],
       sections: [
         {
@@ -1293,7 +1293,7 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "The rank 32 dropout 0.05 condition has the strongest exposed mean delta. Direct supporting evidence is currently limited",
+            "The candidate condition b condition has the strongest exposed mean delta. Direct supporting evidence is currently limited",
             "The same aggregate comparison remains narrow; direct supporting evidence is currently limited",
             "Optimization and efficiency evidence is present but incomplete in the compact release.",
             "The compact results summary does not expose condition-level runtime or memory aggregates.",
@@ -1565,8 +1565,8 @@ describe("scientificWriting", () => {
         ? {
             ...section,
             paragraphs: [
-              "Mean average accuracy rises from 0.4417 for the locked baseline at rank 8 and dropout 0.0 to 0.4667 for rank 16 with dropout 0.0, 0.4583 for rank 16 with dropout 0.05, 0.5125 for rank 32 with dropout 0.0, and 0.5083 for rank 32 with dropout 0.05.",
-              "The absolute mean-accuracy intervals were similarly close for rank 16: [0.4081, 0.5253] without dropout and [0.4125, 0.5209] with dropout 0.05.",
+              "Mean average accuracy rises from 0.4417 for the locked baseline at baseline condition to 0.4667 for One reported condition-level 95% interval, 0.4583 for One reported condition-level 95% interval5, 0.5125 for candidate condition e, and 0.5083 for candidate condition b.",
+              "The absolute mean-accuracy intervals were similarly close for One reported condition-level 95% interval: [0.4081, 0.5253] without dropout and [0.4125, 0.5209] with condition parameter value.",
               "The protocol tracked runtime, training loss, and peak memory, and the full 25-run workload completed under the workstation budget with planned parallelism.",
               ...section.paragraphs
             ]
@@ -1575,7 +1575,7 @@ describe("scientificWriting", () => {
           ? {
               ...section,
               paragraphs: [
-                "Adapter-variant studies instead modify the adapter mechanism itself, so their gains speak more directly to alternative PEFT parameterizations than to whether standard LoRA at rank 16 or 32 benefits from modest dropout in a local preflight.",
+                "Adapter-variant studies instead modify the adapter mechanism itself, so their gains speak more directly to alternative PEFT parameterizations than to whether standard LoRA at candidate conditions benefits from modest dropout in a local preflight.",
                 "QLoRA shows memory-efficient adaptation (QLoRA, arXiv:2305.14314), while MAPLE compares broader PEFT settings (MAPLE, arXiv:2403.14608).",
                 ...section.paragraphs
               ]
@@ -1595,7 +1595,7 @@ describe("scientificWriting", () => {
 
     expect(manuscript.tables?.[0]?.caption).toMatch(/Condition-level mean accuracy/i);
     expect(manuscript.tables?.[0]?.rows).toHaveLength(5);
-    expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).toMatch(/rank 32 \/ dropout 0\.05/);
+    expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).toMatch(/candidate condition [a-z]/);
     expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).toMatch(/n=5/);
     expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).not.toMatch(/delta/);
     expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).not.toMatch(/Conditions analyzed/);
@@ -1621,7 +1621,7 @@ describe("scientificWriting", () => {
       result.consistency_lint.issues.some(
         (issue) =>
           (issue.normalized_facts || []).some(
-            (fact) => fact.source === "results" && fact.value === 0.05 && fact.raw_text.includes("dropout 0.05")
+            (fact) => fact.source === "results" && fact.value === 0.05 && fact.raw_text.includes("condition parameter value")
           )
       )
     ).toBe(false);
@@ -1790,16 +1790,16 @@ describe("scientificWriting", () => {
     expect(result.manuscript.tables?.[0]?.caption).toMatch(/Condition-level mean accuracy/i);
     expect(result.manuscript.tables?.[0]?.rows).toHaveLength(8);
     const rowLabels = result.manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ") || "";
-    expect(rowLabels).toMatch(/rank 8 \/ dropout 0.*baseline/i);
-    expect(rowLabels).toMatch(/rank 32 \/ dropout 0\.05/i);
+    expect(rowLabels).toMatch(/baseline condition/i);
+    expect(rowLabels).toMatch(/candidate condition [a-z]/i);
     expect(rowLabels).not.toMatch(/ARC 0\.5/i);
     expect(rowLabels).not.toMatch(/Benchmark Task B 0\.3333/i);
     expect((rowLabels.match(/baseline/g) || [])).toHaveLength(1);
     expect(result.manuscript.tables?.[0]?.rows.map((row) => row.value)).toContain(0.416666);
     expect(result.manuscript.figures?.[0]?.caption).toMatch(/Condition-level average accuracy/i);
     const figureLabels = result.manuscript.figures?.[0]?.bars.map((row) => row.label).join(" ") || "";
-    expect(figureLabels).toMatch(/rank 8 \/ dropout 0.*baseline/i);
-    expect(figureLabels).toMatch(/rank 32 \/ dropout 0\.05/i);
+    expect(figureLabels).toMatch(/baseline condition/i);
+    expect(figureLabels).toMatch(/candidate condition [a-z]/i);
     expect(result.manuscript.figures?.[0]?.bars).toHaveLength(8);
     expect(result.manuscript.figures?.[0]?.bars.map((row) => row.value)).toContain(0.416666);
   });
@@ -1850,7 +1850,7 @@ describe("scientificWriting", () => {
         paragraphs:
           section.heading === "Conclusion"
             ? [
-                "In the main run, rank 32 with dropout 0.05 achieved the best observed average accuracy, improving from 0.3333 to 0.4167 over the locked baseline."
+                "In the main run, candidate condition b achieved the best observed average accuracy, improving from 0.3333 to 0.4167 over the locked baseline."
               ]
             : section.paragraphs.map((paragraph) => paragraph.text)
       }))
@@ -1942,7 +1942,7 @@ describe("scientificWriting", () => {
                 "The best observed cell improved mean accuracy from 0.333 to 0.417, with training loss 1.524 versus 1.462 for the baseline and a cost profile of 45.687 s wall-clock time and about 4.28 GB peak CUDA memory.",
                 "Average accuracy rises from 0.333334 to 0.416666, an absolute gain of 0.083332, which is equivalent to 8.33 percentage points.",
                 "For the leading observed condition, mean accuracy was 0.4167 versus 0.3333 for the locked baseline, a gain of 0.0833.",
-                "Read directly, it shows that seven conditions clustered at 0.3333 mean accuracy and that only rank 32 / dropout 0.05 exceeded the baseline, reaching 0.4167.",
+                "Read directly, it shows that seven conditions clustered at 0.3333 mean accuracy and that only candidate condition b exceeded the baseline, reaching 0.4167.",
                 "The comparison-condition rows are useful mainly as a calibration point, while the leading-condition rows carry the strongest follow-up signal.",
                 "The primary sweep completed all eight planned conditions in 45.687 seconds of wall-clock runtime, with a peak CUDA allocation of 4,278,951,936 bytes, or roughly 4.28 GB."
               ]
@@ -1959,7 +1959,7 @@ describe("scientificWriting", () => {
             : section.heading === "Conclusion"
               ? [
                   ...section.paragraphs.map((paragraph) => paragraph.text),
-                  "In the main verified run, rank 32 with dropout 0.05 outperformed the locked baseline by 0.0833 mean accuracy, with the improvement driven entirely by Benchmark Task B and not accompanied by lower training loss."
+                  "In the main verified run, candidate condition b outperformed the locked baseline by 0.0833 mean accuracy, with the improvement driven entirely by Benchmark Task B and not accompanied by lower training loss."
                 ]
             : section.paragraphs.map((paragraph) => paragraph.text)
       })),
@@ -1967,14 +1967,14 @@ describe("scientificWriting", () => {
         {
           caption: "Condition-level mean accuracy across the executed rank/dropout grid; labels identify the locked baseline row.",
           rows: [
-            { label: "rank 8 / dropout 0 (baseline)", value: 0.333334 },
+            { label: "baseline condition", value: 0.333334 },
             { label: "rank 4 / dropout 0", value: 0.333334 },
-            { label: "rank 4 / dropout 0.05", value: 0.333334 },
-            { label: "rank 8 / dropout 0.05", value: 0.333334 },
+            { label: "candidate condition d", value: 0.333334 },
+            { label: "candidate condition f", value: 0.333334 },
             { label: "rank 16 / dropout 0", value: 0.333334 },
-            { label: "rank 16 / dropout 0.05", value: 0.333334 },
-            { label: "rank 32 / dropout 0", value: 0.333334 },
-            { label: "rank 32 / dropout 0.05", value: 0.416666 }
+            { label: "One reported condition-level 95% interval", value: 0.333334 },
+            { label: "candidate condition e", value: 0.333334 },
+            { label: "candidate condition b", value: 0.416666 }
           ]
         }
       ]
@@ -2075,7 +2075,7 @@ describe("scientificWriting", () => {
           ? {
               heading: section.heading,
               paragraphs: [
-                "The practical implication is incremental rather than prescriptive. Rank 32 with dropout 0.05 is a reasonable follow-up candidate because it produced the best observed average accuracy, but the present record does not justify treating it as a settled default.",
+                "The practical implication is incremental rather than prescriptive. Rank 32 with condition parameter value is a reasonable follow-up candidate because it produced the best observed average accuracy, but the present record does not justify treating it as a settled default.",
                 "The current evidence is most actionable as a cautious benchmark note for this fixed-budget condition-parameter pilot, especially where the best observed cell clears the pre-specified screening threshold.",
                 "For a small language-model preflight, the most defensible use of the result is triage: it nominates a configuration worth retesting under larger data or broader tasks, but it does not establish a general adapter rule.",
                 "The claim ceiling is therefore central to the interpretation. Completion of the run, a positive mean difference, and a usable table jointly support a candidate-selection claim, while stronger statements about robustness, mechanism, or broad transfer remain outside the available evidence."
@@ -2899,7 +2899,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "Condition-Parameter Preflight",
       abstract:
-        "The study-level objective was met: the available summary reports accuracy_delta_vs_baseline = 0.0448. The strongest summarized condition was rank 32 with dropout 0.05, with a mean delta of 0.0667.",
+        "The study-level objective was met: the available summary reports accuracy_delta_vs_baseline = 0.0448. The strongest summarized condition was candidate condition b, with a mean delta of 0.0667.",
       keywords: ["LoRA"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a repeated-seed condition-parameter comparison."] },
@@ -2974,7 +2974,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "Condition-Parameter Preflight",
       abstract:
-        "Within this realized run, the best exposed condition, rank 32 with dropout 0.05, raises mean accuracy from 0.333334 to 0.416666 relative to the baseline.",
+        "Within this realized run, the best exposed condition, candidate condition b, raises mean accuracy from 0.333334 to 0.416666 relative to the baseline.",
       keywords: ["LoRA"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
@@ -2982,7 +2982,7 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "The reported results identifies rank 32 with dropout 0.05 as the strongest observed condition, with average accuracy 0.416666 compared with 0.333334 for the locked baseline at rank 8 and dropout 0.0."
+            "The reported results identifies candidate condition b as the strongest observed condition, with average accuracy 0.416666 compared with 0.333334 for the locked baseline at baseline condition."
           ]
         },
         { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
@@ -3062,7 +3062,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "Condition-Parameter Preflight",
       abstract:
-        "The best reported condition combines rank 32 with dropout 0.05. Its average accuracy across Benchmark Task A and Benchmark Task B is 0.4167, compared with 0.3333 for the locked baseline at rank 8 and dropout 0.0.",
+        "The best reported condition combines candidate condition b. Its average accuracy across Benchmark Task A and Benchmark Task B is 0.4167, compared with 0.3333 for the locked baseline at baseline condition.",
       keywords: ["LoRA"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
@@ -3070,8 +3070,8 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "Within that analyzed configuration, the best reported condition combines rank 32 with dropout 0.05.",
-            "Its average accuracy across Benchmark Task A and Benchmark Task B is 0.4167, compared with 0.3333 for the locked baseline at rank 8 and dropout 0.0."
+            "Within that analyzed configuration, the best reported condition combines candidate condition b.",
+            "Its average accuracy across Benchmark Task A and Benchmark Task B is 0.4167, compared with 0.3333 for the locked baseline at baseline condition."
           ]
         },
         { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
@@ -3135,7 +3135,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "Condition-Parameter Preflight",
       abstract:
-        "The explicit comparison is rank 32 with dropout 0.05 versus rank 8 with dropout 0.0, with average accuracy rising from 0.333334 to 0.416666.",
+        "The explicit comparison is candidate condition b versus baseline condition, with average accuracy rising from 0.333334 to 0.416666.",
       keywords: ["LoRA"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
@@ -3143,7 +3143,7 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "The explicit comparison reported in the summary is rank 32 with dropout 0.05 versus rank 8 with dropout 0.0, with average accuracy rising from 0.333334 to 0.416666."
+            "The explicit comparison reported in the summary is candidate condition b versus baseline condition, with average accuracy rising from 0.333334 to 0.416666."
           ]
         },
         { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
@@ -3176,7 +3176,7 @@ describe("scientificWriting", () => {
       condition_summaries: [
         {
           condition_marker: "baseline_condition",
-          label: "rank 8 / dropout 0 (baseline)",
+          label: "baseline condition",
           lora_rank: 8,
           lora_dropout: 0,
           is_baseline: true,
@@ -3188,7 +3188,7 @@ describe("scientificWriting", () => {
         },
         {
           condition_marker: "candidate_condition_f5",
-          label: "rank 32 / dropout 0.05",
+          label: "candidate condition b",
           lora_rank: 32,
           lora_dropout: 0.05,
           completed_seed_count: 1,
@@ -3214,7 +3214,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "Condition-Parameter Preflight",
       abstract:
-        "The best observed condition was rank 32 with dropout 0.05, increasing average accuracy from 33.3% to 41.7%, an 8.3-point gain over the locked baseline.",
+        "The best observed condition was candidate condition b, increasing average accuracy from 33.3% to 41.7%, an 8.3-point gain over the locked baseline.",
       keywords: ["LoRA"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
@@ -3222,8 +3222,8 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "The locked baseline, rank 8 with zero dropout, achieved mean accuracy 0.333334.",
-            "The best observed setting was rank 32 with dropout 0.05, which achieved mean accuracy 0.416666 across Benchmark Task A and Benchmark Task B.",
+            "The locked baseline, baseline condition with zero dropout, achieved mean accuracy 0.333334.",
+            "The best observed setting was candidate condition b, which achieved mean accuracy 0.416666 across Benchmark Task A and Benchmark Task B.",
             "The average difference remains a local screening signal rather than a settled prescription."
           ]
         },
@@ -3274,7 +3274,7 @@ describe("scientificWriting", () => {
       condition_summaries: [
         {
           condition_marker: "baseline_condition",
-          label: "rank 8 / dropout 0 (baseline)",
+          label: "baseline condition",
           lora_rank: 8,
           lora_dropout: 0,
           is_baseline: true,
@@ -3284,7 +3284,7 @@ describe("scientificWriting", () => {
         },
         {
           condition_marker: "candidate_condition_f5",
-          label: "rank 32 / dropout 0.05",
+          label: "candidate condition b",
           lora_rank: 32,
           lora_dropout: 0.05,
           completed_seed_count: 1,
@@ -3301,7 +3301,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "Condition-Parameter Preflight",
       abstract:
-        "In the archived main run, the best observed condition was rank 32 with dropout 0.05, which improved average accuracy from 0.333334 to 0.416666, an absolute gain of 0.083332 over the baseline and above the prespecified +0.01 target.",
+        "In the archived main run, the best observed condition was candidate condition b, which improved average accuracy from 0.333334 to 0.416666, an absolute gain of 0.083332 over the baseline and above the prespecified +0.01 target.",
       keywords: ["LoRA"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
@@ -3356,7 +3356,7 @@ describe("scientificWriting", () => {
       condition_summaries: [
         {
           condition_marker: "baseline_condition",
-          label: "rank 8 / dropout 0 (baseline)",
+          label: "baseline condition",
           lora_rank: 8,
           lora_dropout: 0,
           is_baseline: true,
@@ -3371,7 +3371,7 @@ describe("scientificWriting", () => {
         },
         {
           condition_marker: "candidate_condition_f5",
-          label: "rank 32 / dropout 0.05",
+          label: "candidate condition b",
           lora_rank: 32,
           lora_dropout: 0.05,
           is_baseline: false,
@@ -3394,7 +3394,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "Condition-Parameter Preflight",
       abstract:
-        "The intended sweep crossed ranks {4, 8, 16, 32} and dropout {0.0, 0.05}, with average accuracy as the endpoint. The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. In the main recorded sweep, the best reported condition, rank 32 with dropout 0.05, achieved 0.4167 average accuracy compared with 0.3333 for the baseline, a gain of 0.0833. The best reported comparison, rank 32 with dropout 0.05 versus the baseline, achieved average accuracy 0.416666 versus 0.333334, a gain of 0.083332 that exceeds the prespecified 0.01 improvement target. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation. Condition-level 95% intervals overlap substantially, and each interval is based on only 12 predictions.",
+        "The intended sweep crossed ranks {4, 8, 16, 32} and dropout {0.0, 0.05}, with average accuracy as the endpoint. The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. In the main recorded sweep, the best reported condition, candidate condition b, achieved 0.4167 average accuracy compared with 0.3333 for the baseline, a gain of 0.0833. The best reported comparison, candidate condition b versus the baseline, achieved average accuracy 0.416666 versus 0.333334, a gain of 0.083332 that exceeds the prespecified 0.01 improvement target. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation. Condition-level 95% intervals overlap substantially, and each interval is based on only 12 predictions.",
       keywords: ["LoRA"],
       sections: [
         {
@@ -3412,7 +3412,7 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "The best recorded condition was rank 32 with dropout 0.05, which improved average accuracy from 0.3333 in the locked baseline to 0.4167.",
+            "The best recorded condition was candidate condition b, which improved average accuracy from 0.3333 in the locked baseline to 0.4167.",
             "The baseline average accuracy is 0.333334, while the best reported condition reaches 0.416666, giving a delta of 0.083332 over baseline.",
             "Reported training loss did not improve in parallel: the baseline loss was 1.4620, whereas the best-accuracy condition reported 1.5242.",
             "The baseline train loss is 1.461996, whereas the best reported condition has a higher train loss of 1.524199 despite better evaluation accuracy.",
@@ -3508,7 +3508,7 @@ describe("scientificWriting", () => {
       condition_summaries: [
         {
           condition_marker: "baseline_condition",
-          label: "rank 8 / dropout 0 (baseline)",
+          label: "baseline condition",
           lora_rank: 8,
           lora_dropout: 0,
           is_baseline: true,
@@ -3518,7 +3518,7 @@ describe("scientificWriting", () => {
         },
         {
           condition_marker: "candidate_condition_f5",
-          label: "rank 32 / dropout 0.05",
+          label: "candidate condition b",
           lora_rank: 32,
           lora_dropout: 0.05,
           completed_seed_count: 1,
@@ -3549,8 +3549,8 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "Table 1 shows seven cells tied at 0.3333 mean accuracy and one cell, rank 32 with dropout 0.05, at 0.4167.",
-            "Seven of the eight cells reported the same mean average accuracy, 0.333334, and only rank 32 / dropout 0.05 reached 0.416666."
+            "Table 1 shows seven cells tied at 0.3333 mean accuracy and one cell, candidate condition b, at 0.4167.",
+            "Seven of the eight cells reported the same mean average accuracy, 0.333334, and only candidate condition b reached 0.416666."
           ]
         },
         { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
@@ -3560,14 +3560,14 @@ describe("scientificWriting", () => {
         {
           caption: "Condition-level mean accuracy across the executed rank/dropout grid; labels identify the locked baseline row.",
           rows: [
-            { label: "rank 8 / dropout 0 (baseline)", value: 0.3333 },
+            { label: "baseline condition", value: 0.3333 },
             { label: "rank 4 / dropout 0", value: 0.3333 },
-            { label: "rank 4 / dropout 0.05", value: 0.3333 },
-            { label: "rank 8 / dropout 0.05", value: 0.3333 },
+            { label: "candidate condition d", value: 0.3333 },
+            { label: "candidate condition f", value: 0.3333 },
             { label: "rank 16 / dropout 0", value: 0.3333 },
-            { label: "rank 16 / dropout 0.05", value: 0.3333 },
-            { label: "rank 32 / dropout 0", value: 0.3333 },
-            { label: "rank 32 / dropout 0.05", value: 0.4167 }
+            { label: "One reported condition-level 95% interval", value: 0.3333 },
+            { label: "candidate condition e", value: 0.3333 },
+            { label: "candidate condition b", value: 0.4167 }
           ],
           source_refs: [{ kind: "artifact", id: "latest_results.condition_summaries" }]
         }
@@ -3652,7 +3652,7 @@ describe("scientificWriting", () => {
       synthesis: {
         discussion_points: ["The evidence supports a narrow benchmark signal, not a universal LoRA prescription."],
         failure_analysis: [],
-        follow_up_actions: ["Carry rank 32 dropout 0.05 into a larger scale-up."],
+        follow_up_actions: ["Carry candidate condition b into a larger scale-up."],
         confidence_statement: "Confidence is moderate."
       },
       limitations: ["The small LLM preflight does not establish a general stability law."]
@@ -3665,8 +3665,8 @@ describe("scientificWriting", () => {
       sections: [
         { heading: "Introduction", paragraphs: ["We study condition parameters under a fixed local budget."] },
         { heading: "Related Work", paragraphs: ["QLoRA and PEFT benchmarks motivate the local adapter question."] },
-        { heading: "Method", paragraphs: ["The protocol uses a rank-8 no-dropout baseline and a higher-rank comparison."] },
-        { heading: "Results", paragraphs: ["The rank 32 dropout 0.05 cell had the strongest mean delta."] },
+        { heading: "Method", paragraphs: ["The protocol uses a locked baseline condition and a higher-rank comparison."] },
+        { heading: "Results", paragraphs: ["The candidate condition b cell had the strongest mean delta."] },
         { heading: "Discussion", paragraphs: ["The result is a follow-up signal rather than a broad conclusion."] },
         { heading: "Limitations", paragraphs: ["The study is a small-backbone preflight."] },
         { heading: "Conclusion", paragraphs: ["The strongest cell merits follow-up."] }
@@ -3700,7 +3700,7 @@ describe("scientificWriting", () => {
         {
           heading: "Limitations",
           paragraphs: [
-            "condition summaries / rank 16 dropout 0 0 / accuracy delta vs baseline 95% CI [-0.0591, 0.1091] over n=5.",
+            "condition summaries / One reported condition-level 95% interval / accuracy delta vs baseline 95% CI [-0.0591, 0.1091] over n=5.",
             "Several training details that would normally be expected in a publication-grade methods section, including optimizer, learning rate, batch structure, and checkpoint schedule, are not recoverable from the available evidence.",
             "The missing items include optimizer configuration, learning-rate schedule, batch structure, and checkpoint policy."
           ]
@@ -3735,7 +3735,7 @@ describe("scientificWriting", () => {
     const text = strengthened.sections.flatMap((section) => section.paragraphs).join(" ");
 
     expect(text).toContain("selected backbone");
-    expect(text).toContain("comparison condition condition");
+    expect(text).toContain("One reported condition-level 95% interval");
     expect(text).toContain("best observed higher-rank LoRA cell is worth testing");
     expect(text).toContain("local small-model preflight");
     expect(text).toContain("secondary diagnostics rather than as a condition-level efficiency ranking");
@@ -3797,9 +3797,9 @@ describe("scientificWriting", () => {
           heading: "Results",
           paragraphs: [
             "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01.",
-            "rank 32 dropout 0 05 vs rank 8 dropout 0 0 accuracy_delta_vs_baseline=0.083332 benchmark_task_a_accuracy=0.6417 benchmark_task_b_accuracy=0.3133.",
-            "rank 32 dropout 0 05 vs rank 8 dropout 0 0 improves accuracy delta vs baseline by 0.0833.",
-            "The 95% interval for conditions rank 16 dropout 0 0 average accuracy spans 0.1381 to 0.6094. wall clock runtime sec=45.687. device cuda max memory allocated bytes=4278951936.",
+            "candidate condition b vs baseline condition accuracy_delta_vs_baseline=0.083332 benchmark_task_a_accuracy=0.6417 benchmark_task_b_accuracy=0.3133.",
+            "candidate condition b vs baseline condition improves accuracy delta vs baseline by 0.0833.",
+            "The 95% interval for conditions One reported condition-level 95% interval average accuracy spans 0.1381 to 0.6094. wall clock runtime sec=45.687. device cuda max memory allocated bytes=4278951936.",
             "The table and figure are therefore used as complementary checks: the table anchors the numeric values, while the figure is retained only when it shows a distinct pattern that is not already obvious from the rows.",
             "Across these summaries, the completed condition comparison is the relevant reporting unit rather than an isolated seed or anecdotal observation. The available results therefore support a provisional ordering of the recorded cells, but the combination of wide intervals and very limited evaluation size leaves that ordering uncertain."
           ]
@@ -3815,7 +3815,7 @@ describe("scientificWriting", () => {
           heading: "Limitations",
           paragraphs: [
             "Specification may be underspecified and require narrower scope.",
-            "conditions / rank 16 dropout 0 0 / average accuracy 95% CI [0.1381, 0.6094] over n=12 prediction(s)."
+            "conditions / One reported condition-level 95% interval / average accuracy 95% CI [0.1381, 0.6094] over n=12 prediction(s)."
           ]
         },
         { heading: "Conclusion", paragraphs: ["The best observed cell merits larger-scale replication."] }
@@ -3894,7 +3894,7 @@ describe("scientificWriting", () => {
     expect(allText).toContain("Benchmark Task A and Benchmark Task B");
     expect(allText).toContain("run-metadata task labels Benchmark Task A and Benchmark Task B");
     expect(allText).toContain("planned and realized execution records should be read conservatively");
-    expect(allText).toContain("One reported condition-level 95% interval");
+    expect(allText).toContain("95% interval for the macro-F1 delta spans");
     expect(allText).toContain("local preflight");
     expect(allText).toContain("Figure 1 isolates the task-level contribution");
     expect(allText).toContain("Supplementary setup details");

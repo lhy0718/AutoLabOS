@@ -1786,7 +1786,7 @@ describe("run_experiments execution profile behavior", () => {
               group_kind: "aggregate",
               dataset_scope: ["Benchmark Task A", "Benchmark Task B"],
               metrics: ["accuracy_delta_vs_baseline"],
-              baselines: ["Locked rank=8 dropout=0.0 baseline"],
+              baselines: ["Locked baseline condition"],
               notes: [
                 "Paper-scale evidence floor: 4 ranks x 5 seeds = 20 fine-tune runs, plus 2 exact baseline reruns.",
                 "Training budget is 22 runs total including exact baseline repeats."

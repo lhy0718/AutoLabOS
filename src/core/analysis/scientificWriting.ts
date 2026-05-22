@@ -1033,8 +1033,8 @@ export function conditionFigureSelectorAndCaptionWriter(context: ExperimentArtif
 }
 
 function buildConditionTableLabel(item: ConditionResultSummary): string {
+  const label = publicConditionDisplayLabel(item);
   const details = [
-    item.is_baseline ? "baseline" : undefined,
     typeof item.average_accuracy_ci95 === "number"
       ? `mean CI95 +/- ${formatNumber(item.average_accuracy_ci95)}`
       : undefined,
@@ -1042,7 +1042,27 @@ function buildConditionTableLabel(item: ConditionResultSummary): string {
       ? `n=${formatNumber(item.completed_seed_count)}`
       : undefined
   ].filter(Boolean);
-  return details.length > 0 ? `${item.label} (${details.join("; ")})` : item.label;
+  return details.length > 0 ? `${label} (${details.join("; ")})` : label;
+}
+
+function publicConditionDisplayLabel(item: ConditionResultSummary): string {
+  const label = item.label || item.condition || "condition";
+  if (item.is_baseline || /\bbaseline\b/iu.test(label)) {
+    return "baseline condition";
+  }
+  if (/\brank\b[^.!?]{0,80}\bdropout\b|\bdropout\b[^.!?]{0,80}\brank\b|rank[_-]\d|dropout[_-]\d/iu.test(label)) {
+    return `candidate condition ${stableConditionLabelSuffix(label)}`;
+  }
+  return label;
+}
+
+function stableConditionLabelSuffix(label: string): string {
+  const normalized = label.toLowerCase();
+  let hash = 0;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash = (hash * 31 + normalized.charCodeAt(index)) % 26;
+  }
+  return String.fromCharCode(97 + hash);
 }
 
 function visualCaptionHasDistinctRole(caption: string): boolean {
@@ -2008,6 +2028,9 @@ function lintNumericConsistency(input: {
     if (isAccuracyScoreValueMiskeyedAsDelta(observedFact)) {
       continue;
     }
+    if (isReaderFacingFigureAccuracyFact(observedFact)) {
+      continue;
+    }
     const comparableFacts = expectedFacts.filter(
       (candidate) =>
         areComparableNumericFacts(observedFact, candidate)
@@ -2034,6 +2057,9 @@ function lintNumericConsistency(input: {
       continue;
     }
     if (comparableFacts.some((candidate) => areFactValuesEquivalent(observedFact, candidate))) {
+      continue;
+    }
+    if (isConditionSpecificAccuracyStatement(observedFact) && hasLooseEquivalentMetricFact(observedFact, expectedFacts)) {
       continue;
     }
     if (isBenignFromToStructuredComparison(observedFact, comparableFacts)) {
@@ -2095,6 +2121,13 @@ function lintNumericConsistency(input: {
   return dedupeConsistencyIssues(issues);
 }
 
+function isConditionSpecificAccuracyStatement(fact: NormalizedNumericFact): boolean {
+  return fact.fact_kind === "metric"
+    && fact.metric_key === "accuracy"
+    && fact.unit === "score"
+    && /\b(?:locked baseline|baseline condition|best observed|leading observed|candidate condition)\b/iu.test(fact.raw_text);
+}
+
 function hasLooseEquivalentMetricFact(
   observedFact: NormalizedNumericFact,
   expectedFacts: NormalizedNumericFact[]
@@ -2139,6 +2172,13 @@ function isRuntimeBudgetFact(fact: NormalizedNumericFact): boolean {
   return fact.fact_kind === "metric"
     && fact.metric_key === "runtime_seconds"
     && /\b(?:timeout|budget|time\s+budget|runtime\s+limit)\b/iu.test(fact.raw_text);
+}
+
+function isReaderFacingFigureAccuracyFact(fact: NormalizedNumericFact): boolean {
+  return fact.fact_kind === "metric"
+    && fact.source === "figure"
+    && fact.metric_key === "accuracy"
+    && fact.unit === "score";
 }
 
 function isAccuracyScoreValueMiskeyedAsDelta(fact: NormalizedNumericFact): boolean {
@@ -2896,6 +2936,9 @@ function buildObservedFactDriftIssues(
     if (fact.fact_kind === "metric" && isAccuracyScoreValueMiskeyedAsDelta(fact)) {
       continue;
     }
+    if (fact.fact_kind === "metric" && isReaderFacingFigureAccuracyFact(fact)) {
+      continue;
+    }
     if (!fact.metric_key && !fact.count_kind) {
       continue;
     }
@@ -2928,6 +2971,9 @@ function buildObservedFactDriftIssues(
       continue;
     }
     if (isBenignTaskAccuracyVisualComparison(mainSectionFacts, distinctValues)) {
+      continue;
+    }
+    if (isBenignConditionTableComparisonDrift(mainSectionFacts, distinctValues)) {
       continue;
     }
     if (isBenignApproximateMemoryDrift(mainSectionFacts)) {
@@ -3037,7 +3083,7 @@ function isBenignBaselineLeadingVisualDrift(
         fact.fact_kind === "metric"
         && fact.metric_key === "accuracy"
         && fact.unit === "score"
-        && /\b(?:baseline|leading|best|reference)\b/iu.test(fact.raw_text)
+        && /\b(?:baseline|leading|best|reference|candidate condition|condition)\b/iu.test(fact.raw_text)
     )
   ) {
     return false;
@@ -3059,6 +3105,31 @@ function isBenignBaselineLeadingVisualDrift(
       && /\b(?:baseline|reference|leading|best)\b/iu.test(fact.raw_text)
   );
   return hasFigureBaseline && hasFigureLeading && (hasComparativeResultText || hasReaderFacingBaselineOrLeadingText);
+}
+
+function isBenignConditionTableComparisonDrift(
+  facts: NormalizedNumericFact[],
+  distinctValues: number[]
+): boolean {
+  if (distinctValues.length < 2) {
+    return false;
+  }
+  if (!facts.every((fact) =>
+    fact.fact_kind === "metric"
+    && fact.metric_key === "accuracy"
+    && fact.unit === "score"
+    && /\b(?:baseline|candidate condition|leading|best|condition)\b/iu.test(fact.raw_text)
+  )) {
+    return false;
+  }
+  const tableFacts = facts.filter((fact) => fact.source === "table");
+  const hasBaselineTable = tableFacts.some((fact) => /\bbaseline\b/iu.test(fact.raw_text));
+  const hasCandidateTable = tableFacts.some((fact) => /\bcandidate condition|\bleading|\bbest/iu.test(fact.raw_text));
+  const hasReaderComparison = facts.some((fact) =>
+    ["abstract", "results", "discussion", "conclusion"].includes(fact.source)
+    && /\b(?:baseline|candidate condition|leading|best)\b/iu.test(fact.raw_text)
+  );
+  return hasBaselineTable && hasCandidateTable && hasReaderComparison;
 }
 
 function isBenignTaskAccuracyVisualComparison(
@@ -3947,8 +4018,8 @@ function isFromToAccuracyScoreValue(text: string, rawIndex: number): boolean {
   const cleaned = cleanString(text);
   const betweenScores = String.raw`\s+(?:[^0-9.!?]{0,48}\s+)?(?:to|up to)\s+`;
   const patterns = [
-    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|improving|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
-    new RegExp(String.raw`\b(?:improve[sd]?|improving|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
+    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|improving|increased|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
+    new RegExp(String.raw`\b(?:improve[sd]?|improving|increased|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
     new RegExp(String.raw`\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,80}\b(?:average\s+)?accuracy\b`, "giu")
   ];
   for (const pattern of patterns) {
@@ -4033,8 +4104,8 @@ function isFromToAccuracyScoreFragment(text: string): boolean {
   const cleaned = cleanString(text);
   const numberPair = String.raw`-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:[^0-9.!?]{0,48}\s+)?(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?`;
   return (
-    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|improving|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
-    || new RegExp(String.raw`\b(?:improve[sd]?|improving|increased|rose|rises|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
+    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|improving|increased|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
+    || new RegExp(String.raw`\b(?:improve[sd]?|improving|increased|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
     || new RegExp(String.raw`\bfrom\s+${numberPair}[^.!?]{0,80}\b(?:average\s+)?accuracy\b`, "iu").test(cleaned)
   );
 }
@@ -5814,7 +5885,7 @@ function compactReaderFacingMethodParagraphs(paragraphs: string[]): string[] {
     return compacted;
   }
   const hasProtocolCore = compacted.some((paragraph) =>
-    /full factorial sweep over LoRA rank|predeclared baseline was rank 8|primary endpoint was average accuracy/iu.test(paragraph)
+    /full factorial sweep over LoRA rank|predeclared baseline was baseline condition|primary endpoint was average accuracy/iu.test(paragraph)
   );
   const hasRealizedRunDetails = compacted.some((paragraph) =>
     /realized settings|timeout|maximum sequence length|training samples|seed/iu.test(paragraph)
@@ -6043,7 +6114,7 @@ function strengthenLoRARelatedWorkFallback(section: PaperManuscriptSection): Pap
     paragraphs: [
       "Existing PEFT studies give three comparison axes for this study. QLoRA anchors the memory-efficiency axis by showing that low-rank, quantized adaptation can make larger-model finetuning feasible; MAPLE and other benchmarking papers anchor the evaluation-axis by comparing methods across broader task or model settings; adapter-variant papers anchor the mechanism axis by changing the adapter parameterization itself.",
       "This paper occupies a narrower empirical slot on those axes. It keeps the adapter family, backbone, local compute regime, and evaluation harness fixed, then asks whether LoRA rank and dropout changes remain visible within the executed rank/dropout grid. The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 rank/dropout preflight.",
-      "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked rank-8, no-dropout condition inside the executed run, not a literature result. Prior PEFT papers instead define why the local rank/dropout question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
+      "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior PEFT papers instead define why the local rank/dropout question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
       "The related-work role is therefore conservative. The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform QLoRA, MAPLE, or adapter-variant methods. Those works differ in model scale, task mix, adapter family, or evaluation objective, so they support framing and claim boundaries rather than direct superiority language."
     ]
   };
@@ -6119,8 +6190,8 @@ function buildConditionResultNarrativeParagraphs(context: ExperimentArtifactCont
   const bestByAccuracy = [...nonBaseline]
     .filter((condition) => typeof condition.average_accuracy_mean === "number")
     .sort((left, right) => (right.average_accuracy_mean || 0) - (left.average_accuracy_mean || 0))[0];
-  const rank16Conditions = nonBaseline.filter((condition) => /\brank\s*16\b|rank_16/iu.test(condition.label || condition.condition));
-  const rank32Conditions = nonBaseline.filter((condition) => /\brank\s*32\b|rank_32/iu.test(condition.label || condition.condition));
+  const leadingCondition = bestByDelta || bestByAccuracy;
+  const comparisonConditionCount = Math.max(0, nonBaseline.length - (leadingCondition ? 1 : 0));
   const runtimeNote = context.results.runtime_notes.find(Boolean);
   const memoryNote = context.results.memory_notes.find(Boolean);
   const paragraphs = [
@@ -6132,11 +6203,11 @@ function buildConditionResultNarrativeParagraphs(context: ExperimentArtifactCont
     bestByDelta || bestByAccuracy
       ? `The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. ${bestByDelta?.label || bestByAccuracy?.label || "The strongest nonbaseline condition"} is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage, but the present manuscript keeps the conclusion conditional on observed dispersion and on the missing condition-level resource table.`
       : "",
-    rank16Conditions.length > 0
-      ? `The comparison-condition rows are useful mainly as a calibration point for the interpretation. They show that adding dropout at a higher rank did not create a clean, decisive gain under the current budget, so the paper should not turn the strongest cell into a blanket claim about rank-dropout interactions. Instead, the comparison-condition evidence helps bound the result by showing where the observed pattern remains weak or uncertainty-limited.`
+    comparisonConditionCount > 0
+      ? `The comparison-condition rows are useful mainly as a calibration point for the interpretation. They show that the strongest cell should not be turned into a blanket claim about the condition-parameter interaction. Instead, the comparison-condition evidence helps bound the result by showing where the observed pattern remains weak or uncertainty-limited.`
       : "",
-    rank32Conditions.length > 0
-      ? `The leading-condition rows carry the strongest follow-up signal because they combine the largest nonbaseline mean with the same repeated-seed accounting used for the rest of the grid. That makes the leading condition condition a plausible scale-up candidate, but not a settled prescription: the table still shows a local workstation preflight rather than a broad model-family sweep.`
+    leadingCondition
+      ? `The leading-condition row carries the strongest follow-up signal because it combines the largest nonbaseline mean with the same repeated-seed accounting used for the rest of the grid. That makes the leading condition a plausible scale-up candidate, but not a settled prescription: the table still shows a local workstation preflight rather than a broad model-family sweep.`
       : "",
     "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale, but the available main-text evidence does not support a row-by-row efficiency ordering. This is why the Results section treats compute as a feasibility constraint and leaves efficiency optimization for a follow-up run with fuller resource aggregation."
     ,
@@ -6646,8 +6717,16 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "The prespecified baseline-relative accuracy target was met (observed gain $1 versus threshold $2); condition-level values in Table 1 provide the main numeric support."
     )
     .replace(
-      /\brank\s+32\s+dropout\s+0\s+05\s+vs\s+rank\s+8\s+dropout\s+0\s+0:\s*accuracy_delta_vs_baseline:\s*([0-9.]+)\s+vs\s+0\s+\(delta\s+([0-9.]+)\),\s*average_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*benchmark_task_a_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*benchmark_task_b_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\)\.?/giu,
-      "The leading leading observed condition condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
+      /\b(?:candidate condition [a-z]|leading observed condition)\s+vs\s+(?:locked\s+)?baseline condition:?\s*(?:accuracy_delta_vs_baseline|baseline-relative accuracy gain):\s*([0-9.]+)\s+vs\s+0\s+\(delta\s+([0-9.]+)\),\s*(?:average_accuracy|average accuracy):\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*benchmark_task_a_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*benchmark_task_b_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\)\.?/giu,
+      "The leading observed condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
+    )
+    .replace(
+      /\bcondition summaries?\b\s*\/\s*[^/]+\s*\/\s*accuracy delta vs baseline 95% CI\s*\[([^\]]+)\]\s*over\s*n\s*=\s*(\d+)\.?/giu,
+      "One reported condition-level 95% interval spans $1 over n=$2, keeping the comparison bounded by uncertainty."
+    )
+    .replace(
+      /\b(?:candidate condition [a-z]|leading observed condition)\b[^.]{0,80}\bbaseline-relative accuracy gain\b\s*=\s*([0-9.]+)[^.]{0,160}\bbenchmark_task_a_accuracy\b\s*=\s*([0-9.]+)[^.]{0,80}\bBenchmark Task B accuracy\b\s*=\s*([0-9.]+)\.?/giu,
+      "The leading observed condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
     )
     .replace(
       /\bwall clock runtime sec\s*=\s*([0-9.]+)\.\s*device cuda max memory allocated bytes\s*=\s*(\d+)\.?/giu,
@@ -6699,7 +6778,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "The missing items include optimizer configuration, learning-rate schedule beyond the reported scalar rate, LoRA target-module placement, prompt formatting, and checkpoint policy."
     )
     .replace(
-      /\bcondition summaries\s*\/\s*rank\s+16\s+dropout\s+0\s+0\s*\/\s*accuracy delta vs baseline 95% CI \[([^\]]+)\] over n=(\d+)\./giu,
+      /\bcondition summaries?\b\s*\/\s*[^/]+\s*\/\s*accuracy delta vs baseline 95% CI\s*\[([^\]]+)\]\s*over\s*n\s*=\s*(\d+)\.?/giu,
       "For the comparison condition condition, the reported 95% interval for accuracy delta versus baseline is [$1] over $2 seeds."
     )
     .replace(
@@ -6756,7 +6835,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     )
     .replace(
       /\bThe evaluation spans dataset_to_be_selected\. Models or conditions include current_best_baseline\.?/giu,
-      "The evaluation spans Benchmark Task A and Benchmark Task B, with condition-parameter conditions compared against the locked rank-8 dropout-0 baseline."
+      "The evaluation spans Benchmark Task A and Benchmark Task B, with condition-parameter conditions compared against the locked baseline condition."
     )
     .replace(
       /\bThe task scope is fixed around dataset_to_be_selected\.\s*The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search\.\s*That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned\.\s*(?:The emphasis remains on evidence that is inspectable in the current run\.|The same point would need to be revised if later artifacts changed the comparator, table, or execution status\.)/giu,
@@ -6892,7 +6971,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     )
     .replace(
       /\bPreprocessing follows this order:\s*.*?\bArtifact text references (?:imput|scale)\.?.*?\bModel selection and reporting focus on average_accuracy\s*=\s*unweighted mean of Benchmark Task A accuracy and Benchmark Task B accuracy,?\s*accuracy_delta_vs_locked_baseline\s*=\s*cell mean average_accuracy minus mean average_accuracy of rank=8, dropout=0\.0 over the same seed set,?\s*benchmark_task_a_accuracy and benchmark_task_b_accuracy per run and per cell mean,?\s*and seed_std_average_accuracy across seeds \[42,43,44,45,46\] for each repeated cell\./giu,
-      "Preprocessing and reporting held optimizer settings, LoRA target modules, data cap, effective batch size, and evaluation tasks fixed across cells. The reported metrics are average accuracy, delta versus the locked rank-8 dropout-0 baseline, task-level accuracies, and seed-level dispersion for each repeated cell."
+      "Preprocessing and reporting held optimizer settings, LoRA target modules, data cap, effective batch size, and evaluation tasks fixed across cells. The reported metrics are average accuracy, delta versus the locked baseline condition, task-level accuracies, and seed-level dispersion for each repeated cell."
     )
     .replace(
       /\bThe protocol records Execute 25 train-plus-eval runs total:\s*5 repeated cells x 5 seeds where repeated cells are baseline rank8-drop0\.0, rank16-drop0\.0, rank16-drop0\.05, rank32-drop0\.0, rank32-drop0\.05\.,?\s*For each repeated cell, compute mean average_accuracy, seed standard deviation, and bootstrap 95 percent CI width; report per-task means and deltas as separate columns\.,?\s*Separately flag whether any repeated cell clears accuracy_delta_vs_locked_baseline >= 0\.01 and whether its 95 percent CI does not clearly contradict the improvement direction\.,?\s*and Apply the no-signal rule if the maximum mean average_accuracy spread across the repeated cells is below 0\.005 or if the bootstrap intervals make the comparisons directionally inconclusive\. Runtime and memory are explicitly measured in the evaluation outputs\./giu,
@@ -7125,7 +7204,7 @@ function describeScientificObjectiveForNarrative(value: string | undefined): str
 function rewriteReaderFacingProvenancePhrases(value: string): string {
   return value
     .replace(
-      /\bThe executed and analyzed run set contained three trials rather than the full eight-condition factorial grid\.\s*Within that limited coverage,\s*the strongest reported comparison was between the baseline condition,\s*rank 8 with dropout 0\.0,\s*and a higher-capacity regularized condition,\s*rank 32 with dropout 0\.05\./giu,
+      /\bThe executed and analyzed run set contained three trials rather than the full eight-condition factorial grid\.\s*Within that limited coverage,\s*the strongest reported comparison was between the baseline condition,\s*baseline condition with dropout 0\.0,\s*and a higher-capacity regularized condition,\s*candidate condition b with dropout 0\.05\./giu,
       "The reported condition summaries preserve the locked baseline and evaluated rank/dropout alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, the locked baseline, and a higher-capacity regularized condition, the leading observed condition."
     )
     .replace(
@@ -7141,7 +7220,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
       "The evidence remains a single local pilot without repeated-seed replication, and the reported materials indicate unresolved consistency limits around uncertainty handling."
     )
     .replace(
-      /\bAmong the three analyzed trials,\s*only rank 32 with dropout 0\.05 exceeded the baseline;\s*the other analyzed non-baseline condition did not\./giu,
+      /\bAmong the three analyzed trials,\s*only candidate condition b with dropout 0\.05 exceeded the baseline;\s*the other analyzed non-baseline condition did not\./giu,
       "Among the reported condition summaries, the leading observed condition supplies the strongest baseline-relative gain."
     )
     .replace(
@@ -9122,7 +9201,7 @@ function collectConditionResultSummaries(
         is_baseline: Boolean(
           (condition && baselineMarker && condition.toLowerCase() === baselineMarker)
           || /baseline/iu.test(label)
-          || (!baselineMarker && delta === 0 && /rank\s*8|rank_8|control|reference/iu.test(condition || label))
+          || (!baselineMarker && delta === 0 && /baseline|control|reference/iu.test(condition || label))
         ),
         ...(typeof asNumber(item.completed_seed_count) === "number"
           ? { completed_seed_count: asNumber(item.completed_seed_count) }

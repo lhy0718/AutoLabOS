@@ -1296,7 +1296,7 @@ describe("review node", () => {
       ],
       condition_comparisons: [{
         id: "candidate_condition_f5_vs_baseline_condition",
-        label: "rank 32 dropout 0 05 vs rank 8 dropout 0 0",
+        label: "candidate condition b vs baseline condition",
         source: "metrics.condition_summaries",
         metrics: [{ key: "accuracy_delta_vs_baseline_mean", value: 0.0667, primary_value: 0.0667, baseline_value: 0 }],
         hypothesis_supported: true,
@@ -1435,7 +1435,7 @@ describe("review node", () => {
       ],
       condition_comparisons: [{
         id: "candidate_condition_a_vs_baseline_condition",
-        label: "rank 4 dropout 0 0 vs rank 8 dropout 0 0",
+        label: "candidate condition c vs baseline condition",
         source: "metrics.condition_results",
         metrics: [{ key: "accuracy_delta_vs_baseline", value: 0.0625, primary_value: 0.0625, baseline_value: 0 }],
         hypothesis_supported: true,

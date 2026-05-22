@@ -495,11 +495,7 @@ function repairMainTableClaims(
   }
   return tables.map((table) => {
     const rowText = table.rows.map((row) => row.label).join(" ");
-    const exposesAllCells =
-      /\brank\s*4\b/iu.test(rowText) &&
-      /\brank\s*8\b/iu.test(rowText) &&
-      /\brank\s*16\b/iu.test(rowText) &&
-      /\brank\s*32\b/iu.test(rowText);
+    const exposesAllCells = table.rows.length >= 4 && /\b(?:baseline|condition|candidate)\b/iu.test(rowText);
     const caption = exposesAllCells
       ? cleanString(table.caption)
       : cleanString(table.caption)
@@ -538,15 +534,15 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
       "The prespecified baseline-relative accuracy target was met (observed gain $1 versus threshold $2); condition-level values in Table 1 provide the main numeric support."
     )
     .replace(
-      /\brank\s+32\s+dropout\s+0\s+05\s+vs\s+rank\s+8\s+dropout\s+0\s+0:\s*baseline-relative accuracy gain:\s*([0-9.]+)\s+vs\s+0\s+\(delta\s+([0-9.]+)\),\s*average accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*Benchmark Task A accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*Benchmark Task B accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\)\.?/giu,
+      /\b(?:candidate condition [a-z]|leading observed condition|best observed cell)\s+vs\s+(?:locked\s+)?baseline condition:\s*baseline-relative accuracy gain:\s*([0-9.]+)\s+vs\s+0\s+\(delta\s+([0-9.]+)\),\s*average accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*Benchmark Task A accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*Benchmark Task B accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\)\.?/giu,
       "The leading observed condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
     )
     .replace(
-      /\bThe leading condition was rank 32 with dropout 0\.05,\s*compared with the locked rank 8 dropout 0\.0 baseline;\s*the observed baseline-relative average-accuracy gain was ([0-9.]+),\s*average accuracy was [0-9.]+ versus [0-9.]+,\s*Benchmark Task A accuracy was [0-9.]+ versus [0-9.]+,\s*and Benchmark Task B accuracy was [0-9.]+ versus [0-9.]+\.?/giu,
+      /\bThe leading condition was the leading observed condition,\s*compared with the locked baseline condition;\s*the observed baseline-relative average-accuracy gain was ([0-9.]+),\s*average accuracy was [0-9.]+ versus [0-9.]+,\s*Benchmark Task A accuracy was [0-9.]+ versus [0-9.]+,\s*and Benchmark Task B accuracy was [0-9.]+ versus [0-9.]+\.?/giu,
       "The leading observed condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
     )
     .replace(
-      /\bIn the reported best comparison,\s*rank 32 with dropout 0\.05 outperformed the baseline rank 8 with dropout 0\.0 by ([0-9.]+) average accuracy;\s*Benchmark Task A stayed at [0-9.]+ while Benchmark Task B increased from [0-9.]+ to [0-9.]+\.?/giu,
+      /\bIn the reported best comparison,\s*the leading observed condition outperformed the locked baseline condition by ([0-9.]+) average accuracy;\s*Benchmark Task A stayed at [0-9.]+ while Benchmark Task B increased from [0-9.]+ to [0-9.]+\.?/giu,
       "In the reported best comparison, the leading observed condition cell is the follow-up candidate. Table 1 gives the task-level values, and the baseline-relative average-accuracy gain is $1."
     )
     .replace(
@@ -554,7 +550,7 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
       "Operational measurements remain secondary: wall-clock runtime was $1 seconds, and peak CUDA allocation was recorded as a secondary resource diagnostic."
     )
     .replace(
-      /\bThe 95% interval for conditions rank 16 dropout 0 0 average accuracy spans ([0-9.]+) to ([0-9.]+)\.\s*wall-clock runtime was ([0-9]+(?:\.[0-9]+)?)\.?\s*seconds,\s*with peak CUDA allocation recorded as a secondary resource diagnostic\./giu,
+      /\bThe 95% interval for conditions? [^.]{1,80}? average accuracy spans ([0-9.]+) to ([0-9.]+)\.\s*wall-clock runtime was ([0-9]+(?:\.[0-9]+)?)\.?\s*seconds,\s*with peak CUDA allocation recorded as a secondary resource diagnostic\./giu,
       "The reported interval summary keeps uncertainty visible: one comparison condition average-accuracy interval spans $1 to $2 over the evaluated predictions. Runtime and CUDA allocation remain secondary feasibility diagnostics."
     )
     .replace(
@@ -936,7 +932,7 @@ function repairSubmissionAbstract(abstract: string): string {
       "The strongest contribution of the study is a conservative, auditable pilot protocol for comparing configured conditions under explicit budget, reporting, and uncertainty constraints."
     )
     .replace(
-      /\bThe protocol targeted a 4 x 2 factorial sweep over ranks \{4,\s*8,\s*16,\s*32\} and dropout values \{0\.0,\s*0\.05\},\s*with average accuracy across Benchmark Task A and Benchmark Task B as the primary performance measure and rank 8 with no dropout as the locked in-grid baseline\./giu,
+      /\bThe protocol targeted a 4 x 2 factorial sweep over condition parameters,\s*with average accuracy across Benchmark Task A and Benchmark Task B as the primary performance measure and locked baseline condition as the locked in-grid baseline\./giu,
       "The protocol targeted a configured 4 x 2 condition sweep. Average accuracy across Benchmark Task A and Benchmark Task B was the primary performance measure, and the locked in-grid baseline was designated in advance."
     )
     .replace(
@@ -1010,11 +1006,11 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "The prespecified baseline-relative accuracy target was met in the analyzed run, with an observed gain of $1 against a threshold of $2."
     )
     .replace(
-      /\bleading condition vs locked baseline:\s*accuracy_delta_vs_baseline:\s*([0-9.]+)\s+vs\s+0\s*\(delta\s+([0-9.]+)\),\s*average_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([0-9.]+)\),\s*benchmark_task_a_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([^)]+)\),\s*benchmark_task_b_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([^)]+)\)\./giu,
+      /\b(?:leading condition|candidate condition [a-z]) vs (?:locked )?baseline(?: condition)?:\s*(?:accuracy_delta_vs_baseline|baseline-relative accuracy gain):\s*([0-9.]+)\s+vs\s+0\s*\(delta\s+([0-9.]+)\),\s*(?:average_accuracy|average accuracy):\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([0-9.]+)\),\s*benchmark_task_a_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([^)]+)\),\s*benchmark_task_b_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([^)]+)\)\.?/giu,
       "For the leading observed condition, Table 1 reports the condition-level values for the cell and the locked baseline; the baseline-relative mean gain is $5."
     )
     .replace(
-      /\bIn the reported best comparison,\s*rank 32 with dropout 0\.05 outperformed the baseline rank 8 with dropout 0\.0 by ([0-9.]+) average accuracy;\s*Benchmark Task A stayed at [0-9.]+ while Benchmark Task B increased from [0-9.]+ to [0-9.]+\.?/giu,
+      /\bIn the reported best comparison,\s*the leading observed condition outperformed the locked baseline condition by ([0-9.]+) average accuracy;\s*Benchmark Task A stayed at [0-9.]+ while Benchmark Task B increased from [0-9.]+ to [0-9.]+\.?/giu,
       "In the reported best comparison, the leading observed condition cell is the follow-up candidate. Table 1 gives the task-level values, and the baseline-relative average-accuracy gain is $1."
     )
     .replace(
@@ -1022,7 +1018,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "The observed baseline-relative average-accuracy gain is $3; Table 1 and Figure 1 carry the underlying baseline and leading-condition accuracy values."
     )
     .replace(
-      /\bThe best reported cell is rank 32 with dropout 0\.05,\s*which increases average accuracy from ([0-9.]+) in the locked baseline to ([0-9.]+),\s*for an absolute gain of ([0-9.]+)\./giu,
+      /\bThe best reported cell is (?:the leading observed condition|candidate condition [a-z]),\s*which increases average accuracy from ([0-9.]+) in the locked baseline to ([0-9.]+),\s*for an absolute gain of ([0-9.]+)\./giu,
       "The best reported cell is the leading observed condition. Table 1 reports the corresponding mean values for that cell and the locked baseline; the baseline-relative gain is $3."
     )
     .replace(
@@ -1066,7 +1062,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "The fixed search space held condition parameters as the manipulated factors, with fixed training settings including $1 and reported run details recording $2."
     )
     .replace(
-      /\bResults reports the best observed cell against the locked rank-8,\s*dropout-0 baseline;\s*Table 1 reports condition mean accuracies and identifies only that locked row as the baseline\./giu,
+      /\bResults reports the best observed cell against the locked baseline condition;\s*Table 1 reports condition mean accuracies and identifies only that locked row as the baseline\./giu,
       headingKey === "method"
         ? ""
         : "Table 1 reports all eight condition mean accuracies and identifies only the locked locked baseline row as the baseline."
@@ -1100,7 +1096,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "Table 1 reports the visible baseline-to-leading comparison quantities"
     )
     .replace(
-      /\bthe currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate,\s*such as direct numerical comparisons of rank 32 with and without dropout or rank 8 with and without dropout\b/giu,
+      /\bthe currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate,\s*such as direct numerical comparisons of [^.]+? with and without dropout or [^.]+? with and without dropout\b/giu,
       "the currently exposed record provides condition means but not complete per-cell uncertainty, resource, or auxiliary-metric tables needed for a formal interaction estimate"
     )
     .replace(
@@ -1192,11 +1188,11 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "Because verified execution metadata identifies the selected backbone as the selected backbone"
     )
     .replace(
-      /\bThe reported conditions are condition-parameter cells compared against the locked rank-8,\s*dropout-0 baseline on the selected backbone\./giu,
+      /\bThe reported conditions are condition-parameter cells compared against the locked baseline condition,\s*dropout-0 baseline on the selected backbone\./giu,
       headingKey === "method" ? "" : "The reported conditions compare condition-parameter cells against the locked locked baseline baseline."
     )
     .replace(
-      /\bEvaluation spans Benchmark Task A and Benchmark Task B\.\s*The reported conditions are condition-parameter cells compared against the locked rank-8,\s*dropout-0 baseline on the selected backbone\./giu,
+      /\bEvaluation spans Benchmark Task A and Benchmark Task B\.\s*The reported conditions are condition-parameter cells compared against the locked baseline condition,\s*dropout-0 baseline on the selected backbone\./giu,
       headingKey === "method" ? "" : "Evaluation spans Benchmark Task A and Benchmark Task B."
     )
     .replace(
@@ -1240,8 +1236,8 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "Existing PEFT studies define three comparison axes relevant here: memory efficiency under constrained hardware, evaluation breadth across task or model settings, and adapter-parameterization choices that change the update mechanism."
     )
     .replace(
-      /\bAccordingly,\s*prior work is used here as framing rather than as a condition-matched baseline\.\s*The comparator of record is the internal rank-8,\s*no-dropout condition inside the executed run,\s*whereas QLoRA-,\s*MAPLE-,\s*and adapter-variant results differ in scale,\s*task mix,\s*adapter family,\s*or evaluation objective and therefore set the interpretation context rather than a direct performance target\./giu,
-      "Accordingly, prior work is used here as framing rather than as a condition-matched baseline. The comparator of record is the internal rank-8, no-dropout condition inside the executed run; external PEFT results differ in scale, task mix, adapter family, or evaluation objective and therefore set the interpretation context rather than a direct performance target."
+      /\bAccordingly,\s*prior work is used here as framing rather than as a condition-matched baseline\.\s*The comparator of record is the internal baseline condition,\s*no-dropout condition inside the executed run,\s*whereas QLoRA-,\s*MAPLE-,\s*and adapter-variant results differ in scale,\s*task mix,\s*adapter family,\s*or evaluation objective and therefore set the interpretation context rather than a direct performance target\./giu,
+      "Accordingly, prior work is used here as framing rather than as a condition-matched baseline. The comparator of record is the internal baseline condition, no-dropout condition inside the executed run; external PEFT results differ in scale, task mix, adapter family, or evaluation objective and therefore set the interpretation context rather than a direct performance target."
     )
     .replace(/\baccuracy_delta_vs_baseline\b/giu, "baseline-relative accuracy gain")
     .replace(/\baverage_accuracy\b/giu, "average accuracy")
@@ -1460,11 +1456,11 @@ function repairRelatedWorkComparatorRedundancy(paragraphs: string[]): string[] {
   for (const paragraph of paragraphs) {
     const repeatsInternalComparator =
       /\b(?:numerical|relevant)\s+baseline\b/iu.test(paragraph) &&
-      /\blocked rank-8\b/iu.test(paragraph) &&
+      /\blocked baseline condition\b/iu.test(paragraph) &&
       /\bPrior (?:PEFT|work)\b/iu.test(paragraph);
     const repeatsExternalFramingComparator =
       /\bexternal PEFT papers serve as framing comparators\b/iu.test(paragraph) &&
-      /\blocked rank-8\b/iu.test(paragraph);
+      /\blocked baseline condition\b/iu.test(paragraph);
     const repeatsConservativeRelatedWorkRole =
       insertedInternalComparatorSynthesis &&
       /\bThe related-work role is therefore conservative\b/iu.test(paragraph) &&
@@ -1649,8 +1645,8 @@ function repairAppendixSections(sections: PaperManuscriptSection[]): PaperManusc
               "A later replication should preserve locked-baseline accounting, expose complete task-wise and resource tables, and rerun the leading condition under a broader benchmark suite before claiming general LoRA regularization behavior."
             )
             .replace(
-              /\bThe study used a fixed 4x2 grid over ranks 4,\s*8,\s*16,\s*and 32 and dropout values 0\.0 and 0\.05,\s*with rank 8 and dropout 0\.0 serving as the locked baseline\.\s*The run was designed for a dual-RTX-4090-class local workstation and used seed 42\.\s*The preferred backbone in the protocol was the selected backbone,\s*with the configured fallback backbone reserved as a fallback\.\s*The training source was the configured training dataset under a cap of 10000 examples,\s*although the summarized preflight reported here used 48 examples\./giu,
-              "The study used a fixed 4x2 grid over ranks 4, 8, 16, and 32 and dropout values 0.0 and 0.05, with the locked baseline serving as the locked baseline. The executed summary identifies the selected backbone as the selected backbone, keeps the configured fallback backbone as a fallback candidate only, and reports seed 17 with 48 the configured training dataset training examples."
+              /\bThe study used a fixed 4x2 grid over condition parameters,\s*with baseline condition serving as the locked baseline\.\s*The run was designed for a dual-RTX-4090-class local workstation and used seed 42\.\s*The preferred backbone in the protocol was the selected backbone,\s*with the configured fallback backbone reserved as a fallback\.\s*The training source was the configured training dataset under a cap of 10000 examples,\s*although the summarized preflight reported here used 48 examples\./giu,
+              "The study used a fixed 4x2 grid over condition parameters, with the locked baseline serving as the locked baseline. The executed summary identifies the selected backbone as the selected backbone, keeps the configured fallback backbone as a fallback candidate only, and reports seed 17 with 48 the configured training dataset training examples."
             )
             .replace(
               /\bBecause the manuscript source used for writing does not expose the full interval-construction procedure\b/giu,
@@ -3152,7 +3148,7 @@ function parseConditionVisualRow(row: PaperManuscriptVisualRow): {
     : Number(row.label.match(/\bdropout\s*([0-9]+(?:\.[0-9]+)?)/iu)?.[1]);
   const condition = row.is_baseline || /\bbaseline\b/iu.test(row.label)
     ? "Locked baseline"
-    : `rank ${Number.isFinite(rank) ? rank : "?"} / dropout ${Number.isFinite(dropout) ? formatShortNumber(dropout) : "?"}`;
+    : cleanString(row.label) || "Candidate condition";
   return {
     condition,
     rank: Number.isFinite(rank) ? formatShortNumber(rank) : "--",

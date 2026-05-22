@@ -8286,7 +8286,7 @@ describe("ImplementSessionManager", () => {
       [
         "selected_design:",
         '  title: "5-seed high-rank dropout stability against locked baseline"',
-        '  summary: "Run repeated-seed training for the locked baseline and the high-rank cells rank 16 and rank 32 with dropout 0.0 versus 0.05."',
+        '  summary: "Run repeated-seed training for the locked baseline and the high-rank cells rank 16 and candidate condition e versus 0.05."',
         "  evaluation_steps:",
         '    - "Execute 25 train-plus-eval runs total: 5 repeated cells x 5 seeds where repeated cells are baseline rank8-drop0.0, rank16-drop0.0, rank16-drop0.05, rank32-drop0.0, rank32-drop0.05."',
         '    - "Use training seeds [42,43,44,45,46] and report seed standard deviation plus bootstrap 95 percent CI width."'
@@ -8404,7 +8404,7 @@ describe("ImplementSessionManager", () => {
         '    - "Run ranks {4,8,16,32} with dropout 0.0 for seeds {42,43,44,45,46}."',
         '    - "Paper-scale evidence floor for the narrowed claim: 4 ranks x 5 seeds = 20 fine-tune runs, plus 2 exact baseline reruns."',
         "  evaluation_steps:",
-        '    - "Run ranks {4,8,16,32} with dropout 0.0 for seeds {42,43,44,45,46}, then rerun the baseline rank=8 dropout=0.0 two additional times."',
+        '    - "Run the planned fixed-parameter condition set for seeds {42,43,44,45,46}, then rerun the locked baseline condition two additional times."',
         "  resource_notes:",
         '    - "22 runs total including exact baseline repeats."'
       ].join("\n"),
@@ -20576,7 +20576,7 @@ describe("ImplementSessionManager", () => {
         "from dataclasses import asdict, dataclass",
         "import json",
         "",
-        "BASELINE_CONDITION_MARKER = 'rank8_dropout0'",
+        "BASELINE_CONDITION_MARKER = 'baseline_condition'",
         "",
         "@dataclass(frozen=True)",
         "class ConditionSpec:",
@@ -20608,7 +20608,7 @@ describe("ImplementSessionManager", () => {
         "    'ConditionSpec',",
         "    marker=BASELINE_CONDITION_MARKER,",
         "    condition_id=BASELINE_CONDITION_MARKER,",
-        "    display_name='Baseline LoRA rank=8 dropout=0.0',",
+        "    display_name='Baseline condition',",
         "    is_baseline=True,",
         "    rank=8,",
         "    lora_alpha=16,",
@@ -20634,8 +20634,8 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_config_instance_dataclass_field_alias_marker");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
-      marker: "rank8_dropout0",
-      display_name: "Baseline LoRA rank=8 dropout=0.0",
+      marker: "baseline_condition",
+      display_name: "Baseline condition",
       is_baseline: true,
       lora_rank: 8,
       lora_alpha: 16,
@@ -36588,7 +36588,7 @@ describe("ImplementSessionManager", () => {
                   "PEFT_RECIPES = (",
                   "    RecipeSpec(",
                   "        name='lora_r8',",
-                  "        display_name='LoRA rank-8',",
+                  "        display_name='LoRA baseline condition',",
                   "        recipe_type='lora',",
                   "        rank=8,",
                   "        alpha=16,",

@@ -19,6 +19,7 @@ Public source and tests must describe general AutoLabOS behavior, not one histor
 - If legacy compatibility is still needed, express it through generic alias/adapter behavior rather than naming a specific old experiment.
 - Do not allow paper-writing fallbacks to invent a specific model, benchmark pair, method setting, or condition marker.
 - When a leak is found, extend the public-code sanitization guard with the exact newly discovered identifier family so source, tests, and local skills cannot reintroduce it.
+- Treat reader-visible fixture labels with numeric condition values as leaks too; public tests should use baseline/candidate labels unless the values are supplied by the test input being validated.
 - Prefer neutral callable/file names such as run_condition_sweep_experiment.py, run_locked_condition_sweep, and benchmark_task_a/benchmark_task_b over method-, model-, or dataset-specific names in public fixtures.
 
 ## Workflow

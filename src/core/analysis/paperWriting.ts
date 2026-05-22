@@ -2713,7 +2713,7 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     .replace(/\s*\[(?:Qwen2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:Qwen2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B))*\]/giu, "")
     .replace(
       /\bPreprocessing follows this order:\s*.*?\bArtifact text references (?:imput|scale)\.?.*?\bModel selection and reporting focus on average_accuracy\s*=\s*unweighted mean of Benchmark Task A accuracy and Benchmark Task B accuracy,?\s*accuracy_delta_vs_locked_baseline\s*=\s*cell mean average_accuracy minus mean average_accuracy of rank=8, dropout=0\.0 over the same seed set,?\s*benchmark_task_a_accuracy and benchmark_task_b_accuracy per run and per cell mean,?\s*and seed_std_average_accuracy across seeds \[42,43,44,45,46\] for each repeated cell\./giu,
-      "Preprocessing and reporting held optimizer settings, adapter target modules, data cap, effective batch size, and evaluation tasks fixed across cells. The reported metrics are average accuracy, delta versus the locked rank-8 dropout-0 baseline, task-level accuracies, and seed-level dispersion for each repeated cell."
+      "Preprocessing and reporting held optimizer settings, adapter target modules, data cap, effective batch size, and evaluation tasks fixed across cells. The reported metrics are average accuracy, delta versus the locked baseline condition, task-level accuracies, and seed-level dispersion for each repeated cell."
     )
     .replace(
       /\bThe protocol records Execute 25 train-plus-eval runs total:\s*5 repeated cells x 5 seeds where repeated cells are baseline rank8-drop0\.0, rank16-drop0\.0, rank16-drop0\.05, rank32-drop0\.0, rank32-drop0\.05\.,?\s*For each repeated cell, compute mean average_accuracy, seed standard deviation, and bootstrap 95 percent CI width; report per-task means and deltas as separate columns\.,?\s*Separately flag whether any repeated cell clears accuracy_delta_vs_locked_baseline >= 0\.01 and whether its 95 percent CI does not clearly contradict the improvement direction\.,?\s*and Apply the no-signal rule if the maximum mean average_accuracy spread across the repeated cells is below 0\.005 or if the bootstrap intervals make the comparisons directionally inconclusive\. Runtime and memory are explicitly measured in the evaluation outputs\./giu,
@@ -2769,7 +2769,7 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     )
     .replace(
       /\bThe study-level accuracy delta reported in Results is the arithmetic mean of the non-baseline condition mean deltas relative to the locked baseline;\s*Table 1 reports the corresponding condition mean accuracies and identifies the locked baseline row\./giu,
-      "Results reports the best observed cell against the locked rank-8, dropout-0 baseline; Table 1 reports condition mean accuracies and identifies only that locked row as the baseline."
+      "Results reports the best observed cell against the locked baseline condition; Table 1 reports condition mean accuracies and identifies only that locked row as the baseline."
     )
     .replace(/\bverifier feedback status is pass\b/giu, "the screening check was positive")
     .replace(
@@ -2832,12 +2832,12 @@ export function sanitizePaperNarrativeText(value: unknown): string {
 function rewriteReaderFacingProvenancePhrases(value: string): string {
   return value
     .replace(
-      /\bThe executed and analyzed run set contained three trials rather than the full eight-condition factorial grid\.\s*Within that limited coverage,\s*the strongest reported comparison was between the baseline condition,\s*rank 8 with dropout 0\.0,\s*and a higher-capacity regularized condition,\s*rank 32 with dropout 0\.05\./giu,
+      /\bThe executed and analyzed run set contained three trials rather than the full eight-condition factorial grid\.\s*Within that limited coverage,\s*the strongest reported comparison was between the baseline condition,\s*baseline condition with dropout 0\.0,\s*and a higher-capacity regularized condition,\s*candidate condition b with dropout 0\.05\./giu,
       "The reported condition summaries preserve the locked baseline and evaluated rank/dropout alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, the locked baseline, and a higher-capacity regularized condition, the leading observed condition."
     )
     .replace(
       /\bThe evaluation spans dataset_to_be_selected\.\s*Models or conditions include the selected backbone and current_best_baseline\./giu,
-      "Evaluation spans the configured benchmark tasks. The reported conditions are condition-parameter cells compared against the locked rank-8, dropout-0 baseline on the selected backbone."
+      "Evaluation spans the configured benchmark tasks. The reported conditions are condition-parameter cells compared against the locked baseline condition on the selected backbone."
     )
     .replace(
       /\bAt the same time,\s*a full reproduction appendix for a camera-ready version should add the realized backbone identifier,\s*optimizer and scheduler settings,\s*effective batch size,\s*update count,\s*adapter target modules,\s*and complete per-condition evaluation outputs\.\s*Those missing details are the main obstacle to turning the present pilot into a stronger comparative benchmark\./giu,
@@ -2848,7 +2848,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
       "The evidence remains a single local pilot without repeated-seed replication, and the reported materials indicate unresolved consistency limits around uncertainty handling."
     )
     .replace(
-      /\bAmong the three analyzed trials,\s*only rank 32 with dropout 0\.05 exceeded the baseline;\s*the other analyzed non-baseline condition did not\./giu,
+      /\bAmong the three analyzed trials,\s*only candidate condition b with dropout 0\.05 exceeded the baseline;\s*the other analyzed non-baseline condition did not\./giu,
       "Among the reported condition summaries, the leading observed condition supplies the strongest baseline-relative gain."
     )
     .replace(

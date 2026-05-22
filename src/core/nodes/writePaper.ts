@@ -3198,7 +3198,7 @@ function repairFinalTableAvailabilityClaim(heading: string, paragraph: string): 
       "Table 1 reports all eight condition mean accuracies, while the compact record does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables"
     )
     .replace(
-      /\bthe currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate,\s*such as direct numerical comparisons of rank 32 with and without dropout or rank 8 with and without dropout\b/giu,
+      /\bthe currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate,\s*such as direct numerical comparisons of candidate condition b with and without dropout or baseline condition with and without dropout\b/giu,
       "the currently exposed record provides condition means but not complete per-cell uncertainty, resource, or auxiliary-metric tables needed for a formal interaction estimate"
     )
     .replace(

@@ -316,6 +316,9 @@ def build_continue_command(record: dict, run_id: str, next_node: str, node_args:
 def expand_command_override(raw_command: str, run_id: str, next_node: str) -> str:
     return raw_command.replace("{run_id}", run_id).replace("{next_node}", next_node)
 
+def command_override_replaces_continue_command(raw_command: str) -> bool:
+    return raw_command.lstrip().startswith("/")
+
 
 def pending_transition_target(record: dict) -> str:
     transition = record.get("graph", {}).get("pendingTransition")
@@ -697,6 +700,12 @@ def run_selftest() -> int:
     ):
         print("FAIL: command override placeholders were not expanded")
         return 1
+    if not command_override_replaces_continue_command("/agent retry implement_experiments run-p6"):
+        print("FAIL: slash command override was not recognized as a command replacement")
+        return 1
+    if command_override_replaces_continue_command("Steering implement_experiments for run-p6"):
+        print("FAIL: text steering override was incorrectly treated as a command replacement")
+        return 1
     if expand_command_override("Steer {next_node} for {run_id}", run_id, "implement_experiments") != (
         "Steer implement_experiments for run-p6"
     ):
@@ -755,6 +764,7 @@ def main() -> int:
     os.close(slave_fd)
 
     buffer_text = ""
+    sent_command_override = False
     try:
         buffer_text = wait_for(
             master_fd,
@@ -773,6 +783,7 @@ def main() -> int:
             if command_override:
                 command = expand_command_override(command_override, run_id, wait_node)
                 send_line(master_fd, command)
+                sent_command_override = True
                 print(f"INFO: {wait_node} is already running; sent command override and observing until the next stop boundary.")
             else:
                 print(f"INFO: {wait_node} is already running; observing until the next stop boundary.")
@@ -784,12 +795,13 @@ def main() -> int:
             record_before_command = load_run_record(workspace, run_id)
             command = (
                 expand_command_override(command_override, run_id, next_node)
-                if command_override
+                if command_override and command_override_replaces_continue_command(command_override)
                 else build_continue_command(record_before_command, run_id, next_node, node_args)
             )
             wait_node = node_to_observe_after_command(record_before_command, next_node, command)
             initial_signature = record_boundary_signature(record_before_command, wait_node)
             send_line(master_fd, command)
+            sent_command_override = bool(command_override and command_override_replaces_continue_command(command_override))
         buffer_text = wait_for_stop_boundary(
             master_fd,
             stop_pattern_for_node(wait_node),
@@ -821,7 +833,13 @@ def main() -> int:
                 if record_after_boundary
                 else None
             )
-            print(f"INFO: {wait_node} is already running after the prior boundary; observing the handoff.")
+            if command_override and not sent_command_override:
+                command = expand_command_override(command_override, run_id, wait_node)
+                send_line(master_fd, command)
+                sent_command_override = True
+                print(f"INFO: {wait_node} is already running after the prior boundary; sent command override and observing the handoff.")
+            else:
+                print(f"INFO: {wait_node} is already running after the prior boundary; observing the handoff.")
             buffer_text = wait_for_stop_boundary(
                 master_fd,
                 stop_pattern_for_node(wait_node),
