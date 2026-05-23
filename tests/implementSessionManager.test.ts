@@ -377,7 +377,7 @@ describe("ImplementSessionManager", () => {
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "runner.py"))).toBe(false);
   });
 
-  it("normalizes a locked PEFT config from conditions to recipes-only runtime schema", () => {
+  it("normalizes a locked adapter config from conditions to recipes-only runtime schema", () => {
     const normalized = normalizeLockedPeftStudyConfigPayloadForCompatibility({
       experiment_name: "locked_peft",
       baseline_first_required: true,
@@ -425,7 +425,7 @@ describe("ImplementSessionManager", () => {
     ]);
   });
 
-  it("repairs locked PEFT config files in place before handoff", async () => {
+  it("repairs locked adapter config files in place before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-peft-config-"));
     tempDirs.push(workspace);
     const configPath = path.join(workspace, "experiment_config.yaml");
@@ -3807,7 +3807,7 @@ describe("ImplementSessionManager", () => {
         "    'run_single_condition',",
         "    'execute_condition',",
         "    'train_and_evaluate_condition',",
-        "    'run_peft_condition',",
+        "    'run_condition_worker',",
         "    'run_condition_trial',",
         ")",
         "",
@@ -15564,6 +15564,47 @@ describe("ImplementSessionManager", () => {
     expect(output.seeds).toEqual([1, 2, 3]);
   });
 
+  it("repairs duplicate helper definitions when the final signature drops positional arity", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-duplicate-helper-positional-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import json",
+        "from typing import Sequence",
+        "",
+        "def resolve_schedule(raw_schedule: Sequence[int] | None = None) -> list[int]:",
+        "    return list(raw_schedule or [1, 2, 3])",
+        "",
+        "def build_payload():",
+        "    return {'seeds': resolve_schedule([4, 5])}",
+        "",
+        "def resolve_schedule() -> list[int]:",
+        "    return [1]",
+        "",
+        "if __name__ == '__main__':",
+        "    print(json.dumps(build_payload(), sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /takes 0 positional arguments but 1 was given/u
+    );
+
+    const repair = await repairPythonDuplicateHelperSignatureDriftSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource.match(/^def resolve_schedule/gmu)).toHaveLength(1);
+    const output = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(output.seeds).toEqual([4, 5]);
+  });
+
   it("prioritizes final CLI orchestration and locked grid executors before helper resolvers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-final-cli-locked-grid-"));
     tempDirs.push(workspace);
@@ -19201,7 +19242,7 @@ describe("ImplementSessionManager", () => {
         "        'run_candidate_experiments',",
         "        'execute_candidate_experiments',",
         "        'execute_instruction_study',",
-        "        'run_peft_candidate_study',",
+        "        'run_candidate_study',",
         "        'run_study_orchestration',",
         "        'run_experiment_orchestration',",
         "    )",
@@ -19339,27 +19380,27 @@ describe("ImplementSessionManager", () => {
         "    supported = {key: value for key, value in kwargs.items() if key in parameters}",
         "    return func(*args, **supported)",
         "",
-        "def run_baseline_locked_peft_variant_comparison(config):",
+        "def run_baseline_locked_candidate_variant_comparison(config):",
         "    assert config == {'seed': 42}",
         "    return {'status': 'completed', 'candidate_results': [{'candidate_id': 'base'}, {'candidate_id': 'lora_r8'}]}",
         "",
-        "run_peft_variant_comparison = run_baseline_locked_peft_variant_comparison",
-        "run_experiment_comparison = run_baseline_locked_peft_variant_comparison",
+        "run_candidate_variant_comparison = run_baseline_locked_candidate_variant_comparison",
+        "run_experiment_comparison = run_baseline_locked_candidate_variant_comparison",
         "",
         "def _autolabos_run_workflow(config, args):",
         "    workflow = _autolabos_resolve_callable(",
         "        'run_instruction_study',",
-        "        'run_baseline_first_peft_comparison',",
-        "        'run_peft_variant_comparison_loop',",
-        "        'run_peft_comparison_study',",
+        "        'run_baseline_first_candidate_comparison',",
+        "        'run_candidate_variant_comparison_loop',",
+        "        'run_candidate_comparison_study',",
         "        'run_experiment',",
         "        'execute_experiment',",
         "    )",
         "    if workflow is None:",
         "        raise RuntimeError(",
         "            'No experiment workflow function was found. Expected one of: '",
-        "            'run_instruction_study, run_baseline_first_peft_comparison, '",
-        "            'run_peft_variant_comparison_loop, run_peft_comparison_study, run_experiment, execute_experiment.'",
+        "            'run_instruction_study, run_baseline_first_candidate_comparison, '",
+        "            'run_candidate_variant_comparison_loop, run_candidate_comparison_study, run_experiment, execute_experiment.'",
         "        )",
         "    return _autolabos_call_compatible(workflow, config=config, args=args, experiment_config=config)",
         "",
@@ -19383,7 +19424,7 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("def run_instruction_study(config=None, args=None, experiment_config=None, **keyword):");
-    expect(repairedSource).toContain("target = run_baseline_locked_peft_variant_comparison");
+    expect(repairedSource).toContain("target = run_baseline_locked_candidate_variant_comparison");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
@@ -19487,7 +19528,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def _run_entrypoint_workflow(config):",
         "    orchestration_fn = _first_existing_callable((",
-        "        'run_locked_peft_study',",
+        "        'run_locked_candidate_study',",
         "        'run_instruction_study',",
         "        'run_experiment',",
         "        'orchestrate_experiment',",
@@ -19682,9 +19723,9 @@ describe("ImplementSessionManager", () => {
         "",
         "def _chunk5c_run_condition_study(config):",
         "    runner = _chunk5c_first_global_callable((",
-        "        'run_locked_peft_instruction_study',",
+        "        'run_locked_instruction_study',",
         "        'run_instruction_study',",
-        "        'execute_locked_peft_instruction_study',",
+        "        'execute_locked_instruction_study',",
         "        'execute_locked_study',",
         "        'run_locked_condition_study',",
         "        'run_all_conditions',",
@@ -19696,7 +19737,7 @@ describe("ImplementSessionManager", () => {
         "    if runner is None:",
         "        raise RuntimeError(",
         "            'No condition execution helper was found from earlier chunks; expected one of '",
-        "            'run_locked_peft_instruction_study/run_all_conditions/run_experiment_conditions.'",
+        "            'run_locked_instruction_study/run_all_conditions/run_experiment_conditions.'",
         "        )",
         "    namespace = argparse.Namespace(**dict(config))",
         "    return _chunk5c_call_flexibly(runner, namespace, config=config, args=namespace, **dict(config))",
@@ -19720,10 +19761,10 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("def run_locked_peft_instruction_study(*positional, **keyword):");
+    expect(repairedSource).toContain("def run_locked_instruction_study(*positional, **keyword):");
     expect(repairedSource).toContain("target = execute_baseline_first_conditions");
-    expect(repairedSource).toContain("run_all_conditions = run_locked_peft_instruction_study");
-    expect(repairedSource).toContain("run_experiment_conditions = run_locked_peft_instruction_study");
+    expect(repairedSource).toContain("run_all_conditions = run_locked_instruction_study");
+    expect(repairedSource).toContain("run_experiment_conditions = run_locked_instruction_study");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
@@ -19850,7 +19891,7 @@ describe("ImplementSessionManager", () => {
         "        'run_all_conditions',",
         "        'execute_condition_workflow',",
         "        'execute_all_conditions',",
-        "        'run_peft_condition_study',",
+        "        'run_adapter_condition_study',",
         "        'run_study_conditions',",
         "        'run_recipe_comparison',",
         "        'execute_recipe_comparison',",
@@ -21798,7 +21839,7 @@ describe("ImplementSessionManager", () => {
         "    benchmark_samples = {'benchmark_task_a': [{'answer': 'A'}]}",
         "    condition_runner = _pick_global_callable(",
         "        'run_condition_suite',",
-        "        'run_peft_conditions',",
+        "        'run_condition_suite',",
         "        'execute_condition_suite',",
         "        'execute_conditions',",
         "        'run_all_conditions',",
@@ -29351,7 +29392,7 @@ describe("ImplementSessionManager", () => {
         "        'run_instruction_study',",
         "        'execute_instruction_study',",
         "        'run_instruction_tuning_study',",
-        "        'run_peft_study',",
+        "        'run_candidate_study',",
         "        'run_study',",
         "        'execute_study',",
         "        'run_experiment',",
@@ -29365,7 +29406,7 @@ describe("ImplementSessionManager", () => {
         "            if isinstance(result, Mapping):",
         "                return result",
         "            return {'study_result': result}",
-        "    raise RuntimeError('No PEFT study workflow function was found.')",
+        "    raise RuntimeError('No candidate study workflow function was found.')",
         "",
         "def _entrypoint_assemble_metrics(args, study_result, started_at, finished_at, error=None):",
         "    schema_candidates = ('assemble_final_metrics',)",
@@ -29409,7 +29450,7 @@ describe("ImplementSessionManager", () => {
     );
 
     expect(() => execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })).toThrow(
-      /No PEFT study workflow function/
+      /No candidate study workflow function/
     );
 
     const repair = await repairPythonEntrypointWorkflowSignatureBridgeSurface(scriptPath);
@@ -29831,7 +29872,7 @@ describe("ImplementSessionManager", () => {
         "def _instantiate_config_if_available(config_dict):",
         "    return dict(config_dict)",
         "",
-        "def run_ordered_peft_instruction_study(config):",
+        "def run_ordered_instruction_study(config):",
         "    assert config['from_builder'] is True",
         "    return {",
         "        'status': 'completed',",
@@ -29844,10 +29885,10 @@ describe("ImplementSessionManager", () => {
         "    }",
         "",
         "def run_study(args):",
-        "    return run_ordered_peft_instruction_study(args)",
+        "    return run_ordered_instruction_study(args)",
         "",
         "def orchestrate_study(args):",
-        "    return run_ordered_peft_instruction_study(args)",
+        "    return run_ordered_instruction_study(args)",
         "",
         "def _prepare_final_metrics_payload(args, config_dict, study_metrics, started_at):",
         "    return {",
@@ -31380,7 +31421,7 @@ describe("ImplementSessionManager", () => {
                   "",
                   "def _call_registered_study_workflow(args=None, output_dir=None):",
                   "    workflow_names = [",
-                  "        'run_baseline_first_peft_comparison',",
+                  "        'run_baseline_first_candidate_comparison',",
                   "        'run_recipe_execution_and_evaluation_loop',",
                   "        'compare_adapter_recipes',",
                   "    ]",
@@ -31469,10 +31510,10 @@ describe("ImplementSessionManager", () => {
               content: [
                 "from __future__ import annotations",
                 "",
-                "def orchestrate_peft_instruction_study(config=None):",
+                "def orchestrate_instruction_study(config=None):",
                 "    return {'status': 'completed', 'accuracy_delta_vs_baseline': 0.0}",
                 "",
-                "run_instruction_study = orchestrate_peft_instruction_study",
+                "run_instruction_study = orchestrate_instruction_study",
                 "",
                 "def _call_experiment_orchestrator(config=None):",
                 "    for name in ('run_instruction_study', 'run_study', 'execute_experiment', 'orchestrate_experiment'):",
@@ -31878,11 +31919,11 @@ describe("ImplementSessionManager", () => {
                   "            return candidate",
                   "    return None",
                   "",
-                  "def run_baseline_first_peft_study(args=None, device=None, train_dataset=None, eval_splits=None, output_dir=None, runtime_tracker=None):",
+                  "def run_baseline_first_candidate_study(args=None, device=None, train_dataset=None, eval_splits=None, output_dir=None, runtime_tracker=None):",
                   "    return {'status': 'completed'}",
                   "",
-                  "orchestrate_baseline_first_recipe_runs = run_baseline_first_peft_study",
-                  "run_locked_baseline_first_comparison = run_baseline_first_peft_study",
+                  "orchestrate_baseline_first_recipe_runs = run_baseline_first_candidate_study",
+                  "run_locked_baseline_first_comparison = run_baseline_first_candidate_study",
                   "",
                   "def _entrypoint_execute_study(args=None, runtime_state=None):",
                   "    executor = _entrypoint_lookup_callable((",
@@ -31896,7 +31937,7 @@ describe("ImplementSessionManager", () => {
                   "        'run_experiment',",
                   "    ))",
                   "    if executor is None:",
-                  "        raise RuntimeError('No baseline-first PEFT study execution helper was found in the runner.')",
+                  "        raise RuntimeError('No baseline-first candidate study execution helper was found in the runner.')",
                   "    return executor(args=args)",
                   "",
                   "def main(argv=None):",
@@ -31984,7 +32025,7 @@ describe("ImplementSessionManager", () => {
                   "def evaluate_locked_unmodified_baseline(*args, **kwargs):",
                   "    return {'candidate_id': 'baseline_unmodified_base'}",
                   "",
-                  "def run_peft_candidate_evaluations(*args, **kwargs):",
+                  "def run_candidate_evaluations(*args, **kwargs):",
                   "    return [{'candidate_id': 'lora_r8_alpha16'}], {'best_recipe': 'lora_r8_alpha16'}",
                   "",
                   "def _autolabos_callable(name):",
@@ -31993,12 +32034,12 @@ describe("ImplementSessionManager", () => {
                   "",
                   "def _run_locked_baseline_first_comparison(config, args):",
                   "    runner_names = (",
-                  "        'run_baseline_first_peft_study',",
+                  "        'run_baseline_first_candidate_study',",
                   "        'run_baseline_first_comparison',",
                   "        'execute_baseline_first_study',",
                   "        'run_recipe_comparison',",
                   "        'run_adapter_recipe_comparison',",
-                  "        'run_peft_instruction_comparison',",
+                  "        'run_instruction_comparison',",
                   "        'run_baseline_and_adapter_recipes',",
                   "        'execute_experiment',",
                   "    )",
@@ -32091,18 +32132,18 @@ describe("ImplementSessionManager", () => {
                 content: [
                   "from __future__ import annotations",
                   "",
-                  "def run_locked_peft_experiment_rows(args=None):",
+                  "def run_locked_candidate_experiment_rows(args=None):",
                   "    return [{'recipe_id': 'standard_lora', 'status': 'completed'}]",
                   "",
                   "def run_recipe_execution_evaluation_loop(args=None):",
-                  "    return run_locked_peft_experiment_rows(args)",
+                  "    return run_locked_candidate_experiment_rows(args)",
                   "",
                   "def _run_study_with_available_helper(args=None):",
                   "    candidate_names = (",
-                  "        'run_locked_peft_instruction_study',",
+                  "        'run_locked_instruction_study',",
                   "        'run_instruction_study',",
-                  "        'run_locked_peft_study',",
-                  "        'run_peft_study',",
+                  "        'run_locked_candidate_study',",
+                  "        'run_candidate_study',",
                   "        'run_experiment_rows',",
                   "        'run_locked_recipe_rows',",
                   "        'run_recipe_experiment_loop',",
@@ -32405,7 +32446,7 @@ describe("ImplementSessionManager", () => {
                   "        'run_locked_condition',",
                   "        'run_single_locked_condition',",
                   "        'execute_single_locked_condition',",
-                  "        'run_peft_condition',",
+                  "        'run_condition_worker',",
                   "        'train_and_evaluate_condition',",
                   "        'train_evaluate_condition',",
                   "        'run_condition',",

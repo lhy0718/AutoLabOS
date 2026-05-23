@@ -97,11 +97,21 @@ describe("public code sanitization", () => {
       conditionMarker(32, "0_05")
     ];
 
+    const bannedPatterns = [
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([114, 117, 110, 95, 112, 101, 102, 116, 95])}[A-Za-z0-9_]*`, "u"),
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([101, 120, 101, 99, 117, 116, 101, 95, 112, 101, 102, 116, 95])}[A-Za-z0-9_]*`, "u"),
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([111, 114, 99, 104, 101, 115, 116, 114, 97, 116, 101, 95, 112, 101, 102, 116, 95])}[A-Za-z0-9_]*`, "u")
+    ];
+
     const offenders = CODE_DIRS.flatMap(walkCodeFiles).flatMap((relativePath) => {
       const text = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
-      return banned
+      const literalOffenders = banned
         .filter((pattern) => text.includes(pattern))
         .map((pattern) => ({ relativePath, pattern }));
+      const patternOffenders = bannedPatterns
+        .filter((pattern) => pattern.test(text))
+        .map((pattern) => ({ relativePath, pattern: pattern.source }));
+      return [...literalOffenders, ...patternOffenders];
     });
 
     expect(offenders).toEqual([]);

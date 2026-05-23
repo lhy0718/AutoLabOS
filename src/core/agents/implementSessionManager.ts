@@ -10105,7 +10105,7 @@ function addPythonRunnerCandidate(candidates: Set<string>, rawValue: string | nu
 }
 
 const RECIPE_WORKFLOW_ENTRYPOINT_NAMES = [
-  "run_baseline_first_peft_comparison",
+  "run_baseline_first_candidate_comparison",
   "run_baseline_first_candidate_evaluation",
   "run_baseline_first_recipe_comparison",
   "run_baseline_first_comparison",
@@ -10115,14 +10115,14 @@ const RECIPE_WORKFLOW_ENTRYPOINT_NAMES = [
   "run_recipe_execution_and_evaluation_loop",
   "execute_recipe_execution_and_evaluation_loop",
   "run_recipe_execution_evaluation_loop",
-  "run_baseline_first_peft_study",
+  "run_baseline_first_candidate_study",
   "run_locked_instruction_study",
-  "run_locked_peft_study",
-  "run_peft_study",
+  "run_locked_candidate_study",
+  "run_candidate_study",
   "run_experiment_rows",
   "run_locked_recipe_rows",
   "run_recipe_experiment_loop",
-  "run_locked_peft_experiment_rows",
+  "run_locked_candidate_experiment_rows",
   "run_study_comparison",
   "run_study_orchestration",
   "run_orchestration_and_status_handling",
@@ -10177,7 +10177,7 @@ async function detectPythonMissingRegisteredRecipeWorkflow(scriptPath?: string):
     source.includes("No experiment orchestration helper is available from earlier sections") ||
     source.includes("No study orchestration function was found") ||
     source.includes("No baseline-first study runner was found") ||
-    source.includes("No baseline-first PEFT study execution helper was found") ||
+    source.includes("No baseline-first candidate study execution helper was found") ||
     source.includes("No executable study helper was found in completed sections") ||
     source.includes("None of the required functions are available");
   if (!hasRegisteredWorkflowDispatcher) {
@@ -23014,7 +23014,7 @@ export async function repairPythonConditionSuiteAliasSurface(
     "run_all_conditions_baseline_first",
     "execute_all_conditions_baseline_first",
     "run_baseline_first_locked_conditions",
-    "execute_locked_peft_study_conditions",
+    "execute_locked_condition_study",
     "run_condition_execution",
     "execute_condition_execution"
   ].find((name) => pythonSourceDefinesOrImportsName(source, name));
@@ -33089,7 +33089,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         "run_all_conditions",
         "execute_condition_workflow",
         "execute_all_conditions",
-        "run_peft_condition_study",
+        "run_adapter_condition_study",
         "run_study_conditions",
         "run_recipe_comparison",
         "execute_recipe_comparison",
@@ -33122,7 +33122,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
       ]
     : hasFailureSafeTopLevelOrchestrationResolver
     ? [
-        "run_locked_peft_study",
+        "run_locked_candidate_study",
         "run_experiment",
         "run_study",
         "run_full_experiment",
@@ -33147,9 +33147,9 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         ]
       : [
           "run_study",
-          "run_baseline_first_peft_comparison",
-          "run_peft_variant_comparison_loop",
-          "run_peft_comparison_study",
+          "run_baseline_first_candidate_comparison",
+          "run_candidate_variant_comparison_loop",
+          "run_candidate_comparison_study",
           "run_experiment",
           "execute_experiment"
         ]
@@ -33173,7 +33173,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         "run_candidate_experiments",
         "execute_candidate_experiments",
         "execute_study",
-        "run_peft_candidate_study",
+        "run_candidate_study",
         "run_study_orchestration",
         "run_experiment_orchestration"
       ]
@@ -33303,13 +33303,13 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
       ? [
           "run_baseline_first_experiment",
           "execute_baseline_first_experiment",
-          "run_baseline_locked_peft_variant_comparison",
-          "execute_baseline_locked_peft_variant_comparison",
-          "run_baseline_locked_peft_comparison",
-          "execute_baseline_locked_peft_comparison",
-          "run_baseline_first_peft_variant_comparison",
-          "execute_baseline_first_peft_variant_comparison",
-          "run_peft_variant_comparison",
+          "run_baseline_locked_candidate_variant_comparison",
+          "execute_baseline_locked_candidate_variant_comparison",
+          "run_baseline_locked_candidate_comparison",
+          "execute_baseline_locked_candidate_comparison",
+          "run_baseline_first_candidate_variant_comparison",
+          "execute_baseline_first_candidate_variant_comparison",
+          "run_candidate_variant_comparison",
           "run_experiment_comparison",
           "run_study_core",
           "execute_candidate_study",
@@ -33321,10 +33321,10 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
           "run_candidate_study",
           "execute_baseline_first_candidate_study",
           "run_baseline_first_candidate_study",
-          "execute_baseline_first_peft_study",
-          "run_baseline_first_peft_study",
-          "execute_peft_candidate_study",
-          "run_peft_candidate_study",
+          "execute_baseline_first_candidate_study",
+          "run_baseline_first_candidate_study",
+          "execute_candidate_study",
+          "run_candidate_study",
           "execute_locked_baseline_first_recipes",
           "run_locked_baseline_first_recipes",
           "execute_baseline_first_recipes",
@@ -33671,8 +33671,8 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         "    execute_condition_workflow = run_condition_workflow",
         "if \"execute_all_conditions\" not in globals():",
         "    execute_all_conditions = run_condition_workflow",
-        "if \"run_peft_condition_study\" not in globals():",
-        "    run_peft_condition_study = run_condition_workflow",
+        "if \"run_adapter_condition_study\" not in globals():",
+        "    run_adapter_condition_study = run_condition_workflow",
         "if \"run_study_conditions\" not in globals():",
         "    run_study_conditions = run_condition_workflow",
         "if \"run_recipe_comparison\" not in globals():",
@@ -35396,7 +35396,7 @@ export async function repairPythonChunk5OrchestrationHelperBridgeSurface(
     "build_final_metrics_payload"
   ];
   const domainStudyHelperNames = [
-    "run_ordered_peft_instruction_study",
+    "run_ordered_instruction_study",
     "run_study",
     "orchestrate_study",
     "run_experiment",
@@ -35482,7 +35482,7 @@ export async function repairPythonChunk5OrchestrationHelperBridgeSurface(
     "    run_config = _autolabos_chunk5_orchestration_bridge_instantiate_config(config_dict)",
     "    attempts = []",
     "    for helper_name in (",
-    "        \"run_ordered_peft_instruction_study\",",
+    "        \"run_ordered_instruction_study\",",
     "        \"run_study\",",
     "        \"orchestrate_study\",",
     "        \"run_experiment\",",
@@ -35893,7 +35893,7 @@ async function detectPythonMissingConcreteConditionWorkerSurface(
     "run_locked_condition",
     "run_single_locked_condition",
     "execute_single_locked_condition",
-    "run_peft_condition",
+    "run_condition_worker",
     "train_and_evaluate_condition",
     "train_evaluate_condition",
     "run_condition"
@@ -35940,7 +35940,7 @@ async function detectPythonMissingConcreteConditionWorkerSurface(
     "run_single_condition",
     "execute_condition",
     "train_and_evaluate_condition",
-    "run_peft_condition",
+    "run_condition_worker",
     "run_condition_trial"
   ];
   const definedCallableNames = callableResolverNames.filter((name) =>
@@ -39559,8 +39559,38 @@ function pythonSignatureAcceptsVarKwargs(signature: string): boolean {
     .some((param) => /^\*\*\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*:|\s*$|\s*=)/u.test(param));
 }
 
-function extractPythonCallKeywordNames(source: string, functionName: string): Set<string> {
+function pythonSignatureAcceptsVarArgs(signature: string): boolean {
+  return splitPythonSignatureParameters(signature)
+    .map((param) => param.replace(/#.*/u, "").trim())
+    .some((param) => /^\*(?!\*)\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*:|\s*$|\s*=)/u.test(param));
+}
+
+function pythonSignaturePositionalCapacity(signature: string): number {
+  if (pythonSignatureAcceptsVarArgs(signature)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  let count = 0;
+  for (const rawParam of splitPythonSignatureParameters(signature)) {
+    const param = rawParam.replace(/#.*/u, "").trim();
+    if (!param || param === "/") {
+      continue;
+    }
+    if (param === "*" || param.startsWith("*")) {
+      break;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+interface PythonCallShape {
+  keywords: Set<string>;
+  maxPositionalArgs: number;
+}
+
+function extractPythonCallShape(source: string, functionName: string): PythonCallShape {
   const keywords = new Set<string>();
+  let maxPositionalArgs = 0;
   const escaped = escapeRegex(functionName);
   const pattern = new RegExp("\\b" + escaped + "\\s*\\(", "gu");
   for (const match of source.matchAll(pattern)) {
@@ -39611,11 +39641,24 @@ function extractPythonCallKeywordNames(source: string, functionName: string): Se
       continue;
     }
     const callBody = source.slice(openIndex + 1, closeIndex);
-    for (const keywordMatch of callBody.matchAll(/(?:^|[,\n])\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/gu)) {
-      keywords.add(keywordMatch[1]);
+    let positionalCount = 0;
+    for (const rawArg of splitPythonSignatureParameters(callBody)) {
+      const arg = rawArg.replace(/#.*/u, "").trim();
+      if (!arg) {
+        continue;
+      }
+      const keywordMatch = /^([A-Za-z_][A-Za-z0-9_]*)\s*=/u.exec(arg);
+      if (keywordMatch) {
+        keywords.add(keywordMatch[1]);
+        continue;
+      }
+      if (!arg.startsWith("*")) {
+        positionalCount += 1;
+      }
     }
+    maxPositionalArgs = Math.max(maxPositionalArgs, positionalCount);
   }
-  return keywords;
+  return { keywords, maxPositionalArgs };
 }
 
 export async function repairPythonDuplicateHelperSignatureDriftSurface(scriptPath?: string): Promise<{
@@ -39646,14 +39689,15 @@ export async function repairPythonDuplicateHelperSignatureDriftSurface(scriptPat
     if (group.length < 2) {
       continue;
     }
-    const callKeywords = extractPythonCallKeywordNames(source, name);
-    if (callKeywords.size === 0) {
+    const callShape = extractPythonCallShape(source, name);
+    if (callShape.keywords.size === 0 && callShape.maxPositionalArgs === 0) {
       continue;
     }
     const finalDefinition = group[group.length - 1];
     const finalParams = new Set(extractPythonParameterNames(finalDefinition.signature));
     const finalAcceptsKwargs = pythonSignatureAcceptsVarKwargs(finalDefinition.signature);
-    if (finalAcceptsKwargs) {
+    const finalPositionalCapacity = pythonSignaturePositionalCapacity(finalDefinition.signature);
+    if (finalAcceptsKwargs && finalPositionalCapacity >= callShape.maxPositionalArgs) {
       continue;
     }
 
@@ -39663,9 +39707,13 @@ export async function repairPythonDuplicateHelperSignatureDriftSurface(scriptPat
       .find((definition) => {
         const params = new Set(extractPythonParameterNames(definition.signature));
         const acceptsKwargs = pythonSignatureAcceptsVarKwargs(definition.signature);
-        return [...callKeywords].some(
+        const positionalCapacity = pythonSignaturePositionalCapacity(definition.signature);
+        const supportsKeywordCalls = [...callShape.keywords].some(
           (keyword) => !finalParams.has(keyword) && (acceptsKwargs || params.has(keyword))
         );
+        const supportsPositionalCalls =
+          callShape.maxPositionalArgs > finalPositionalCapacity && positionalCapacity >= callShape.maxPositionalArgs;
+        return supportsKeywordCalls || supportsPositionalCalls;
       });
     if (!compatibleEarlierDefinition) {
       continue;
@@ -39918,7 +39966,7 @@ export function normalizeLockedPeftStudyConfigPayloadForCompatibility(
   if (payload.study_name === undefined) {
     const derivedStudyName =
       firstPresentRecordString(payload, ["study_name", "experiment_name", "run_id"]) ||
-      "qwen2_5_1_5b_peft_instruction_study";
+      "locked_adapter_instruction_study";
     payload.study_name = derivedStudyName;
   }
 
@@ -39926,8 +39974,8 @@ export function normalizeLockedPeftStudyConfigPayloadForCompatibility(
     repaired: true,
     payload,
     message: droppedBaseline
-      ? "Normalized locked PEFT config to recipes-only schema and removed the baseline entry before handoff."
-      : "Normalized locked PEFT config to the recipes-only runtime schema before handoff."
+      ? "Normalized locked adapter config to recipes-only schema and removed the baseline entry before handoff."
+      : "Normalized locked adapter config to the recipes-only runtime schema before handoff."
   };
 }
 
