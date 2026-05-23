@@ -2527,6 +2527,13 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
     messages.push(adjacentBackendAggregationSeedRowsRepair.message || `Added adjacent backend aggregation seed_rows alias in ${path.basename(scriptPath)} before run_experiments execution.`);
   }
 
+  const adjacentBackendConditionSummariesRepair =
+    await repairPythonAdjacentBackendConditionSummariesMappingSurface(scriptPath);
+  if (adjacentBackendConditionSummariesRepair.repaired) {
+    repaired = true;
+    messages.push(adjacentBackendConditionSummariesRepair.message || `Normalized adjacent backend condition summaries in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
   const mainCallableResolverSpecificityRepair =
     await repairPythonMainCallableResolverSpecificitySurface(scriptPath);
   if (mainCallableResolverSpecificityRepair.repaired) {
@@ -2762,6 +2769,41 @@ async function repairPythonAdjacentBackendAggregationSeedRowsSurface(scriptPath:
   return {
     repaired: true,
     message: `Added seed_rows alias for adjacent backend aggregation in ${path.basename(backendPath)} before run_experiments execution.`
+  };
+}
+async function repairPythonAdjacentBackendConditionSummariesMappingSurface(scriptPath: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  const backendPath = path.join(path.dirname(scriptPath), "backend_experiment_impl.py");
+  if (!(await fileExists(backendPath))) {
+    return { repaired: false };
+  }
+  const source = await fs.readFile(backendPath, "utf8");
+  if (source.includes("raw_condition_summaries = aggregate_payload.get")) {
+    return { repaired: false };
+  }
+  const conditionSummariesLinePattern = /^(\s*)condition_summaries = list\(aggregate_payload\.get\(["']condition_summaries["'], \[\]\)\)/mu;
+  const match = source.match(conditionSummariesLinePattern);
+  if (!match) {
+    return { repaired: false };
+  }
+  const indent = match[1] || "";
+  const replacement = [
+    `${indent}raw_condition_summaries = aggregate_payload.get("condition_summaries", [])`,
+    `${indent}if isinstance(raw_condition_summaries, Mapping):`,
+    `${indent}    condition_summaries = list(raw_condition_summaries.values())`,
+    `${indent}else:`,
+    `${indent}    condition_summaries = list(raw_condition_summaries)`
+  ].join("\n");
+  const nextSource = source.replace(conditionSummariesLinePattern, replacement);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+  await fs.writeFile(backendPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Normalized adjacent backend condition_summaries mapping in ${path.basename(backendPath)} before run_experiments execution.`
   };
 }
 function extractPythonScriptPathFromCommand(command: string, cwd: string): string | undefined {

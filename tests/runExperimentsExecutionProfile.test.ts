@@ -1343,6 +1343,11 @@ describe("run_experiments execution profile behavior", () => {
         "        ],",
         "    }",
         "",
+        "def summarize_payload_for_public_report(aggregate_payload):",
+        "    best_condition_summary = {}",
+        "    condition_summaries = list(aggregate_payload.get(\"condition_summaries\", []))",
+        "    return [summary.get(\"accuracy_delta_vs_baseline\") for summary in condition_summaries]",
+        "",
         "def run_experiment(metrics_path=None, output_dir=None, **kwargs):",
         "    seed_results = [",
         "        {\"condition_marker\": \"baseline_condition\", \"status\": \"completed\"},",
@@ -1435,6 +1440,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(metrics.completed_run_count).toBe(2);
     expect(metrics.completed_condition_count).toBe(2);
     expect(await readFile(scriptPath, "utf8")).toContain("backend_experiment_impl.py");
+    expect(await readFile(backendPath, "utf8")).toContain("raw_condition_summaries = aggregate_payload.get");
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes("Added adjacent backend_experiment_impl.py discovery")
