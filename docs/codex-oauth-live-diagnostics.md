@@ -4,7 +4,7 @@ Last updated: 2026-04-24
 
 ## Scope
 
-This note records live validation evidence for the `implement_experiments` Codex OAuth blocker on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+This note records live validation evidence for an `implement_experiments` Codex OAuth blocker on a persisted live-validation run.
 
 Path note: `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
 
@@ -16,7 +16,7 @@ The goal is to separate:
 ## Confirmed AutoLabOS-side improvements
 
 - `implement_experiments` now localizes the intended runner path:
-  - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `outputs/<bundle>/experiment/<study-runner.py>`
 - placeholder/comment-only Python chunk responses are rejected instead of silently passing
 - placeholder-only public bundles are no longer recovered as valid implement results
 - staged scaffold and bootstrap prompts are compacted
@@ -194,13 +194,13 @@ Interpretation:
   - decomposition repair completed because the scaffold omitted `decomposition_plan`
   - materialization planning returned a single Python runner chunk
   - because Python runner materialization now always uses chunk generation, the live log showed:
-    - `Generating staged_llm unit 1/1 chunk 1/1: Implement the PEFT instruction study runner`
+    - `Generating staged_llm unit 1/1 chunk 1/1: Implement the study runner`
   - the provider then waited with no observable text delta through heartbeat observations up to `539s`
   - streamed output eventually arrived and wrote:
-    - `unit_chunk_responses/peft_runner__peft_runner__d0__chunk_1_1.txt`
+    - `unit_chunk_responses/<runner-chunk-response>.txt`
   - the public runner was rewritten to `690` lines
   - local verification passed via:
-    - `python -m py_compile <validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+    - `python -m py_compile <validation-workspace>/outputs/<bundle>/experiment/<study-runner.py>`
   - `implement_experiments/status.json` ended with:
     - `status: "completed"`
     - `verifyStatus: "pass"`
@@ -249,22 +249,22 @@ What we can now say confidently:
 What we cannot yet say confidently:
 
 - whether future provider-side no-delta waits are caused by provider load, prompt shape sensitivity, request routing, or another upstream transport condition
-- whether the generated PEFT runner will satisfy the downstream `run_experiments` metrics contract until that node is rerun
+- whether the generated study runner will satisfy the downstream `run_experiments` metrics contract until that node is rerun
 
 ## Primary artifacts
 
-- `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
-- `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
-- `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/scaffold_prompt.txt`
-- `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/scaffold_raw_response.txt`
-- `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_prompt.txt`
-- `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_chunk_prompts/`
-- `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_chunk_responses/`
-- `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+- `.autolabos-validation/.autolabos/runs/<run-id>/implement_experiments/status.json`
+- `.autolabos-validation/.autolabos/runs/<run-id>/implement_experiments/progress.jsonl`
+- `.autolabos-validation/.autolabos/runs/<run-id>/implement_experiments/scaffold_prompt.txt`
+- `.autolabos-validation/.autolabos/runs/<run-id>/implement_experiments/scaffold_raw_response.txt`
+- `.autolabos-validation/.autolabos/runs/<run-id>/implement_experiments/bootstrap_contract_prompt.txt`
+- `.autolabos-validation/.autolabos/runs/<run-id>/implement_experiments/unit_chunk_prompts/`
+- `.autolabos-validation/.autolabos/runs/<run-id>/implement_experiments/unit_chunk_responses/`
+- `.autolabos-validation/outputs/<bundle>/experiment/<study-runner.py>`
 
 ## Recommended next diagnostic step
 
 - keep the current guarded staged path and do not reintroduce deterministic heuristic fallbacks
 - rebuild with Codex OAuth delta-forwarding so future live retries expose real text deltas when the backend emits them
-- continue to downstream `run_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- continue to downstream `run_experiments` on the persisted live-validation run
 - treat any future no-delta waits as provider-stage evidence first, but inspect `partial_response.txt`, chunk prompt/response artifacts, and status heartbeats before changing the decomposition policy

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
-const CODE_DIRS = ["src", "tests", path.join(".codex", "skills")];
+const CODE_DIRS = ["src", "tests", "docs", path.join(".codex", "skills")];
 const TEXT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".md"]);
 
 function walkCodeFiles(dir: string): string[] {
@@ -37,7 +37,7 @@ function conditionMarker(rank: number, dropoutCode: string): string {
 }
 
 describe("public code sanitization", () => {
-  it("does not expose one-off experiment identifiers in public source, tests, or local skills", () => {
+  it("does not expose one-off experiment identifiers in public source, tests, docs, or local skills", () => {
     const banned = [
       chars([114, 117, 110, 95, 112, 101, 102, 116, 95, 105, 110, 115, 116, 114, 117, 99, 116, 105, 111, 110, 95, 115, 116, 117, 100, 121]),
       chars([101, 120, 101, 99, 117, 116, 101, 95, 112, 101, 102, 116, 95, 105, 110, 115, 116, 114, 117, 99, 116, 105, 111, 110, 95, 115, 116, 117, 100, 121]),

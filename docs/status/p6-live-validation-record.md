@@ -17,7 +17,7 @@ Updated: 2026-05-07
 Observed result:
 
 - A fresh validation run was created.
-- The run used the frozen P6 LoRA rank/dropout brief snapshot.
+- The run used the frozen P6 parameter-efficient adaptation brief snapshot.
 - The run produced inspectable workflow state, events, checkpoints, and node artifacts.
 - The run advanced through the governed workflow to `run_experiments`.
 
@@ -41,8 +41,8 @@ The run currently includes:
 - `events.jsonl`
 - node checkpoints through `run_experiments`
 - collected literature and analysis artifacts from earlier nodes
-- generated experiment package under `outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment`
-- `run_lora_rank_dropout_study.py`
+- generated experiment package under `outputs/<bundle>/experiment`
+- `<study-runner.py>`
 - `metrics.json`
 - `run_experiments_verify_report.json`
 - `result_analysis.json`
@@ -70,18 +70,18 @@ The run currently includes:
 
 ## Current Experiment Evidence
 
-- Model: `Qwen/Qwen2.5-1.5B`, resolved from local cache.
+- Model: a small locally cached instruction-tuned backbone resolved by the runner.
 - Hardware observed by the runner: 2 CUDA devices, both RTX 4090-class GPUs with roughly 24 GB VRAM each.
-- Training/evaluation data: bounded ARC-Challenge and HellaSwag examples, marked non-synthetic by the generated runner.
-- Conditions: 5 LoRA rank/dropout conditions x 5 seeds.
+- Training/evaluation data: bounded benchmark-task examples, marked non-synthetic by the generated runner.
+- Conditions: 5 adaptation conditions x 5 seeds.
 - Required runs: 25.
 - Completed runs: 25.
 - Failed runs: 0.
 - Objective metric: `accuracy_delta_vs_baseline=0.04479166666666667`.
-- Best non-baseline mean result in the completed table: rank=32/dropout=0.05, mean average accuracy 0.5083 versus baseline 0.4417.
+- Best non-baseline mean result in the completed table: the strongest candidate condition, mean average accuracy 0.5083 versus baseline 0.4417.
 - Run verifier status: pass.
 - Result analysis status: pass for result-table handoff.
-- Result table comparator: `rank_32_dropout_0_05` versus baseline `rank_8_dropout_0_0`.
+- Result table comparator: `<candidate_condition>` versus baseline `<baseline_condition>`.
 - Headline result-table metric: `accuracy_delta_vs_baseline_mean`, baseline 0, comparator 0.066667, delta 0.0667.
 - Result analysis trial count: 25 total / 25 executed / 0 cached.
 - Figure audit status: completed with 0 severe mismatches, 1 warning for an empty figure directory, and no review block required.

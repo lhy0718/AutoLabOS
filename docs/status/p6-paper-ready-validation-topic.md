@@ -6,27 +6,27 @@ Updated: 2026-05-06
 
 Freeze the P6 full end-to-end validation topic as:
 
-> PEFT LoRA rank x dropout interaction under a fixed small-model multiple-choice adaptation budget.
+> Parameter-efficient adaptation choices under a fixed small-model multiple-choice budget.
 
 The first full live validation run should use a cached, locally runnable small LLM target instead of making the run depend on a new gated or uncached model download.
 
 ## Preferred Validation Brief
 
-- Broad topic: LoRA rank and dropout interaction in small-model PEFT adaptation.
-- Research question: Under a fixed data, training, and evaluation budget, does the LoRA rank x dropout choice measurably affect downstream multiple-choice accuracy and training efficiency?
-- Current hypothesis: Higher rank is not automatically better under a constrained adaptation budget; small dropout may moderate overfitting at higher rank.
-- Preferred base model for the first P6 run: `Qwen/Qwen2.5-1.5B`.
-- Fallback base model if the preferred cached model fails preflight: `TinyLlama/TinyLlama-1.1B-Chat-v1.0`.
+- Broad topic: parameter-efficient adaptation choices in small-model adaptation.
+- Research question: Under a fixed data, training, and evaluation budget, do adaptation-condition choices measurably affect downstream multiple-choice accuracy and training efficiency?
+- Current hypothesis: higher-capacity settings are not automatically better under a constrained adaptation budget; regularized settings may moderate overfitting.
+- Preferred base model for the first P6 run: `<preferred_small_cached_model>`.
+- Fallback base model if the preferred cached model fails preflight: `<fallback_small_cached_model>`.
 - Scale-up target after the first successful full run: a 7B-class model, only after model access, dependencies, runtime, and evaluator preflight are clean.
 
 ## Experimental Contract
 
-- Current live-run training data: bounded ARC-Challenge and HellaSwag train examples, separate from validation examples.
-- Current live-run evaluation tasks: ARC-Challenge and HellaSwag validation examples.
-- Primary metric: average accuracy across ARC-Challenge and HellaSwag.
+- Current live-run training data: bounded benchmark-task train examples, separate from validation examples.
+- Current live-run evaluation tasks: bounded benchmark-task validation examples.
+- Primary metric: average accuracy across the bounded benchmark tasks.
 - Secondary metrics: train loss, wall-clock runtime, peak VRAM, failed-run visibility.
-- Baseline: rank=8, dropout=0.0.
-- Current live-run conditions: rank=8/dropout=0.0 baseline plus rank=16/dropout=0.0, rank=16/dropout=0.05, rank=32/dropout=0.0, and rank=32/dropout=0.05 comparators.
+- Baseline: `<baseline_condition>`.
+- Current live-run conditions: one locked baseline plus candidate comparators from the declared grid.
 - Current live-run robustness signal: five seeds per condition, seeds 42 through 46.
 - Scale-up candidate: add rank=4 and larger evaluation slices only after the current run clears analyze/review/audit gates.
 - Result table minimum columns: model, rank, dropout, seed, task, accuracy, average accuracy, train loss, runtime, peak VRAM, status, failure note.
@@ -38,12 +38,12 @@ The first full live validation run should use a cached, locally runnable small L
 - It naturally produces a compact quantitative result table.
 - It directly exercises `implement_experiments`, `run_experiments`, `analyze_results`, `figure_audit`, `review`, `write_paper`, and `autolabos audit --run`.
 - It keeps the paper-readiness gate honest: null or negative results can still become a valid research memo, while incomplete or fallback-only evidence must not become paper-ready.
-- It is close to known live-validation risk around PEFT runners, so failures are useful product evidence rather than wasted work.
+- It is close to known live-validation risk around generated research runners, so failures are useful product evidence rather than wasted work.
 - It matches the audit-first strategy: AutoLabOS should prove that baseline/comparator, result-table completeness, failed-run visibility, and claim ceiling can govern a real AI-generated research run before it claims paper readiness.
 
 ## Machine-Fit Rationale
 
-The first P6 run should be sized for the current local workstation: dual RTX 4090 GPUs with roughly 24 GB VRAM each, 125 GiB system memory, and an Intel i9-14900K-class CPU. The current run confirmed CUDA visibility, local Qwen/Qwen2.5-1.5B cache availability, and a working PEFT/Transformers/Datasets stack.
+The first P6 run should be sized for the current local workstation: dual RTX 4090 GPUs with roughly 24 GB VRAM each, 125 GiB system memory, and an Intel i9-14900K-class CPU. The current run confirmed CUDA visibility, local small-model cache availability, and a working model-training/data stack.
 
 This makes a cached 1B- to 1.5B-class model the right first full-run target. It lowers external setup risk while preserving the evidence contract: real training, explicit baseline, comparator rows, repeated seeds, quantitative metrics, limitations, and post-run audit.
 
@@ -51,12 +51,12 @@ This makes a cached 1B- to 1.5B-class model the right first full-run target. It 
 
 The active P6 run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` completed `run_experiments` for the frozen topic on 2026-05-06 and reached the final audit gate on 2026-05-07.
 
-- Model: `Qwen/Qwen2.5-1.5B`, resolved from local cache.
+- Model: a small locally cached instruction-tuned backbone resolved by the runner.
 - Conditions: 5 condition markers x 5 seeds = 25 required runs.
 - Completed runs: 25/25.
 - Failed runs: 0.
 - Primary delta: `accuracy_delta_vs_baseline=0.04479166666666667`.
-- Best non-baseline condition by mean delta: rank=32/dropout=0.05, with mean average accuracy 0.5083 versus baseline 0.4417.
+- Best non-baseline condition by mean delta: the strongest candidate condition, with mean average accuracy 0.5083 versus baseline 0.4417.
 - Mean peak VRAM stayed near 5 GB for the largest condition, so the topic fits the current machine with room for guarded follow-up analysis.
 - `figure_audit` completed with no severe figure/result/caption mismatch.
 - `review` downgraded the output to `paper_scale_candidate`.
