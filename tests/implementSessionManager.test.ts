@@ -214,6 +214,7 @@ import {
   repairPythonLockedBaselineFirstExecutionResolverSurface,
   repairPythonLockedBaselineFirstSweepOrchestratorSurface,
   repairPythonBaselineFirstLockedSweepEntrypointResolverSurface,
+  repairPythonPublicStudyEntrypointArgsAliasSurface,
   repairPythonFinalCliLockedGridResolverSurface,
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
@@ -6166,6 +6167,38 @@ describe("ImplementSessionManager", () => {
       encoding: "utf8"
     }).trim();
     expect(output).toBe("neutral_base_model:cpu");
+  });
+
+  it("aliases args keyword calls into argv-only public study entrypoints", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-study-entrypoint-args-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Optional, Sequence",
+        "",
+        "def run_condition_schedule(argv: Optional[Sequence[str]] = None) -> dict:",
+        "    tokens = list(argv or [])",
+        "    return {'tokens': tokens}",
+        "",
+        "print(run_condition_schedule(args=['--candidate-condition', 'candidate_condition_a'])['tokens'][-1])",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/unexpected keyword argument 'args'/);
+
+    const repair = await repairPythonPublicStudyEntrypointArgsAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("args=None");
+    expect(repairedSource).toContain("if args is not None and argv is None:");
+    const output = execFileSync("python3", [scriptPath], {
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("candidate_condition_a");
   });
 
   it("widens a metric float helper so aggregate callers can omit field names", async () => {

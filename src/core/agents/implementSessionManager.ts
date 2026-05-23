@@ -9404,6 +9404,8 @@ export class ImplementSessionManager {
       await repairPythonLockedBaselineFirstSweepOrchestratorSurface(executionScriptPath);
     const baselineFirstLockedSweepEntrypointResolverRepair =
       await repairPythonBaselineFirstLockedSweepEntrypointResolverSurface(executionScriptPath);
+    const publicStudyEntrypointArgsAliasRepair =
+      await repairPythonPublicStudyEntrypointArgsAliasSurface(executionScriptPath);
     const finalCliLockedGridResolverRepair =
       await repairPythonFinalCliLockedGridResolverSurface(executionScriptPath);
     const entrypointStudyResultKwargAliasRepair =
@@ -9534,6 +9536,7 @@ export class ImplementSessionManager {
         lockedBaselineFirstExecutionResolverRepair,
         lockedBaselineFirstSweepOrchestratorRepair,
         baselineFirstLockedSweepEntrypointResolverRepair,
+        publicStudyEntrypointArgsAliasRepair,
         finalCliLockedGridResolverRepair,
         entrypointStudyResultKwargAliasRepair,
         nestedRunRecordsProjectionRepair,
@@ -40679,6 +40682,74 @@ export async function repairPythonBaselineFirstLockedSweepEntrypointResolverSurf
   return {
     repaired: true,
     message: `Bridged baseline-first locked sweep CLI resolver and runtime context in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonPublicStudyEntrypointArgsAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!/\bdef\s+(?:run|execute|orchestrate)_[A-Za-z0-9_]*(?:study|experiment|workflow|orchestration|pipeline|matrix|schedule|conditions)\s*\(/u.test(source)) {
+    return { repaired: false };
+  }
+
+  const perRunNames = new Set([
+    "run_condition_seed",
+    "run_condition_seed_experiment",
+    "run_single_condition_seed_experiment",
+    "execute_condition_seed_run",
+    "execute_single_run",
+    "run_single_study_cell",
+    "run_single_condition_seed",
+    "train_and_evaluate_condition",
+    "run_one_condition",
+    "run_condition_experiment",
+    "run_single_condition",
+    "execute_condition",
+    "execute_training_condition"
+  ]);
+
+  let repaired = false;
+  const nextSource = source.replace(
+    /^(\s*(?:async\s+)?def\s+((?:run|execute|orchestrate)_[A-Za-z0-9_]*(?:study|experiment|workflow|orchestration|pipeline|matrix|schedule|conditions))\s*\()([^)\n]*\bargv\b[^)\n]*)(\)\s*(?:->\s*[^:\n]+)?\s*:\s*)$/gmu,
+    (full: string, prefix: string, name: string, parameters: string, suffix: string) => {
+      if (
+        perRunNames.has(name) ||
+        /\*\*/u.test(parameters) ||
+        /(?:^|,)\s*\*?args\s*(?::|=|,|$)/u.test(parameters)
+      ) {
+        return full;
+      }
+      const lineIndent = prefix.match(/^(\s*)/u)?.[1] ?? "";
+      const bodyIndent = `${lineIndent}    `;
+      repaired = true;
+      return [
+        `${prefix}${parameters}, args=None${suffix}`,
+        `${bodyIndent}if args is not None and argv is None:`,
+        `${bodyIndent}    argv = args`
+      ].join("\n");
+    }
+  );
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added args keyword alias to argv-based public study entrypoint in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
