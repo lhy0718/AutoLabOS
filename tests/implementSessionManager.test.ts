@@ -1524,7 +1524,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
         callCount += 1;
-        writeFileSync(scriptPath, "print('baseline evaluation ready')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         onEvent?.({ type: "file.changed", path: scriptPath });
         return {
           threadId: `thread-impl-design-contract-${callCount}`,
@@ -1633,7 +1633,7 @@ describe("ImplementSessionManager", () => {
           finalText: JSON.stringify({
             summary: "Implemented the public experiment script.",
             run_command: `python3 ${JSON.stringify(scriptPath)}`,
-            test_command: `python3 -m py_compile ${JSON.stringify(driftedScriptPath)}`,
+            test_command: `python3 ${JSON.stringify(driftedScriptPath)} --dry-run`,
             changed_files: [scriptPath, driftedScriptPath],
             artifacts: [scriptPath, driftedScriptPath],
             public_artifacts: [scriptPath, driftedScriptPath],
@@ -1675,6 +1675,89 @@ describe("ImplementSessionManager", () => {
           (event.payload as { source?: string } | undefined)?.source === "local_verification"
       )
     ).toBe(false);
+  });
+
+  it("normalizes drifted lightweight syntax verification to the published script path", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-verify-normalize-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Verification Syntax Normalization Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "plan_verify_normalize",
+        hypothesis_ids: ["h_1"],
+        baselines: ["baseline_runner"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: false
+    });
+    await storeExperimentGovernanceDecision(run, memory, {
+      contract,
+      entries: []
+    });
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "candidate_study.py");
+    const helperPath = path.join(publicDir, "candidate_backend.py");
+    const codex = {
+      runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
+        writeFileSync(helperPath, "print('helper module ready')\n", "utf8");
+        onEvent?.({ type: "file.changed", path: scriptPath });
+        onEvent?.({ type: "file.changed", path: helperPath });
+        return {
+          threadId: "thread-impl-verify-normalize",
+          finalText: JSON.stringify({
+            summary: "Implemented the public experiment script with a helper module.",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(helperPath)}`,
+            changed_files: [scriptPath, helperPath],
+            artifacts: [scriptPath, helperPath],
+            public_artifacts: [scriptPath, helperPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+    expect(result.testCommand).toBe(`python3 -m py_compile ${JSON.stringify(scriptPath)}`);
+    expect(result.testCommand).not.toContain(helperPath);
+    expect(
+      await memory.get<{ verdict: string; findings: Array<{ code: string }> }>(
+        "experiment_governance.design_implementation_validation"
+      )
+    ).toMatchObject({ verdict: "allow" });
   });
 
   it("emits coalesced intermediate Codex output", async () => {

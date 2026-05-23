@@ -4366,6 +4366,12 @@ export class ImplementSessionManager {
         rewriteCommandScriptPath(testCommand || "", originalScriptPath, normalizedScriptPath),
         params.workspaceRoot
       ) || undefined;
+    testCommand = alignLightweightSyntaxCheckToScriptPath({
+      command: testCommand,
+      scriptPath: normalizedScriptPath,
+      workingDir: normalizedWorkingDir,
+      workspaceRoot: params.workspaceRoot
+    });
     const verificationCommand = testCommand || deriveFallbackTestCommand(normalizedScriptPath);
     const verificationArtifactCandidates = new Set(
       dedupeStrings([
@@ -13883,6 +13889,24 @@ function rewriteCommandScriptPath(
     rewritten = rewritten.split(from).join(to);
   }
   return rewritten;
+}
+
+function alignLightweightSyntaxCheckToScriptPath(params: {
+  command: string | undefined;
+  scriptPath: string | undefined;
+  workingDir: string;
+  workspaceRoot: string;
+}): string | undefined {
+  const command = params.command?.trim();
+  if (!command || !params.scriptPath || !/\bpy_compile\b/u.test(command)) {
+    return command || undefined;
+  }
+  const referencedScripts = extractWorkspacePathsFromCommand(command, params.workingDir, params.workspaceRoot)
+    .filter((candidate) => /\.py$/iu.test(candidate));
+  if (referencedScripts.length !== 1 || path.normalize(referencedScripts[0]) === path.normalize(params.scriptPath)) {
+    return command;
+  }
+  return deriveFallbackTestCommand(params.scriptPath) || command;
 }
 
 export async function repairPublishedRunCommandWrapperBinding(
