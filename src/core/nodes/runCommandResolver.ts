@@ -34,6 +34,20 @@ export async function resolveRunCommand(
     : undefined;
 
   if (explicitCommand && (!explicitCommandArtifact || (await fileExists(explicitCommandArtifact)))) {
+    const fullStudyAlternative = explicitCommandArtifact
+      ? await resolveFullStudyAlternativeForPerConditionCommand({
+          command: explicitCommand,
+          commandArtifact: explicitCommandArtifact,
+          explicitCwd,
+          publicDir,
+          runDir,
+          workspaceRoot,
+          metricsPath
+        })
+      : undefined;
+    if (fullStudyAlternative) {
+      return fullStudyAlternative;
+    }
     return {
       command: explicitCommand,
       cwd: explicitCwd,
@@ -231,4 +245,194 @@ async function readPackageJson(filePath: string): Promise<{ scripts?: Record<str
   } catch {
     return undefined;
   }
+}
+
+interface FullStudyAlternativeInput {
+  command: string;
+  commandArtifact: string;
+  explicitCwd: string;
+  publicDir?: string;
+  runDir: string;
+  workspaceRoot: string;
+  metricsPath: string;
+}
+
+async function resolveFullStudyAlternativeForPerConditionCommand(
+  input: FullStudyAlternativeInput
+): Promise<ResolvedRunCommand | undefined> {
+  const perConditionPythonArtifact = await resolvePerConditionPythonArtifact(input.commandArtifact);
+  if (!perConditionPythonArtifact) {
+    return undefined;
+  }
+  const source = await readTextIfAvailable(perConditionPythonArtifact);
+  if (!source || !requiresPerConditionCliInputs(source) || commandSuppliesPerConditionInputs(input.command)) {
+    return undefined;
+  }
+
+  const searchDirs = uniqueStrings([
+    path.dirname(perConditionPythonArtifact),
+    path.dirname(input.commandArtifact),
+    input.publicDir,
+    input.explicitCwd,
+    input.runDir
+  ]).filter((dir) => isPathInsideOrEqual(dir, input.workspaceRoot));
+  const candidates: Array<{ filePath: string; score: number }> = [];
+  for (const dir of searchDirs) {
+    for (const filePath of await listPythonFiles(dir)) {
+      if (path.resolve(filePath) === path.resolve(perConditionPythonArtifact)) {
+        continue;
+      }
+      const candidateSource = await readTextIfAvailable(filePath);
+      if (!candidateSource || requiresPerConditionCliInputs(candidateSource)) {
+        continue;
+      }
+      const score = scoreFullStudyRunnerCandidate(filePath, candidateSource);
+      if (score > 0) {
+        candidates.push({ filePath, score });
+      }
+    }
+  }
+
+  candidates.sort((left, right) => right.score - left.score || left.filePath.localeCompare(right.filePath));
+  const selected = candidates[0];
+  if (!selected) {
+    return undefined;
+  }
+  return {
+    command: appendMetricsPath(inferCommandForScript(selected.filePath), input.metricsPath),
+    cwd: path.dirname(selected.filePath),
+    source: "run_context.run_command.full_study_alternative",
+    metricsPath: input.metricsPath,
+    testCommand: undefined,
+    testCwd: path.dirname(selected.filePath)
+  };
+}
+
+async function resolvePerConditionPythonArtifact(commandArtifact: string): Promise<string | undefined> {
+  if (/\.py$/iu.test(commandArtifact)) {
+    return commandArtifact;
+  }
+  if (!/\.sh$/iu.test(commandArtifact)) {
+    return undefined;
+  }
+  const shellSource = await readTextIfAvailable(commandArtifact);
+  if (!shellSource) {
+    return undefined;
+  }
+  const scriptDir = path.dirname(commandArtifact);
+  const candidates = extractPythonRunnerCandidatesFromShell(shellSource, scriptDir);
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function extractPythonRunnerCandidatesFromShell(source: string, scriptDir: string): string[] {
+  const candidates: string[] = [];
+  const assignmentPattern = /(?:^|\n)\s*[A-Za-z_][A-Za-z0-9_]*=(["'])([^"']*\.py)\1/gu;
+  for (const match of source.matchAll(assignmentPattern)) {
+    candidates.push(resolveShellPathToken(match[2] || "", scriptDir));
+  }
+  const tokenPattern = /(["']?)([^\s"']*\.py)\1/gu;
+  for (const match of source.matchAll(tokenPattern)) {
+    candidates.push(resolveShellPathToken(match[2] || "", scriptDir));
+  }
+  return uniqueStrings(candidates).filter((candidate) => path.isAbsolute(candidate));
+}
+
+function resolveShellPathToken(token: string, scriptDir: string): string {
+  const normalized = token
+    .replace(/\$\{SCRIPT_DIR\}/gu, scriptDir)
+    .replace(/\$SCRIPT_DIR/gu, scriptDir)
+    .replace(/\$\{PWD\}/gu, process.cwd())
+    .replace(/\$PWD/gu, process.cwd());
+  return path.isAbsolute(normalized) ? normalized : path.resolve(scriptDir, normalized);
+}
+
+function commandSuppliesPerConditionInputs(command: string): boolean {
+  const tokens = tokenizeCommand(command);
+  return hasFlag(tokens, "--condition-marker", "--condition") && hasFlag(tokens, "--seed");
+}
+
+function requiresPerConditionCliInputs(source: string): boolean {
+  return requiresAnyFlag(source, ["--condition-marker", "--condition"]) && requiresAnyFlag(source, ["--seed"]);
+}
+
+function requiresAnyFlag(source: string, flags: string[]): boolean {
+  return flags.some((flag) => {
+    const escaped = escapeRegExp(flag);
+    return new RegExp(
+      "add_argument\\([\\s\\S]{0,500}['\"]" + escaped + "['\"][\\s\\S]{0,500}required\\s*=\\s*True",
+      "u"
+    ).test(source);
+  });
+}
+
+function scoreFullStudyRunnerCandidate(filePath: string, source: string): number {
+  const basename = path.basename(filePath).toLowerCase();
+  let score = 0;
+  if (/\b(study|sweep|matrix|suite|orchestrat|portfolio)\b/iu.test(basename)) {
+    score += 100;
+  }
+  if (/run_.*(study|sweep|matrix|suite|orchestrat)/iu.test(basename)) {
+    score += 40;
+  }
+  if (/(--condition-markers|condition_markers|planned_runs|run_study|study_output|study-output)/u.test(source)) {
+    score += 40;
+  }
+  if (/--metrics-path|metrics_path/u.test(source)) {
+    score += 20;
+  }
+  if (/if\s+__name__\s*==\s*['"]__main__['"]|def\s+main\s*\(/u.test(source)) {
+    score += 10;
+  }
+  if (basename === "experiment.py" || basename === "run_experiment.py") {
+    score -= 20;
+  }
+  return score;
+}
+
+function appendMetricsPath(command: string, metricsPath: string): string {
+  const tokens = tokenizeCommand(command);
+  if (hasFlag(tokens, "--metrics-path", "--metrics-out")) {
+    return command;
+  }
+  return `${command} --metrics-path ${JSON.stringify(metricsPath)}`;
+}
+
+function tokenizeCommand(command: string): string[] {
+  return command.match(/"[^"]*"|'[^']*'|\S+/g)?.map((token) => token.replace(/^["']|["']$/g, "")) || [];
+}
+
+function hasFlag(tokens: string[], ...flags: string[]): boolean {
+  return tokens.some((token) => flags.some((flag) => token === flag || token.startsWith(`${flag}=`)));
+}
+
+async function listPythonFiles(dir: string): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && /\.py$/iu.test(entry.name))
+      .map((entry) => path.join(dir, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+async function readTextIfAvailable(filePath: string): Promise<string | undefined> {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }

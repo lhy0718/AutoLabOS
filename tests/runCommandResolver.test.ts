@@ -174,4 +174,137 @@ describe("resolveRunCommand", () => {
     expect(resolved.command).toContain("--metrics-path");
     expect(resolved.source).toBe("run_context.run_command");
   });
+
+  it("reroutes an argument-free per-condition command to a sibling full-study runner", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-study-reroute-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Runner Study Reroute",
+      topic: "runner",
+      constraints: [],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const publicDir = path.join(workspace, "public-runner");
+    mkdirSync(publicDir, { recursive: true });
+    const conditionRunner = path.join(publicDir, "run_condition.py");
+    const studyRunner = path.join(publicDir, "run_instruction_study.py");
+    writeFileSync(
+      conditionRunner,
+      [
+        "import argparse",
+        "parser = argparse.ArgumentParser()",
+        "parser.add_argument('--condition-marker', '--condition', required=True)",
+        "parser.add_argument('--seed', required=True)",
+        "parser.add_argument('--metrics-path')",
+        "args = parser.parse_args()"
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      studyRunner,
+      [
+        "import argparse",
+        "def main():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--condition-markers', nargs='*')",
+        "    parser.add_argument('--metrics-path')",
+        "    parser.parse_args()",
+        "if __name__ == '__main__':",
+        "    main()"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const metricsPath = path.join(workspace, ".autolabos", "runs", run.id, "metrics.json");
+    await memory.put(
+      "implement_experiments.run_command",
+      `python3 ${JSON.stringify(conditionRunner)} --metrics-path ${JSON.stringify(metricsPath)}`
+    );
+    await memory.put("implement_experiments.public_dir", publicDir);
+    await memory.put("implement_experiments.cwd", publicDir);
+    await memory.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const resolved = await resolveRunCommand(run, workspace);
+    expect(resolved.command).toContain(studyRunner);
+    expect(resolved.command).toContain("--metrics-path");
+    expect(resolved.command).not.toContain(conditionRunner);
+    expect(resolved.source).toBe("run_context.run_command.full_study_alternative");
+  });
+
+  it("reroutes an argument-free shell wrapper around a per-condition runner", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-shell-study-reroute-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Runner Shell Study Reroute",
+      topic: "runner",
+      constraints: [],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const publicDir = path.join(workspace, "public-runner");
+    mkdirSync(publicDir, { recursive: true });
+    const conditionRunner = path.join(publicDir, "run_condition.py");
+    const studyRunner = path.join(publicDir, "run_instruction_study.py");
+    const runCommand = path.join(publicDir, "run_command.sh");
+    writeFileSync(
+      conditionRunner,
+      [
+        "import argparse",
+        "parser = argparse.ArgumentParser()",
+        "parser.add_argument('--condition-marker', '--condition', required=True)",
+        "parser.add_argument('--seed', required=True)",
+        "parser.add_argument('--metrics-path')",
+        "args = parser.parse_args()"
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      studyRunner,
+      [
+        "import argparse",
+        "def main():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--condition-markers', nargs='*')",
+        "    parser.add_argument('--metrics-path')",
+        "    parser.parse_args()",
+        "if __name__ == '__main__':",
+        "    main()"
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      runCommand,
+      [
+        "#!/usr/bin/env bash",
+        "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"",
+        "RUNNER=\"${SCRIPT_DIR}/run_condition.py\"",
+        "exec python3 \"$RUNNER\" --metrics-path \"$1\""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.run_command", `bash ${JSON.stringify(runCommand)}`);
+    await memory.put("implement_experiments.public_dir", publicDir);
+    await memory.put("implement_experiments.cwd", publicDir);
+    await memory.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const resolved = await resolveRunCommand(run, workspace);
+    expect(resolved.command).toContain(studyRunner);
+    expect(resolved.command).toContain("--metrics-path");
+    expect(resolved.command).not.toContain(conditionRunner);
+    expect(resolved.source).toBe("run_context.run_command.full_study_alternative");
+  });
 });
