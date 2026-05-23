@@ -2750,6 +2750,11 @@ function removeUnsupportedTrainingArgumentsKwargLines(source: string): string {
 }
 
 function promoteSummaryPrimaryMetric(metrics: Record<string, unknown>): string | undefined {
+  const aggregatePromotion = promoteAggregatePrimaryMetric(metrics);
+  if (aggregatePromotion) {
+    return aggregatePromotion;
+  }
+
   const topLevelPrimaryMetricKey = metrics.primary_metric_key;
   if (
     typeof topLevelPrimaryMetricKey === "string" &&
@@ -2789,6 +2794,112 @@ function promoteSummaryPrimaryMetric(metrics: Record<string, unknown>): string |
   }
   metrics[primaryMetricKey] = primaryMetric;
   return `Promoted summary primary metric ${primaryMetricKey}=${primaryMetric} to top-level metrics before contract evaluation.`;
+}
+
+function promoteAggregatePrimaryMetric(metrics: Record<string, unknown>): string | undefined {
+  const aggregate = asRecord(metrics.aggregate);
+  if (Object.keys(aggregate).length === 0) {
+    return undefined;
+  }
+  const config = asRecord(metrics.config);
+  const primaryMetricKey =
+    asString(metrics.primary_metric_key) ||
+    asString(config.primary_metric_key) ||
+    asString(asRecord(metrics.objective).primary_metric_key);
+  if (!primaryMetricKey || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(primaryMetricKey)) {
+    return undefined;
+  }
+
+  const bestCondition = asRecord(aggregate.best_condition);
+  const primaryMetricValue =
+    asNumber(metrics[primaryMetricKey]) ??
+    asNumber(metrics.primary_metric_value) ??
+    asNumber(bestCondition[primaryMetricKey]) ??
+    asNumber(aggregate[primaryMetricKey]);
+  const promoted: string[] = [];
+  if (primaryMetricValue !== undefined) {
+    if (metrics[primaryMetricKey] == null) {
+      metrics[primaryMetricKey] = primaryMetricValue;
+      promoted.push(`${primaryMetricKey}=${primaryMetricValue}`);
+    }
+    if (typeof metrics.primary_metric_value !== "number" || !Number.isFinite(metrics.primary_metric_value)) {
+      metrics.primary_metric_value = primaryMetricValue;
+    }
+    if (typeof metrics.primary_metric !== "number" || !Number.isFinite(metrics.primary_metric)) {
+      metrics.primary_metric = primaryMetricValue;
+    }
+  }
+  if (typeof metrics.primary_metric_key !== "string") {
+    metrics.primary_metric_key = primaryMetricKey;
+  }
+
+  promoteNumericField(metrics, aggregate, "completed_run_count", promoted);
+  promoteNumericField(metrics, aggregate, "completed_condition_count", promoted);
+  promoteNumericField(metrics, aggregate, "failed_run_count", promoted);
+  promoteNumericField(metrics, aggregate, "timed_out_run_count", promoted);
+  promoteStringField(metrics, aggregate, "baseline_marker", "baseline_condition_marker", promoted);
+  const conditionAggregates = aggregate.condition_aggregates;
+  if (!Array.isArray(metrics.condition_summaries) && Array.isArray(conditionAggregates)) {
+    metrics.condition_summaries = conditionAggregates;
+    promoted.push(`condition_summaries=${conditionAggregates.length}`);
+  }
+  if (Object.keys(asRecord(metrics.best_condition)).length === 0 && Object.keys(bestCondition).length > 0) {
+    metrics.best_condition = bestCondition;
+    promoted.push("best_condition");
+  }
+
+  const requiredMarkers = Array.isArray(config.required_condition_markers)
+    ? config.required_condition_markers
+    : undefined;
+  if (asNumber(metrics.required_condition_count) === undefined && requiredMarkers) {
+    metrics.required_condition_count = requiredMarkers.length;
+    promoted.push(`required_condition_count=${requiredMarkers.length}`);
+  }
+  const seedSchedule = Array.isArray(config.seed_schedule) ? config.seed_schedule : undefined;
+  if (asNumber(metrics.required_run_count) === undefined && requiredMarkers && seedSchedule) {
+    metrics.required_run_count = requiredMarkers.length * seedSchedule.length;
+    promoted.push(`required_run_count=${requiredMarkers.length * seedSchedule.length}`);
+  }
+
+  if (promoted.length === 0) {
+    return undefined;
+  }
+  return `Promoted aggregate metrics projection before contract evaluation: ${promoted.join(", ")}.`;
+}
+
+function promoteNumericField(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+  key: string,
+  promoted: string[]
+): void {
+  if (asNumber(target[key]) !== undefined) {
+    return;
+  }
+  const value = asNumber(source[key]);
+  if (value === undefined) {
+    return;
+  }
+  target[key] = value;
+  promoted.push(`${key}=${value}`);
+}
+
+function promoteStringField(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+  sourceKey: string,
+  targetKey: string,
+  promoted: string[]
+): void {
+  if (asString(target[targetKey])) {
+    return;
+  }
+  const value = asString(source[sourceKey]);
+  if (!value) {
+    return;
+  }
+  target[targetKey] = value;
+  promoted.push(`${targetKey}=${value}`);
 }
 
 function derivePrimaryMetricFromConditionSummaries(
