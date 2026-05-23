@@ -9408,6 +9408,8 @@ export class ImplementSessionManager {
       await repairPythonPublicStudyEntrypointArgsAliasSurface(executionScriptPath);
     const publicStudySiblingExperimentBackendRepair =
       await repairPythonPublicStudySiblingExperimentBackendSurface(executionScriptPath);
+    const publicStudyBackendCallableLoaderRepair =
+      await repairPythonPublicStudyBackendCallableLoaderSurface(executionScriptPath);
     const finalCliLockedGridResolverRepair =
       await repairPythonFinalCliLockedGridResolverSurface(executionScriptPath);
     const entrypointStudyResultKwargAliasRepair =
@@ -9540,6 +9542,7 @@ export class ImplementSessionManager {
         baselineFirstLockedSweepEntrypointResolverRepair,
         publicStudyEntrypointArgsAliasRepair,
         publicStudySiblingExperimentBackendRepair,
+        publicStudyBackendCallableLoaderRepair,
         finalCliLockedGridResolverRepair,
         entrypointStudyResultKwargAliasRepair,
         nestedRunRecordsProjectionRepair,
@@ -40887,6 +40890,167 @@ export async function repairPythonPublicStudySiblingExperimentBackendSurface(scr
   return {
     repaired: true,
     message: `Added sibling experiment.py backend candidate to public study wrapper in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonPublicStudyBackendCallableLoaderSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("No training/evaluation backend callable is available") ||
+    !source.includes("BACKEND_CALLABLE_CANDIDATES") ||
+    !source.includes("def _resolve_backend_callable()")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+  const marker = "_autolabos_backend_callable_loader_marker";
+
+  if (!/import\s+importlib\.util/u.test(nextSource)) {
+    nextSource = nextSource.replace(/(^import\s+importlib\s*$)/mu, "$1\nimport importlib.util");
+    repaired = true;
+  }
+
+  const callableTuplePattern = /(BACKEND_CALLABLE_CANDIDATES\s*:\s*tuple\[str, \.\.\.\]\s*=\s*\(\n)([\s\S]*?\n\))/u;
+  const callableTupleMatch = callableTuplePattern.exec(nextSource);
+  if (callableTupleMatch && !/execute_single_condition_seed/u.test(callableTupleMatch[2] ?? "")) {
+    nextSource = nextSource.replace(
+      callableTuplePattern,
+      (_full: string, prefix: string, body: string) => {
+        const trimmedBody = body.replace(/\n\)\s*$/u, "");
+        return (
+          `${prefix}` +
+          `    # ${marker}\n` +
+          `    "execute_single_condition_seed",\n` +
+          `    "_execute_single_condition_seed",\n` +
+          `${trimmedBody}\n` +
+          `    "run_experiment",\n` +
+          `    "execute_experiment",\n` +
+          `)`
+        );
+      }
+    );
+    repaired = true;
+  }
+
+  const loaderBlock = [
+    "",
+    "def _autolabos_load_backend_module_from_path(path: Path) -> Any | None:",
+    "    try:",
+    "        spec = importlib.util.spec_from_file_location(\"autolabos_adjacent_backend\", path)",
+    "        if spec is None or spec.loader is None:",
+    "            return None",
+    "        module = importlib.util.module_from_spec(spec)",
+    "        spec.loader.exec_module(module)",
+    "        return module",
+    "    except Exception:",
+    "        return None",
+    "",
+    "",
+    "def _autolabos_adjacent_backend_files() -> list[Path]:",
+    "    script_path = Path(__file__).resolve()",
+    "    script_dir = script_path.parent",
+    "    names: list[str] = [\"backend_experiment_impl.py\", \"experiment.py\"]",
+    "    if script_path.name.endswith(\"_study.py\"):",
+    "        names.append(script_path.name.replace(\"_study.py\", \"_experiment.py\"))",
+    "    seen: set[Path] = set()",
+    "    candidates: list[Path] = []",
+    "    for name in names:",
+    "        candidate = (script_dir / name).resolve()",
+    "        if candidate == script_path or candidate in seen or not candidate.exists():",
+    "            continue",
+    "        seen.add(candidate)",
+    "        candidates.append(candidate)",
+    "    return candidates",
+    "",
+    "",
+    "def _autolabos_find_backend_callable(container: Any) -> Any | None:",
+    "    for name in BACKEND_CALLABLE_CANDIDATES:",
+    "        candidate = getattr(container, name, None)",
+    "        if callable(candidate):",
+    "            return candidate",
+    "    return None",
+    "",
+    "",
+    "def _autolabos_resolve_adjacent_backend_callable() -> Any | None:",
+    "    for backend_path in _autolabos_adjacent_backend_files():",
+    "        module = _autolabos_load_backend_module_from_path(backend_path)",
+    "        if module is None:",
+    "            continue",
+    "        callable_candidate = _autolabos_find_backend_callable(module)",
+    "        if callable(callable_candidate):",
+    "            return callable_candidate",
+    "    return None",
+    ""
+  ].join("\n");
+
+  if (!nextSource.includes("def _autolabos_resolve_adjacent_backend_callable(")) {
+    nextSource = nextSource.replace(/\ndef\s+_resolve_backend_callable\(\)\s*->\s*Any:\n/u, `${loaderBlock}\ndef _resolve_backend_callable() -> Any:\n`);
+    repaired = true;
+  }
+
+  const resolverPattern = /def\s+_resolve_backend_callable\(\)\s*->\s*Any:\n\s+for\s+name\s+in\s+BACKEND_CALLABLE_CANDIDATES:\n\s+candidate\s+=\s+globals\(\)\.get\(name\)\n\s+if\s+callable\(candidate\):\n\s+return\s+candidate\n\s+return\s+None/u;
+  if (resolverPattern.test(nextSource)) {
+    nextSource = nextSource.replace(
+      resolverPattern,
+      [
+        "def _resolve_backend_callable() -> Any:",
+        "    for name in BACKEND_CALLABLE_CANDIDATES:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    adjacent_backend_callable = _autolabos_resolve_adjacent_backend_callable()",
+        "    if callable(adjacent_backend_callable):",
+        "        return adjacent_backend_callable",
+        "    return None"
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  const perTaskPattern = /for\s+task_name\s+in\s+EVAL_TASKS:\n\s+accuracy,\s*raw_task_payload\s*=\s*_extract_task_accuracy\(raw_payload,\s*task_name\)\n\s+normalized\[task_name\]\s*=\s*\{\n\s+"accuracy":\s*accuracy,\n\s+"raw":\s*_json_safe_local\(raw_task_payload\),\n\s+\}/u;
+  if (perTaskPattern.test(nextSource) && !nextSource.includes("_autolabos_task_accuracy_tuple_shape_marker")) {
+    nextSource = nextSource.replace(
+      perTaskPattern,
+      [
+        "for task_name in EVAL_TASKS:",
+        "        extracted_task_accuracy = _extract_task_accuracy(raw_payload, task_name)",
+        "        # _autolabos_task_accuracy_tuple_shape_marker",
+        "        if isinstance(extracted_task_accuracy, tuple):",
+        "            accuracy, raw_task_payload = extracted_task_accuracy",
+        "        else:",
+        "            accuracy, raw_task_payload = _safe_float(extracted_task_accuracy), None",
+        "        normalized[task_name] = {",
+        "            \"accuracy\": accuracy,",
+        "            \"raw\": _json_safe_local(raw_task_payload),",
+        "        }"
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Loaded adjacent per-condition backend callables and hardened task metric normalization in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

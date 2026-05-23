@@ -216,6 +216,7 @@ import {
   repairPythonBaselineFirstLockedSweepEntrypointResolverSurface,
   repairPythonPublicStudyEntrypointArgsAliasSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
+  repairPythonPublicStudyBackendCallableLoaderSurface,
   repairPythonFinalCliLockedGridResolverSurface,
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
@@ -6478,6 +6479,112 @@ describe("ImplementSessionManager", () => {
       encoding: "utf8"
     }).trim();
     expect(output).toBe("declared");
+  });
+
+
+  it("loads adjacent per-condition backends and tolerates duplicate scalar task accuracy helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-study-callable-loader-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
+    const backendPath = path.join(workspace, "backend_experiment_impl.py");
+    writeFileSync(
+      backendPath,
+      [
+        "def execute_single_condition_seed(condition, seed, config):",
+        "    marker = condition.get('marker') if isinstance(condition, dict) else getattr(condition, 'marker', 'candidate_condition')",
+        "    return {",
+        "        'condition_marker': marker,",
+        "        'seed': seed,",
+        "        'benchmark_task_a_accuracy': 0.25,",
+        "        'benchmark_task_b_accuracy': 0.75,",
+        "        'average_accuracy': 0.50,",
+        "        'success': True,",
+        "    }",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      scriptPath,
+      [
+        "import importlib",
+        "import inspect",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "EVAL_TASKS = ('benchmark_task_a', 'benchmark_task_b')",
+        "BACKEND_CALLABLE_CANDIDATES: tuple[str, ...] = (",
+        "    'run_backend_seed',",
+        "    '_run_backend_seed',",
+        ")",
+        "",
+        "def _safe_float(value):",
+        "    try:",
+        "        return float(value)",
+        "    except Exception:",
+        "        return None",
+        "",
+        "def _json_safe_local(value):",
+        "    return value",
+        "",
+        "def _extract_task_accuracy(raw_payload: dict[str, Any], canonical_task: str) -> tuple[float | None, Any]:",
+        "    return _safe_float(raw_payload.get(canonical_task + '_accuracy')), raw_payload",
+        "",
+        "def _normalize_per_task_metrics(raw_payload):",
+        "    normalized = {}",
+        "    for task_name in EVAL_TASKS:",
+        "        accuracy, raw_task_payload = _extract_task_accuracy(raw_payload, task_name)",
+        "        normalized[task_name] = {",
+        "            \"accuracy\": accuracy,",
+        "            \"raw\": _json_safe_local(raw_task_payload),",
+        "        }",
+        "    return normalized",
+        "",
+        "def _resolve_backend_callable() -> Any:",
+        "    for name in BACKEND_CALLABLE_CANDIDATES:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _invoke_backend_callable(backend, **kwargs):",
+        "    signature = inspect.signature(backend)",
+        "    accepted = {key: value for key, value in kwargs.items() if key in signature.parameters}",
+        "    return backend(**accepted)",
+        "",
+        "def normalize_seed_result(raw_result):",
+        "    per_task = _normalize_per_task_metrics(raw_result)",
+        "    return {'status': 'ok', 'a': per_task['benchmark_task_a']['accuracy'], 'b': per_task['benchmark_task_b']['accuracy']}",
+        "",
+        "def execute_condition_seed():",
+        "    backend = _resolve_backend_callable()",
+        "    if backend is None:",
+        "        raise RuntimeError('No training/evaluation backend callable is available. Expected one of: ' + ', '.join(BACKEND_CALLABLE_CANDIDATES))",
+        "    raw = _invoke_backend_callable(backend, condition={'marker': 'candidate_condition'}, seed=7, config={'mode': 'test'})",
+        "    return normalize_seed_result(raw)",
+        "",
+        "def _extract_task_accuracy(raw: dict[str, Any], task_name: str) -> float | None:",
+        "    return _safe_float(raw.get(task_name + '_accuracy'))",
+        "",
+        "print(execute_condition_seed())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/No training\/evaluation backend callable/);
+
+    const repair = await repairPythonPublicStudyBackendCallableLoaderSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_backend_callable_loader_marker");
+    expect(repairedSource).toContain("_autolabos_task_accuracy_tuple_shape_marker");
+    const output = execFileSync("python3", [scriptPath], {
+      encoding: "utf8"
+    }).trim();
+    expect(output).toContain("'status': 'ok'");
+    expect(output).toContain("'a': 0.25");
+    expect(output).toContain("'b': 0.75");
   });
 
   it("widens a metric float helper so aggregate callers can omit field names", async () => {
