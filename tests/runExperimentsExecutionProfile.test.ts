@@ -1257,6 +1257,169 @@ describe("run_experiments execution profile behavior", () => {
       )
     ).toBe(true);
   });
+  it("prefers adjacent generated backend implementation over partial internal runner fallback", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-adjacent-backend-discovery-"));
+    process.chdir(root);
+    const run = makeRun("run-adjacent-backend-discovery");
+    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const scriptPath = path.join(root, "experiment.py");
+    const backendPath = path.join(root, "backend_experiment_impl.py");
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "import importlib.util",
+        "import json",
+        "import sys",
+        "",
+        "def discover_backend(explicit_module=None):",
+        "    search_dir = Path(__file__).resolve().parent",
+        "    candidates = []",
+        "    candidates.extend(",
+        "        [",
+        "            search_dir / \"study_backend.py\",",
+        "            search_dir / \"backend.py\",",
+        "        ]",
+        "    )",
+        "    current_file = Path(__file__).resolve()",
+        "    for candidate in candidates:",
+        "        if not candidate.exists() or candidate.resolve() == current_file:",
+        "            continue",
+        "        spec = importlib.util.spec_from_file_location(f\"study_backend_{candidate.stem}\", candidate)",
+        "        if spec is None or spec.loader is None:",
+        "            continue",
+        "        module = importlib.util.module_from_spec(spec)",
+        "        spec.loader.exec_module(module)",
+        "        for fn_name in (\"run_study\", \"run_experiment\", \"execute_study\"):",
+        "            fn = getattr(module, fn_name, None)",
+        "            if callable(fn):",
+        "                return {\"callable\": fn, \"path\": str(candidate)}",
+        "    return None",
+        "",
+        "def partial_internal_backend():",
+        "    return {\"status\": \"partial_completed\", \"primary_metric_key\": \"accuracy_delta_vs_baseline\", \"completed_run_count\": 1, \"required_run_count\": 2, \"completed_condition_count\": 0, \"required_condition_count\": 2}",
+        "",
+        "def main():",
+        "    metrics_path = Path(sys.argv[sys.argv.index(\"--metrics-path\") + 1])",
+        "    backend = discover_backend(None)",
+        "    result = backend[\"callable\"](<metrics_path=metrics_path>) if backend else partial_internal_backend()",
+        "    metrics_path.parent.mkdir(parents=True, exist_ok=True)",
+        "    metrics_path.write_text(json.dumps(result, indent=2), encoding=\"utf8\")",
+        "    print(json.dumps({\"status\": result.get(\"status\"), \"completed_run_count\": result.get(\"completed_run_count\")}))",
+        "    return 0",
+        "",
+        "if __name__ == \"__main__\":",
+        "    raise SystemExit(main())"
+      ].join("\n").replace("<metrics_path=metrics_path>", "metrics_path=metrics_path"),
+      "utf8"
+    );
+    await writeFile(
+      backendPath,
+      [
+        "def run_experiment(metrics_path=None, output_dir=None, **kwargs):",
+        "    return {",
+        "        \"status\": \"success\",",
+        "        \"primary_metric_key\": \"accuracy_delta_vs_baseline\",",
+        "        \"primary_metric\": 0.02,",
+        "        \"primary_metric_value\": 0.02,",
+        "        \"accuracy_delta_vs_baseline\": 0.02,",
+        "        \"completed_run_count\": 2,",
+        "        \"required_run_count\": 2,",
+        "        \"completed_condition_count\": 2,",
+        "        \"required_condition_count\": 2,",
+        "        \"baseline_condition_marker\": \"baseline_condition\",",
+        "        \"condition_summaries\": [",
+        "            {\"condition_marker\": \"baseline_condition\", \"accuracy_delta_vs_baseline\": 0},",
+        "            {\"condition_marker\": \"candidate_condition_a\", \"accuracy_delta_vs_baseline\": 0.02},",
+        "        ],",
+        "    }"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", `python3 "${scriptPath}" --metrics-path "${path.join(runDir, "metrics.json")}"`);
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+    await runContext.put(EXPERIMENT_GOVERNANCE_CONTRACT_KEY, {
+      version: 1,
+      run_id: run.id,
+      plan_id: "plan-adjacent-backend-discovery",
+      selected_hypothesis_ids: ["hypothesis-1"],
+      objective_metric_name: run.objectiveMetric,
+      baseline_first_required: true,
+      baseline_candidate_ids: ["baseline_condition"],
+      comparison_mode: "baseline_first_locked",
+      budget_profile: { mode: "single_run_locked", locked: true, timeout_sec: 1800 },
+      objective_profile: {
+        source: "test",
+        raw: run.objectiveMetric,
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        direction: "maximize",
+        threshold: 0.01,
+        thresholdOperator: ">="
+      },
+      created_at: new Date().toISOString()
+    });
+
+    const eventStream = new InMemoryEventStream();
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async (command: string) => {
+          const { execFile } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFile);
+          const match = command.match(/python3?\s+"([^"]+)"\s+--metrics-path\s+"([^"]+)"/u);
+          if (!match) {
+            throw new Error(`unexpected command: ${command}`);
+          }
+          const result = await execFileAsync("python3", [match[1], "--metrics-path", match[2]], { cwd: root });
+          return {
+            status: "ok" as const,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).not.toBe("failure");
+    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
+      accuracy_delta_vs_baseline?: number;
+      completed_run_count?: number;
+      completed_condition_count?: number;
+    };
+    expect(metrics.accuracy_delta_vs_baseline).toBe(0.02);
+    expect(metrics.completed_run_count).toBe(2);
+    expect(metrics.completed_condition_count).toBe(2);
+    expect(await readFile(scriptPath, "utf8")).toContain("backend_experiment_impl.py");
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes("Added adjacent backend_experiment_impl.py discovery")
+      )
+    ).toBe(true);
+  });
   it("promotes condition summary primary metric when the top-level objective metric is null", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-condition-summary-metric-projection-"));
     process.chdir(root);

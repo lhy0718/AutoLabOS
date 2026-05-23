@@ -2514,6 +2514,12 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
     messages.push(outputDirArgparseRepair.message || `Added --output-dir argparse alias to ${path.basename(scriptPath)} before run_experiments execution.`);
   }
 
+  const adjacentBackendDiscoveryRepair = await repairPythonAdjacentBackendDiscoverySurface(scriptPath);
+  if (adjacentBackendDiscoveryRepair.repaired) {
+    repaired = true;
+    messages.push(adjacentBackendDiscoveryRepair.message || `Added adjacent backend implementation discovery in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
   const mainCallableResolverSpecificityRepair =
     await repairPythonMainCallableResolverSpecificitySurface(scriptPath);
   if (mainCallableResolverSpecificityRepair.repaired) {
@@ -2695,6 +2701,33 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   return {
     repaired: true,
     message: messages.join(" ")
+  };
+}
+
+async function repairPythonAdjacentBackendDiscoverySurface(scriptPath: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  const backendPath = path.join(path.dirname(scriptPath), "backend_experiment_impl.py");
+  if (!(await fileExists(backendPath))) {
+    return { repaired: false };
+  }
+  const source = await fs.readFile(scriptPath, "utf8");
+  if (source.includes("backend_experiment_impl.py") || !source.includes("def discover_backend")) {
+    return { repaired: false };
+  }
+  const candidatesPattern = /(\n\s*candidates\.extend\(\s*\n\s*\[\s*\n)/u;
+  if (!candidatesPattern.test(source)) {
+    return { repaired: false };
+  }
+  const nextSource = source.replace(candidatesPattern, `$1            search_dir / "backend_experiment_impl.py",\n`);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added adjacent backend_experiment_impl.py discovery to ${path.basename(scriptPath)} before run_experiments execution.`
   };
 }
 
