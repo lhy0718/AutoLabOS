@@ -1362,6 +1362,14 @@ describe("run_experiments execution profile behavior", () => {
         "    condition_summaries = list(aggregate_payload.get(\"condition_summaries\", []))",
         "    return [summary.get(\"accuracy_delta_vs_baseline\") for summary in condition_summaries]",
         "",
+        "def normalize_execution_payload(execution_payload):",
+        "    raw_seed_results = execution_payload.get(\"seed_results\")",
+        "    if raw_seed_results is None:",
+        "        raw_seed_results = execution_payload.get(\"raw_seed_results\")",
+        "    if raw_seed_results is None:",
+        "        raw_seed_results = execution_payload.get(\"results\")",
+        "    return raw_seed_results",
+        "",
         "def run_experiment(metrics_path=None, output_dir=None, **kwargs):",
         "    seed_results = [",
         "        {\"condition_marker\": \"baseline_condition\", \"status\": \"completed\"},",
@@ -1457,6 +1465,7 @@ describe("run_experiments execution profile behavior", () => {
     const backendSource = await readFile(backendPath, "utf8");
     expect(backendSource).toContain("raw_condition_summaries = aggregate_payload.get");
     expect(backendSource).toContain("kwargs: Any = None, **extra_kwargs: Any");
+    expect(backendSource).toContain('execution_payload.get("seed_rows")');
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes("Added adjacent backend_experiment_impl.py discovery")

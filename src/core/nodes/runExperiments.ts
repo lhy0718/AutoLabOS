@@ -2541,6 +2541,13 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
     messages.push(adjacentBackendSupportedKwargsRepair.message || `Normalized adjacent backend supported-kwargs helper in ${path.basename(scriptPath)} before run_experiments execution.`);
   }
 
+  const adjacentBackendExecutionSeedRowsRepair =
+    await repairPythonAdjacentBackendExecutionSeedRowsSurface(scriptPath);
+  if (adjacentBackendExecutionSeedRowsRepair.repaired) {
+    repaired = true;
+    messages.push(adjacentBackendExecutionSeedRowsRepair.message || `Accepted adjacent backend execution seed_rows alias in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
   const mainCallableResolverSpecificityRepair =
     await repairPythonMainCallableResolverSpecificitySurface(scriptPath);
   if (mainCallableResolverSpecificityRepair.repaired) {
@@ -2861,6 +2868,35 @@ async function repairPythonAdjacentBackendSupportedKwargsSurface(scriptPath: str
   return {
     repaired: true,
     message: `Normalized adjacent backend _invoke_with_supported_kwargs in ${path.basename(backendPath)} before run_experiments execution.`
+  };
+}
+async function repairPythonAdjacentBackendExecutionSeedRowsSurface(scriptPath: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  const backendPath = path.join(path.dirname(scriptPath), "backend_experiment_impl.py");
+  if (!(await fileExists(backendPath))) {
+    return { repaired: false };
+  }
+  const source = await fs.readFile(backendPath, "utf8");
+  if (source.includes('execution_payload.get("seed_rows")')) {
+    return { repaired: false };
+  }
+  const rawSeedResultsPattern = /^(\s*)raw_seed_results = execution_payload\.get\(["']seed_results["']\)\n/mu;
+  if (!rawSeedResultsPattern.test(source)) {
+    return { repaired: false };
+  }
+  const nextSource = source.replace(
+    rawSeedResultsPattern,
+    `$1raw_seed_results = execution_payload.get("seed_results")\n$1if raw_seed_results is None:\n$1    raw_seed_results = execution_payload.get("seed_rows")\n`
+  );
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+  await fs.writeFile(backendPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Accepted seed_rows from adjacent backend execution payload in ${path.basename(backendPath)} before run_experiments execution.`
   };
 }
 function extractPythonScriptPathFromCommand(command: string, cwd: string): string | undefined {
