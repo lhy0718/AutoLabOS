@@ -6384,6 +6384,102 @@ describe("ImplementSessionManager", () => {
     expect(output).toBe("ok");
   });
 
+  it("keeps declared backend implementations ahead of derived sibling fallback wrappers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-study-backend-priority-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
+    const derivedBackendPath = path.join(workspace, "run_instruction_experiment.py");
+    const declaredBackendPath = path.join(workspace, "backend_experiment_impl.py");
+    writeFileSync(
+      derivedBackendPath,
+      [
+        "def run_experiment():",
+        "    return {'status': 'derived'}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      declaredBackendPath,
+      [
+        "def run_experiment():",
+        "    return {'status': 'declared'}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      scriptPath,
+      [
+        "import importlib",
+        "import importlib.util",
+        "import sys",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "SCRIPT_PATH = Path(__file__).resolve()",
+        "SCRIPT_DIR = SCRIPT_PATH.parent",
+        "BACKEND_MODULE_CANDIDATES = [",
+        "    'backend_experiment_impl',",
+        "    'study_backend',",
+        "    'local_backend',",
+        "]",
+        "BACKEND_FILE_CANDIDATES = [f'{name}.py' for name in BACKEND_MODULE_CANDIDATES]",
+        "BACKEND_CALLABLE_CANDIDATES = ['run_experiment', 'run_study', 'main']",
+        "",
+        "def _load_module_from_path(path: Path):",
+        "    spec = importlib.util.spec_from_file_location('neutral_backend', path)",
+        "    module = importlib.util.module_from_spec(spec)",
+        "    assert spec and spec.loader",
+        "    spec.loader.exec_module(module)",
+        "    return module",
+        "",
+        "def _discover_backend_module(explicit_backend: str | None):",
+        "    if str(SCRIPT_DIR) not in sys.path:",
+        "        sys.path.insert(0, str(SCRIPT_DIR))",
+        "    if explicit_backend:",
+        "        return importlib.import_module(explicit_backend), explicit_backend",
+        "    for filename in BACKEND_FILE_CANDIDATES:",
+        "        candidate = (SCRIPT_DIR / filename).resolve()",
+        "        if candidate.exists() and candidate != SCRIPT_PATH:",
+        "            return _load_module_from_path(candidate), str(candidate)",
+        "    for module_name in BACKEND_MODULE_CANDIDATES:",
+        "        try:",
+        "            return importlib.import_module(module_name), module_name",
+        "        except Exception:",
+        "            continue",
+        "    searched = [str((SCRIPT_DIR / filename).resolve()) for filename in BACKEND_FILE_CANDIDATES]",
+        "    raise ImportError('Unable to locate backend experiment implementation. Searched files/modules: ' + ', '.join(searched + BACKEND_MODULE_CANDIDATES))",
+        "",
+        "def _find_backend_callable(module: Any):",
+        "    for name in BACKEND_CALLABLE_CANDIDATES:",
+        "        candidate = getattr(module, name, None)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    raise AttributeError('No callable backend entrypoint found')",
+        "",
+        "def main():",
+        "    module, _backend_id = _discover_backend_module(None)",
+        "    return _find_backend_callable(module)()['status']",
+        "",
+        "print(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonPublicStudySiblingExperimentBackendSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource.indexOf("for filename in BACKEND_FILE_CANDIDATES:")).toBeLessThan(
+      repairedSource.indexOf("derived_sibling_backend_name")
+    );
+    const output = execFileSync("python3", [scriptPath], {
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("declared");
+  });
+
   it("widens a metric float helper so aggregate callers can omit field names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-coerce-float-field-name-"));
     tempDirs.push(workspace);

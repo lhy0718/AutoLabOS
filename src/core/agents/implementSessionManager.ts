@@ -40772,6 +40772,18 @@ export async function repairPythonPublicStudySiblingExperimentBackendSurface(scr
   }
 
   const marker = "_autolabos_sibling_experiment_backend_candidate_marker";
+  const derivedSiblingBackendAssignment =
+    'derived_sibling_backend_name = SCRIPT_PATH.name.replace("_study.py", "_experiment.py")';
+  const derivedSiblingBackendBlock =
+    `    # ${marker}\n` +
+    `    ${derivedSiblingBackendAssignment}\n` +
+    "    if derived_sibling_backend_name != SCRIPT_PATH.name:\n" +
+    "        derived_sibling_backend_path = (SCRIPT_DIR / derived_sibling_backend_name).resolve()\n" +
+    "        if derived_sibling_backend_path.exists() and derived_sibling_backend_path != SCRIPT_PATH:\n" +
+    "            try:\n" +
+    "                return _load_module_from_path(derived_sibling_backend_path), str(derived_sibling_backend_path)\n" +
+    "            except Exception:\n" +
+    "                pass\n";
   const functionCandidateSurface =
     source.includes("def _resolve_backend") &&
     source.includes("def _candidate_backend_files") &&
@@ -40781,8 +40793,12 @@ export async function repairPythonPublicStudySiblingExperimentBackendSurface(scr
     source.includes("BACKEND_MODULE_CANDIDATES") &&
     source.includes("BACKEND_FILE_CANDIDATES") &&
     source.includes("Unable to locate backend experiment implementation");
+  const derivedBeforeDeclaredFileLoop =
+    constantCandidateSurface &&
+    source.includes(derivedSiblingBackendAssignment) &&
+    source.indexOf(derivedSiblingBackendAssignment) < source.indexOf("for filename in BACKEND_FILE_CANDIDATES:");
   if (
-    source.includes(marker) ||
+    (source.includes(marker) && !derivedBeforeDeclaredFileLoop) ||
     (!functionCandidateSurface && !constantCandidateSurface)
   ) {
     return { repaired: false };
@@ -40819,31 +40835,45 @@ export async function repairPythonPublicStudySiblingExperimentBackendSurface(scr
     if (moduleCandidatesMatch && !/["']experiment["']/u.test(moduleCandidatesMatch[2] ?? "")) {
       nextSource = nextSource.replace(
         moduleCandidatesBlockPattern,
-        (_full: string, prefix: string, body: string) =>
-          `${prefix}    # ${marker}\n    "experiment",\n${body}`
+        (_full: string, prefix: string, body: string) => {
+          const trimmedBody = body.replace(/\n\]\s*$/u, "");
+          return `${prefix}${trimmedBody}\n    # ${marker}\n    "experiment",\n]`;
+        }
       );
       repaired = true;
     }
 
     const backendFileLoopPattern = /(\n\s+for\s+filename\s+in\s+BACKEND_FILE_CANDIDATES:\n)/u;
+    if (derivedBeforeDeclaredFileLoop) {
+      const legacyDerivedSiblingBlockPattern =
+        /\n\s+# _autolabos_sibling_experiment_backend_candidate_marker\n\s+derived_sibling_backend_name = SCRIPT_PATH\.name\.replace\("_study\.py", "_experiment\.py"\)\n\s+if derived_sibling_backend_name != SCRIPT_PATH\.name:\n\s+derived_sibling_backend_path = \(SCRIPT_DIR \/ derived_sibling_backend_name\)\.resolve\(\)\n\s+if derived_sibling_backend_path\.exists\(\) and derived_sibling_backend_path != SCRIPT_PATH:\n\s+try:\n\s+return _load_module_from_path\(derived_sibling_backend_path\), str\(derived_sibling_backend_path\)\n\s+except Exception:\n\s+pass\n/u;
+      nextSource = nextSource.replace(legacyDerivedSiblingBlockPattern, "\n");
+      repaired = true;
+    }
+
+    const backendRaisePattern =
+      /(\n\s+searched\s*=\s*\[str\(\(SCRIPT_DIR\s*\/\s*filename\)\.resolve\(\)\)\s+for\s+filename\s+in\s+BACKEND_FILE_CANDIDATES\]\n\s+raise\s+ImportError\()/u;
     if (
+      backendRaisePattern.test(nextSource) &&
+      !nextSource.includes(derivedSiblingBackendAssignment)
+    ) {
+      nextSource = nextSource.replace(
+        backendRaisePattern,
+        (_full: string, suffix: string) => `\n${derivedSiblingBackendBlock}${suffix}`
+      );
+      repaired = true;
+    } else if (derivedBeforeDeclaredFileLoop && backendRaisePattern.test(nextSource)) {
+      nextSource = nextSource.replace(
+        backendRaisePattern,
+        (_full: string, suffix: string) => `\n${derivedSiblingBackendBlock}${suffix}`
+      );
+    } else if (
       backendFileLoopPattern.test(nextSource) &&
-      !nextSource.includes("derived_sibling_backend_name = SCRIPT_PATH.name.replace")
+      !nextSource.includes(derivedSiblingBackendAssignment)
     ) {
       nextSource = nextSource.replace(
         backendFileLoopPattern,
-        (full: string) =>
-          "\n" +
-          `    # ${marker}\n` +
-          '    derived_sibling_backend_name = SCRIPT_PATH.name.replace("_study.py", "_experiment.py")\n' +
-          "    if derived_sibling_backend_name != SCRIPT_PATH.name:\n" +
-          "        derived_sibling_backend_path = (SCRIPT_DIR / derived_sibling_backend_name).resolve()\n" +
-          "        if derived_sibling_backend_path.exists() and derived_sibling_backend_path != SCRIPT_PATH:\n" +
-          "            try:\n" +
-          "                return _load_module_from_path(derived_sibling_backend_path), str(derived_sibling_backend_path)\n" +
-          "            except Exception:\n" +
-          "                pass\n" +
-          full
+        (full: string) => "\n" + derivedSiblingBackendBlock + full
       );
       repaired = true;
     }
