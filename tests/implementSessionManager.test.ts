@@ -6707,6 +6707,92 @@ describe("ImplementSessionManager", () => {
     expect(output).toContain("'b': 0.75");
   });
 
+  it("loads adjacent backend files for runner-style backend callable resolution", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-runner-backend-loader-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "candidate_study.py");
+    const backendPath = path.join(workspace, "backend_experiment_impl.py");
+    writeFileSync(
+      backendPath,
+      [
+        "def run_experiment(**kwargs):",
+        "    return {'status': 'ok', 'source': 'adjacent_backend'}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      scriptPath,
+      [
+        "import importlib",
+        "import sys",
+        "from pathlib import Path",
+        "",
+        "DEFAULT_BACKEND_MODULE_CANDIDATES = ('missing_backend',)",
+        "DEFAULT_BACKEND_FUNCTION_CANDIDATES = ('run_experiment',)",
+        "_RUNNER_FALLBACK_BACKEND_MODULES = ('fallback_backend',)",
+        "_RUNNER_FALLBACK_BACKEND_FUNCTIONS = ('run_experiment',)",
+        "",
+        "def _runner_global(name, fallback):",
+        "    return globals().get(name, fallback)",
+        "",
+        "def _runner_split_candidates(value, defaults):",
+        "    return list(defaults)",
+        "",
+        "class Args:",
+        "    backend_module = None",
+        "    backend_function = None",
+        "",
+        "def _runner_resolve_paths(args):",
+        "    return {'output_dir': Path(__file__).resolve().parent}",
+        "",
+        "def _runner_resolve_backend_callable(args):",
+        "    module_candidates = _runner_split_candidates(",
+        "        getattr(args, 'backend_module', None),",
+        "        _runner_global('DEFAULT_BACKEND_MODULE_CANDIDATES', _RUNNER_FALLBACK_BACKEND_MODULES),",
+        "    )",
+        "    function_candidates = _runner_split_candidates(",
+        "        getattr(args, 'backend_function', None),",
+        "        _runner_global('DEFAULT_BACKEND_FUNCTION_CANDIDATES', _RUNNER_FALLBACK_BACKEND_FUNCTIONS),",
+        "    )",
+        "    script_dir = Path(__file__).resolve().parent",
+        "    for candidate_dir in (script_dir, _runner_resolve_paths(args)['output_dir'], Path.cwd()):",
+        "        candidate_str = str(candidate_dir)",
+        "        if candidate_str not in sys.path:",
+        "            sys.path.insert(0, candidate_str)",
+        "    import_errors = []",
+        "    for module_name in module_candidates:",
+        "        try:",
+        "            module = importlib.import_module(module_name)",
+        "        except Exception as exc:",
+        "            import_errors.append(f'{module_name}: {exc}')",
+        "            continue",
+        "        for function_name in function_candidates:",
+        "            backend_callable = getattr(module, function_name, None)",
+        "            if callable(backend_callable):",
+        "                return backend_callable, {'module': module_name, 'callable': function_name}",
+        "    raise ImportError('Unable to resolve backend callable. Tried: ' + ' | '.join(import_errors))",
+        "",
+        "backend, info = _runner_resolve_backend_callable(Args())",
+        "print(backend()['source'])",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/Unable to resolve backend callable/);
+
+    const repair = await repairPythonPublicStudyBackendCallableLoaderSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_backend_callable_loader_marker");
+    expect(repairedSource).toContain("backend_experiment_impl.py");
+    const output = execFileSync("python3", [scriptPath], {
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("adjacent_backend");
+  });
+
   it("connects generated study-plan executors to finalization runner resolution", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-study-plan-finalizer-"));
     tempDirs.push(workspace);

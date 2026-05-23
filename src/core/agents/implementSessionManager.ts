@@ -40968,11 +40968,15 @@ export async function repairPythonPublicStudyBackendCallableLoaderSurface(script
     return { repaired: false };
   }
 
-  if (
-    !source.includes("No training/evaluation backend callable is available") ||
-    !source.includes("BACKEND_CALLABLE_CANDIDATES") ||
-    !source.includes("def _resolve_backend_callable()")
-  ) {
+  const hasSimpleCallableLoaderSurface =
+    source.includes("No training/evaluation backend callable is available") &&
+    source.includes("BACKEND_CALLABLE_CANDIDATES") &&
+    source.includes("def _resolve_backend_callable()");
+  const hasRunnerBackendCallableSurface =
+    source.includes("def _runner_resolve_backend_callable(args") &&
+    source.includes("Unable to resolve backend callable. Tried:") &&
+    source.includes("function_candidates");
+  if (!hasSimpleCallableLoaderSurface && !hasRunnerBackendCallableSurface) {
     return { repaired: false };
   }
 
@@ -40981,8 +40985,13 @@ export async function repairPythonPublicStudyBackendCallableLoaderSurface(script
   const marker = "_autolabos_backend_callable_loader_marker";
 
   if (!/import\s+importlib\.util/u.test(nextSource)) {
-    nextSource = nextSource.replace(/(^import\s+importlib\s*$)/mu, "$1\nimport importlib.util");
-    repaired = true;
+    if (/(^import\s+importlib\s*$)/mu.test(nextSource)) {
+      nextSource = nextSource.replace(/(^import\s+importlib\s*$)/mu, "$1\nimport importlib.util");
+      repaired = true;
+    } else if (/(^from\s+pathlib\s+import\s+Path\s*$)/mu.test(nextSource)) {
+      nextSource = nextSource.replace(/(^from\s+pathlib\s+import\s+Path\s*$)/mu, "import importlib.util\n$1");
+      repaired = true;
+    }
   }
 
   const callableTuplePattern = /(BACKEND_CALLABLE_CANDIDATES\s*:\s*tuple\[str, \.\.\.\]\s*=\s*\(\n)([\s\S]*?\n\))/u;
@@ -41078,6 +41087,61 @@ export async function repairPythonPublicStudyBackendCallableLoaderSurface(script
         "        return adjacent_backend_callable",
         "    return None"
       ].join("\n")
+    );
+    repaired = true;
+  }
+
+  const runnerAdjacentBackendBlock = [
+    `    # ${marker}`,
+    "    adjacent_backend_names = ['backend_experiment_impl.py', 'experiment.py']",
+    "    script_path = Path(__file__).resolve()",
+    "    if script_path.name.endswith('_study.py'):",
+    "        adjacent_backend_names.append(script_path.name.replace('_study.py', '_experiment.py'))",
+    "    seen_backend_paths = set()",
+    "    for backend_name in adjacent_backend_names:",
+    "        backend_path = (script_dir / backend_name).resolve()",
+    "        if backend_path == script_path or backend_path in seen_backend_paths or not backend_path.exists():",
+    "            continue",
+    "        seen_backend_paths.add(backend_path)",
+    "        try:",
+    "            spec = importlib.util.spec_from_file_location(",
+    "                f'_autolabos_adjacent_backend_{backend_path.stem}',",
+    "                backend_path,",
+    "            )",
+    "            if spec is None or spec.loader is None:",
+    "                raise ImportError(f'unable to load module spec from {backend_path}')",
+    "            module = importlib.util.module_from_spec(spec)",
+    "            sys.modules[spec.name] = module",
+    "            spec.loader.exec_module(module)",
+    "        except Exception as exc:",
+    "            import_errors.append(f'{backend_path.name}: {exc}')",
+    "            continue",
+    "        for function_name in function_candidates:",
+    "            backend_callable = getattr(module, function_name, None)",
+    "            if callable(backend_callable):",
+    "                return backend_callable, {",
+    "                    'module': str(backend_path),",
+    "                    'callable': function_name,",
+    "                }",
+    "        if callable(module):",
+    "            return module, {",
+    "                'module': str(backend_path),",
+    "                'callable': '<module>',",
+    "            }",
+    "        import_errors.append(",
+    "            f'{backend_path.name}: loaded but no callable found among {function_candidates}'",
+    "        )"
+  ].join("\n");
+  const runnerRaisePattern =
+    /(\n\s+raise\s+ImportError\('Unable to resolve backend callable\. Tried: '\s*\+\s*' \| '\.join\(import_errors\)\))/u;
+  if (
+    hasRunnerBackendCallableSurface &&
+    runnerRaisePattern.test(nextSource) &&
+    !nextSource.includes(`    # ${marker}\n    adjacent_backend_names =`)
+  ) {
+    nextSource = nextSource.replace(
+      runnerRaisePattern,
+      (_full: string, suffix: string) => `\n${runnerAdjacentBackendBlock}${suffix}`
     );
     repaired = true;
   }
