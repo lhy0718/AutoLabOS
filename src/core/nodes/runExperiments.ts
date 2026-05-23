@@ -2548,6 +2548,13 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
     messages.push(adjacentBackendExecutionSeedRowsRepair.message || `Accepted adjacent backend execution seed_rows alias in ${path.basename(scriptPath)} before run_experiments execution.`);
   }
 
+  const adjacentBackendTrainingInputsBridgeRepair =
+    await repairPythonAdjacentBackendTrainingInputsBridgeSurface(scriptPath);
+  if (adjacentBackendTrainingInputsBridgeRepair.repaired) {
+    repaired = true;
+    messages.push(adjacentBackendTrainingInputsBridgeRepair.message || `Bridged adjacent backend training inputs in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
   const mainCallableResolverSpecificityRepair =
     await repairPythonMainCallableResolverSpecificitySurface(scriptPath);
   if (mainCallableResolverSpecificityRepair.repaired) {
@@ -2897,6 +2904,98 @@ async function repairPythonAdjacentBackendExecutionSeedRowsSurface(scriptPath: s
   return {
     repaired: true,
     message: `Accepted seed_rows from adjacent backend execution payload in ${path.basename(backendPath)} before run_experiments execution.`
+  };
+}
+async function repairPythonAdjacentBackendTrainingInputsBridgeSurface(scriptPath: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  const backendPath = path.join(path.dirname(scriptPath), "backend_experiment_impl.py");
+  if (!(await fileExists(backendPath))) {
+    return { repaired: false };
+  }
+  const source = await fs.readFile(backendPath, "utf8");
+  const marker = "_autolabos_training_inputs_bridge_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def run_single_condition_seed(") ||
+    !source.includes("def run_single_seed_training") ||
+    !source.includes("def load_condition_model_bundle(") ||
+    !source.includes("def prepare_single_seed_data_bundle(")
+  ) {
+    return { repaired: false };
+  }
+  const rawTrainingNeedle = "        raw_training_output = None\n        if training_runner is not None:";
+  if (!source.includes(rawTrainingNeedle)) {
+    return { repaired: false };
+  }
+  const bridgeBlock = [
+    "        # _autolabos_training_inputs_bridge_marker",
+    "        bridge_training_model = runtime_context.get(\"model\")",
+    "        bridge_tokenizer = runtime_context.get(\"tokenizer\")",
+    "        bridge_train_examples = runtime_context.get(\"train_examples\") or runtime_context.get(\"training_examples\")",
+    "        bridge_training_device = runtime_context.get(\"device\")",
+    "        if training_runner is not None and (bridge_training_model is None or bridge_tokenizer is None or bridge_train_examples is None):",
+    "            bridge_cache_dir = runtime_context.get(\"cache_dir\")",
+    "            if bridge_cache_dir is not None:",
+    "                bridge_cache_dir = Path(bridge_cache_dir)",
+    "            data_bundle = prepare_single_seed_data_bundle(",
+    "                seed=seed,",
+    "                train_example_count=int(runtime_context.get(\"max_train_examples\") or globals().get(\"DEFAULT_MAX_TRAIN_EXAMPLES\", 96)),",
+    "                eval_examples_per_task=int(runtime_context.get(\"max_eval_examples_per_task\") or globals().get(\"DEFAULT_MAX_EVAL_EXAMPLES_PER_TASK\", 64)),",
+    "                cache_dir=bridge_cache_dir,",
+    "            )",
+    "            if bridge_train_examples is None:",
+    "                bridge_train_examples = data_bundle.get(\"train_examples\")",
+    "            runtime_context.setdefault(\"evaluation_examples_by_task\", data_bundle.get(\"eval_examples\", {}))",
+    "            model_resolution = runtime_context.get(\"model_resolution\")",
+    "            if not isinstance(model_resolution, Mapping):",
+    "                model_resolution = {}",
+    "            bridge_model_name = (",
+    "                runtime_context.get(\"resolved_model_name\")",
+    "                or runtime_context.get(\"resolved_base_model\")",
+    "                or model_resolution.get(\"selected_model_id\")",
+    "                or globals().get(\"PREFERRED_BASE_MODEL\")",
+    "                or globals().get(\"PREFERRED_BASE_MODEL_ID\")",
+    "            )",
+    "            if bridge_training_model is None or bridge_tokenizer is None:",
+    "                model_bundle = load_condition_model_bundle(",
+    "                    base_model_name=str(bridge_model_name),",
+    "                    lora_rank=rank,",
+    "                    lora_dropout=dropout,",
+    "                    cache_dir=bridge_cache_dir,",
+    "                    max_sequence_length=int(runtime_context.get(\"max_sequence_length\") or runtime_context.get(\"max_seq_length\") or globals().get(\"DEFAULT_MAX_SEQ_LENGTH\", 256)),",
+    "                )",
+    "                bridge_training_model = getattr(model_bundle, \"model\", None)",
+    "                bridge_tokenizer = getattr(model_bundle, \"tokenizer\", None)",
+    "                bridge_training_device = getattr(model_bundle, \"device\", bridge_training_device)",
+    "                runtime_context.setdefault(\"resolved_model_name\", getattr(model_bundle, \"base_model_name\", bridge_model_name))",
+    "        if bridge_training_device is None:",
+    "            bridge_training_device = runtime_context.get(\"device\")",
+  ].join("\n");
+  let nextSource = source.replace(
+    rawTrainingNeedle,
+    `        raw_training_output = None\n${bridgeBlock}\n        if training_runner is not None:`
+  );
+  const deviceNeedle = "                device=runtime_context.get(\"device\"),";
+  const deviceReplacement = [
+    "                device=bridge_training_device,",
+    "                model=bridge_training_model,",
+    "                tokenizer=bridge_tokenizer,",
+    "                train_examples=bridge_train_examples,",
+    "                runtime_config=runtime_context,"
+  ].join("\n");
+  if (!nextSource.includes(deviceNeedle)) {
+    return { repaired: false };
+  }
+  nextSource = nextSource.replace(deviceNeedle, deviceReplacement);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+  await fs.writeFile(backendPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged model/tokenizer/train_examples inputs for adjacent backend training in ${path.basename(backendPath)} before run_experiments execution.`
   };
 }
 function extractPythonScriptPathFromCommand(command: string, cwd: string): string | undefined {

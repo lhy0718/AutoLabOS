@@ -1370,6 +1370,32 @@ describe("run_experiments execution profile behavior", () => {
         "        raw_seed_results = execution_payload.get(\"results\")",
         "    return raw_seed_results",
         "",
+        "def load_condition_model_bundle(**kwargs):",
+        "    return None",
+        "",
+        "def prepare_single_seed_data_bundle(**kwargs):",
+        "    return {\"train_examples\": [], \"eval_examples\": {}}",
+        "",
+        "def run_single_seed_training(*, condition, seed, model, tokenizer, train_examples, device, runtime_config=None):",
+        "    return {\"status\": \"completed\"}",
+        "",
+        "def run_single_condition_seed(condition_dict, seed, runtime_context):",
+        "    training_runner = run_single_seed_training",
+        "    try:",
+        "        raw_training_output = None",
+        "        if training_runner is not None:",
+        "            raw_training_output = _invoke_with_supported_kwargs(",
+        "                training_runner,",
+        "                condition=condition_dict,",
+        "                seed=seed,",
+        "                runtime_context=runtime_context,",
+        "                output_dir=None,",
+        "                device=runtime_context.get(\"device\"),",
+        "            )",
+        "        return raw_training_output",
+        "    finally:",
+        "        pass",
+        "",
         "def run_experiment(metrics_path=None, output_dir=None, **kwargs):",
         "    seed_results = [",
         "        {\"condition_marker\": \"baseline_condition\", \"status\": \"completed\"},",
@@ -1466,6 +1492,8 @@ describe("run_experiments execution profile behavior", () => {
     expect(backendSource).toContain("raw_condition_summaries = aggregate_payload.get");
     expect(backendSource).toContain("kwargs: Any = None, **extra_kwargs: Any");
     expect(backendSource).toContain('execution_payload.get("seed_rows")');
+    expect(backendSource).toContain("_autolabos_training_inputs_bridge_marker");
+    expect(backendSource).toContain("train_examples=bridge_train_examples");
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes("Added adjacent backend_experiment_impl.py discovery")
