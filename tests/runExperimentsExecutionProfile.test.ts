@@ -1319,11 +1319,25 @@ describe("run_experiments execution profile behavior", () => {
       backendPath,
       [
         "import inspect",
+        "from typing import Any, Dict, Mapping",
         "",
         "def _backend_call_with_supported_kwargs(func, **kwargs):",
         "    signature = inspect.signature(func)",
         "    filtered_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}",
         "    return func(**filtered_kwargs)",
+        "",
+        "def _invoke_with_supported_kwargs(func: Any, kwargs: Mapping[str, Any]) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):",
+        "        return func(**kwargs)",
+        "    supported_kwargs: Dict[str, Any] = {}",
+        "    for name, parameter in parameters.items():",
+        "        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.VAR_POSITIONAL):",
+        "            continue",
+        "        if name in kwargs:",
+        "            supported_kwargs[name] = kwargs[name]",
+        "    return func(**supported_kwargs)",
         "",
         "def aggregate_study_results(seed_rows, required_condition_markers=None, baseline_condition_marker=None):",
         "    return {",
@@ -1353,7 +1367,7 @@ describe("run_experiments execution profile behavior", () => {
         "        {\"condition_marker\": \"baseline_condition\", \"status\": \"completed\"},",
         "        {\"condition_marker\": \"candidate_condition_a\", \"status\": \"completed\"},",
         "    ]",
-        "    return _backend_call_with_supported_kwargs(",
+        "    return _invoke_with_supported_kwargs(",
         "        aggregate_study_results,",
         "        seed_results=seed_results,",
         "        raw_seed_results=seed_results,",
@@ -1440,7 +1454,9 @@ describe("run_experiments execution profile behavior", () => {
     expect(metrics.completed_run_count).toBe(2);
     expect(metrics.completed_condition_count).toBe(2);
     expect(await readFile(scriptPath, "utf8")).toContain("backend_experiment_impl.py");
-    expect(await readFile(backendPath, "utf8")).toContain("raw_condition_summaries = aggregate_payload.get");
+    const backendSource = await readFile(backendPath, "utf8");
+    expect(backendSource).toContain("raw_condition_summaries = aggregate_payload.get");
+    expect(backendSource).toContain("kwargs: Any = None, **extra_kwargs: Any");
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes("Added adjacent backend_experiment_impl.py discovery")

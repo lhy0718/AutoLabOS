@@ -2534,6 +2534,13 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
     messages.push(adjacentBackendConditionSummariesRepair.message || `Normalized adjacent backend condition summaries in ${path.basename(scriptPath)} before run_experiments execution.`);
   }
 
+  const adjacentBackendSupportedKwargsRepair =
+    await repairPythonAdjacentBackendSupportedKwargsSurface(scriptPath);
+  if (adjacentBackendSupportedKwargsRepair.repaired) {
+    repaired = true;
+    messages.push(adjacentBackendSupportedKwargsRepair.message || `Normalized adjacent backend supported-kwargs helper in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
   const mainCallableResolverSpecificityRepair =
     await repairPythonMainCallableResolverSpecificitySurface(scriptPath);
   if (mainCallableResolverSpecificityRepair.repaired) {
@@ -2804,6 +2811,56 @@ async function repairPythonAdjacentBackendConditionSummariesMappingSurface(scrip
   return {
     repaired: true,
     message: `Normalized adjacent backend condition_summaries mapping in ${path.basename(backendPath)} before run_experiments execution.`
+  };
+}
+async function repairPythonAdjacentBackendSupportedKwargsSurface(scriptPath: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  const backendPath = path.join(path.dirname(scriptPath), "backend_experiment_impl.py");
+  if (!(await fileExists(backendPath))) {
+    return { repaired: false };
+  }
+  const source = await fs.readFile(backendPath, "utf8");
+  if (
+    !source.includes("def _invoke_with_supported_kwargs") ||
+    source.includes("def _invoke_with_supported_kwargs(func: Any, kwargs: Any = None, **extra_kwargs: Any)")
+  ) {
+    return { repaired: false };
+  }
+  const helperPattern = /^def _invoke_with_supported_kwargs\(func: Any, kwargs: Mapping\[str, Any\]\) -> Any:\n(?:    .+\n)+?    return func\(\*\*supported_kwargs\)\n/mu;
+  if (!helperPattern.test(source)) {
+    return { repaired: false };
+  }
+  const replacement = [
+    "def _invoke_with_supported_kwargs(func: Any, kwargs: Any = None, **extra_kwargs: Any) -> Any:",
+    "    merged_kwargs: Dict[str, Any] = {}",
+    "    if kwargs is not None:",
+    "        merged_kwargs.update(dict(kwargs))",
+    "    merged_kwargs.update(extra_kwargs)",
+    "    try:",
+    "        signature = inspect.signature(func)",
+    "    except Exception:",
+    "        return func(**merged_kwargs)",
+    "    parameters = signature.parameters",
+    "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):",
+    "        return func(**merged_kwargs)",
+    "    supported_kwargs: Dict[str, Any] = {}",
+    "    for name, parameter in parameters.items():",
+    "        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.VAR_POSITIONAL):",
+    "            continue",
+    "        if name in merged_kwargs:",
+    "            supported_kwargs[name] = merged_kwargs[name]",
+    "    return func(**supported_kwargs)"
+  ].join("\n");
+  const nextSource = source.replace(helperPattern, replacement);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+  await fs.writeFile(backendPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Normalized adjacent backend _invoke_with_supported_kwargs in ${path.basename(backendPath)} before run_experiments execution.`
   };
 }
 function extractPythonScriptPathFromCommand(command: string, cwd: string): string | undefined {
