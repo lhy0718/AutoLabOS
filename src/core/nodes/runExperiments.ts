@@ -81,6 +81,7 @@ import {
   repairPythonAllowModelDownloadsRuntimeArgDefaultSurface,
   repairPythonRunContextHelperFallbackSurface,
   repairPythonRunResultArtifactAggregationSurface,
+  repairPythonLockedConditionSeedMatrixEntrypointSurface,
   repairPythonSingleConditionExecutorBridgeSurface,
   repairPythonStudyRuntimeHelperAliasSurface,
   repairPythonTerminalMetricsExistingConditionCountSurface,
@@ -2692,6 +2693,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
         "before handoff.",
         "before run_experiments execution."
       ) || `Recovered per-run result artifacts for final metrics aggregation in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const lockedConditionSeedMatrixEntrypointRepair =
+    await repairPythonLockedConditionSeedMatrixEntrypointSurface(scriptPath);
+  if (lockedConditionSeedMatrixEntrypointRepair.repaired) {
+    repaired = true;
+    messages.push(
+      lockedConditionSeedMatrixEntrypointRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Added locked condition/seed matrix study entrypoint aliases in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
   const multipleChoiceDataclassChoiceAliasRepair =

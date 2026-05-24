@@ -30924,6 +30924,145 @@ export async function repairPythonRunResultArtifactAggregationSurface(
   };
 }
 
+export async function repairPythonLockedConditionSeedMatrixEntrypointSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_locked_condition_seed_matrix_entrypoint_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def run_locked_condition_seed_matrix(") ||
+    !source.includes("def _invoke_execution_backend(") ||
+    !source.includes("No study execution callable was found in the script.") ||
+    !source.includes("def build_runtime_paths(") ||
+    !source.includes("def detect_device(")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+_invoke_execution_backend\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const bridge = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_locked_condition_seed_matrix_entrypoint(args=None, runtime_paths=None, device=None, device_info=None, preflight_result=None, **keyword):",
+    "    if args is None:",
+    "        args = keyword.get('namespace') or keyword.get('config') or keyword.get('run_config')",
+    "    if args is None:",
+    "        parser = globals().get('parse_args') or globals().get('parse_cli_args')",
+    "        if callable(parser):",
+    "            try:",
+    "                args = parser([])",
+    "            except TypeError:",
+    "                args = parser()",
+    "    if args is None:",
+    "        raise RuntimeError('No argparse namespace was available for the locked condition/seed matrix runner.')",
+    "",
+    "    if runtime_paths is None:",
+    "        runtime_paths = build_runtime_paths(",
+    "            getattr(args, 'output_dir', globals().get('DEFAULT_PUBLIC_OUTPUT_DIR', '.')),",
+    "            getattr(args, 'metrics_path', globals().get('DEFAULT_METRICS_PATH', 'metrics.json')),",
+    "        )",
+    "",
+    "    if device is None or device_info is None:",
+    "        detected = detect_device()",
+    "        if isinstance(detected, tuple):",
+    "            if device is None:",
+    "                device = detected[0]",
+    "            if device_info is None and len(detected) > 1:",
+    "                device_info = detected[1]",
+    "        elif device is None:",
+    "            device = detected",
+    "    if device_info is None:",
+    "        device_info = {}",
+    "",
+    "    resolved_model = keyword.get('resolved_model') or keyword.get('model_resolution') or keyword.get('model_choice')",
+    "    if resolved_model is None and isinstance(preflight_result, dict):",
+    "        resolved_model = preflight_result",
+    "    if resolved_model is None:",
+    "        resolver = globals().get('resolve_base_model') or globals().get('resolve_model_preflight') or globals().get('resolve_base_model_preflight')",
+    "        if callable(resolver):",
+    "            try:",
+    "                resolved_model = _call_with_compatible_kwargs(",
+    "                    resolver,",
+    "                    args=args,",
+    "                    runtime_paths=runtime_paths,",
+    "                    device=device,",
+    "                    device_info=device_info,",
+    "                    smoke_test=False,",
+    "                    allow_network=default_allow_network() if callable(globals().get('default_allow_network')) else None,",
+    "                )",
+    "            except Exception:",
+    "                resolved_model = preflight_result if isinstance(preflight_result, dict) else {}",
+    "    if resolved_model is None:",
+    "        resolved_model = {}",
+    "",
+    "    if 'run_training_backend' not in globals() and callable(globals().get('run_single_training_backend')):",
+    "        globals()['run_training_backend'] = globals()['run_single_training_backend']",
+    "    if 'evaluate_and_enrich_run' not in globals() and callable(globals().get('evaluate_training_run_on_benchmarks')):",
+    "        globals()['evaluate_and_enrich_run'] = globals()['evaluate_training_run_on_benchmarks']",
+    "",
+    "    run_records = _call_with_compatible_kwargs(",
+    "        run_locked_condition_seed_matrix,",
+    "        args=args,",
+    "        runtime_paths=runtime_paths,",
+    "        resolved_model=resolved_model,",
+    "        model_resolution=resolved_model,",
+    "        model_choice=resolved_model,",
+    "        device=device,",
+    "        device_info=device_info,",
+    "        preflight_result=preflight_result,",
+    "    )",
+    "    return {",
+    "        'status': 'completed',",
+    "        'success': True,",
+    "        'run_records': run_records,",
+    "        'run_results': run_records,",
+    "        'per_run_results': run_records,",
+    "        'resolved_model': _to_plain_jsonable(resolved_model) if callable(globals().get('_to_plain_jsonable')) else resolved_model,",
+    "        'device_info': device_info,",
+    "    }",
+    "",
+    "if 'execute_locked_study' not in globals():",
+    "    execute_locked_study = _autolabos_locked_condition_seed_matrix_entrypoint",
+    "if 'run_locked_study' not in globals():",
+    "    run_locked_study = _autolabos_locked_condition_seed_matrix_entrypoint",
+    "if 'execute_study' not in globals():",
+    "    execute_study = _autolabos_locked_condition_seed_matrix_entrypoint",
+    "if 'run_study' not in globals():",
+    "    run_study = _autolabos_locked_condition_seed_matrix_entrypoint",
+    "if 'execute_experiment' not in globals():",
+    "    execute_experiment = _autolabos_locked_condition_seed_matrix_entrypoint",
+    "if 'run_experiment' not in globals():",
+    "    run_experiment = _autolabos_locked_condition_seed_matrix_entrypoint",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${bridge}${source.slice(insertionMatch.index)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added locked condition/seed matrix study entrypoint aliases in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonSingleRunExecutorSignatureDispatchSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {

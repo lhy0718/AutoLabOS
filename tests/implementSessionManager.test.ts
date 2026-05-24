@@ -201,6 +201,7 @@ import {
   repairPythonNestedRunRecordsProjectionSurface,
   repairPythonAggregateNestedRawResultRowsSurface,
   repairPythonRunResultArtifactAggregationSurface,
+  repairPythonLockedConditionSeedMatrixEntrypointSurface,
   repairPythonSingleRunExecutorSignatureDispatchSurface,
   repairPythonTransformersLinearSchedulerSurface,
   repairPythonLockedConditionContractCallSurface,
@@ -27972,6 +27973,122 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_run_result_artifact_aggregation_marker");
     expect(repairedSource).toContain("execution_map.get('run_results')");
     execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("adds study entrypoint aliases for locked condition-seed matrix runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-seed-entrypoint-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "from types import SimpleNamespace",
+        "",
+        "def build_runtime_paths(output_dir, metrics_path):",
+        "    return SimpleNamespace(output_dir=Path(output_dir), metrics_path=Path(metrics_path))",
+        "",
+        "def detect_device():",
+        "    return 'cpu', {'device': 'cpu'}",
+        "",
+        "def default_allow_network():",
+        "    return False",
+        "",
+        "def _to_plain_jsonable(value):",
+        "    return value if isinstance(value, dict) else {'value': str(value)}",
+        "",
+        "def _call_with_compatible_kwargs(fn, **kwargs):",
+        "    names = fn.__code__.co_varnames[:fn.__code__.co_argcount]",
+        "    return fn(**{key: value for key, value in kwargs.items() if key in names})",
+        "",
+        "def resolve_base_model(device, smoke_test=False, allow_network=False):",
+        "    return {'selected_model_id': 'local-test-model', 'device': str(device)}",
+        "",
+        "def run_single_training_backend(condition, seed, base_model_name=None):",
+        "    return {'condition_marker': condition, 'seed': seed, 'training_status': 'completed'}",
+        "",
+        "def evaluate_training_run_on_benchmarks(run_record, runtime_paths, device):",
+        "    return {**run_record, 'status': 'completed', 'average_accuracy': 0.75, 'device': str(device)}",
+        "",
+        "def _resolve_training_runner():",
+        "    candidate = globals().get('run_training_backend')",
+        "    if callable(candidate):",
+        "        return candidate",
+        "    raise RuntimeError('training alias missing')",
+        "",
+        "def _resolve_evaluation_runner():",
+        "    candidate = globals().get('evaluate_and_enrich_run')",
+        "    if callable(candidate):",
+        "        return candidate",
+        "    raise RuntimeError('evaluation alias missing')",
+        "",
+        "def run_locked_condition_seed_matrix(args, runtime_paths, resolved_model, device, device_info):",
+        "    trainer = _resolve_training_runner()",
+        "    evaluator = _resolve_evaluation_runner()",
+        "    trained = trainer(condition='baseline_condition', seed=7, base_model_name=resolved_model.get('selected_model_id'))",
+        "    return [evaluator(run_record=trained, runtime_paths=runtime_paths, device=device)]",
+        "",
+        "def _build_fallback_execution_outcome(reason):",
+        "    return {'status': 'failed', 'error': reason, 'run_records': []}",
+        "",
+        "def _find_callable(candidate_names):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate, name",
+        "    return None, None",
+        "",
+        "def _invoke_execution_backend(args, runtime_paths, device, device_info, preflight_result):",
+        "    callable_obj, callable_name = _find_callable((",
+        "        'execute_locked_study',",
+        "        'run_locked_study',",
+        "        'execute_study',",
+        "        'run_study',",
+        "        'execute_experiment',",
+        "        'run_experiment',",
+        "    ))",
+        "    if callable_obj is None:",
+        "        return _build_fallback_execution_outcome('No study execution callable was found in the script.')",
+        "    return callable_obj(args=args, runtime_paths=runtime_paths, device=device, device_info=device_info, preflight_result=preflight_result)",
+        "",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--output-dir', default='out')",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    args = parser.parse_args(argv)",
+        "    runtime_paths = build_runtime_paths(args.output_dir, args.metrics_path)",
+        "    device, device_info = detect_device()",
+        "    outcome = _invoke_execution_backend(args, runtime_paths, device, device_info, {'status': 'success'})",
+        "    payload = {'status': outcome.get('status'), 'completed_run_count': len(outcome.get('run_records') or [])}",
+        "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "failed",
+      completed_run_count: 0
+    });
+
+    const repair = await repairPythonLockedConditionSeedMatrixEntrypointSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_locked_condition_seed_matrix_entrypoint_marker");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      completed_run_count: 1
+    });
   });
 
   it("dispatches single-run executors by signature before unsafe positional fallbacks", async () => {
