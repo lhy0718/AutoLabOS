@@ -2534,6 +2534,16 @@ describe("ImplementSessionManager", () => {
         commandRepairFeedback: false
       })
     ).toBe(true);
+
+    expect(
+      shouldRequireFreshRecoveredBundlePlanAlignment({
+        planChanged: false,
+        hasImplementationContractFeedback: true,
+        hasRunnerFeedback: false,
+        hasPaperCritiqueFeedback: false,
+        commandRepairFeedback: false
+      })
+    ).toBe(true);
   });
 
   it("does not reject command-repair recovery only because plan artifacts are newer", () => {
@@ -3874,7 +3884,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Missing Condition Callable",
-      topic: "LoRA rank dropout sweep",
+      topic: "Adapter parameter sweep",
       constraints: ["recent"],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
@@ -3968,7 +3978,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Missing Sweep Kwarg",
-      topic: "LoRA rank dropout sweep",
+      topic: "Adapter parameter sweep",
       constraints: ["recent"],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
@@ -4149,7 +4159,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Preflight Class Selection",
-      topic: "LoRA rank dropout sweep",
+      topic: "Adapter parameter sweep",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
@@ -9340,7 +9350,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Repeated LoRA Contract Run",
-      topic: "LoRA rank dropout stability",
+      topic: "Adapter parameter stability",
       constraints: ["2x RTX 4090", "LoRA conditions: rank in {4,8,16,32} x dropout in {0.0,0.05}"],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
@@ -9446,7 +9456,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Redesigned LoRA Contract Run",
-      topic: "LoRA rank dropout fixed budget",
+      topic: "Adapter parameter fixed budget",
       constraints: ["Original brief used a full rank/dropout grid."],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
@@ -9554,7 +9564,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "P6 Full Grid Contract Run",
-      topic: "LoRA rank dropout fixed budget",
+      topic: "Adapter parameter fixed budget",
       constraints: ["LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
@@ -9668,7 +9678,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "P6 Constraint Supplement Contract Run",
-      topic: "LoRA rank dropout fixed budget",
+      topic: "Adapter parameter fixed budget",
       constraints: ["LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
@@ -13329,7 +13339,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Nonstandard Runner Name",
-      topic: "LoRA rank dropout",
+      topic: "Adapter parameter sweep",
       constraints: ["single workstation"],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
@@ -28957,7 +28967,7 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Run Command Contract Json Alias",
-      topic: "LoRA rank dropout",
+      topic: "Adapter parameter sweep",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });

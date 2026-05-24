@@ -24,7 +24,7 @@ function buildRun(runId: string): RunRecord {
     workflowVersion: 3,
     id: runId,
     title: "Timeout regression",
-    topic: "LoRA rank dropout interaction",
+    topic: "Adapter parameter interaction",
     constraints: ["Use two GPUs", "Keep a named baseline and real metrics."],
     objectiveMetric: "Benchmark Task A and Benchmark Task B mean accuracy",
     status: "running",
@@ -109,8 +109,8 @@ describe("collect-time LLM helpers", () => {
 
     const result = await resolveGeneratedLiteratureQueries({
       run,
-      rawBrief: "# Research Brief\n\n## Topic\nLoRA rank dropout interaction\n",
-      extractedBriefTopic: "LoRA rank dropout interaction",
+      rawBrief: "# Research Brief\n\n## Topic\nAdapter parameter interaction\n",
+      extractedBriefTopic: "Adapter parameter interaction",
       runContextMemory: memory,
       llm: new HangingLLMClient(),
       eventStream,

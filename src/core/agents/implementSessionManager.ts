@@ -831,6 +831,7 @@ export class ImplementSessionManager {
         errorMessage: "Recovered an already materialized governed experiment bundle before re-entering Codex.",
         requireFreshPlanAlignment: shouldRequireFreshRecoveredBundlePlanAlignment({
           planChanged: Boolean(promptTaskSpec.context.plan_changed),
+          hasImplementationContractFeedback: Boolean(promptTaskSpec.context.implementation_contract_feedback),
           hasRunnerFeedback: Boolean(promptTaskSpec.context.runner_feedback),
           hasPaperCritiqueFeedback: Boolean(promptTaskSpec.context.paper_critique_feedback),
           commandRepairFeedback: commandRepairFeedback || deterministicBundleRepairFeedback
@@ -1036,6 +1037,7 @@ export class ImplementSessionManager {
               !allowCurrentAttemptBundleRecovery &&
               shouldRequireFreshRecoveredBundlePlanAlignment({
                 planChanged: Boolean(promptTaskSpec.context.plan_changed),
+                hasImplementationContractFeedback: Boolean(promptTaskSpec.context.implementation_contract_feedback),
                 hasRunnerFeedback: Boolean(promptTaskSpec.context.runner_feedback),
                 hasPaperCritiqueFeedback: Boolean(promptTaskSpec.context.paper_critique_feedback),
                 commandRepairFeedback: commandRepairFeedback || deterministicBundleRepairFeedback
@@ -13820,11 +13822,15 @@ export function shouldApplyRecoveredBundleStaticPythonGuards(
 
 export function shouldRequireFreshRecoveredBundlePlanAlignment(params: {
   planChanged: boolean;
+  hasImplementationContractFeedback?: boolean;
   hasRunnerFeedback: boolean;
   hasPaperCritiqueFeedback: boolean;
   commandRepairFeedback: boolean;
 }): boolean {
   if (params.planChanged) {
+    return true;
+  }
+  if (params.hasImplementationContractFeedback) {
     return true;
   }
   if (params.commandRepairFeedback) {
