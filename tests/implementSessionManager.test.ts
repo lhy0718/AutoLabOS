@@ -200,6 +200,7 @@ import {
   repairPythonEntrypointStudyResultKwargAliasSurface,
   repairPythonNestedRunRecordsProjectionSurface,
   repairPythonAggregateNestedRawResultRowsSurface,
+  repairPythonRunResultArtifactAggregationSurface,
   repairPythonSingleRunExecutorSignatureDispatchSurface,
   repairPythonTransformersLinearSchedulerSurface,
   repairPythonLockedConditionContractCallSurface,
@@ -27847,6 +27848,129 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_aggregate_nested_raw_result_rows_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("recovers completed per-run result artifacts before final report aggregation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-artifact-aggregation-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "import time",
+        "from pathlib import Path",
+        "",
+        "def _to_plain_mapping(value):",
+        "    return dict(value or {}) if isinstance(value, dict) else {}",
+        "",
+        "def _normalize_run_record(record):",
+        "    return {",
+        "        'condition_marker': record.get('condition_marker'),",
+        "        'seed': record.get('seed'),",
+        "        'status': record.get('status'),",
+        "        'average_accuracy': record.get('average_accuracy'),",
+        "    }",
+        "",
+        "def assemble_experiment_report(args, execution_result, top_level_error=None):",
+        "    execution_map = _to_plain_mapping(execution_result)",
+        "    raw_run_records = execution_map.get('run_records') or execution_map.get('results') or []",
+        "    normalized_records = [_normalize_run_record(record) for record in raw_run_records]",
+        "    completed_records = [record for record in normalized_records if record.get('status') == 'completed']",
+        "    return {'summary': {'completed_run_count': len(completed_records)}, 'per_run_results': normalized_records}",
+        "",
+        "def _call_with_supported_kwargs(target, **kwargs):",
+        "    names = target.__code__.co_varnames[:target.__code__.co_argcount]",
+        "    return target(**{key: value for key, value in kwargs.items() if key in names})",
+        "",
+        "def prepare_runtime_context(args=None):",
+        "    return {'device': 'local'}",
+        "",
+        "def build_experiment_schedule(runtime=None, runtime_context=None, run_output_dir=None):",
+        "    return [{'condition_marker': 'baseline_condition'}, {'condition_marker': 'candidate_condition_a'}]",
+        "",
+        "def execute_run_schedule(planned_runs=None, runtime_context=None, runtime=None, args=None, experiment_start_monotonic=None):",
+        "    raise RuntimeError('executor should not rerun completed artifacts')",
+        "",
+        "def finalize_and_write_report(args, execution_result, top_level_error=None):",
+        "    return assemble_experiment_report(args=args, execution_result=execution_result, top_level_error=top_level_error)",
+        "",
+        "def _autolabos_public_study_top_level_runner(args=None, argv=None, run_command=None, start_time=None, device_info=None, **keyword):",
+        "    if args is None:",
+        "        args = argparse.Namespace(run_output_dir=Path('runs'), public_dir=Path('.'))",
+        "    runtime_builder = globals().get('prepare_runtime_context')",
+        "    schedule_builder = globals().get('build_experiment_schedule') or globals().get('build_locked_baseline_first_schedule')",
+        "    executor = globals().get('execute_run_schedule') or globals().get('execute_planned_runs') or globals().get('run_planned_schedule')",
+        "    if not callable(runtime_builder) or not callable(schedule_builder) or not callable(executor):",
+        "        raise RuntimeError('Generated schedule runner helpers are incomplete.')",
+        "    runtime_context = _call_with_supported_kwargs(runtime_builder, args=args)",
+        "    run_output_dir = getattr(args, 'run_output_dir', None)",
+        "    planned_runs = _call_with_supported_kwargs(",
+        "        schedule_builder,",
+        "        runtime=runtime_context,",
+        "        runtime_context=runtime_context,",
+        "        run_output_dir=run_output_dir,",
+        "    )",
+        "    monotonic_start = time.perf_counter() if 'time' in globals() else None",
+        "    run_results = _call_with_supported_kwargs(",
+        "        executor,",
+        "        planned_runs=planned_runs,",
+        "        runtime_context=runtime_context,",
+        "        runtime=runtime_context,",
+        "        args=args,",
+        "        experiment_start_monotonic=monotonic_start,",
+        "    )",
+        "    execution_payload = {",
+        "        'status': 'completed',",
+        "        'success': True,",
+        "        'planned_runs': planned_runs,",
+        "        'run_results': run_results,",
+        "        'runtime_context': runtime_context.to_dict() if hasattr(runtime_context, 'to_dict') else runtime_context,",
+        "        'run_command': run_command,",
+        "        'start_time': start_time,",
+        "        'device_info': device_info,",
+        "    }",
+        "    finalizer = globals().get('finalize_and_write_report')",
+        "    if callable(finalizer):",
+        "        return _call_with_supported_kwargs(finalizer, args=args, execution_result=execution_payload)",
+        "    return execution_payload",
+        "",
+        "def main():",
+        "    runs_dir = Path('runs')",
+        "    for name, marker, score in (",
+        "        ('run_001_baseline_condition_seed_42', 'baseline_condition', 0.5),",
+        "        ('run_002_candidate_condition_a_seed_42', 'candidate_condition_a', 0.6),",
+        "    ):",
+        "        run_dir = runs_dir / name",
+        "        run_dir.mkdir(parents=True, exist_ok=True)",
+        "        (run_dir / 'run_result.json').write_text(json.dumps({",
+        "            'condition_marker': marker,",
+        "            'seed': 42,",
+        "            'status': 'completed',",
+        "            'average_accuracy': score,",
+        "        }), encoding='utf-8')",
+        "    report = _autolabos_public_study_top_level_runner()",
+        "    return 0 if report.get('summary', {}).get('completed_run_count') == 2 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /executor should not rerun completed artifacts/
+    );
+
+    const repair = await repairPythonRunResultArtifactAggregationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_run_result_artifact_aggregation_marker");
+    expect(repairedSource).toContain("execution_map.get('run_results')");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 

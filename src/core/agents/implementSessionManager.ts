@@ -30775,6 +30775,155 @@ export async function repairPythonAggregateNestedRawResultRowsSurface(
   };
 }
 
+export async function repairPythonRunResultArtifactAggregationSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_run_result_artifact_aggregation_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("run_result.json") ||
+    !source.includes("def assemble_experiment_report(") ||
+    !source.includes("def _normalize_run_record(") ||
+    !source.includes("raw_run_records = execution_map.get('run_records') or execution_map.get('results') or []")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+assemble_experiment_report\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_load_run_result_artifacts(args):",
+    "    try:",
+    "        from pathlib import Path as _AutoLabOSPath",
+    "        import json as _autolabos_json",
+    "    except Exception:",
+    "        return []",
+    "    roots = []",
+    "    for candidate in (",
+    "        getattr(args, 'run_output_dir', None),",
+    "        getattr(args, 'public_dir', None),",
+    "        globals().get('DEFAULT_RUN_OUTPUT_DIR'),",
+    "        globals().get('DEFAULT_PUBLIC_EXPERIMENT_DIR'),",
+    "    ):",
+    "        if candidate in (None, ''):",
+    "            continue",
+    "        try:",
+    "            root = _AutoLabOSPath(candidate)",
+    "        except Exception:",
+    "            continue",
+    "        if root not in roots:",
+    "            roots.append(root)",
+    "        runs_root = root / 'runs'",
+    "        if runs_root not in roots:",
+    "            roots.append(runs_root)",
+    "    records = []",
+    "    seen_paths = set()",
+    "    for root in roots:",
+    "        if not root.exists() or not root.is_dir():",
+    "            continue",
+    "        for result_path in sorted(root.glob('*/run_result.json')):",
+    "            result_key = str(result_path.resolve())",
+    "            if result_key in seen_paths:",
+    "                continue",
+    "            seen_paths.add(result_key)",
+    "            try:",
+    "                payload = _autolabos_json.loads(result_path.read_text(encoding='utf-8'))",
+    "            except Exception:",
+    "                continue",
+    "            if isinstance(payload, dict):",
+    "                row = dict(payload)",
+    "                row.setdefault('run_output_dir', str(result_path.parent))",
+    "                row.setdefault('output_dir', str(result_path.parent))",
+    "                records.append(row)",
+    "    return records",
+    "",
+    "def _autolabos_completed_artifact_records(records):",
+    "    completed = []",
+    "    for record in list(records or []):",
+    "        if not isinstance(record, dict):",
+    "            continue",
+    "        status = str(record.get('status') or '').strip().lower()",
+    "        if status in {'completed', 'success', 'succeeded', 'ok', 'passed'} or bool(record.get('success')):",
+    "            completed.append(record)",
+    "    return completed",
+    ""
+  ].join("\n");
+
+  let nextSource = `${source.slice(0, insertionMatch.index)}${helper}${source.slice(insertionMatch.index)}`;
+  nextSource = nextSource.replace(
+    "    raw_run_records = execution_map.get('run_records') or execution_map.get('results') or []",
+    [
+      "    raw_run_records = (",
+      "        execution_map.get('run_records')",
+      "        or execution_map.get('run_results')",
+      "        or execution_map.get('per_run_results')",
+      "        or execution_map.get('results')",
+      "        or []",
+      "    )",
+      "    if not raw_run_records:",
+      "        raw_run_records = _autolabos_load_run_result_artifacts(args)"
+    ].join("\n")
+  );
+
+  const runnerBlock = [
+    "    run_results = _call_with_supported_kwargs(",
+    "        executor,",
+    "        planned_runs=planned_runs,",
+    "        runtime_context=runtime_context,",
+    "        runtime=runtime_context,",
+    "        args=args,",
+    "        experiment_start_monotonic=monotonic_start,",
+    "    )"
+  ].join("\n");
+  if (nextSource.includes(runnerBlock)) {
+    nextSource = nextSource.replace(
+      runnerBlock,
+      [
+        "    existing_run_results = _autolabos_load_run_result_artifacts(args)",
+        "    existing_completed_results = _autolabos_completed_artifact_records(existing_run_results)",
+        "    expected_run_count = len(list(planned_runs or []))",
+        "    if expected_run_count > 0 and len(existing_completed_results) >= expected_run_count:",
+        "        run_results = existing_run_results",
+        "    else:",
+        "        run_results = _call_with_supported_kwargs(",
+        "            executor,",
+        "            planned_runs=planned_runs,",
+        "            runtime_context=runtime_context,",
+        "            runtime=runtime_context,",
+        "            args=args,",
+        "            experiment_start_monotonic=monotonic_start,",
+        "        )"
+      ].join("\n")
+    );
+  }
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Recovered per-run result artifacts for final metrics aggregation in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonSingleRunExecutorSignatureDispatchSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {

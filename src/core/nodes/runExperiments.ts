@@ -80,6 +80,7 @@ import {
   repairPythonMetricsPayloadProjectionSurface,
   repairPythonAllowModelDownloadsRuntimeArgDefaultSurface,
   repairPythonRunContextHelperFallbackSurface,
+  repairPythonRunResultArtifactAggregationSurface,
   repairPythonSingleConditionExecutorBridgeSurface,
   repairPythonStudyRuntimeHelperAliasSurface,
   repairPythonTerminalMetricsExistingConditionCountSurface,
@@ -2681,6 +2682,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   if (metricsPayloadProjectionRepair.repaired) {
     repaired = true;
     messages.push(metricsPayloadProjectionRepair.message || `Projected completed condition metrics onto top-level payload fields in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+  const runResultArtifactAggregationRepair =
+    await repairPythonRunResultArtifactAggregationSurface(scriptPath);
+  if (runResultArtifactAggregationRepair.repaired) {
+    repaired = true;
+    messages.push(
+      runResultArtifactAggregationRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Recovered per-run result artifacts for final metrics aggregation in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
   }
   const multipleChoiceDataclassChoiceAliasRepair =
     await repairPythonMultipleChoiceDataclassChoiceAliasSurface(scriptPath);
