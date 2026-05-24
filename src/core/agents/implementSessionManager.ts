@@ -9536,6 +9536,8 @@ export class ImplementSessionManager {
       await repairPythonPublicStudyBackendCallableLoaderSurface(executionScriptPath);
     const publicStudyPlanFinalizationRunnerRepair =
       await repairPythonPublicStudyPlanFinalizationRunnerSurface(executionScriptPath);
+    const publicStudyTopLevelRunnerAliasRepair =
+      await repairPythonPublicStudyTopLevelRunnerAliasSurface(executionScriptPath);
     const finalCliLockedGridResolverRepair =
       await repairPythonFinalCliLockedGridResolverSurface(executionScriptPath);
     const entrypointStudyResultKwargAliasRepair =
@@ -9670,6 +9672,7 @@ export class ImplementSessionManager {
         publicStudySiblingExperimentBackendRepair,
         publicStudyBackendCallableLoaderRepair,
         publicStudyPlanFinalizationRunnerRepair,
+        publicStudyTopLevelRunnerAliasRepair,
         finalCliLockedGridResolverRepair,
         entrypointStudyResultKwargAliasRepair,
         nestedRunRecordsProjectionRepair,
@@ -41703,6 +41706,114 @@ export async function repairPythonPublicStudyPlanFinalizationRunnerSurface(scrip
   return {
     repaired: true,
     message: `Connected study-plan execution helpers to finalization runner resolution in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_public_study_top_level_runner_alias_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("No experiment runner callable was found in the script globals") ||
+    !source.includes("def main(") ||
+    !source.includes("def _resolve_global_callable(") ||
+    !source.includes("def _call_with_supported_kwargs(") ||
+    !source.includes("def execute_run_schedule(") ||
+    !source.includes("def prepare_runtime_context(") ||
+    !source.includes("def build_experiment_schedule(")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionPoint = source.match(/\ndef\s+main\s*\(/u)?.index;
+  if (insertionPoint === undefined) {
+    return { repaired: false };
+  }
+
+  const bridge = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_public_study_top_level_runner(args=None, argv=None, run_command=None, start_time=None, device_info=None, **keyword):",
+    "    if args is None:",
+    "        parser = globals().get('_parse_entrypoint_args') or globals().get('parse_args') or globals().get('parse_cli_args')",
+    "        if callable(parser):",
+    "            args = _call_with_supported_kwargs(parser, argv=argv)",
+    "    if args is None:",
+    "        raise RuntimeError('No argparse namespace was available for the experiment runner.')",
+    "",
+    "    runtime_builder = globals().get('prepare_runtime_context')",
+    "    schedule_builder = globals().get('build_experiment_schedule') or globals().get('build_locked_baseline_first_schedule')",
+    "    executor = globals().get('execute_run_schedule') or globals().get('execute_planned_runs') or globals().get('run_planned_schedule')",
+    "    if not callable(runtime_builder) or not callable(schedule_builder) or not callable(executor):",
+    "        raise RuntimeError('Generated schedule runner helpers are incomplete.')",
+    "",
+    "    runtime_context = _call_with_supported_kwargs(runtime_builder, args=args)",
+    "    model_selector = globals().get('select_base_model_with_fallback')",
+    "    if callable(model_selector):",
+    "        runtime_context = _call_with_supported_kwargs(model_selector, runtime_context, runtime=runtime_context)",
+    "",
+    "    run_output_dir = getattr(args, 'run_output_dir', None)",
+    "    planned_runs = _call_with_supported_kwargs(",
+    "        schedule_builder,",
+    "        runtime=runtime_context,",
+    "        runtime_context=runtime_context,",
+    "        run_output_dir=run_output_dir,",
+    "    )",
+    "    monotonic_start = time.perf_counter() if 'time' in globals() else None",
+    "    run_results = _call_with_supported_kwargs(",
+    "        executor,",
+    "        planned_runs=planned_runs,",
+    "        runtime_context=runtime_context,",
+    "        runtime=runtime_context,",
+    "        args=args,",
+    "        experiment_start_monotonic=monotonic_start,",
+    "    )",
+    "    execution_payload = {",
+    "        'status': 'completed',",
+    "        'success': True,",
+    "        'planned_runs': planned_runs,",
+    "        'run_results': run_results,",
+    "        'runtime_context': runtime_context.to_dict() if hasattr(runtime_context, 'to_dict') else runtime_context,",
+    "        'run_command': run_command,",
+    "        'start_time': start_time,",
+    "        'device_info': device_info,",
+    "    }",
+    "    finalizer = globals().get('finalize_and_write_report')",
+    "    if callable(finalizer):",
+    "        return _call_with_supported_kwargs(finalizer, args=args, execution_result=execution_payload)",
+    "    return execution_payload",
+    "",
+    "if 'run_experiment' not in globals():",
+    "    run_experiment = _autolabos_public_study_top_level_runner",
+    "if 'execute_experiment' not in globals():",
+    "    execute_experiment = _autolabos_public_study_top_level_runner",
+    "if 'run_study' not in globals():",
+    "    run_study = _autolabos_public_study_top_level_runner",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionPoint)}${bridge}${source.slice(insertionPoint)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added public study top-level runner alias in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

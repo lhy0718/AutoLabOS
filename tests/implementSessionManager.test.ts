@@ -219,6 +219,7 @@ import {
   repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonPublicStudyBackendCallableLoaderSurface,
   repairPythonPublicStudyPlanFinalizationRunnerSurface,
+  repairPythonPublicStudyTopLevelRunnerAliasSurface,
   repairPythonFinalCliLockedGridResolverSurface,
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
@@ -6399,6 +6400,101 @@ describe("ImplementSessionManager", () => {
       }
     });
     expect(validation.verdict).toBe("allow");
+  });
+
+  it("aliases top-level public study runners to schedule executors before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-study-runner-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "import sys",
+        "import time",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "def _resolve_global_callable(*names: str) -> Any | None:",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _call_with_supported_kwargs(func: Any, /, *args: Any, **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    accepted = {key: value for key, value in kwargs.items() if key in signature.parameters}",
+        "    positional = args[:sum(1 for parameter in signature.parameters.values() if parameter.default is inspect.Parameter.empty and parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD))]",
+        "    return func(*positional, **accepted)",
+        "",
+        "class RuntimeContext:",
+        "    def __init__(self, output_dir: str):",
+        "        self.output_dir = output_dir",
+        "    def to_dict(self):",
+        "        return {'output_dir': self.output_dir}",
+        "",
+        "def _parse_entrypoint_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    parser.add_argument('--output-dir', required=True)",
+        "    parser.add_argument('--run-output-dir', default=None)",
+        "    return parser.parse_args(argv)",
+        "",
+        "def prepare_runtime_context(args):",
+        "    return RuntimeContext(args.output_dir)",
+        "",
+        "def build_experiment_schedule(runtime, run_output_dir=None):",
+        "    return [{'condition_marker': 'baseline_condition', 'seed': 1}]",
+        "",
+        "def execute_run_schedule(planned_runs, runtime_context, args, experiment_start_monotonic=None):",
+        "    return [{'status': 'completed', 'average_accuracy': 1.0, 'condition_marker': planned_runs[0]['condition_marker']}]",
+        "",
+        "execute_planned_runs = execute_run_schedule",
+        "run_planned_schedule = execute_run_schedule",
+        "",
+        "def finalize_and_write_report(args, execution_result, top_level_error=None):",
+        "    payload = {'status': 'completed', 'success': True, 'run_results': execution_result['run_results']}",
+        "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf8')",
+        "    return payload",
+        "",
+        "def main(argv=None) -> int:",
+        "    args = _parse_entrypoint_args(argv)",
+        "    runner = _resolve_global_callable(",
+        "        'run_experiment',",
+        "        'execute_experiment',",
+        "        'orchestrate_experiment',",
+        "        'run_study',",
+        "        'execute_study',",
+        "    )",
+        "    if runner is None:",
+        "        raise RuntimeError('No experiment runner callable was found in the script globals.')",
+        "    result = _call_with_supported_kwargs(runner, args=args, argv=argv)",
+        "    return 0 if result.get('success') else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    sys.exit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", workspace])
+    ).toThrow(/No experiment runner callable/);
+
+    const repair = await repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_public_study_top_level_runner_alias_marker");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", workspace]);
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.run_results[0].condition_marker).toBe("baseline_condition");
   });
 
   it("adds sibling experiment.py as a backend candidate for public study wrappers", async () => {
