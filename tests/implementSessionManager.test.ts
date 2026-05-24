@@ -214,6 +214,7 @@ import {
   repairPythonLockedBaselineFirstExecutionResolverSurface,
   repairPythonLockedBaselineFirstSweepOrchestratorSurface,
   repairPythonBaselineFirstLockedSweepEntrypointResolverSurface,
+  repairPythonPlannedConditionContractSurface,
   repairPythonPublicStudyEntrypointArgsAliasSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonPublicStudyBackendCallableLoaderSurface,
@@ -234,6 +235,7 @@ import {
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 import { buildPublicExperimentDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
+import { validateDesignImplementationAlignment } from "../src/core/experiments/designImplementationValidator.js";
 import { CodexNativeClient } from "../src/integrations/codex/codexCliClient.js";
 import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
 import { buildHeuristicObjectiveMetricProfile } from "../src/core/objectiveMetric.js";
@@ -6331,6 +6333,72 @@ describe("ImplementSessionManager", () => {
       encoding: "utf8"
     }).trim();
     expect(output).toBe("out");
+  });
+
+  it("materializes planned condition and seed contracts before design validation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-planned-contract-surface-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import json",
+        "",
+        "PLANNED_CONDITION_MARKERS = ('baseline_condition', 'candidate_condition_a')",
+        "REQUIRED_CONDITION_COUNT = 2",
+        "SEED_SCHEDULE = (42,)",
+        "",
+        "def run_condition_study(",
+        "    *,",
+        "    output_dir='out',",
+        "    metrics_path='metrics.json',",
+        "):",
+        "    return {'status': 'ok'}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = {
+      required_condition_count: 3,
+      required_run_count: 9,
+      seed_schedule: [11, 22, 33],
+      baseline_condition_marker: "baseline_condition",
+      required_condition_markers: [
+        "baseline_condition",
+        "candidate_condition_a",
+        "candidate_condition_b"
+      ]
+    };
+
+    const contractRepair = await repairPythonPlannedConditionContractSurface(scriptPath, contract);
+    const argsRepair = await repairPythonPublicStudyEntrypointArgsAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(contractRepair.repaired).toBe(true);
+    expect(argsRepair.repaired).toBe(true);
+    expect(repairedSource.indexOf("candidate_condition_b")).toBeLessThan(
+      repairedSource.indexOf("PLANNED_CONDITION_MARKERS = ('baseline_condition', 'candidate_condition_a')")
+    );
+    expect(repairedSource).toContain("PLANNED_SEEDS = (11, 22, 33)");
+    expect(repairedSource).toContain("REQUIRED_RUN_COUNT = 9");
+    expect(repairedSource).toContain("*,\n    args=None,");
+    execFileSync("python3", ["-m", "py_compile", scriptPath]);
+
+    const validation = await validateDesignImplementationAlignment({
+      plannedConditionContract: contract,
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath: path.join(workspace, "metrics.json"),
+        workingDir: workspace,
+        publicDir: workspace,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+    expect(validation.verdict).toBe("allow");
   });
 
   it("adds sibling experiment.py as a backend candidate for public study wrappers", async () => {

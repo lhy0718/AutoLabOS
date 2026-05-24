@@ -21,6 +21,7 @@ import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
 import { resolveExperimentLlmProfile } from "../experimentLlmProfile.js";
 import {
   ExperimentDesignImplementationValidationReport,
+  PlannedConditionImplementationContract,
   validateDesignImplementationAlignment,
   validateVerificationCommandSurface
 } from "../experiments/designImplementationValidator.js";
@@ -1236,6 +1237,56 @@ export class ImplementSessionManager {
       }
 
       const comparisonContract = await loadExperimentComparisonContract(run, runContext);
+      const plannedContractSurfaceRepair = await repairPythonPlannedConditionContractSurface(
+        prepared.scriptPath,
+        promptTaskSpec.context.planned_condition_contract
+      );
+      if (plannedContractSurfaceRepair.repaired) {
+        prepared.changedFiles = dedupeStrings([
+          ...prepared.changedFiles,
+          ...(prepared.scriptPath ? [prepared.scriptPath] : [])
+        ]);
+        prepared.publicArtifacts = dedupeStrings([
+          ...prepared.publicArtifacts,
+          ...(prepared.scriptPath && isSubpath(prepared.scriptPath, prepared.publicDir) ? [prepared.scriptPath] : [])
+        ]);
+        emitImplementObservation(
+          "verify",
+          plannedContractSurfaceRepair.message ||
+            "Materialized planned condition contract before design validation.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: prepared.publicDir,
+            scriptPath: prepared.scriptPath,
+            runCommand: prepared.runCommand
+          }
+        );
+      }
+      const earlyStudyEntrypointArgsRepair = await repairPythonPublicStudyEntrypointArgsAliasSurface(
+        prepared.scriptPath
+      );
+      if (earlyStudyEntrypointArgsRepair.repaired) {
+        prepared.changedFiles = dedupeStrings([
+          ...prepared.changedFiles,
+          ...(prepared.scriptPath ? [prepared.scriptPath] : [])
+        ]);
+        prepared.publicArtifacts = dedupeStrings([
+          ...prepared.publicArtifacts,
+          ...(prepared.scriptPath && isSubpath(prepared.scriptPath, prepared.publicDir) ? [prepared.scriptPath] : [])
+        ]);
+        emitImplementObservation(
+          "verify",
+          earlyStudyEntrypointArgsRepair.message || "Added args keyword alias before design validation.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: prepared.publicDir,
+            scriptPath: prepared.scriptPath,
+            runCommand: prepared.runCommand
+          }
+        );
+      }
       const designImplementationValidation = enforceUnresolvedImplementationContractFeedback(
         await validateDesignImplementationAlignment({
         comparisonContract,
@@ -16112,7 +16163,7 @@ function buildImplementationContractFeedback(
     suggested_next_action: blockingFindings.some(
       (finding) => finding.code === "PLANNED_PER_RUN_EXECUTION_HELPER_MISSING"
     )
-      ? "Regenerate the runnable experiment script so the baseline-first 32-run condition-by-seed loop calls a concrete per-run execution helper; metrics-only shells or resolvers that search only missing helpers must not pass implement_experiments."
+      ? "Regenerate the runnable experiment script so the approved condition-by-seed loop calls a concrete per-run execution helper; metrics-only shells or resolvers that search only missing helpers must not pass implement_experiments."
       : "Regenerate the implementation so static validation can see every approved condition and every condition-by-seed run before run_experiments executes it.",
     recorded_at: new Date().toISOString()
   };
@@ -40633,6 +40684,184 @@ export async function repairPythonLockedSweepRuntimeKwargBridgeSurface(scriptPat
     repaired: true,
     message: `Bridged locked-sweep runtime data/model and metrics kwargs in ${path.basename(scriptPath)} before handoff.`
   };
+}
+
+export async function repairPythonPlannedConditionContractSurface(
+  scriptPath?: string,
+  contract?: PlannedConditionImplementationContract
+): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py" || !contract) {
+    return { repaired: false };
+  }
+
+  const requiredMarkers = dedupeStrings(contract.required_condition_markers || []);
+  const seedSchedule = (contract.seed_schedule || [])
+    .map((seed) => Number(seed))
+    .filter((seed) => Number.isInteger(seed));
+  const requiredConditionCount = normalizeContractPositiveInteger(contract.required_condition_count);
+  const requiredRunCount = normalizeContractPositiveInteger(contract.required_run_count);
+  if (
+    requiredMarkers.length === 0 &&
+    seedSchedule.length === 0 &&
+    requiredConditionCount === undefined &&
+    requiredRunCount === undefined
+  ) {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const block = buildPythonPlannedConditionContractBlock({
+    requiredMarkers,
+    baselineMarker: contract.baseline_condition_marker,
+    seedSchedule,
+    requiredConditionCount,
+    requiredRunCount
+  });
+  const existingBlockPattern = /\n?# _autolabos_planned_condition_contract_marker_start\n[\s\S]*?# _autolabos_planned_condition_contract_marker_end\n?/u;
+  const nextSource = existingBlockPattern.test(source)
+    ? source.replace(existingBlockPattern, `\n${block}\n`)
+    : insertPythonContractBlockBeforePublicDeclarations(source, block);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Materialized the planned condition/seed contract in ${path.basename(scriptPath)} before design validation.`
+  };
+}
+
+function buildPythonPlannedConditionContractBlock(params: {
+  requiredMarkers: string[];
+  baselineMarker?: string;
+  seedSchedule: number[];
+  requiredConditionCount?: number;
+  requiredRunCount?: number;
+}): string {
+  const conditionCount = params.requiredConditionCount ?? params.requiredMarkers.length;
+  const runCount =
+    params.requiredRunCount ??
+    (params.requiredMarkers.length > 0 && params.seedSchedule.length > 0
+      ? params.requiredMarkers.length * params.seedSchedule.length
+      : undefined);
+  const lines = [
+    "# _autolabos_planned_condition_contract_marker_start",
+    "# AutoLabOS materializes the approved design contract for static handoff validation.",
+    `PLANNED_CONDITION_MARKERS = ${toPythonTupleLiteral(params.requiredMarkers)}`
+  ];
+  if (params.baselineMarker) {
+    lines.push(`BASELINE_CONDITION_MARKER = ${JSON.stringify(params.baselineMarker)}`);
+  }
+  if (conditionCount !== undefined) {
+    lines.push(`REQUIRED_CONDITION_COUNT = ${conditionCount}`);
+  }
+  if (params.seedSchedule.length > 0) {
+    lines.push(`PLANNED_SEEDS = ${toPythonTupleLiteral(params.seedSchedule)}`);
+    lines.push("SEED_SCHEDULE = PLANNED_SEEDS");
+  }
+  if (runCount !== undefined) {
+    lines.push(`REQUIRED_RUN_COUNT = ${runCount}`);
+    lines.push(`PLANNED_RUN_COUNT = ${runCount}`);
+  }
+  if (params.requiredMarkers.length > 0) {
+    lines.push(
+      "PLANNED_CONDITIONS = [",
+      "    {'condition_marker': marker, 'marker': marker, 'condition_id': marker, 'name': marker}",
+      "    for marker in PLANNED_CONDITION_MARKERS",
+      "]"
+    );
+  }
+  if (params.requiredMarkers.length > 0 && params.seedSchedule.length > 0) {
+    lines.push(
+      "PLANNED_CONDITION_SEED_RUNS = [",
+      "    {'condition_marker': marker, 'marker': marker, 'condition_id': marker, 'seed': seed}",
+      "    for marker in PLANNED_CONDITION_MARKERS",
+      "    for seed in PLANNED_SEEDS",
+      "]"
+    );
+  }
+  lines.push("# _autolabos_planned_condition_contract_marker_end", "");
+  return lines.join("\n");
+}
+
+function toPythonTupleLiteral(values: Array<string | number>): string {
+  if (values.length === 0) {
+    return "()";
+  }
+  const renderedValues = values.map((value) => JSON.stringify(value));
+  const suffix = renderedValues.length === 1 ? "," : "";
+  return `(${renderedValues.join(", ")}${suffix})`;
+}
+
+function normalizeContractPositiveInteger(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return Math.floor(parsed);
+}
+
+function insertPythonContractBlockBeforePublicDeclarations(source: string, block: string): string {
+  const lines = source.split(/\n/u);
+  let index = 0;
+  if (lines[index]?.startsWith("#!")) {
+    index += 1;
+  }
+  while (
+    index < lines.length &&
+    (/^#.*coding[:=]/iu.test(lines[index] || "") || (lines[index] || "").trim() === "")
+  ) {
+    index += 1;
+  }
+
+  const firstMeaningfulLine = lines[index] || "";
+  const docstringDelimiter = firstMeaningfulLine.trim().match(/^(?:[rRuUbBfF]+)?(["']{3})/u)?.[1];
+  if (docstringDelimiter) {
+    index += 1;
+    while (index < lines.length && !(lines[index] || "").includes(docstringDelimiter)) {
+      index += 1;
+    }
+    if (index < lines.length) {
+      index += 1;
+    }
+  }
+
+  while (index < lines.length && (lines[index] || "").trim() === "") {
+    index += 1;
+  }
+  while (index < lines.length && /^from\s+__future__\s+import\s+/u.test(lines[index] || "")) {
+    index += 1;
+    while (index < lines.length && (lines[index] || "").trim() === "") {
+      index += 1;
+    }
+  }
+  while (index < lines.length && /^(?:import\s+|from\s+)/u.test(lines[index] || "")) {
+    index += 1;
+    while (
+      index < lines.length &&
+      /^\s*(?:\)|,|[A-Za-z_][A-Za-z0-9_]*\s*,?\s*)$/u.test(lines[index] || "")
+    ) {
+      index += 1;
+    }
+    while (index < lines.length && (lines[index] || "").trim() === "") {
+      index += 1;
+    }
+  }
+
+  const before = lines.slice(0, index).join("\n");
+  const after = lines.slice(index).join("\n");
+  const prefix = before.length > 0 ? `${before}\n\n` : "";
+  return `${prefix}${block}${after}`;
 }
 
 export async function repairPythonConditionSeedPlanDispatchSurface(scriptPath?: string): Promise<{
