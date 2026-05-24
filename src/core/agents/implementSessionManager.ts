@@ -3667,25 +3667,46 @@ export class ImplementSessionManager {
         publicDir: input.publicDir
       }
     );
-    const completion = await this.completeStagedLlmRequest({
-      runDir: input.runDir,
-      prompt: this.buildStagedImplementMaterializationPlanPrompt({
-        taskSpec: input.taskSpec,
-        searchLocalization: input.searchLocalization,
-        branchPlan: input.branchPlan,
-        scaffold: input.scaffold,
-        decompositionPlan: input.decompositionPlan,
-        unit: input.unit
-      }),
-      systemPrompt: appendStagedImplementMaterializationPlanOverrideToPrompt(input.unit.target_path || ""),
-      timeoutMs: input.timeoutMs,
-      abortSignal: input.abortSignal,
-      attempt: input.attempt,
-      threadId: input.threadId,
-      publicDir: input.publicDir,
-      emitImplementObservation: input.emitImplementObservation,
-      reasoningEffort: input.reasoningEffort
-    });
+    let completion: { text: string; threadId?: string };
+    try {
+      completion = await this.completeStagedLlmRequest({
+        runDir: input.runDir,
+        prompt: this.buildStagedImplementMaterializationPlanPrompt({
+          taskSpec: input.taskSpec,
+          searchLocalization: input.searchLocalization,
+          branchPlan: input.branchPlan,
+          scaffold: input.scaffold,
+          decompositionPlan: input.decompositionPlan,
+          unit: input.unit
+        }),
+        systemPrompt: appendStagedImplementMaterializationPlanOverrideToPrompt(input.unit.target_path || ""),
+        timeoutMs: input.timeoutMs,
+        abortSignal: input.abortSignal,
+        attempt: input.attempt,
+        threadId: input.threadId,
+        publicDir: input.publicDir,
+        emitImplementObservation: input.emitImplementObservation,
+        reasoningEffort: input.reasoningEffort
+      });
+    } catch (error) {
+      if (isImplementStagedLlmTimeoutError(error)) {
+        const fallbackPlan = buildLocalMaterializationPlanForUnit(input.unit);
+        input.emitImplementObservation(
+          "codex",
+          `Materialization planning timed out for ${input.unit.title}; using a local single-chunk materialization plan.`,
+          {
+            attempt: input.attempt,
+            threadId: input.threadId,
+            publicDir: input.publicDir
+          }
+        );
+        return {
+          plan: fallbackPlan,
+          threadId: input.threadId
+        };
+      }
+      throw error;
+    }
     const rawPath = path.join(
       input.runDir,
       IMPLEMENT_UNIT_PLAN_DIR,
@@ -11405,6 +11426,44 @@ function parseDynamicMaterializationPlan(value: unknown): DynamicMaterialization
         : "The provider returned a dynamic plan without explicit rationale metadata.",
     chunks
   };
+}
+
+function buildLocalMaterializationPlanForUnit(unit: DynamicDecompositionUnit): DynamicMaterializationPlan {
+  const targetPath = unit.target_path || "";
+  const contentKind = inferMaterializationChunkKindForPath(targetPath, unit.unit_type);
+  return {
+    strategy: "local_single_chunk_fallback",
+    rationale:
+      "The provider did not return a materialization subplan within the bounded request, so AutoLabOS uses the approved decomposition unit as one executable materialization chunk.",
+    chunks: [
+      {
+        id: "complete_artifact",
+        title: "Complete artifact",
+        purpose: unit.purpose || `Materialize ${unit.title}.`,
+        content_kind: contentKind,
+        include_imports: contentKind === "code_section",
+        include_entrypoint: contentKind === "code_section",
+        verification_focus: unit.verification_focus
+      }
+    ]
+  };
+}
+
+function inferMaterializationChunkKindForPath(
+  filePath: string,
+  unitType?: DynamicDecompositionUnit["unit_type"]
+): DynamicMaterializationChunk["content_kind"] {
+  const ext = path.extname(filePath).toLowerCase();
+  if ([".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"].includes(ext) || unitType === "config_file") {
+    return "config_block";
+  }
+  if (ext === ".md" || unitType === "documentation_file") {
+    return "documentation_section";
+  }
+  if ([".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".sh"].includes(ext)) {
+    return "code_section";
+  }
+  return "text_section";
 }
 
 function parseDynamicMaterializationChunk(value: unknown): DynamicMaterializationChunk | undefined {
