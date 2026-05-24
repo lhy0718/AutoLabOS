@@ -856,7 +856,7 @@ async function readPublicContractSurfaceText(publicDir: string, publicArtifacts:
     "locked_condition_contract.json",
     "experiment_plan.yaml",
     "study_spec.json"
-  ].filter((name) => artifactNames.size === 0 || artifactNames.has(name) || name === "README.md" || name.endsWith(".json"));
+  ].filter((name) => artifactNames.size === 0 || artifactNames.has(name));
   const candidatePaths = dedupeStrings(candidateNames.map((name) => path.join(publicDir, name)));
   const texts = await Promise.all(candidatePaths.map((candidatePath) => safeReadText(candidatePath)));
   return texts.filter(Boolean).join("\n");

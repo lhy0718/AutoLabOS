@@ -579,6 +579,75 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("ignores stale public docs outside the current handoff artifact list", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-stale-public-doc-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-stale-public-doc", "metrics.json");
+    const markers = [
+      "baseline_condition",
+      "candidate_condition_a",
+      "candidate_condition_b",
+      "candidate_condition_c",
+      "candidate_condition_d",
+      "candidate_condition_e",
+      "candidate_condition_f",
+      "candidate_condition_g",
+      "candidate_condition_h"
+    ];
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = (",
+        ...markers.map((marker) => `  '${marker}',`),
+        ")",
+        "REQUIRED_CONDITION_COUNT = 9",
+        "REQUIRED_RUN_COUNT = 45",
+        "SEED_SCHEDULE = [11, 22, 33, 44, 55]",
+        "def run_condition_seed(condition, seed):",
+        "    return {'condition': condition, 'seed': seed, 'status': 'completed'}",
+        "def main():",
+        "    return {'completed_run_count': 45, 'accuracy_delta_vs_baseline': 0.0}"
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      readmePath,
+      ["Stale previous attempt summary.", "Published condition count: 6", "Published run count: 32"].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 9,
+        required_run_count: 45,
+        seed_schedule: [11, 22, 33, 44, 55],
+        baseline_condition_marker: "baseline_condition",
+        required_condition_markers: markers
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.findings).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "PUBLIC_CONDITION_MARKERS_CONTRACTED" }),
+        expect.objectContaining({ code: "PUBLIC_RUN_COUNT_CONTRACTED" })
+      ])
+    );
+  });
+
   it("blocks planned runners that declare a full schedule but resolve only missing per-run helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-missing-per-run-helper-"));
     tempDirs.push(workspace);
