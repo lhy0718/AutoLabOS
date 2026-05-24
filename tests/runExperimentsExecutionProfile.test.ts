@@ -975,6 +975,142 @@ describe("run_experiments execution profile behavior", () => {
     ).toBe(true);
   });
 
+  it("repairs public study top-level runner aliases before run_experiments execution", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-public-runner-alias-repair-"));
+    process.chdir(root);
+    const run = makeRun("run-public-runner-alias-repair");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "experiment.py");
+    await writeFile(
+      scriptPath,
+      [
+        "from typing import Any, Optional, Sequence",
+        "",
+        "def _resolve_global_callable(candidate_names: Sequence[str]) -> Optional[Any]:",
+        "    for candidate_name in candidate_names:",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _call_with_supported_kwargs(callable_obj, *args, **kwargs):",
+        "    return callable_obj(*args, **kwargs)",
+        "",
+        "def prepare_runtime_context(args=None, **kwargs):",
+        "    return {'args': args}",
+        "",
+        "def build_experiment_schedule(runtime=None, runtime_context=None, run_output_dir=None, **kwargs):",
+        "    return [{'condition_id': 'baseline_condition'}]",
+        "",
+        "def execute_run_schedule(planned_runs=None, runtime_context=None, **kwargs):",
+        "    return [{'condition_id': 'baseline_condition', 'status': 'completed'}]",
+        "",
+        "def main() -> int:",
+        "    runner = _resolve_global_callable(('run_experiment', 'execute_experiment', 'run_study'))",
+        "    if not callable(runner):",
+        "        raise RuntimeError('No experiment runner callable was found in the script globals.')",
+        "    return 0",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", `python3 ${JSON.stringify(scriptPath)}`);
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    let repairedBeforeExecution = false;
+    const eventStream = new InMemoryEventStream();
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          const repairedSource = await readFile(scriptPath, "utf8");
+          repairedBeforeExecution =
+            repairedSource.includes("_autolabos_public_study_top_level_runner_alias_marker") &&
+            repairedSource.includes("run_experiment = _autolabos_public_study_top_level_runner");
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric: {
+                  name: "accuracy_delta_vs_baseline",
+                  value: 0.02,
+                  target: 0.01,
+                  met: true
+                },
+                condition_results: [
+                  {
+                    condition_id: "baseline_condition",
+                    condition_type: "baseline",
+                    status: "completed",
+                    accuracy: 0.4
+                  },
+                  {
+                    condition_id: "candidate_condition_a",
+                    condition_type: "candidate",
+                    status: "completed",
+                    accuracy: 0.42
+                  }
+                ],
+                completed_condition_count: 2
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    await node.execute({ run, graph: run.graph });
+
+    expect(repairedBeforeExecution).toBe(true);
+    expect(await readFile(scriptPath, "utf8")).toContain(
+      "_autolabos_public_study_top_level_runner_alias_marker"
+    );
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes(
+          "Added public study top-level runner alias in experiment.py before run_experiments execution."
+        )
+      )
+    ).toBe(true);
+  });
+
   it("promotes top-level primary_metric_key and primary_metric before objective contract validation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-primary-metric-key-projection-"));
     process.chdir(root);

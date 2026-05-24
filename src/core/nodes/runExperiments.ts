@@ -72,6 +72,7 @@ import {
   repairPythonMainMetricsPayloadBuilderCallSurface,
   repairPythonMainCallableResolverSpecificitySurface,
   repairPythonMainStudyRunnerDeviceBridgeSurface,
+  repairPythonPublicStudyTopLevelRunnerAliasSurface,
   repairPythonLockedConditionSingleRunnerBridgeSurface,
   repairPythonMultipleChoiceDataclassChoiceAliasSurface,
   repairPythonOutputDirArgparseAlias,
@@ -2572,6 +2573,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   if (mainStudyRunnerDeviceBridgeRepair.repaired) {
     repaired = true;
     messages.push(mainStudyRunnerDeviceBridgeRepair.message || `Bridged main study runner device invocation in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+  const publicStudyTopLevelRunnerAliasRepair =
+    await repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPath);
+  if (publicStudyTopLevelRunnerAliasRepair.repaired) {
+    repaired = true;
+    messages.push(
+      publicStudyTopLevelRunnerAliasRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Added public study top-level runner alias in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
   }
   const lockedConditionSingleRunnerBridgeRepair =
     await repairPythonLockedConditionSingleRunnerBridgeSurface(scriptPath);
