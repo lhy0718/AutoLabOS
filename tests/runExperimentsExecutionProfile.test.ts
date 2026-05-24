@@ -896,7 +896,12 @@ describe("run_experiments execution profile behavior", () => {
     let repairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
-      config: {} as any,
+      config: {
+        experiments: {
+          network_policy: "declared",
+          network_purpose: "model_download"
+        }
+      } as any,
       executionProfile: "local",
       runStore: {} as any,
       eventStream,
@@ -905,7 +910,8 @@ describe("run_experiments execution profile behavior", () => {
       pdfTextLlm: new MockLLMClient(),
       codex: {} as any,
       aci: {
-        runCommand: async () => {
+        runCommand: async (command: string) => {
+          expect(command).toContain("AUTOLABOS_ALLOW_MODEL_DOWNLOAD=1 ");
           const repairedSource = await readFile(scriptPath, "utf8");
           repairedBeforeExecution = repairedSource.includes("_autolabos_main_metrics_payload_builder_call_marker");
           await writeFile(

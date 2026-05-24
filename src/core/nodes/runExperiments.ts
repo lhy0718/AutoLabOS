@@ -78,6 +78,7 @@ import {
   repairPythonOutputDirArgparseAlias,
   repairPythonParameterSummaryRecordSurface,
   repairPythonMetricsPayloadProjectionSurface,
+  repairPythonAllowModelDownloadsRuntimeArgDefaultSurface,
   repairPythonRunContextHelperFallbackSurface,
   repairPythonSingleConditionExecutorBridgeSurface,
   repairPythonStudyRuntimeHelperAliasSurface,
@@ -597,6 +598,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         command: primaryCommand,
         cwd: resolved.cwd
       });
+      primaryCommand = withModelDownloadEnvIfDeclared(primaryCommand, deps.config);
       if (executionPlan && executionPlan.command !== primaryCommand) {
         executionPlan = {
           ...executionPlan,
@@ -2485,6 +2487,20 @@ function resolveMaybeRelative(value: string | undefined, workspaceRoot: string):
   return path.join(workspaceRoot, value);
 }
 
+function withModelDownloadEnvIfDeclared(
+  command: string,
+  config: NodeExecutionDeps["config"]
+): string {
+  if (
+    config.experiments?.network_purpose !== "model_download" ||
+    config.experiments?.network_policy === "blocked" ||
+    /(^|\s)AUTOLABOS_ALLOW_MODEL_DOWNLOAD=/u.test(command)
+  ) {
+    return command;
+  }
+  return `AUTOLABOS_ALLOW_MODEL_DOWNLOAD=1 ${command}`;
+}
+
 async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   runContext: RunContextMemory;
   command: string;
@@ -2567,6 +2583,18 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   if (runContextHelperFallbackRepair.repaired) {
     repaired = true;
     messages.push(runContextHelperFallbackRepair.message || `Allowed run-context helper fallback in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const allowModelDownloadsRuntimeArgDefaultRepair =
+    await repairPythonAllowModelDownloadsRuntimeArgDefaultSurface(scriptPath);
+  if (allowModelDownloadsRuntimeArgDefaultRepair.repaired) {
+    repaired = true;
+    messages.push(
+      allowModelDownloadsRuntimeArgDefaultRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Honored AUTOLABOS_ALLOW_MODEL_DOWNLOAD for allow_model_downloads runtime defaults in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
   }
 
   const mainStudyRunnerDeviceBridgeRepair = await repairPythonMainStudyRunnerDeviceBridgeSurface(scriptPath);

@@ -71,6 +71,7 @@ import {
   repairPythonStudyCallModelSelectionKwargSurface,
   repairPythonModelSelectionPlanScalarFallbackSurface,
   repairPythonAllowModelDownloadDefaultSurface,
+  repairPythonAllowModelDownloadsRuntimeArgDefaultSurface,
   repairPythonCallContextInvokerBridgeSurface,
   repairPythonStudyConditionRuntimeInputMaterializationSurface,
   repairPythonBaselineFirstConditionRuntimeInputSurface,
@@ -28541,6 +28542,47 @@ describe("ImplementSessionManager", () => {
         env: { ...process.env, AUTOLABOS_ALLOW_MODEL_DOWNLOAD: "1" }
       }).trim()
     ).toBe("False");
+
+    const runtimeArgScriptPath = path.join(workspace, "run_runtime_arg_study.py");
+    writeFileSync(
+      runtimeArgScriptPath,
+      [
+        "import argparse",
+        "import os",
+        "",
+        "def _runtime_arg(args, name, default):",
+        "    return getattr(args, name, default)",
+        "",
+        "def _coerce_bool(value):",
+        "    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}",
+        "",
+        "def build_runtime(args):",
+        "    return _coerce_bool(_runtime_arg(args, 'allow_model_downloads', False))",
+        "",
+        "if __name__ == '__main__':",
+        "    print(build_runtime(argparse.Namespace()))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runtimeArgRepair = await repairPythonAllowModelDownloadsRuntimeArgDefaultSurface(
+      runtimeArgScriptPath
+    );
+    const runtimeArgSource = readFileSync(runtimeArgScriptPath, "utf8");
+    expect(runtimeArgRepair.repaired).toBe(true);
+    expect(runtimeArgSource).toContain("AUTOLABOS_ALLOW_MODEL_DOWNLOAD");
+    expect(runtimeArgSource).not.toContain("_runtime_arg(args, 'allow_model_downloads', False)");
+    expect(execFileSync("python3", [runtimeArgScriptPath], { cwd: workspace, encoding: "utf8" }).trim()).toBe(
+      "False"
+    );
+    expect(
+      execFileSync("python3", [runtimeArgScriptPath], {
+        cwd: workspace,
+        encoding: "utf8",
+        env: { ...process.env, AUTOLABOS_ALLOW_MODEL_DOWNLOAD: "1" }
+      }).trim()
+    ).toBe("True");
   });
 
   it("bridges generated call_context invokers from positional condition dispatch", async () => {

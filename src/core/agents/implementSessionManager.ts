@@ -9328,6 +9328,8 @@ export class ImplementSessionManager {
       await repairPythonModelSelectionPlanScalarFallbackSurface(executionScriptPath);
     const allowModelDownloadDefaultRepair =
       await repairPythonAllowModelDownloadDefaultSurface(executionScriptPath);
+    const allowModelDownloadsRuntimeArgDefaultRepair =
+      await repairPythonAllowModelDownloadsRuntimeArgDefaultSurface(executionScriptPath);
     const callContextInvokerBridgeRepair =
       await repairPythonCallContextInvokerBridgeSurface(executionScriptPath);
     const studyConditionRuntimeInputRepair =
@@ -9568,6 +9570,7 @@ export class ImplementSessionManager {
       studyCallModelSelectionKwargRepair,
       modelSelectionPlanScalarFallbackRepair,
       allowModelDownloadDefaultRepair,
+      allowModelDownloadsRuntimeArgDefaultRepair,
       callContextInvokerBridgeRepair,
       studyConditionRuntimeInputRepair,
       baselineFirstConditionRuntimeInputRepair,
@@ -31626,6 +31629,47 @@ export async function repairPythonAllowModelDownloadDefaultSurface(
   return {
     repaired: true,
     message: `Honored AUTOLABOS_ALLOW_MODEL_DOWNLOAD in ${path.basename(
+      scriptPath
+    )} before handoff.`
+  };
+}
+
+export async function repairPythonAllowModelDownloadsRuntimeArgDefaultSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_allow_model_downloads_runtime_arg_default_marker";
+  const target = "_runtime_arg(args, 'allow_model_downloads', False)";
+  const replacement = "_runtime_arg(args, 'allow_model_downloads', os.environ.get('AUTOLABOS_ALLOW_MODEL_DOWNLOAD', ''))";
+  if (source.includes(marker) || !source.includes(target) || !source.includes("_coerce_bool(")) {
+    return { repaired: false };
+  }
+
+  let nextSource = source.split(target).join(replacement);
+  if (!nextSource.includes("import os")) {
+    nextSource = nextSource.replace(/(^from __future__ import annotations\n)?/u, (match) => `${match}import os\n`);
+  }
+  const markerNeedle = "allow_model_downloads=_coerce_bool(";
+  nextSource = nextSource.replace(markerNeedle, `# ${marker}\n        ${markerNeedle}`);
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Honored AUTOLABOS_ALLOW_MODEL_DOWNLOAD for allow_model_downloads runtime defaults in ${path.basename(
       scriptPath
     )} before handoff.`
   };
