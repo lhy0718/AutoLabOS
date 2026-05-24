@@ -329,6 +329,9 @@ export function buildFallbackEvaluation(input: LLMEvaluatorInput): PaperQualityE
   const hasResults = input.presence.metricsPresent;
   const hasBaseline = input.presence.baselineSummaryPresent;
   const diagnostics = gate.paper_scale_diagnostics || [];
+  const objectiveStatus = input.report?.overview?.objective_status?.toLowerCase?.() || "";
+  const objectiveSummary = input.report?.overview?.objective_summary || "";
+  const negativeResultDetected = objectiveStatus === "not_met" || /objective metric not met/iu.test(objectiveSummary);
   const minimumGateGaps: EvidenceGap[] = gate.blockers.map(b => ({
     gap: b,
     severity: "critical",
@@ -406,8 +409,10 @@ export function buildFallbackEvaluation(input: LLMEvaluatorInput): PaperQualityE
     critique_summary: `LLM evaluation unavailable. Fallback: ${gate.summary}`,
     recommended_action: gate.passed ? "consolidate_evidence" : "backtrack_to_experiments",
     action_rationale: "Fallback evaluation — LLM was unavailable or timed out.",
-    negative_result_detected: false,
-    negative_result_framing: "",
+    negative_result_detected: negativeResultDetected,
+    negative_result_framing: negativeResultDetected
+      ? "The configured objective was not met; frame the branch as a negative or inconclusive result unless new evidence changes the conclusion."
+      : "",
     minimum_gate_passed: gate.passed,
     minimum_gate_ceiling: gate.ceiling_type
   };

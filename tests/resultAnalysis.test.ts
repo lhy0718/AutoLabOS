@@ -501,6 +501,99 @@ describe("resultAnalysis", () => {
     );
   });
 
+  it("projects completed condition_aggregates into baseline/comparator tables", () => {
+    const report = buildAnalysisReport({
+      run: {
+        objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+      },
+      metrics: {
+        status: "completed",
+        baseline_condition_marker: "baseline_condition",
+        required_run_count: 10,
+        completed_run_count: 10,
+        condition_aggregates: [
+          {
+            condition_marker: "baseline_condition",
+            status: "completed",
+            completed_seed_count: 5,
+            mean_average_accuracy: 0.61,
+            accuracy_delta_vs_baseline: 0,
+            mean_task_a_accuracy: 0.75,
+            mean_task_b_accuracy: 0.47
+          },
+          {
+            condition_marker: "candidate_condition_a",
+            status: "completed",
+            completed_seed_count: 5,
+            mean_average_accuracy: 0.64,
+            accuracy_delta_vs_baseline: 0.03,
+            mean_task_a_accuracy: 0.77,
+            mean_task_b_accuracy: 0.51
+          }
+        ]
+      },
+      objectiveProfile: {
+        source: "llm",
+        raw: "accuracy_delta_vs_baseline >= 0.01",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_average_accuracy"],
+        comparator: ">=",
+        targetValue: 0.01,
+        targetDescription: "Accuracy delta should improve by at least one point.",
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      objectiveEvaluation: {
+        rawObjectiveMetric: "accuracy_delta_vs_baseline >= 0.01",
+        profileSource: "llm",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_average_accuracy"],
+        matchedMetricKey: "accuracy_delta_vs_baseline",
+        comparator: ">=",
+        targetValue: 0.01,
+        observedValue: 0.03,
+        status: "met",
+        summary: "Objective metric met."
+      }
+    });
+
+    expect(report.condition_comparisons[0]).toMatchObject({
+      id: "candidate_condition_a_vs_baseline_condition",
+      source: "metrics.condition_aggregates",
+      hypothesis_supported: true
+    });
+    expect(report.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "accuracy_delta_vs_baseline",
+          baseline_value: 0,
+          primary_value: 0.03,
+          value: 0.03
+        }),
+        expect.objectContaining({
+          key: "mean_average_accuracy",
+          baseline_value: 0.61,
+          primary_value: 0.64,
+          value: 0.03
+        })
+      ])
+    );
+
+    const validation = buildResultsTableValidation({ report });
+    expect(validation.valid).toBe(true);
+    expect(validation.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "accuracy_delta_vs_baseline",
+          baseline: 0,
+          comparator: 0.03,
+          delta: 0.03
+        })
+      ])
+    );
+  });
+
   it("extracts a preset runtime guardrail from the experiment plan and removes the stale threshold warning", () => {
     const report = buildAnalysisReport({
       run: {

@@ -30,6 +30,7 @@ export interface AnalysisConditionComparison {
     | "metrics.conditions"
     | "metrics.condition_results"
     | "metrics.condition_summaries"
+    | "metrics.condition_aggregates"
     | "metrics.per_condition"
     | "metrics.per_condition_average_accuracy";
   metrics: AnalysisComparisonMetric[];
@@ -2384,6 +2385,7 @@ function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
     | "metrics.conditions"
     | "metrics.condition_results"
     | "metrics.condition_summaries"
+    | "metrics.condition_aggregates"
     | "metrics.per_condition"
     | "metrics.per_condition_average_accuracy";
   rows: Array<Record<string, unknown>>;
@@ -2392,8 +2394,12 @@ function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
   const summaryRows = asArray(metrics.condition_summaries)
     .map((item) => markBaselineConditionRow(enrichConditionRow(asRecord(item)), baselineMarkers))
     .filter((row) => Object.keys(row).length > 0);
+  const aggregateRows = asArray(metrics.condition_aggregates)
+    .map((item) => markBaselineConditionRow(enrichConditionRow(asRecord(item)), baselineMarkers))
+    .filter((row) => Object.keys(row).length > 0);
+  const conditionSummaryRows = summaryRows.length > 0 ? summaryRows : aggregateRows;
   const summariesByName = new Map(
-    summaryRows
+    conditionSummaryRows
       .map((row) => [readConditionName(row), row] as const)
       .filter(([name]) => Boolean(name))
   );
@@ -2463,7 +2469,10 @@ function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
   if (perConditionRows.length > 0) {
     return { source: "metrics.per_condition_average_accuracy", rows: perConditionRows };
   }
-  return { source: "metrics.condition_summaries", rows: summaryRows };
+  if (summaryRows.length > 0) {
+    return { source: "metrics.condition_summaries", rows: summaryRows };
+  }
+  return { source: "metrics.condition_aggregates", rows: aggregateRows };
 }
 
 function readPerConditionAverageAccuracyRows(

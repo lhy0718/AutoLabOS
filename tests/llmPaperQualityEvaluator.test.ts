@@ -209,6 +209,27 @@ describe("buildFallbackEvaluation", () => {
     expect(result.recommended_action).toBe("backtrack_to_experiments");
   });
 
+  it("marks objective misses as negative or inconclusive results in fallback mode", () => {
+    const input = makeFallbackInput({
+      report: {
+        overview: {
+          objective_status: "not_met",
+          objective_summary: "Objective metric not met: accuracy_delta_vs_baseline=0 does not satisfy >= 0.01.",
+          execution_runs: 10
+        },
+        condition_comparisons: [],
+        primary_findings: [],
+        limitations: [],
+        warnings: []
+      } as unknown as AnalysisReport
+    });
+
+    const result = buildFallbackEvaluation(input);
+
+    expect(result.negative_result_detected).toBe(true);
+    expect(result.negative_result_framing).toContain("configured objective was not met");
+  });
+
   it("includes ISO timestamp", () => {
     const result = buildFallbackEvaluation(makeFallbackInput());
     expect(result.evaluated_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
