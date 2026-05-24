@@ -12449,9 +12449,9 @@ describe("ImplementSessionManager", () => {
               text: JSON.stringify({
                 chunk_id: "chunk_runner",
                 content: [
-                  "# BEGIN AUTOLABOS SECTION chunk_runner :: echoed marker from model output",
-                  "# Purpose: This line should not survive handoff.",
-                  "# Order: 1/1",
+                  "    # BEGIN AUTOLABOS SECTION chunk_runner :: echoed marker from model output",
+                  "    # Purpose: This line should not survive handoff.",
+                  "    # Order: 1/1",
                   "import json",
                   "from pathlib import Path",
                   "",
@@ -12461,7 +12461,7 @@ describe("ImplementSessionManager", () => {
                   "",
                   "if __name__ == '__main__':",
                   "    raise SystemExit(main())",
-                  "# END AUTOLABOS SECTION chunk_runner"
+                  "    # END AUTOLABOS SECTION chunk_runner"
                 ].join("\n")
               }),
               threadId: "thread-single-skeleton-chunk"

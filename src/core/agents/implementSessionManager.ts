@@ -12021,14 +12021,15 @@ function stripCanonicalSkeletonMarkers(content: string, filePath: string): strin
   const stripped = content
     .split("\n")
     .filter((line) => {
-      return !line.startsWith(`${commentPrefix}AUTOLABOS CANONICAL SKELETON`) &&
-        !line.startsWith(`${commentPrefix}Target:`) &&
-        !line.startsWith(`${commentPrefix}Unit:`) &&
-        !line.startsWith(`${commentPrefix}Strategy:`) &&
-        !line.startsWith(`${commentPrefix}BEGIN AUTOLABOS SECTION`) &&
-        !line.startsWith(`${commentPrefix}Purpose:`) &&
-        !line.startsWith(`${commentPrefix}Order:`) &&
-        !line.startsWith(`${commentPrefix}END AUTOLABOS SECTION`);
+      const normalizedLine = line.trimStart();
+      return !normalizedLine.startsWith(`${commentPrefix}AUTOLABOS CANONICAL SKELETON`) &&
+        !normalizedLine.startsWith(`${commentPrefix}Target:`) &&
+        !normalizedLine.startsWith(`${commentPrefix}Unit:`) &&
+        !normalizedLine.startsWith(`${commentPrefix}Strategy:`) &&
+        !normalizedLine.startsWith(`${commentPrefix}BEGIN AUTOLABOS SECTION`) &&
+        !normalizedLine.startsWith(`${commentPrefix}Purpose:`) &&
+        !normalizedLine.startsWith(`${commentPrefix}Order:`) &&
+        !normalizedLine.startsWith(`${commentPrefix}END AUTOLABOS SECTION`);
     })
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
