@@ -1139,12 +1139,13 @@ describe("run_experiments execution profile behavior", () => {
     await mkdir(path.join(runDir, "memory"), { recursive: true });
 
     const scriptPath = path.join(root, "experiment.py");
+    const markerExpression = '"rank_" + "8" + "_dropout_" + "0_05"';
     await writeFile(
       scriptPath,
       [
         "import argparse",
         "import inspect",
-        "from typing import Any, Mapping, Optional, Sequence, Tuple",
+        "from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple",
         "",
         "def build_arg_parser():",
         "    parser = argparse.ArgumentParser()",
@@ -1154,6 +1155,42 @@ describe("run_experiments execution profile behavior", () => {
         "",
         "def execute_planned_runs(args: argparse.Namespace, context):",
         "    return {'status': 'completed', 'context': context}",
+        "",
+        "def _safe_int(value: Any, default=None):",
+        "    return default if value is None else int(value)",
+        "",
+        "def _safe_float(value: Any, default=None):",
+        "    return default if value is None else float(value)",
+        "",
+        "def _parse_condition_marker(marker: str):",
+        "    return {'rank': 8, 'dropout': 0.05, 'condition_marker': marker}",
+        "",
+        `PLANNED_CONDITIONS = [{'condition_marker': ${markerExpression}}]`,
+        "SEED_SCHEDULE = [42]",
+        "",
+        "def _global_value(*names, default=None):",
+        "    for name in names:",
+        "        if name in globals():",
+        "            return globals()[name]",
+        "    return default",
+        "",
+        "def get_planned_run_schedule() -> List[Dict[str, Any]]:",
+        "    explicit_rows = _global_value('PLANNED_RUNS', default=None)",
+        "    condition_rows = _global_value('PLANNED_CONDITIONS', default=None)",
+        "    seeds = _global_value('SEED_SCHEDULE', default=[42])",
+        "    schedule: List[Dict[str, Any]] = []",
+        "    if isinstance(condition_rows, Sequence) and condition_rows:",
+        "        for condition in condition_rows:",
+        "            if not isinstance(condition, Mapping):",
+        "                continue",
+        "            rank = _safe_int(condition.get(\"rank\", condition.get(\"lora_rank\", condition.get(\"r\"))), default=None)",
+        "            dropout = _safe_float(condition.get(\"dropout\", condition.get(\"lora_dropout\")), default=None)",
+        "            marker = condition.get(\"condition_marker\") or condition.get(\"marker\")",
+        "            if marker is None and rank is not None and dropout is not None:",
+        "                marker = 'candidate'",
+        "            for seed in seeds:",
+        "                schedule.append({'condition_marker': str(marker), 'rank': rank, 'dropout': dropout, 'seed': int(seed)})",
+        "    return schedule",
         "",
         "def _signature_compatible_kwargs(fn: Any, kwargs: Mapping[str, Any]) -> Optional[dict[str, Any]]:",
         "    signature = inspect.signature(fn)",
@@ -1207,6 +1244,7 @@ describe("run_experiments execution profile behavior", () => {
     await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
 
     let repairedBeforeExecution = false;
+    let recoveredScheduleParametersBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
       config: {
@@ -1227,6 +1265,9 @@ describe("run_experiments execution profile behavior", () => {
         runCommand: async () => {
           const repairedSource = await readFile(scriptPath, "utf8");
           repairedBeforeExecution = repairedSource.includes('"context": runtime_context');
+          recoveredScheduleParametersBeforeExecution = repairedSource.includes(
+            "_autolabos_condition_schedule_marker_parameter_surface"
+          );
           await writeFile(
             path.join(runDir, "metrics.json"),
             JSON.stringify(
@@ -1276,7 +1317,11 @@ describe("run_experiments execution profile behavior", () => {
     await node.execute({ run, graph: run.graph });
 
     expect(repairedBeforeExecution).toBe(true);
+    expect(recoveredScheduleParametersBeforeExecution).toBe(true);
     expect(await readFile(scriptPath, "utf8")).toContain('"context": runtime_context');
+    expect(await readFile(scriptPath, "utf8")).toContain(
+      "_autolabos_condition_schedule_marker_parameter_surface"
+    );
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes(

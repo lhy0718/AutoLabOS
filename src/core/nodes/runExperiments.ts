@@ -74,6 +74,7 @@ import {
   repairPythonMainStudyRunnerDeviceBridgeSurface,
   repairPythonPublicStudyTopLevelRunnerAliasSurface,
   repairPythonHighLevelWorkloadContextAliasSurface,
+  repairPythonConditionScheduleMarkerParameterSurface,
   repairPythonLockedConditionSingleRunnerBridgeSurface,
   repairPythonMultipleChoiceDataclassChoiceAliasSurface,
   repairPythonOutputDirArgparseAlias,
@@ -2677,6 +2678,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
         "before handoff.",
         "before run_experiments execution."
       ) || `Added context alias to high-level workload invocation in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const conditionScheduleMarkerParameterRepair =
+    await repairPythonConditionScheduleMarkerParameterSurface(scriptPath);
+  if (conditionScheduleMarkerParameterRepair.repaired) {
+    repaired = true;
+    messages.push(
+      conditionScheduleMarkerParameterRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Recovered missing condition schedule parameters from markers in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
   const lockedConditionSingleRunnerBridgeRepair =

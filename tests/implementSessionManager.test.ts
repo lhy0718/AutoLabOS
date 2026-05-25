@@ -220,6 +220,7 @@ import {
   repairPythonPlannedConditionContractSurface,
   repairPythonPublicStudyEntrypointArgsAliasSurface,
   repairPythonHighLevelWorkloadContextAliasSurface,
+  repairPythonConditionScheduleMarkerParameterSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonPublicStudyBackendCallableLoaderSurface,
   repairPythonPublicStudyPlanFinalizationRunnerSurface,
@@ -30710,6 +30711,64 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(repairedSource).toContain('"context": runtime_context');
     expect(repairedSource).toContain('"runtime_context": runtime_context');
+  });
+
+  it("recovers missing condition schedule parameters from condition markers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-schedule-marker-parameters-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const markerExpression = '"rank_" + "8" + "_dropout_" + "0_05"';
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, List, Dict, Sequence, Mapping",
+        "",
+        "def _safe_int(value: Any, default=None):",
+        "    return default if value is None else int(value)",
+        "",
+        "def _safe_float(value: Any, default=None):",
+        "    return default if value is None else float(value)",
+        "",
+        "def _parse_condition_marker(marker: str):",
+        "    return {'rank': 8, 'dropout': 0.05, 'condition_marker': marker}",
+        "",
+        `PLANNED_CONDITIONS = [{'condition_marker': ${markerExpression}}]`,
+        "SEED_SCHEDULE = [42]",
+        "",
+        "def _global_value(*names, default=None):",
+        "    for name in names:",
+        "        if name in globals():",
+        "            return globals()[name]",
+        "    return default",
+        "",
+        "def get_planned_run_schedule() -> List[Dict[str, Any]]:",
+        "    explicit_rows = _global_value('PLANNED_RUNS', default=None)",
+        "    condition_rows = _global_value('PLANNED_CONDITIONS', default=None)",
+        "    seeds = _global_value('SEED_SCHEDULE', default=[42])",
+        "    schedule: List[Dict[str, Any]] = []",
+        "    if isinstance(condition_rows, Sequence) and condition_rows:",
+        "        for condition in condition_rows:",
+        "            if not isinstance(condition, Mapping):",
+        "                continue",
+        "            rank = _safe_int(condition.get(\"rank\", condition.get(\"lora_rank\", condition.get(\"r\"))), default=None)",
+        "            dropout = _safe_float(condition.get(\"dropout\", condition.get(\"lora_dropout\")), default=None)",
+        "            marker = condition.get(\"condition_marker\") or condition.get(\"marker\")",
+        "            if marker is None and rank is not None and dropout is not None:",
+        "                marker = 'candidate'",
+        "            for seed in seeds:",
+        "                schedule.append({'condition_marker': str(marker), 'rank': rank, 'dropout': dropout, 'seed': int(seed)})",
+        "    return schedule",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonConditionScheduleMarkerParameterSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_condition_schedule_marker_parameter_surface");
+    expect(repairedSource).toContain("parsed_marker = _parse_condition_marker");
   });
 
   it("blocks auto-handoff when a python run_command uses flags missing from argparse", async () => {

@@ -1339,6 +1339,30 @@ export class ImplementSessionManager {
           }
         );
       }
+      const earlyConditionScheduleMarkerParameterRepair =
+        await repairPythonConditionScheduleMarkerParameterSurface(prepared.scriptPath);
+      if (earlyConditionScheduleMarkerParameterRepair.repaired) {
+        prepared.changedFiles = dedupeStrings([
+          ...prepared.changedFiles,
+          ...(prepared.scriptPath ? [prepared.scriptPath] : [])
+        ]);
+        prepared.publicArtifacts = dedupeStrings([
+          ...prepared.publicArtifacts,
+          ...(prepared.scriptPath && isSubpath(prepared.scriptPath, prepared.publicDir) ? [prepared.scriptPath] : [])
+        ]);
+        emitImplementObservation(
+          "verify",
+          earlyConditionScheduleMarkerParameterRepair.message ||
+            "Recovered missing condition schedule parameters from markers before design validation.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: prepared.publicDir,
+            scriptPath: prepared.scriptPath,
+            runCommand: prepared.runCommand
+          }
+        );
+      }
       const designImplementationValidation = enforceUnresolvedImplementationContractFeedback(
         await validateDesignImplementationAlignment({
         comparisonContract,
@@ -9586,6 +9610,8 @@ export class ImplementSessionManager {
       await repairPythonPublicStudyEntrypointArgsAliasSurface(executionScriptPath);
     const highLevelWorkloadContextAliasRepair =
       await repairPythonHighLevelWorkloadContextAliasSurface(executionScriptPath);
+    const conditionScheduleMarkerParameterRepair =
+      await repairPythonConditionScheduleMarkerParameterSurface(executionScriptPath);
     const publicStudySiblingExperimentBackendRepair =
       await repairPythonPublicStudySiblingExperimentBackendSurface(executionScriptPath);
     const publicStudyBackendCallableLoaderRepair =
@@ -9727,6 +9753,7 @@ export class ImplementSessionManager {
         baselineFirstLockedSweepEntrypointResolverRepair,
         publicStudyEntrypointArgsAliasRepair,
         highLevelWorkloadContextAliasRepair,
+        conditionScheduleMarkerParameterRepair,
         publicStudySiblingExperimentBackendRepair,
         publicStudyBackendCallableLoaderRepair,
         publicStudyPlanFinalizationRunnerRepair,
@@ -41763,6 +41790,63 @@ export async function repairPythonHighLevelWorkloadContextAliasSurface(scriptPat
   return {
     repaired: true,
     message: `Added context alias to high-level workload invocation in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonConditionScheduleMarkerParameterSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def get_planned_run_schedule") ||
+    !source.includes("def _parse_condition_marker") ||
+    !source.includes('marker = condition.get("condition_marker") or condition.get("marker")')
+  ) {
+    return { repaired: false };
+  }
+
+  const markerLine = '            marker = condition.get("condition_marker") or condition.get("marker")';
+  const repairMarker = "_autolabos_condition_schedule_marker_parameter_surface";
+  if (source.includes(repairMarker)) {
+    return { repaired: false };
+  }
+
+  const insertion = [
+    markerLine,
+    `            # ${repairMarker}`,
+    "            if marker is not None and (rank is None or dropout is None):",
+    "                parsed_marker = _parse_condition_marker(str(marker)) if callable(globals().get(\"_parse_condition_marker\")) else {}",
+    "                if isinstance(parsed_marker, dict):",
+    "                    if rank is None:",
+    "                        rank = _safe_int(parsed_marker.get(\"rank\"), default=None)",
+    "                    if dropout is None:",
+    "                        dropout = _safe_float(parsed_marker.get(\"dropout\", parsed_marker.get(\"lora_dropout\")), default=None)",
+    "                elif isinstance(parsed_marker, (list, tuple)) and len(parsed_marker) >= 2:",
+    "                    if rank is None:",
+    "                        rank = _safe_int(parsed_marker[0], default=None)",
+    "                    if dropout is None:",
+    "                        dropout = _safe_float(parsed_marker[1], default=None)"
+  ].join("\n");
+  const nextSource = source.replace(markerLine, insertion);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Recovered missing condition schedule rank/dropout parameters from markers in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
