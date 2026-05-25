@@ -11736,6 +11736,179 @@ describe("ImplementSessionManager", () => {
     expect(llmCalls).toBe(3);
   });
 
+  it("uses a local single-chunk fallback when initial chunk subdivision planning times out", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-subchunk-timeout-fallback-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Chunk Subdivision Timeout Fallback Run",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with sandbox setup errors."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async (prompt: string) => {
+          llmCalls += 1;
+          if (prompt.includes("scaffold-first contract")) {
+            return {
+              text: JSON.stringify({
+                summary: "Runner scaffold with two planned chunks.",
+                run_command: "python3 " + JSON.stringify(publicScriptPath),
+                test_command: "python3 -m py_compile " + JSON.stringify(publicScriptPath),
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                decomposition_plan: {
+                  objective: "Materialize the primary runner only.",
+                  strategy: "purpose_adaptive",
+                  rationale: "This rerun only needs the main script.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary experiment runner",
+                      purpose: "Provide the main runnable experiment entrypoint.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath,
+                      verification_focus: ["run_command"]
+                    }
+                  ]
+                },
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-subdivision-timeout-scaffold"
+            };
+          }
+          if (prompt.includes("Staged implement materialization subplan.")) {
+            return {
+              text: JSON.stringify({
+                strategy: "test_runner_chunks",
+                rationale: "Split a large runner into two code chunks.",
+                chunks: [
+                  {
+                    id: "chunk_setup",
+                    title: "Setup",
+                    purpose: "Implement imports and helper setup.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: false
+                  },
+                  {
+                    id: "chunk_entrypoint",
+                    title: "Entrypoint",
+                    purpose: "Implement reporting and main entrypoint.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-subdivision-timeout-materialization"
+            };
+          }
+          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_setup")) {
+            throw new Error("implement_experiments staged_llm request timed out after 10ms without provider progress");
+          }
+          const targetChunkMatch = /Target chunk: ([^\s\n]+)/.exec(prompt);
+          const targetChunkId = targetChunkMatch?.[1]?.trim();
+          if (targetChunkId?.startsWith("chunk_setup")) {
+            return {
+              text: JSON.stringify({
+                chunk_id: targetChunkId,
+                content: [
+                  "import json",
+                  "from pathlib import Path",
+                  "",
+                  "def write_metrics(metrics_path):",
+                  "    Path(metrics_path).write_text(json.dumps({\"status\": \"completed\", \"accuracy\": 1.0}), encoding=\"utf-8\")"
+                ].join("\n")
+              }),
+              threadId: "thread-subdivision-timeout-setup"
+            };
+          }
+          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_entrypoint")) {
+            return {
+              text: JSON.stringify({
+                strategy: "single_entrypoint_subchunk",
+                rationale: "The entrypoint chunk is already minimal.",
+                chunks: [
+                  {
+                    id: "chunk_entrypoint",
+                    title: "Entrypoint",
+                    purpose: "Implement the entrypoint.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-subdivision-timeout-entrypoint-plan"
+            };
+          }
+          if (targetChunkId?.startsWith("chunk_entrypoint")) {
+            return {
+              text: JSON.stringify({
+                chunk_id: targetChunkId,
+                content: [
+                  "",
+                  "def main():",
+                  `    write_metrics(${JSON.stringify(path.join(runDir, "metrics.json"))})`,
+                  "",
+                  "if __name__ == \"__main__\":",
+                  "    main()"
+                ].join("\n")
+              }),
+              threadId: "thread-subdivision-timeout-entrypoint"
+            };
+          }
+          throw new Error(`Unexpected staged_llm prompt in subdivision timeout fallback test: ${prompt.slice(0, 200)}`);
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+    expect(readFileSync(publicScriptPath, "utf8")).toContain("def main():");
+    const fallbackPlan = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "unit_plans", "runner__chunk_setup.json"), "utf8")
+    ) as { strategy?: string; chunks?: Array<{ id?: string }> };
+    expect(fallbackPlan.strategy).toBe("local_single_chunk_subdivision_fallback");
+    expect(fallbackPlan.chunks?.map((chunk) => chunk.id)).toEqual(["chunk_setup"]);
+    expect(llmCalls).toBeGreaterThanOrEqual(5);
+  });
   it("subdivides a large runner chunk into smaller purpose-aligned subchunks before materializing code", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-subchunk-plan-"));
     tempDirs.push(workspace);

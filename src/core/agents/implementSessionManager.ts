@@ -4049,29 +4049,56 @@ export class ImplementSessionManager {
         publicDir: input.publicDir
       }
     );
-    const completion = await this.completeStagedLlmRequest({
-      runDir: input.runDir,
-      prompt: this.buildStagedImplementChunkSubdivisionPlanPrompt({
-        taskSpec: input.taskSpec,
-        searchLocalization: input.searchLocalization,
-        branchPlan: input.branchPlan,
-        scaffold: input.scaffold,
-        decompositionPlan: input.decompositionPlan,
-        unit: input.unit,
-        materializationPlan: input.materializationPlan,
-        chunk: input.chunk,
-        forceSmallerSubdivision: input.forceSmallerSubdivision,
-        previousFailure: input.previousFailure
-      }),
-      systemPrompt: appendStagedImplementMaterializationPlanOverrideToPrompt(input.unit.target_path || ""),
-      timeoutMs: input.timeoutMs,
-      abortSignal: input.abortSignal,
-      attempt: input.attempt,
-      threadId: input.threadId,
-      publicDir: input.publicDir,
-      emitImplementObservation: input.emitImplementObservation,
-      reasoningEffort: input.reasoningEffort
-    });
+    let completion: { text: string; threadId?: string };
+    try {
+      completion = await this.completeStagedLlmRequest({
+        runDir: input.runDir,
+        prompt: this.buildStagedImplementChunkSubdivisionPlanPrompt({
+          taskSpec: input.taskSpec,
+          searchLocalization: input.searchLocalization,
+          branchPlan: input.branchPlan,
+          scaffold: input.scaffold,
+          decompositionPlan: input.decompositionPlan,
+          unit: input.unit,
+          materializationPlan: input.materializationPlan,
+          chunk: input.chunk,
+          forceSmallerSubdivision: input.forceSmallerSubdivision,
+          previousFailure: input.previousFailure
+        }),
+        systemPrompt: appendStagedImplementMaterializationPlanOverrideToPrompt(input.unit.target_path || ""),
+        timeoutMs: input.timeoutMs,
+        abortSignal: input.abortSignal,
+        attempt: input.attempt,
+        threadId: input.threadId,
+        publicDir: input.publicDir,
+        emitImplementObservation: input.emitImplementObservation,
+        reasoningEffort: input.reasoningEffort
+      });
+    } catch (error) {
+      if (isImplementStagedLlmTimeoutError(error)) {
+        const fallbackPlan = buildLocalChunkSubdivisionPlanForChunk(input.chunk, {
+          forceSmallerSubdivision: input.forceSmallerSubdivision === true
+        });
+        input.emitImplementObservation(
+          "codex",
+          `Chunk subdivision planning timed out for ${input.chunk.title}; using a local ${
+            fallbackPlan.chunks.length === 1 ? "single-chunk" : "two-part"
+          } subdivision plan.`,
+          {
+            attempt: input.attempt,
+            threadId: input.threadId,
+            publicDir: input.publicDir
+          }
+        );
+        const baseId = `${sanitizeArtifactId(input.unit.id)}__${sanitizeArtifactId(input.chunk.id)}`;
+        await writeJsonFile(path.join(input.runDir, IMPLEMENT_UNIT_PLAN_DIR, `${baseId}.json`), fallbackPlan);
+        return {
+          plan: fallbackPlan,
+          threadId: input.threadId
+        };
+      }
+      throw error;
+    }
     const baseId = `${sanitizeArtifactId(input.unit.id)}__${sanitizeArtifactId(input.chunk.id)}`;
     const rawPath = path.join(input.runDir, IMPLEMENT_UNIT_PLAN_DIR, `${baseId}_raw_response.txt`);
     await ensureDir(path.dirname(rawPath));
@@ -11616,6 +11643,43 @@ function buildLocalMaterializationPlanForUnit(unit: DynamicDecompositionUnit): D
         verification_focus: unit.verification_focus
       }
     ]
+  };
+}
+
+function buildLocalChunkSubdivisionPlanForChunk(
+  chunk: DynamicMaterializationChunk,
+  options: { forceSmallerSubdivision?: boolean } = {}
+): DynamicMaterializationPlan {
+  if (!options.forceSmallerSubdivision) {
+    return {
+      strategy: "local_single_chunk_subdivision_fallback",
+      rationale:
+        "The provider did not return a chunk subdivision subplan within the bounded request, so AutoLabOS uses the approved parent chunk directly.",
+      chunks: [chunk]
+    };
+  }
+
+  const firstChunk: DynamicMaterializationChunk = {
+    ...chunk,
+    id: `${chunk.id}_part_1`,
+    title: `${chunk.title} part 1`,
+    purpose: `${chunk.purpose} Cover the first bounded portion of this parent chunk.`,
+    include_entrypoint: false
+  };
+  const secondChunk: DynamicMaterializationChunk = {
+    ...chunk,
+    id: `${chunk.id}_part_2`,
+    title: `${chunk.title} part 2`,
+    purpose: `${chunk.purpose} Cover the second bounded portion of this parent chunk and finish the parent contract.`,
+    include_imports: false,
+    include_entrypoint: chunk.include_entrypoint,
+    depends_on: [firstChunk.id]
+  };
+  return {
+    strategy: "local_two_part_subdivision_fallback",
+    rationale:
+      "The provider did not return a forced-smaller subdivision subplan within the bounded request, so AutoLabOS splits the parent chunk into two ordered local parts.",
+    chunks: [firstChunk, secondChunk]
   };
 }
 
