@@ -337,7 +337,7 @@ interface VerifyReport {
 interface ImplementationContractFeedback {
   source: "implement_experiments";
   status: "fail";
-  stage: "design_implementation_validation";
+  stage: "design_implementation_validation" | "local_verification";
   summary: string;
   stderr_excerpt?: string;
   blocking_findings: Array<{
@@ -2187,6 +2187,17 @@ export class ImplementSessionManager {
     const implementStatus = run.graph.nodeStates.implement_experiments?.status;
     const implementAlreadySucceeded =
       implementStatus === "completed" || implementStatus === "needs_approval";
+    const latestImplementVerifyReport = await runContext.get<VerifyReport>("implement_experiments.verify_report");
+    const implementHasNewerLocalFailure =
+      Number.isFinite(feedbackRecordedAt) &&
+      Number.isFinite(implementUpdatedAt) &&
+      implementUpdatedAt > feedbackRecordedAt &&
+      (implementStatus === "failed" || implementStatus === "running") &&
+      latestImplementVerifyReport?.status === "fail" &&
+      latestImplementVerifyReport.next_action === "retry_patch";
+    if (implementHasNewerLocalFailure) {
+      return undefined;
+    }
     if (
       Number.isFinite(feedbackRecordedAt) &&
       Number.isFinite(implementUpdatedAt) &&
@@ -16259,21 +16270,42 @@ function buildImplementationContractFeedback(
     (verifyReport?.status === "fail" &&
       verifyReport.failure_type === "spec" &&
       /design-to-implementation contract validation failed/iu.test(verifyReport.summary || ""));
-  if (!isContractBlock || !verifyReport) {
+  const isLocalVerificationBlock =
+    verifyReport?.status === "fail" &&
+    verifyReport.next_action === "retry_patch" &&
+    !isContractBlock;
+  if ((!isContractBlock && !isLocalVerificationBlock) || !verifyReport) {
     return undefined;
   }
+  const localFailureCode = /AUTOLABOS SECTION skeleton markers/iu.test(
+    `${verifyReport.summary}\n${verifyReport.stderr_excerpt || ""}`
+  )
+    ? "PYTHON_SECTION_SKELETON_MARKERS_PRESENT"
+    : "IMPLEMENT_LOCAL_VERIFICATION_FAILED";
   return {
     source: "implement_experiments",
     status: "fail",
-    stage: "design_implementation_validation",
+    stage: isContractBlock ? "design_implementation_validation" : "local_verification",
     summary: verifyReport.summary,
     stderr_excerpt: verifyReport.stderr_excerpt,
-    blocking_findings: blockingFindings.slice(0, 12),
-    suggested_next_action: blockingFindings.some(
-      (finding) => finding.code === "PLANNED_PER_RUN_EXECUTION_HELPER_MISSING"
-    )
-      ? "Regenerate the runnable experiment script so the approved condition-by-seed loop calls a concrete per-run execution helper; metrics-only shells or resolvers that search only missing helpers must not pass implement_experiments."
-      : "Regenerate the implementation so static validation can see every approved condition and every condition-by-seed run before run_experiments executes it.",
+    blocking_findings: isContractBlock
+      ? blockingFindings.slice(0, 12)
+      : [
+          {
+            code: localFailureCode,
+            message: trimBlock(verifyReport.summary, 520),
+            evidence: trimBlock(verifyReport.stderr_excerpt || "", 520) || undefined
+          }
+        ],
+    suggested_next_action: isLocalVerificationBlock
+      ? localFailureCode === "PYTHON_SECTION_SKELETON_MARKERS_PRESENT"
+        ? "Regenerate or repair the public Python runner so no AUTOLABOS SECTION skeleton markers remain in any verification surface before run_experiments is retried."
+        : "Repair the latest local verification failure from implement_experiments before addressing older run_experiments runtime feedback."
+      : blockingFindings.some(
+          (finding) => finding.code === "PLANNED_PER_RUN_EXECUTION_HELPER_MISSING"
+        )
+        ? "Regenerate the runnable experiment script so the approved condition-by-seed loop calls a concrete per-run execution helper; metrics-only shells or resolvers that search only missing helpers must not pass implement_experiments."
+        : "Regenerate the implementation so static validation can see every approved condition and every condition-by-seed run before run_experiments executes it.",
     recorded_at: new Date().toISOString()
   };
 }
@@ -33861,6 +33893,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
     source.includes("def _autolabos_run_workflow");
   const hasFailureSafeTopLevelOrchestrationResolver =
     source.includes("No experiment orchestration callable found. Expected one of:") ||
+    source.includes("No orchestration helper was found in the loaded experiment module.") ||
     source.includes("No experiment orchestration function was defined before the entrypoint section.") ||
     source.includes("def _resolve_orchestration_callable(") ||
     (
@@ -34128,6 +34161,13 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         ]
       : hasFailureSafeTopLevelOrchestrationResolver
       ? [
+          "run_locked_baseline_first_experiment",
+          "execute_locked_baseline_first_experiment",
+          "run_baseline_first_experiment",
+          "execute_baseline_first_experiment",
+          "execute_planned_runs",
+          "execute_run_schedule",
+          "run_planned_schedule",
           "run_baseline_first_orchestration",
           "execute_baseline_first_orchestration",
           "run_baseline_first_study_orchestration",
@@ -34663,8 +34703,17 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         "    except Exception:",
         "        _autolabos_Mapping = dict",
         "    _autolabos_started_at = time.time() if \"time\" in globals() else 0.0",
+        "    _autolabos_config = None",
+        "    _autolabos_config_builder = globals().get(\"build_experiment_config\") or globals().get(\"resolve_experiment_config\")",
+        "    if args is not None and callable(_autolabos_config_builder):",
+        "        try:",
+        "            _autolabos_config = _autolabos_config_builder(args)",
+        "        except TypeError:",
+        "            _autolabos_config = _autolabos_config_builder()",
         "    _autolabos_kwargs = {",
         "        \"args\": args,",
+        "        \"config\": _autolabos_config if _autolabos_config is not None else args,",
+        "        \"experiment_config\": _autolabos_config if _autolabos_config is not None else args,",
         "        \"device\": keyword.get(\"device\"),",
         "        \"device_info\": keyword.get(\"device_info\"),",
         "        \"tokenizer\": keyword.get(\"tokenizer\"),",

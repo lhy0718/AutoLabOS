@@ -20822,6 +20822,92 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("repairs final main resolver aliases to planned-run orchestration helpers before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-planned-run-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Optional, Sequence",
+        "",
+        "def build_experiment_config(args):",
+        "    return {'output_dir': args.output_dir, 'metrics_path': args.metrics_path}",
+        "",
+        "def run_locked_baseline_first_experiment(config, args=None):",
+        "    assert config['output_dir'] == 'out'",
+        "    return {'status': 'completed', 'primary_metric': 0.5, 'config_output_dir': config['output_dir']}",
+        "",
+        "def _resolve_callable(names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _call_with_variants(func, variants):",
+        "    for variant in variants:",
+        "        try:",
+        "            return func(*variant)",
+        "        except TypeError:",
+        "            continue",
+        "    return func()",
+        "",
+        "def _resolve_cli_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--output-dir', default='out')",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    return parser.parse_args(argv)",
+        "",
+        "def _persist_result_payload(args, result, started_at=0):",
+        "    Path(args.metrics_path).write_text(json.dumps(result, sort_keys=True), encoding='utf-8')",
+        "    return result, {'metrics_path': args.metrics_path}",
+        "",
+        "def main(argv: Optional[Sequence[str]] = None) -> int:",
+        "    args = _resolve_cli_args(argv)",
+        "    orchestrator = _resolve_callable([",
+        "        'orchestrate_experiment',",
+        "        'run_orchestrated_experiment',",
+        "        'execute_orchestration',",
+        "        'run_experiment',",
+        "        'execute_experiment',",
+        "    ])",
+        "    if orchestrator is None:",
+        "        raise RuntimeError('No orchestration helper was found in the loaded experiment module.')",
+        "    result = _call_with_variants(orchestrator, [(args,), tuple()])",
+        "    _persist_result_payload(args, result)",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace })
+    ).toThrow(/No orchestration helper/);
+
+    const repair = await repairPythonRecipeExecutionOrchestratorAlias(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def run_experiment(args=None, **keyword):");
+    expect(repairedSource).toContain("target = run_locked_baseline_first_experiment");
+    expect(repairedSource).toContain(`_autolabos_config_builder = globals().get("build_experiment_config")`);
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      config_output_dir: "out"
+    });
+  });
+
   it("repairs runtime wrapper aliases when the final entrypoint misses expected wrapper names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runtime-wrapper-alias-"));
     tempDirs.push(workspace);
@@ -41396,4 +41482,105 @@ describe("ImplementSessionManager", () => {
     expect(progressText).toContain("Loaded implementation contract feedback");
     expect(progressText).toContain("Implementation contract feedback changed the repair target");
   });
+  it("prioritizes newer implement local verification feedback over stale runner feedback", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-local-feedback-priority-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Fresh Thread After Local Verification Feedback",
+      topic: "repair generated experiment runner",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.implement_experiments.status = "failed";
+    run.graph.nodeStates.implement_experiments.updatedAt = "2026-05-19T00:00:00.000Z";
+    run.graph.nodeStates.run_experiments.status = "failed";
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair local verification\n", "utf8");
+
+    const scriptPath = path.join(runDir, "experiment.py");
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.thread_id", "thread-stale-local-verify");
+    await memory.put("implement_experiments.verify_report", {
+      status: "fail",
+      failure_type: "implementation",
+      next_action: "retry_patch",
+      summary:
+        "Local verification failed via python -m py_compile: Generated Python runner still contains AUTOLABOS SECTION skeleton markers after staged materialization.",
+      stderr_excerpt:
+        "Generated Python runner still contains AUTOLABOS SECTION skeleton markers after staged materialization. Unfilled or unstripped section marker(s): cli_metrics_writer."
+    });
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "runtime",
+      summary: "Older runtime traceback should not override the newer local verification failure.",
+      command: "python3 " + JSON.stringify(scriptPath),
+      metrics_path: path.join(runDir, "metrics.json"),
+      suggested_next_action: "Repair the older runtime failure after local verification passes.",
+      recorded_at: "2026-05-18T00:00:00.000Z"
+    });
+    const seededRun = (await runStore.getRun(run.id)) || run;
+    seededRun.currentNode = "implement_experiments";
+    seededRun.graph.currentNode = "implement_experiments";
+    seededRun.graph.nodeStates.implement_experiments.status = "failed";
+    seededRun.graph.nodeStates.implement_experiments.updatedAt = "2026-05-19T00:00:00.000Z";
+    seededRun.graph.nodeStates.run_experiments.status = "failed";
+    seededRun.nodeThreads.implement_experiments = "thread-stale-local-verify";
+    await runStore.updateRun(seededRun);
+
+    let seenThreadId: string | undefined = "uninitialized";
+    let capturedPrompt = "";
+    const codex = {
+      runTurnStream: async ({ prompt, threadId }: { prompt?: string; threadId?: string }) => {
+        seenThreadId = threadId;
+        capturedPrompt = prompt || "";
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
+        return {
+          threadId: "thread-fresh-after-local-verification",
+          finalText: JSON.stringify({
+            summary: "Repaired the runner after local verification feedback.",
+            run_command: "python3 " + JSON.stringify(scriptPath),
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const progressText = readFileSync(path.join(runDir, "implement_experiments", "progress.jsonl"), "utf8");
+
+    expect(seenThreadId).toBeUndefined();
+    expect(result.threadId).toBe("thread-fresh-after-local-verification");
+    expect(capturedPrompt).toContain("Implementation contract feedback from implement_experiments:");
+    expect(capturedPrompt).toContain("PYTHON_SECTION_SKELETON_MARKERS_PRESENT");
+    expect(capturedPrompt).not.toContain("Older runtime traceback should not override");
+    expect(progressText).toContain("Loaded implementation contract feedback");
+    expect(progressText).toContain("Implementation contract feedback changed the repair target");
+    expect(progressText).not.toContain("Loaded runner feedback from run_experiments");
+  });
+
 });
