@@ -219,6 +219,7 @@ import {
   repairPythonBaselineFirstLockedSweepEntrypointResolverSurface,
   repairPythonPlannedConditionContractSurface,
   repairPythonPublicStudyEntrypointArgsAliasSurface,
+  repairPythonHighLevelWorkloadContextAliasSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonPublicStudyBackendCallableLoaderSurface,
   repairPythonPublicStudyPlanFinalizationRunnerSurface,
@@ -30641,6 +30642,74 @@ describe("ImplementSessionManager", () => {
         { condition_id: "lora_baseline", status: "completed" }
       ]
     });
+  });
+
+  it("adds context aliases for high-level workload callables that use context parameter names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-high-level-context-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from typing import Any, Mapping, Sequence, Tuple, Optional",
+        "",
+        "def execute_planned_runs(args: argparse.Namespace, context):",
+        "    return {'status': 'completed', 'context': context}",
+        "",
+        "def _signature_compatible_kwargs(fn: Any, kwargs: Mapping[str, Any]) -> Optional[dict[str, Any]]:",
+        "    signature = inspect.signature(fn)",
+        "    filtered = {k: v for k, v in kwargs.items() if k in signature.parameters}",
+        "    for name, parameter in signature.parameters.items():",
+        "        if parameter.default is inspect._empty and name not in filtered:",
+        "            return None",
+        "    return filtered",
+        "",
+        "def _try_call_callable(fn: Any, kwarg_options: Sequence[Mapping[str, Any]]) -> Tuple[bool, Any, Optional[BaseException]]:",
+        "    last_error = None",
+        "    for kwargs in kwarg_options:",
+        "        compatible = _signature_compatible_kwargs(fn, kwargs)",
+        "        if compatible is None:",
+        "            continue",
+        "        try:",
+        "            return True, fn(**compatible), None",
+        "        except Exception as exc:",
+        "            last_error = exc",
+        "    return False, None, last_error",
+        "",
+        "def _run_workload_from_previous_sections(args, runtime_context, plan_metadata, backend, resolved_model):",
+        "    high_level_fn = execute_planned_runs",
+        "    ok, value, error = _try_call_callable(",
+        "        high_level_fn,",
+        "        [",
+        "            {",
+        "                \"args\": args,",
+        "                \"runtime_context\": runtime_context,",
+        "                \"planned_runs\": plan_metadata.get(\"planned_runs\"),",
+        "                \"plan_metadata\": plan_metadata,",
+        "                \"backend\": backend,",
+        "                \"resolved_model\": resolved_model,",
+        "            },",
+        "            {\"args\": args, \"runtime_context\": runtime_context},",
+        "            {\"runtime_context\": runtime_context, \"plan_metadata\": plan_metadata},",
+        "        ],",
+        "    )",
+        "    if ok:",
+        "        return value",
+        "    raise RuntimeError(f\"High-level execution callable {high_level_fn.__name__} failed: {error}\")",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(readFileSync(scriptPath, "utf8")).not.toContain('"context": runtime_context');
+    const repair = await repairPythonHighLevelWorkloadContextAliasSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain('"context": runtime_context');
+    expect(repairedSource).toContain('"runtime_context": runtime_context');
   });
 
   it("blocks auto-handoff when a python run_command uses flags missing from argparse", async () => {

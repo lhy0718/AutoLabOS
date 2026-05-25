@@ -1315,6 +1315,30 @@ export class ImplementSessionManager {
           }
         );
       }
+      const earlyHighLevelWorkloadContextAliasRepair =
+        await repairPythonHighLevelWorkloadContextAliasSurface(prepared.scriptPath);
+      if (earlyHighLevelWorkloadContextAliasRepair.repaired) {
+        prepared.changedFiles = dedupeStrings([
+          ...prepared.changedFiles,
+          ...(prepared.scriptPath ? [prepared.scriptPath] : [])
+        ]);
+        prepared.publicArtifacts = dedupeStrings([
+          ...prepared.publicArtifacts,
+          ...(prepared.scriptPath && isSubpath(prepared.scriptPath, prepared.publicDir) ? [prepared.scriptPath] : [])
+        ]);
+        emitImplementObservation(
+          "verify",
+          earlyHighLevelWorkloadContextAliasRepair.message ||
+            "Added context alias to high-level workload invocation before design validation.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: prepared.publicDir,
+            scriptPath: prepared.scriptPath,
+            runCommand: prepared.runCommand
+          }
+        );
+      }
       const designImplementationValidation = enforceUnresolvedImplementationContractFeedback(
         await validateDesignImplementationAlignment({
         comparisonContract,
@@ -9560,6 +9584,8 @@ export class ImplementSessionManager {
       await repairPythonBaselineFirstLockedSweepEntrypointResolverSurface(executionScriptPath);
     const publicStudyEntrypointArgsAliasRepair =
       await repairPythonPublicStudyEntrypointArgsAliasSurface(executionScriptPath);
+    const highLevelWorkloadContextAliasRepair =
+      await repairPythonHighLevelWorkloadContextAliasSurface(executionScriptPath);
     const publicStudySiblingExperimentBackendRepair =
       await repairPythonPublicStudySiblingExperimentBackendSurface(executionScriptPath);
     const publicStudyBackendCallableLoaderRepair =
@@ -9700,6 +9726,7 @@ export class ImplementSessionManager {
         lockedBaselineFirstSweepOrchestratorRepair,
         baselineFirstLockedSweepEntrypointResolverRepair,
         publicStudyEntrypointArgsAliasRepair,
+        highLevelWorkloadContextAliasRepair,
         publicStudySiblingExperimentBackendRepair,
         publicStudyBackendCallableLoaderRepair,
         publicStudyPlanFinalizationRunnerRepair,
@@ -41668,6 +41695,74 @@ export async function repairPythonPublicStudyEntrypointArgsAliasSurface(scriptPa
   return {
     repaired: true,
     message: `Added args keyword alias to public study entrypoint in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonHighLevelWorkloadContextAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _run_workload_from_previous_sections") ||
+    !source.includes("High-level execution callable") ||
+    !source.includes('"runtime_context": runtime_context')
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source.replace(
+    /("runtime_context": runtime_context,\n)(\s*)("planned_runs": plan_metadata\.get\("planned_runs"\),)/gu,
+    (full: string, runtimeContextLine: string, indent: string, plannedRunsLine: string) => {
+      if (full.includes('"context": runtime_context')) {
+        return full;
+      }
+      repaired = true;
+      return `${runtimeContextLine}${indent}"context": runtime_context,\n${indent}${plannedRunsLine}`;
+    }
+  );
+
+  nextSource = nextSource.replace(
+    /(\{\s*"args": args,\s*"runtime_context": runtime_context,\s*)(\})/gu,
+    (full: string, prefix: string, suffix: string) => {
+      if (full.includes('"context": runtime_context')) {
+        return full;
+      }
+      repaired = true;
+      return `${prefix}"context": runtime_context, ${suffix}`;
+    }
+  );
+
+  nextSource = nextSource.replace(
+    /(\{\s*"runtime_context": runtime_context,\s*"plan_metadata": plan_metadata,\s*)(\})/gu,
+    (full: string, prefix: string, suffix: string) => {
+      if (full.includes('"context": runtime_context')) {
+        return full;
+      }
+      repaired = true;
+      return `${prefix}"context": runtime_context, ${suffix}`;
+    }
+  );
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added context alias to high-level workload invocation in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
