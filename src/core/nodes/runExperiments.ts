@@ -73,6 +73,7 @@ import {
   repairPythonMainCallableResolverSpecificitySurface,
   repairPythonMainStudyRunnerDeviceBridgeSurface,
   repairPythonPublicStudyTopLevelRunnerAliasSurface,
+  repairPythonHighLevelWorkloadContextAliasSurface,
   repairPythonLockedConditionSingleRunnerBridgeSurface,
   repairPythonMultipleChoiceDataclassChoiceAliasSurface,
   repairPythonOutputDirArgparseAlias,
@@ -2665,6 +2666,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
         "before handoff.",
         "before run_experiments execution."
       ) || `Added public study top-level runner alias in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const highLevelWorkloadContextAliasRepair =
+    await repairPythonHighLevelWorkloadContextAliasSurface(scriptPath);
+  if (highLevelWorkloadContextAliasRepair.repaired) {
+    repaired = true;
+    messages.push(
+      highLevelWorkloadContextAliasRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Added context alias to high-level workload invocation in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
   const lockedConditionSingleRunnerBridgeRepair =

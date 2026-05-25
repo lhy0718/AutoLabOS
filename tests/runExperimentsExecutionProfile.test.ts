@@ -1131,6 +1131,161 @@ describe("run_experiments execution profile behavior", () => {
     ).toBe(true);
   });
 
+  it("repairs high-level workload context aliases before run_experiments execution", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-workload-context-alias-repair-"));
+    process.chdir(root);
+    const run = makeRun("run-workload-context-alias-repair");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "experiment.py");
+    await writeFile(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from typing import Any, Mapping, Optional, Sequence, Tuple",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    parser.add_argument('--timeout-sec', type=int, default=0)",
+        "    return parser",
+        "",
+        "def execute_planned_runs(args: argparse.Namespace, context):",
+        "    return {'status': 'completed', 'context': context}",
+        "",
+        "def _signature_compatible_kwargs(fn: Any, kwargs: Mapping[str, Any]) -> Optional[dict[str, Any]]:",
+        "    signature = inspect.signature(fn)",
+        "    filtered = {k: v for k, v in kwargs.items() if k in signature.parameters}",
+        "    for name, parameter in signature.parameters.items():",
+        "        if parameter.default is inspect._empty and name not in filtered:",
+        "            return None",
+        "    return filtered",
+        "",
+        "def _try_call_callable(fn: Any, kwarg_options: Sequence[Mapping[str, Any]]) -> Tuple[bool, Any, Optional[BaseException]]:",
+        "    last_error = None",
+        "    for kwargs in kwarg_options:",
+        "        compatible = _signature_compatible_kwargs(fn, kwargs)",
+        "        if compatible is None:",
+        "            continue",
+        "        try:",
+        "            return True, fn(**compatible), None",
+        "        except Exception as exc:",
+        "            last_error = exc",
+        "    return False, None, last_error",
+        "",
+        "def _run_workload_from_previous_sections(args, runtime_context, plan_metadata, backend, resolved_model):",
+        "    high_level_fn = execute_planned_runs",
+        "    ok, value, error = _try_call_callable(",
+        "        high_level_fn,",
+        "        [",
+        "            {",
+        "                \"args\": args,",
+        "                \"runtime_context\": runtime_context,",
+        "                \"planned_runs\": plan_metadata.get(\"planned_runs\"),",
+        "                \"plan_metadata\": plan_metadata,",
+        "                \"backend\": backend,",
+        "                \"resolved_model\": resolved_model,",
+        "            },",
+        "            {\"args\": args, \"runtime_context\": runtime_context},",
+        "            {\"runtime_context\": runtime_context, \"plan_metadata\": plan_metadata},",
+        "        ],",
+        "    )",
+        "    if ok:",
+        "        return value",
+        "    raise RuntimeError(f\"High-level execution callable {high_level_fn.__name__} failed: {error}\")",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", `python3 ${JSON.stringify(scriptPath)}`);
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    let repairedBeforeExecution = false;
+    const eventStream = new InMemoryEventStream();
+    const node = createRunExperimentsNode({
+      config: {
+        experiments: {
+          timeout_sec: 43200,
+          network_policy: "declared",
+          network_purpose: "model_download"
+        }
+      } as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          const repairedSource = await readFile(scriptPath, "utf8");
+          repairedBeforeExecution = repairedSource.includes('"context": runtime_context');
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric: {
+                  name: "accuracy_delta_vs_baseline",
+                  value: 0.02,
+                  target: 0.01,
+                  met: true
+                },
+                condition_results: [
+                  { condition_id: "baseline_condition", status: "completed", accuracy: 0.4 },
+                  { condition_id: "candidate_condition_a", status: "completed", accuracy: 0.42 }
+                ],
+                completed_condition_count: 2
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    await node.execute({ run, graph: run.graph });
+
+    expect(repairedBeforeExecution).toBe(true);
+    expect(await readFile(scriptPath, "utf8")).toContain('"context": runtime_context');
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes(
+          "Added context alias to high-level workload invocation in experiment.py"
+        )
+      )
+    ).toBe(true);
+  });
+
   it("does not append timeout flags only mentioned outside argparse", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-timeout-flag-source-mention-"));
     process.chdir(root);
