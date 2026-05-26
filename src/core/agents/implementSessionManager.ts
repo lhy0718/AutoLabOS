@@ -16075,7 +16075,7 @@ async function loadImplementationLongTermMemory(
     .map((row) => summarizeLongTermEntry(row.entry));
 
   return {
-    search_queries: queries,
+    search_queries: queries.map((query) => trimBlock(sanitizeReusableImplementationMemoryText(query), 120)),
     retrieved
   };
 }
@@ -16149,10 +16149,31 @@ function summarizeLongTermEntry(entry: LongTermEntry): LongTermMemoryHint {
   return {
     id: entry.id,
     category: entry.category,
-    text: trimBlock(entry.text, 320),
-    tags: entry.tags.slice(0, 8),
+    text: trimBlock(sanitizeReusableImplementationMemoryText(entry.text), 320),
+    tags: dedupeStrings(entry.tags.map(sanitizeImplementationMemoryTag)).slice(0, 8),
     created_at: entry.createdAt
   };
+}
+
+function sanitizeReusableImplementationMemoryText(text: string): string {
+  return text
+    .replace(
+      /Successful implement_experiments lesson for topic "[^"]*" targeting [^.]+\./giu,
+      "Successful implement_experiments lesson for a completed implementation task."
+    )
+    .replace(/\b[A-Za-z][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*\b/gu, "configured_model")
+    .replace(/\b[a-z][a-z0-9_]*(?:experiment|study|backend|runner)[a-z0-9_]*\.(?:py|sh)\b/giu, "generated_script")
+    .replace(/\brank[\s_-]*\d+[\s_-]*dropout[\s_-]*[0-9]+(?:[._][0-9]+)?\b/giu, "condition_marker")
+    .replace(/\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/giu, "run_id")
+    .replace(/\b[a-z][a-z0-9-]*-[0-9a-f]{8,}\b/giu, "run_output_slug");
+}
+
+function sanitizeImplementationMemoryTag(tag: string): string {
+  const sanitized = sanitizeReusableImplementationMemoryText(tag).trim();
+  if (!sanitized || sanitized !== tag || tag.length > 96 || /[/.]/u.test(tag)) {
+    return "implementation_lesson";
+  }
+  return sanitized;
 }
 
 function buildSuccessfulImplementationLesson(params: {
@@ -16166,15 +16187,18 @@ function buildSuccessfulImplementationLesson(params: {
     ...params.attempt.branchPlan.focus_files,
     ...params.localization.selected_files
   ])
-    .map((filePath) => path.basename(filePath))
+    .map((filePath) => sanitizeImplementationMemoryTag(path.basename(filePath)))
+    .filter((tag) => tag !== "implementation_lesson")
     .slice(0, 4);
-  const verificationCommand = params.verifyReport.command || params.attempt.testCommand || "local verification";
+  const verificationCommand = sanitizeReusableImplementationMemoryText(
+    params.verifyReport.command || params.attempt.testCommand || "local verification"
+  );
   const lesson = [
-    `Successful implement_experiments lesson for topic "${params.run.topic}" targeting ${params.run.objectiveMetric}.`,
-    focusFiles.length > 0 ? `Prefer the focused files ${focusFiles.join(", ")}.` : "Keep the patch tightly focused.",
+    "Successful implement_experiments lesson for a completed implementation task.",
+    focusFiles.length > 0 ? `Prefer the focused artifact role(s) ${focusFiles.join(", ")}.` : "Keep the patch tightly focused.",
     `Verification passed via ${oneLine(verificationCommand)}.`,
-    `Keep reusable artifacts in ${path.basename(params.taskSpec.workspace.public_dir)} and metrics at ${path.basename(params.taskSpec.workspace.metrics_path)}.`,
-    oneLine(params.attempt.summary)
+    "Keep reusable artifacts in the public experiment directory and metrics at the run metrics path.",
+    sanitizeReusableImplementationMemoryText(oneLine(params.attempt.summary))
   ].join(" ");
   return trimBlock(lesson, 480);
 }

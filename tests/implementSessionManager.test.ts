@@ -2063,8 +2063,8 @@ describe("ImplementSessionManager", () => {
         id: "lt_seed_1",
         runId: run.id,
         category: "implementation",
-        text: "Prefer the prior accuracy runner and keep the verification command lightweight with py_compile first.",
-        tags: ["implement_experiments", "agent reasoning", "accuracy"],
+        text: "Prefer the prior accuracy runner from generated_tradeoff_experiment.py with Vendor/Model-3B and a numeric condition marker while keeping py_compile first.",
+        tags: ["implement_experiments", "agent reasoning", "accuracy", "generated_tradeoff_experiment.py", "Vendor/Model-3B"],
         createdAt: "2026-03-01T00:00:00.000Z"
       })}\n`,
       "utf8"
@@ -2163,12 +2163,20 @@ describe("ImplementSessionManager", () => {
 
     expect(capturedPrompt).toContain("Long-term implementation memory:");
     expect(capturedPrompt).toContain("Prefer the prior accuracy runner");
+    expect(capturedPrompt).toContain("generated_script");
+    expect(capturedPrompt).toContain("configured_model");
+    expect(capturedPrompt).not.toContain("generated_tradeoff_experiment.py");
+    expect(capturedPrompt).not.toContain("Vendor/Model-3B");
     expect(longTermMemory?.retrieved[0]?.text).toContain("Prefer the prior accuracy runner");
+    expect(longTermMemory?.retrieved[0]?.text).not.toContain("generated_tradeoff_experiment.py");
+    expect(longTermMemory?.retrieved[0]?.tags).not.toContain("generated_tradeoff_experiment.py");
     expect(longTermMemory?.saved?.id).toBeTruthy();
     expect(longTermEntries).toHaveLength(2);
     expect(longTermEntries.at(-1)?.category).toBe("implementation");
     expect(longTermEntries.at(-1)?.tags).toContain("implement_experiments");
     expect(longTermEntries.at(-1)?.text).toContain("Successful implement_experiments lesson");
+    expect(longTermEntries.at(-1)?.text).not.toContain(run.topic);
+    expect(longTermEntries.at(-1)?.text).not.toContain(path.basename(scriptPath));
     expect(eventStream.history().some((event) => String(event.payload.text || "").includes("Loaded 1 long-term"))).toBe(true);
   });
 
