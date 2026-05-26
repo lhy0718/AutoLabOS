@@ -11736,7 +11736,7 @@ describe("ImplementSessionManager", () => {
     expect(llmCalls).toBe(3);
   });
 
-  it("uses a local single-chunk fallback when initial chunk subdivision planning times out", async () => {
+  it("uses local fallbacks that micro-split execution chunks when subdivision planning times out", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-subchunk-timeout-fallback-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -11822,6 +11822,14 @@ describe("ImplementSessionManager", () => {
                     include_entrypoint: false
                   },
                   {
+                    id: "chunk_execution",
+                    title: "Execution and result aggregation",
+                    purpose: "Implement training/evaluation execution, raw result capture, metric aggregation, and reporting helpers.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: false
+                  },
+                  {
                     id: "chunk_entrypoint",
                     title: "Entrypoint",
                     purpose: "Implement reporting and main entrypoint.",
@@ -11853,6 +11861,19 @@ describe("ImplementSessionManager", () => {
               }),
               threadId: "thread-subdivision-timeout-setup"
             };
+          }
+          if (targetChunkId?.startsWith("chunk_execution")) {
+            const helperName = targetChunkId.replace(/[^A-Za-z0-9_]/g, "_");
+            return {
+              text: JSON.stringify({
+                chunk_id: targetChunkId,
+                content: `def ${helperName}():\n    return None\n`
+              }),
+              threadId: "thread-subdivision-timeout-execution"
+            };
+          }
+          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_execution")) {
+            throw new Error("implement_experiments staged_llm request timed out after 10ms without provider progress");
           }
           if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_entrypoint")) {
             return {
@@ -11907,7 +11928,20 @@ describe("ImplementSessionManager", () => {
     ) as { strategy?: string; chunks?: Array<{ id?: string }> };
     expect(fallbackPlan.strategy).toBe("local_single_chunk_subdivision_fallback");
     expect(fallbackPlan.chunks?.map((chunk) => chunk.id)).toEqual(["chunk_setup"]);
-    expect(llmCalls).toBeGreaterThanOrEqual(5);
+    const executionFallbackPlan = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "unit_plans", "runner__chunk_execution.json"), "utf8")
+    ) as { strategy?: string; chunks?: Array<{ id?: string; include_imports?: boolean; include_entrypoint?: boolean; depends_on?: string[] }> };
+    expect(executionFallbackPlan.strategy).toBe("local_execution_micro_stage_subdivision_fallback");
+    expect(executionFallbackPlan.chunks?.map((chunk) => chunk.id)).toEqual([
+      "chunk_execution_preflight",
+      "chunk_execution_one_run",
+      "chunk_execution_raw_records",
+      "chunk_execution_aggregation",
+      "chunk_execution_wiring"
+    ]);
+    expect(executionFallbackPlan.chunks?.[0]?.include_imports).toBe(false);
+    expect(executionFallbackPlan.chunks?.[4]?.depends_on).toEqual(["chunk_execution_aggregation"]);
+    expect(llmCalls).toBeGreaterThanOrEqual(9);
   });
   it("subdivides a large runner chunk into smaller purpose-aligned subchunks before materializing code", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-subchunk-plan-"));
@@ -12600,6 +12634,12 @@ describe("ImplementSessionManager", () => {
     ).toBe(true);
     expect(
       prompts.some((entry) => entry.includes("Return a strictly smaller ordered subdivision with at least 2 subchunks."))
+    ).toBe(true);
+    expect(
+      prompts.some((entry) =>
+        entry.includes("avoid repeating the failed responsibility boundary") &&
+        entry.includes("split those concerns into separate subchunks")
+      )
     ).toBe(true);
     expect(
       prompts.some(

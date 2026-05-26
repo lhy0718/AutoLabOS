@@ -4079,11 +4079,15 @@ export class ImplementSessionManager {
         const fallbackPlan = buildLocalChunkSubdivisionPlanForChunk(input.chunk, {
           forceSmallerSubdivision: input.forceSmallerSubdivision === true
         });
+        const fallbackPlanShape =
+          fallbackPlan.chunks.length === 1
+            ? "single-chunk"
+            : fallbackPlan.strategy === "local_two_part_subdivision_fallback"
+              ? "two-part"
+              : "micro-stage";
         input.emitImplementObservation(
           "codex",
-          `Chunk subdivision planning timed out for ${input.chunk.title}; using a local ${
-            fallbackPlan.chunks.length === 1 ? "single-chunk" : "two-part"
-          } subdivision plan.`,
+          `Chunk subdivision planning timed out for ${input.chunk.title}; using a local ${fallbackPlanShape} subdivision plan.`,
           {
             attempt: input.attempt,
             threadId: input.threadId,
@@ -4136,11 +4140,14 @@ export class ImplementSessionManager {
       "Choose the smallest ordered set of subchunks that matches the experiment purpose and verification focus.",
       "Split executable source by function responsibility whenever a parent chunk combines data access, model setup, training/execution, evaluation, or metrics aggregation.",
       "Keep each subchunk narrow enough to materialize as one coherent helper group plus any directly associated call sites.",
+      "When a parent chunk combines an execution loop with raw evidence capture or aggregate metric reporting, split it into dependency-safe micro-stages such as preflight/context resolution, ordered run-plan construction, one-condition execution, raw record persistence, aggregate metric computation, and entrypoint wiring.",
+      "Prefer more small subchunks over a large catch-all loop chunk; each code_section subchunk should be materializable as a compact helper group, not a full experiment runner.",
       "Returning a single subchunk is valid only when the parent chunk is already one narrow responsibility.",
       ...(params.forceSmallerSubdivision
         ? [
             "The previous attempt to materialize this parent chunk did not complete.",
             "Return a strictly smaller ordered subdivision with at least 2 subchunks.",
+            "For retry subdivision after a timeout or provider termination, avoid repeating the failed responsibility boundary; if the failed parent mentions execution, raw results, evidence collection, metrics, reporting, or entrypoint behavior, split those concerns into separate subchunks.",
             "Use the failure below to choose dependency-safe subchunk boundaries.",
             "If the failure names undefined uppercase constants, the earliest subchunk must define those constants before any dataclass, config, or helper references them; otherwise replace them with literal values or explicit config lookups in the same subchunk.",
             ...(params.previousFailure ? ["Previous materialization failure:", params.previousFailure] : [])
@@ -11650,6 +11657,58 @@ function buildLocalChunkSubdivisionPlanForChunk(
   chunk: DynamicMaterializationChunk,
   options: { forceSmallerSubdivision?: boolean } = {}
 ): DynamicMaterializationPlan {
+  const responsibilityText = (chunk.title + " " + chunk.purpose).toLowerCase();
+  const needsExecutionMicroStages =
+    /\b(?:preflight|execution|execute|training|evaluation|result|results|evidence|metric|metrics|aggregation|aggregate|reporting|entrypoint)\b/u.test(
+      responsibilityText
+    );
+  if (needsExecutionMicroStages) {
+    const stageSpecs: Array<{ suffix: string; title: string; purpose: string; includeImports?: boolean; includeEntrypoint?: boolean }> = [
+      {
+        suffix: "preflight",
+        title: "Preflight and ordered run-plan setup",
+        purpose: "Resolve runtime context, environment checks, model/data/task availability, and the ordered run-plan contract before executing any condition.",
+        includeImports: chunk.include_imports
+      },
+      {
+        suffix: "one_run",
+        title: "Single condition execution helper",
+        purpose: "Implement one bounded condition/seed execution path with explicit structured failure capture."
+      },
+      {
+        suffix: "raw_records",
+        title: "Raw evidence and row persistence",
+        purpose: "Persist per-run raw records, stdout/stderr excerpts, and failure evidence before aggregate reporting."
+      },
+      {
+        suffix: "aggregation",
+        title: "Aggregate metric computation",
+        purpose: "Compute baseline-relative metrics, per-task summaries, dispersion fields, and completion counts from raw rows."
+      },
+      {
+        suffix: "wiring",
+        title: "Parent chunk wiring and final contract handoff",
+        purpose: "Wire the parent chunk helpers together and expose any entrypoint or downstream call sites required by the original parent chunk.",
+        includeEntrypoint: chunk.include_entrypoint
+      }
+    ];
+    const chunks = stageSpecs.map((stage, index): DynamicMaterializationChunk => ({
+      ...chunk,
+      id: chunk.id + "_" + stage.suffix,
+      title: chunk.title + ": " + stage.title,
+      purpose: chunk.purpose + " " + stage.purpose,
+      include_imports: index === 0 ? stage.includeImports === true : false,
+      include_entrypoint: stage.includeEntrypoint === true,
+      depends_on: index === 0 ? chunk.depends_on : [chunk.id + "_" + stageSpecs[index - 1].suffix]
+    }));
+    return {
+      strategy: "local_execution_micro_stage_subdivision_fallback",
+      rationale:
+        "The provider did not return a forced-smaller subdivision subplan within the bounded request, so AutoLabOS splits the execution/result parent chunk into dependency-safe micro-stages.",
+      chunks
+    };
+  }
+
   if (!options.forceSmallerSubdivision) {
     return {
       strategy: "local_single_chunk_subdivision_fallback",
@@ -11661,16 +11720,16 @@ function buildLocalChunkSubdivisionPlanForChunk(
 
   const firstChunk: DynamicMaterializationChunk = {
     ...chunk,
-    id: `${chunk.id}_part_1`,
-    title: `${chunk.title} part 1`,
-    purpose: `${chunk.purpose} Cover the first bounded portion of this parent chunk.`,
+    id: chunk.id + "_part_1",
+    title: chunk.title + " part 1",
+    purpose: chunk.purpose + " Cover the first bounded portion of this parent chunk.",
     include_entrypoint: false
   };
   const secondChunk: DynamicMaterializationChunk = {
     ...chunk,
-    id: `${chunk.id}_part_2`,
-    title: `${chunk.title} part 2`,
-    purpose: `${chunk.purpose} Cover the second bounded portion of this parent chunk and finish the parent contract.`,
+    id: chunk.id + "_part_2",
+    title: chunk.title + " part 2",
+    purpose: chunk.purpose + " Cover the second bounded portion of this parent chunk and finish the parent contract.",
     include_imports: false,
     include_entrypoint: chunk.include_entrypoint,
     depends_on: [firstChunk.id]
