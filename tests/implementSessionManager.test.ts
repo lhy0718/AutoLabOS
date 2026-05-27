@@ -24,6 +24,7 @@ import {
   getImplementLlmTimeoutMs,
   getImplementLlmProgressStallTimeoutMs,
   ImplementSessionManager,
+  listRecoveredBundleSnapshotDirs,
   shouldSkipAttemptSnapshotPath,
   isMalformedJsonStagedLlmChunkError,
   isTransientStagedLlmProviderError,
@@ -393,8 +394,58 @@ describe("ImplementSessionManager", () => {
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", ".hf_cache", "models--provider--model"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "hf_cache", "models--provider--model"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "cache", "transformers", "models--provider--model"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "cache", "hf_home", "hub", "datasets--provider--task"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "hf_home", "hub", "datasets--provider--task"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "node_modules", "pkg"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "runner.py"))).toBe(false);
+  });
+
+  it("recovers only bounded executable bundle snapshots and ignores cached dataset trees", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "autolabos-snapshot-recovery-"));
+    try {
+      const runDir = path.join(root, "run");
+      const publicDir = path.join(root, "public");
+      const staleCacheDir = path.join(
+        runDir,
+        "implement_experiments",
+        "attempt_snapshots",
+        "attempt_1.orphaned-1",
+        "captured",
+        "1",
+        "cache",
+        "hf_home",
+        "hub",
+        "datasets--provider--task"
+      );
+      const helperOnlyDir = path.join(
+        runDir,
+        "implement_experiments",
+        "attempt_snapshots",
+        "attempt_2",
+        "captured",
+        "1"
+      );
+      const executableBundleDir = path.join(
+        runDir,
+        "implement_experiments",
+        "attempt_snapshots",
+        "attempt_3",
+        "captured",
+        "1"
+      );
+      mkdirSync(staleCacheDir, { recursive: true });
+      mkdirSync(helperOnlyDir, { recursive: true });
+      mkdirSync(executableBundleDir, { recursive: true });
+      writeFileSync(path.join(staleCacheDir, "dataset_script.py"), "print(\"cached dataset\")\n");
+      writeFileSync(path.join(helperOnlyDir, "helper.py"), "print(\"helper only\")\n");
+      writeFileSync(path.join(executableBundleDir, "run_condition_sweep_experiment.py"), "print(\"run\")\n");
+
+      const recovered = await listRecoveredBundleSnapshotDirs({ runDir, publicDir });
+
+      expect(recovered).toEqual([executableBundleDir]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("normalizes a locked adapter config from conditions to recipes-only runtime schema", () => {

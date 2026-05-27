@@ -13622,17 +13622,37 @@ export function selectRecoveredPublicBundleScriptPath(params: {
   return prioritizeImplementationContractFocus(candidatePaths, feedbackText)[0];
 }
 
-async function listRecoveredBundleSnapshotDirs(params: {
+const MAX_RECOVERED_BUNDLE_SNAPSHOT_ATTEMPTS = 16;
+const MAX_RECOVERED_BUNDLE_SNAPSHOT_DIRS = 24;
+
+async function hasRecoveredBundleEntrypointSurface(dirPath: string): Promise<boolean> {
+  const entries = await fs.readdir(dirPath).catch(() => []);
+  return entries.some((entry) =>
+    entry === "run_command.sh" ||
+    entry === "experiment.py" ||
+    /^run_[A-Za-z0-9_-]*(?:experiment|study|sweep)[A-Za-z0-9_-]*\.(?:py|js|mjs|cjs)$/iu.test(entry)
+  );
+}
+
+export async function listRecoveredBundleSnapshotDirs(params: {
   runDir: string;
   publicDir: string;
 }): Promise<string[]> {
   const snapshotsRoot = path.join(params.runDir, "implement_experiments", "attempt_snapshots");
   const attempts = await fs.readdir(snapshotsRoot, { withFileTypes: true }).catch(() => []);
-  const candidates: Array<{ path: string; mtimeMs: number }> = [];
+  const attemptDirs: Array<{ name: string; mtimeMs: number }> = [];
   for (const attempt of attempts) {
     if (!attempt.isDirectory()) {
       continue;
     }
+    const attemptPath = path.join(snapshotsRoot, attempt.name);
+    const stat = await fs.stat(attemptPath).catch(() => undefined);
+    attemptDirs.push({ name: attempt.name, mtimeMs: stat?.mtimeMs ?? 0 });
+  }
+  const candidates: Array<{ path: string; mtimeMs: number }> = [];
+  for (const attempt of attemptDirs
+    .sort((left, right) => right.mtimeMs - left.mtimeMs || right.name.localeCompare(left.name))
+    .slice(0, MAX_RECOVERED_BUNDLE_SNAPSHOT_ATTEMPTS)) {
     const capturedRoot = path.join(snapshotsRoot, attempt.name, "captured");
     const capturedEntries = await fs.readdir(capturedRoot, { withFileTypes: true }).catch(() => []);
     for (const capturedEntry of capturedEntries) {
@@ -13643,17 +13663,25 @@ async function listRecoveredBundleSnapshotDirs(params: {
       if (isPathInsideOrEqual(params.publicDir, capturedPath)) {
         continue;
       }
-      const entries = await fs.readdir(capturedPath).catch(() => []);
-      if (!entries.some((entry) => /\.(py|js|sh|mjs|cjs)$/iu.test(entry))) {
+      if (shouldSkipAttemptSnapshotPath(capturedPath)) {
+        continue;
+      }
+      if (!(await hasRecoveredBundleEntrypointSurface(capturedPath))) {
         continue;
       }
       const stat = await fs.stat(capturedPath).catch(() => undefined);
       candidates.push({ path: capturedPath, mtimeMs: stat?.mtimeMs ?? 0 });
+      if (candidates.length >= MAX_RECOVERED_BUNDLE_SNAPSHOT_DIRS) {
+        break;
+      }
+    }
+    if (candidates.length >= MAX_RECOVERED_BUNDLE_SNAPSHOT_DIRS) {
+      break;
     }
   }
-  return candidates
+  return dedupeStrings(candidates
     .sort((left, right) => right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path))
-    .map((candidate) => candidate.path);
+    .map((candidate) => candidate.path));
 }
 
 async function restoreRecoveredSnapshotBundle(params: {
@@ -15234,6 +15262,8 @@ const ATTEMPT_SNAPSHOT_IGNORED_DIR_NAMES = new Set([
   ".mypy_cache",
   ".pytest_cache",
   "__pycache__",
+  "cache",
+  "hf_home",
   "hf_cache",
   "node_modules"
 ]);
@@ -15245,6 +15275,9 @@ export function shouldSkipAttemptSnapshotPath(filePath: string): boolean {
       return true;
     }
     if (segment.startsWith("models--")) {
+      return true;
+    }
+    if (segment.startsWith("datasets--")) {
       return true;
     }
     return segment === "transformers" && index > 0 && segments[index - 1] === "cache";
