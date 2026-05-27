@@ -191,6 +191,9 @@ import {
   repairPythonRuntimePathsMappingRecordSurface,
   repairPythonCommandTokensNamespaceSurface,
   repairPythonOptionalPathArgDefaultsSurface,
+  repairPythonKeywordOnlyDefaultCallSurface,
+  repairPythonDanglingKeywordOnlyDefaultSyntaxSurface,
+  repairPythonUnexpectedKeywordParameterSurface,
   repairPythonNamespaceGetNoneDefaultSurface,
   repairPythonInvalidInfinityLiteralSurface,
   repairPythonRankDropoutMarkerParserCollisionSurface,
@@ -41087,6 +41090,159 @@ describe("ImplementSessionManager", () => {
       "json.dumps(_autolabos_json_safe({'metrics_path': args.metrics_path, 'status': metrics.get('status')}), indent=2)"
     );
     expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("repairs keyword-only default helper calls from runner feedback", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-keyword-default-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "condition_sweep_runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "import json",
+        "",
+        "def _normalize_path(value, *, default, base_dir=None):",
+        "    if value in (None, ''):",
+        "        return Path(default)",
+        "    return Path(value)",
+        "",
+        "def _default_metrics_path():",
+        "    configured = 'metrics.json'",
+        "    return _normalize_path(",
+        "        configured,",
+        "        base_dir=Path.cwd(),",
+        "    )",
+        "",
+        "def main():",
+        "    metrics_path = _default_metrics_path()",
+        "    metrics_path.write_text(json.dumps({'status': 'completed'}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report: Parameters<typeof repairPythonKeywordOnlyDefaultCallSurface>[1] = {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "runtime",
+      summary: "TypeError: _normalize_path() missing 1 required keyword-only argument: 'default'",
+      command: "python3 " + JSON.stringify(scriptPath),
+      recorded_at: "2026-05-26T00:00:00.000Z"
+    };
+
+    const repaired = await repairPythonKeywordOnlyDefaultCallSurface(scriptPath, report);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repaired.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_keyword_only_default_call_marker");
+    expect(repairedSource).toMatch(/base_dir=Path\.cwd\(\),\n\s+default=None,\n\s+\)/u);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "metrics.json"), "utf8"))).toMatchObject({
+      status: "completed"
+    });
+  });
+
+
+  it("repairs dangling keyword-only default syntax from local verification feedback", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-dangling-default-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "condition_sweep_runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "import json",
+        "",
+        "def _normalize_path(value, *, default, base_dir=None):",
+        "    return Path(default if value in (None, '') else value)",
+        "",
+        "def _default_metrics_path():",
+        "    return _normalize_path(",
+        "        'metrics.json',",
+        "        base_dir=Path.cwd(),",
+        "    , default=None)",
+        "",
+        "def main():",
+        "    _default_metrics_path().write_text(json.dumps({'status': 'completed'}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repaired = await repairPythonDanglingKeywordOnlyDefaultSyntaxSurface(scriptPath, {
+      summary: 'Local verification failed via py_compile: line 10 , default=None) ^ SyntaxError: invalid syntax'
+    });
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repaired.repaired).toBe(true);
+    expect(repairedSource).toMatch(/base_dir=Path\.cwd\(\),\n\s+default=None,\n\s+\)/u);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "metrics.json"), "utf8"))).toMatchObject({
+      status: "completed"
+    });
+  });
+
+
+  it("widens helper signatures for unexpected generated keyword arguments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-unexpected-keyword-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "condition_sweep_runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "import json",
+        "",
+        "def _normalize_path(",
+        "    value,",
+        "    *,",
+        "    default,",
+        "):",
+        "    return Path(default if value in (None, '') else value)",
+        "",
+        "def _default_metrics_path():",
+        "    return _normalize_path('metrics.json', base_dir=Path.cwd(), default=None)",
+        "",
+        "def main():",
+        "    _default_metrics_path().write_text(json.dumps({'status': 'completed'}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report: Parameters<typeof repairPythonUnexpectedKeywordParameterSurface>[1] = {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "metrics",
+      summary: "Experiment metrics payload reports failed status: _normalize_path() got an unexpected keyword argument 'base_dir'",
+      recorded_at: "2026-05-26T00:00:00.000Z"
+    };
+
+    const repaired = await repairPythonUnexpectedKeywordParameterSurface(scriptPath, report);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repaired.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_unexpected_keyword_parameter_marker");
+    expect(repairedSource).toMatch(/def _normalize_path\(\n\s+value,\n\s+\*,\n\s+default,\n\s+base_dir=None,?\n\s*\):/u);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "metrics.json"), "utf8"))).toMatchObject({
+      status: "completed"
+    });
   });
 
   it("ignores model-supplied paths that escape the workspace", async () => {

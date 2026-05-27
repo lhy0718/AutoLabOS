@@ -624,6 +624,23 @@ export class ImplementSessionManager {
         { publicDir: defaultPublicDir }
       );
     }
+    if (isRecoverableDanglingKeywordOnlyDefaultSyntaxFeedback(taskSpec.context.implementation_contract_feedback)) {
+      const previousScriptPath = await runContext.get<string>("implement_experiments.script");
+      const syntaxRepair = await repairPythonDanglingKeywordOnlyDefaultSyntaxSurface(
+        previousScriptPath,
+        taskSpec.context.implementation_contract_feedback
+      );
+      if (syntaxRepair.repaired) {
+        emitImplementObservation(
+          "verify",
+          syntaxRepair.message || "Repaired dangling keyword-only default syntax before retrying implementation.",
+          { publicDir: defaultPublicDir, scriptPath: previousScriptPath }
+        );
+        await runContext.put("implement_experiments.verify_report", null);
+        await runContext.put("implement_experiments.design_implementation_validation", null);
+        taskSpec.context.implementation_contract_feedback = undefined;
+      }
+    }
 
     let activeThreadId = currentThreadId;
     if (
@@ -13771,6 +13788,8 @@ async function recoverStructuredResultFromPublicBundle(params: {
         await repairPythonConditionSuccessStatusAliasSurface(scriptPath),
         await repairPythonMetricsPayloadProjectionSurface(scriptPath),
         await repairPythonFinalOrchestrationHelperSurface(scriptPath),
+        await repairPythonKeywordOnlyDefaultCallSurface(scriptPath, params.runnerFeedback, params.runnerFeedbackDiagnosticText),
+        await repairPythonUnexpectedKeywordParameterSurface(scriptPath, params.runnerFeedback, params.runnerFeedbackDiagnosticText),
         await repairPythonMainFindCallableStudyResolverSurface(scriptPath)
       ];
       const repairedSource = await fs.readFile(scriptPath, "utf8").catch(() => "");
@@ -14266,6 +14285,344 @@ async function readRunVerifierReportDiagnosticText(
   return logText.slice(-16_000);
 }
 
+
+function extractRecoverableKeywordOnlyDefaultFeedback(
+  text: string
+): { functionName: string; keywordName: string } | undefined {
+  const match = /([A-Za-z_][A-Za-z0-9_]*)\(\) missing 1 required keyword-only argument: ['"]([A-Za-z_][A-Za-z0-9_]*)['"]/u.exec(text);
+  if (!match) {
+    return undefined;
+  }
+  const functionName = match[1];
+  const keywordName = match[2];
+  if (!functionName.startsWith("_") || keywordName !== "default") {
+    return undefined;
+  }
+  return { functionName, keywordName };
+}
+
+function extractPythonRequiredKeywordOnlyParameterNames(signature: string): string[] {
+  const names: string[] = [];
+  let keywordOnly = false;
+  for (const rawParam of splitPythonSignatureParameters(signature)) {
+    const param = rawParam.replace(/#.*/u, "").trim();
+    if (!param || param === "/") {
+      continue;
+    }
+    if (param === "*" || /^\*[^*]/u.test(param)) {
+      keywordOnly = true;
+      continue;
+    }
+    if (!keywordOnly || param.startsWith("**") || pythonSignatureParamHasTopLevelDefault(param)) {
+      continue;
+    }
+    const name = param.split(":")[0]?.trim() || "";
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+function findPythonCallCloseIndex(source: string, openIndex: number): number {
+  let depth = 0;
+  let quote: "'" | "\"" | undefined;
+  let escaped = false;
+  for (let index = openIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (char === "'" || char === "\"") {
+      quote = char;
+      continue;
+    }
+    if (char === "(") {
+      depth += 1;
+      continue;
+    }
+    if (char === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return -1;
+}
+
+function pythonCallBodyHasKeyword(callBody: string, keywordName: string): boolean {
+  return splitPythonSignatureParameters(callBody).some((rawArg) => {
+    const arg = rawArg.replace(/#.*/u, "").trim();
+    return new RegExp(`^${escapeRegex(keywordName)}\\s*=`, "u").test(arg);
+  });
+}
+
+export async function repairPythonKeywordOnlyDefaultCallSurface(
+  scriptPath?: string,
+  report?: RunVerifierReport,
+  diagnosticText = ""
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  const feedback = [
+    report?.summary,
+    report?.stderr_excerpt,
+    report?.stdout_excerpt,
+    report?.suggested_next_action,
+    diagnosticText
+  ].filter((value): value is string => Boolean(value)).join("\n");
+  const parsed = extractRecoverableKeywordOnlyDefaultFeedback(feedback);
+  if (!parsed) {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const signature = extractPythonFunctionSignature(source, parsed.functionName);
+  if (!signature) {
+    return { repaired: false };
+  }
+  const requiredKeywordOnly = extractPythonRequiredKeywordOnlyParameterNames(signature);
+  if (!requiredKeywordOnly.includes(parsed.keywordName)) {
+    return { repaired: false };
+  }
+
+  const callPattern = new RegExp(`\\b${escapeRegex(parsed.functionName)}\\s*\\(`, "gu");
+  const edits: Array<{ closeIndex: number; insertion: string }> = [];
+  for (const match of source.matchAll(callPattern)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    const previousChar = source[match.index - 1] || "";
+    const prefix = source.slice(Math.max(0, match.index - 8), match.index);
+    if (previousChar === "." || /\bdef\s*$/u.test(prefix)) {
+      continue;
+    }
+    const openIndex = source.indexOf("(", match.index);
+    if (openIndex < 0) {
+      continue;
+    }
+    const closeIndex = findPythonCallCloseIndex(source, openIndex);
+    if (closeIndex < 0) {
+      continue;
+    }
+    const callBody = source.slice(openIndex + 1, closeIndex);
+    if (pythonCallBodyHasKeyword(callBody, parsed.keywordName)) {
+      continue;
+    }
+    let insertion = callBody.trim().length > 0 ? `, ${parsed.keywordName}=None` : `${parsed.keywordName}=None`;
+    if (callBody.includes("\n")) {
+      const closeLineStart = source.lastIndexOf("\n", closeIndex) + 1;
+      const closeIndent = source.slice(closeLineStart, closeIndex).match(/^\s*/u)?.[0] || "";
+      const argumentLines = callBody.split(/\r?\n/u).filter((line) => line.trim().length > 0);
+      const lastArgumentLine = argumentLines.at(-1) || "";
+      const argumentIndent = lastArgumentLine.match(/^\s*/u)?.[0] || `${closeIndent}  `;
+      insertion = callBody.trimEnd().endsWith(",")
+        ? `${argumentIndent}${parsed.keywordName}=None,\n${closeIndent}`
+        : `,\n${argumentIndent}${parsed.keywordName}=None\n${closeIndent}`;
+    }
+    edits.push({
+      closeIndex,
+      insertion
+    });
+  }
+
+  if (edits.length === 0) {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  for (const edit of edits.sort((left, right) => right.closeIndex - left.closeIndex)) {
+    nextSource = `${nextSource.slice(0, edit.closeIndex)}${edit.insertion}${nextSource.slice(edit.closeIndex)}`;
+  }
+  const marker = "_autolabos_keyword_only_default_call_marker";
+  if (!nextSource.includes(marker)) {
+    nextSource = insertPythonTopLevelHelperAfterImports(nextSource, `\n# ${marker}\n`);
+  }
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added explicit default=None to ${parsed.functionName} call site(s) in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+
+
+function extractRecoverableUnexpectedKeywordFeedback(
+  text: string
+): { functionName: string; keywordName: string } | undefined {
+  const match = /([A-Za-z_][A-Za-z0-9_]*)\(\) got an unexpected keyword argument ['"]([A-Za-z_][A-Za-z0-9_]*)['"]/u.exec(text);
+  if (!match) {
+    return undefined;
+  }
+  const functionName = match[1];
+  const keywordName = match[2];
+  if (!functionName.startsWith("_") || keywordName !== "base_dir") {
+    return undefined;
+  }
+  return { functionName, keywordName };
+}
+
+export async function repairPythonUnexpectedKeywordParameterSurface(
+  scriptPath?: string,
+  report?: RunVerifierReport,
+  diagnosticText = ""
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+  const feedback = [
+    report?.summary,
+    report?.stderr_excerpt,
+    report?.stdout_excerpt,
+    report?.suggested_next_action,
+    diagnosticText
+  ].filter((value): value is string => Boolean(value)).join("\n");
+  const parsed = extractRecoverableUnexpectedKeywordFeedback(feedback);
+  if (!parsed) {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const escapedName = escapeRegex(parsed.functionName);
+  const definitionPattern = new RegExp("(^|\\n)def\\s+" + escapedName + "\\s*\\(", "u");
+  const match = definitionPattern.exec(source);
+  if (!match) {
+    return { repaired: false };
+  }
+  const openIndex = source.indexOf("(", match.index);
+  if (openIndex < 0) {
+    return { repaired: false };
+  }
+  const closeIndex = findPythonCallCloseIndex(source, openIndex);
+  if (closeIndex < 0) {
+    return { repaired: false };
+  }
+  const signatureParams = source.slice(openIndex + 1, closeIndex);
+  if (
+    new RegExp("(?:^|,)\\s*" + escapeRegex(parsed.keywordName) + "(?:\\s*:|\\s*=|\\s*,|\\s*$)", "u").test(signatureParams) ||
+    /\*\*/u.test(signatureParams)
+  ) {
+    return { repaired: false };
+  }
+  const insertedKeywordParam = signatureParams.includes("*")
+    ? `${parsed.keywordName}=None`
+    : `*, ${parsed.keywordName}=None`;
+  let insertion = signatureParams.trim().length > 0
+    ? `, ${insertedKeywordParam}`
+    : insertedKeywordParam;
+  if (signatureParams.includes("\n")) {
+    const closeLineStart = source.lastIndexOf("\n", closeIndex) + 1;
+    const closeIndent = source.slice(closeLineStart, closeIndex).match(/^\s*/u)?.[0] || "";
+    const parameterLines = signatureParams.split(/\r?\n/u).filter((line) => line.trim().length > 0);
+    const lastParameterLine = parameterLines.at(-1) || "";
+    const parameterIndent = lastParameterLine.match(/^\s*/u)?.[0] || `${closeIndent}  `;
+    insertion = signatureParams.trimEnd().endsWith(",")
+      ? `${parameterIndent}${insertedKeywordParam},\n${closeIndent}`
+      : `,\n${parameterIndent}${insertedKeywordParam}\n${closeIndent}`;
+  }
+  let nextSource = `${source.slice(0, closeIndex)}${insertion}${source.slice(closeIndex)}`;
+  const marker = "_autolabos_unexpected_keyword_parameter_marker";
+  if (!nextSource.includes(marker)) {
+    nextSource = insertPythonTopLevelHelperAfterImports(nextSource, `\n# ${marker}\n`);
+  }
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added optional ${parsed.keywordName} keyword compatibility to ${parsed.functionName} in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+function isRecoverableDanglingKeywordOnlyDefaultSyntaxFeedback(
+  report: { summary?: string; stderr_excerpt?: string } | undefined
+): boolean {
+  const text = [report?.summary, report?.stderr_excerpt]
+    .filter((value): value is string => Boolean(value))
+    .join("\n");
+  return /SyntaxError: invalid syntax/u.test(text) && /,\s*default=None\)\s*\^?/u.test(text);
+}
+
+export async function repairPythonDanglingKeywordOnlyDefaultSyntaxSurface(
+  scriptPath?: string,
+  report?: { summary?: string; stderr_excerpt?: string }
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+  if (!isRecoverableDanglingKeywordOnlyDefaultSyntaxFeedback(report)) {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const lines = source.split(/\r?\n/u);
+  let repaired = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^(\s*),\s*default=None\)\s*$/u.exec(lines[index] || "");
+    if (!match) {
+      continue;
+    }
+    const closeIndent = match[1];
+    let argumentIndent = `${closeIndent}  `;
+    for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+      const previousLine = lines[cursor] || "";
+      if (previousLine.trim().length === 0) {
+        continue;
+      }
+      argumentIndent = previousLine.match(/^\s*/u)?.[0] || argumentIndent;
+      break;
+    }
+    lines.splice(index, 1, `${argumentIndent}default=None,`, `${closeIndent})`);
+    index += 1;
+    repaired = true;
+  }
+
+  if (!repaired) {
+    return { repaired: false };
+  }
+
+  const nextSource = lines.join("\n");
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Repaired dangling keyword-only default syntax in ${path.basename(scriptPath)} before retrying implementation.`
+  };
+}
+
 function isRecoverableBundleDeterministicRepairFeedback(
   report: RunVerifierReport | undefined,
   diagnosticText = ""
@@ -14284,6 +14641,8 @@ function isRecoverableBundleDeterministicRepairFeedback(
     /No study sweep entrypoint was found/u.test(summary) ||
     /No study execution helper was found/u.test(summary) ||
     /No study sweep runner or single-run helper was found/u.test(summary) ||
+    extractRecoverableKeywordOnlyDefaultFeedback(summary) !== undefined ||
+    extractRecoverableUnexpectedKeywordFeedback(summary) !== undefined ||
     /missing \d+ required positional arguments?: .*base_model_id.*train_examples/u.test(summary) ||
     /missing \d+ required positional arguments?: .*train_examples.*base_model_id/u.test(summary) ||
     /AttributeError:\s*['"][^'"]+['"] object has no attribute ['"]get['"]/u.test(summary) ||
@@ -14302,6 +14661,8 @@ function hasRecoverableBundleDeterministicRepairMarker(source: string): boolean 
     "_autolabos_condition_success_status_alias_marker",
     "_autolabos_entrypoint_locked_condition_seed_sweep_candidate_marker",
     "_autolabos_final_orchestration_helper_marker",
+    "_autolabos_keyword_only_default_call_marker",
+    "_autolabos_unexpected_keyword_parameter_marker",
     "_autolabos_skip_callable_classes_marker"
   ].some((marker) => source.includes(marker));
 }
