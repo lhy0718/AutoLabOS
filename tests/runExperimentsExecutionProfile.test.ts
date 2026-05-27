@@ -1361,6 +1361,114 @@ describe("run_experiments execution profile behavior", () => {
     ).toBe(true);
   });
 
+  it("does not let P6 harness timeout override runner timeout flags", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-timeout-env-separation-"));
+    process.chdir(root);
+    const run = makeRun("run-timeout-env-separation");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "experiment.py");
+    await writeFile(
+      scriptPath,
+      [
+        "import argparse",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument(\"--metrics-path\", default=\"metrics.json\")",
+        "    parser.add_argument(\"--timeout-sec\", type=int, default=0)",
+        "    return parser.parse_args(argv)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 " + JSON.stringify(scriptPath));
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const originalP6Timeout = process.env.AUTOLABOS_P6_NEXT_TIMEOUT_SEC;
+    process.env.AUTOLABOS_P6_NEXT_TIMEOUT_SEC = "9876";
+    let observedCommand = "";
+    try {
+      const node = createRunExperimentsNode({
+        config: {
+          experiments: {
+            timeout_sec: 1234,
+            network_policy: "blocked"
+          }
+        } as any,
+        executionProfile: "local",
+        runStore: {} as any,
+        eventStream: new InMemoryEventStream(),
+        llm: new MockLLMClient(),
+        experimentLlm: new MockLLMClient(),
+        pdfTextLlm: new MockLLMClient(),
+        codex: {} as any,
+        aci: {
+          runCommand: async (command: string) => {
+            observedCommand = command;
+            await writeFile(
+              path.join(runDir, "metrics.json"),
+              JSON.stringify(
+                {
+                  status: "completed",
+                  success: true,
+                  primary_metric: {
+                    name: "accuracy_delta_vs_baseline",
+                    value: 0.02,
+                    target: 0.01,
+                    met: true
+                  },
+                  condition_results: [
+                    { condition_id: "baseline_condition", status: "completed", accuracy: 0.4 },
+                    { condition_id: "candidate_condition_a", status: "completed", accuracy: 0.42 }
+                  ],
+                  completed_condition_count: 2
+                },
+                null,
+                2
+              ),
+              "utf8"
+            );
+            return {
+              status: "ok" as const,
+              stdout: "runner completed",
+              stderr: "",
+              exit_code: 0,
+              duration_ms: 10
+            };
+          },
+          runTests: async () => ({
+            status: "ok" as const,
+            stdout: "",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 1
+          })
+        } as any,
+        semanticScholar: {} as any,
+        openAlex: {} as any,
+        crossref: {} as any,
+        arxiv: {} as any,
+        responsesPdfAnalysis: {} as any
+      });
+
+      await node.execute({ run, graph: run.graph });
+    } finally {
+      if (originalP6Timeout === undefined) {
+        delete process.env.AUTOLABOS_P6_NEXT_TIMEOUT_SEC;
+      } else {
+        process.env.AUTOLABOS_P6_NEXT_TIMEOUT_SEC = originalP6Timeout;
+      }
+    }
+
+    expect(observedCommand).toContain("--timeout-sec 1234");
+    expect(observedCommand).not.toContain("--timeout-sec 9876");
+  });
+
   it("does not append timeout flags only mentioned outside argparse", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-timeout-flag-source-mention-"));
     process.chdir(root);

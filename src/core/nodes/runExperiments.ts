@@ -2749,10 +2749,6 @@ function withModelDownloadEnvIfDeclared(
 }
 
 function resolveRunExperimentsBudgetTimeoutSec(config: NodeExecutionDeps["config"]): number | undefined {
-  const envTimeout = Number(process.env.AUTOLABOS_P6_NEXT_TIMEOUT_SEC || "");
-  if (Number.isFinite(envTimeout) && envTimeout > 0) {
-    return Math.floor(envTimeout);
-  }
   const configTimeout = Number(config.experiments?.timeout_sec || 0);
   if (Number.isFinite(configTimeout) && configTimeout > 0) {
     return Math.floor(configTimeout);
