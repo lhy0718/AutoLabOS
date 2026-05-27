@@ -2332,7 +2332,7 @@ export class ImplementSessionManager {
     if (params.sessionMode === "staged_llm") {
       lines.splice(10, 0, "6. This staged_llm attempt uses a scaffold-first contract.");
       lines.splice(11, 0, "7. Return scaffold metadata only in the first response. Do NOT include file contents in the scaffold response.");
-      lines.splice(12, 0, "8. Decomposition planning may happen in a follow-up repair turn, so focus this scaffold on the minimal runnable metadata and localization surface.");
+      lines.splice(12, 0, "8. Include a compact decomposition_plan in the scaffold: at least one materialize_text_file unit targeting script_path or changed_files; do not include file contents.");
       lines.splice(13, 0, "9. The API-mode context below is compacted to the highest-signal fields only; do not assume omitted fields are required.");
     }
 
@@ -14656,9 +14656,10 @@ function appendStagedImplementScaffoldOverrideToPrompt(prompt: string): string {
     "",
     "Staged implement scaffold mode:",
     "- Return scaffold metadata first. Do NOT include file_edits or file contents in this response.",
-    "- Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions.",
+    "- Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, decomposition_plan.",
     "- changed_files, artifacts, and public_artifacts must list only files materialized during implement_experiments, not deferred runtime outputs such as metrics_path, results*.json, *_results.json, study_results.json, latest_results.json, or run.log.",
-    "- Do not include decomposition_plan or file_plan in this first scaffold response unless you can do so without delaying the runnable metadata surface.",
+    "- decomposition_plan is required and must be compact: include only the smallest materialize_text_file units needed for the runnable bundle, with target_path values matching script_path or changed_files.",
+    "- Do NOT include file_edits, file_plan, or file contents in this first scaffold response.",
     "- Keep the scaffold minimal, concrete, and runnable."
   ].join("\n");
 }
@@ -14696,7 +14697,8 @@ function appendStagedImplementMaterializationPlanOverrideToPrompt(targetPath: st
     "- Return ONLY one bare JSON object with keys: strategy, rationale, chunks.",
     "- Do NOT use markdown fences or any extra commentary.",
     "- Keep chunk scopes non-overlapping and ordered.",
-    "- Let the chunk count follow the requested file's purpose and verification focus; do not force a fixed chunk count."
+    "- For runnable Python scripts, experiment runners, or CLI entrypoints, use 3-6 focused chunks unless the file is clearly tiny; do not plan a single giant runner chunk.",
+    "- Let the chunk count follow the requested file's purpose and verification focus while keeping each chunk small enough for bounded generation and validation."
   ].join("\n");
 }
 

@@ -10242,7 +10242,7 @@ describe("ImplementSessionManager", () => {
     expect(stagedFallbackPrompts[0]).toContain("Implementation attempt 1/3.");
     expect(stagedFallbackPrompts[0]).toContain("scaffold-first contract");
     expect(stagedFallbackPrompts[0]).toContain("Return scaffold metadata only in the first response.");
-    expect(stagedFallbackPrompts[0]).not.toContain("include a decomposition_plan");
+    expect(stagedFallbackPrompts[0]).toContain("Include a compact decomposition_plan");
     expect(stagedFallbackPrompts[0]).not.toContain("Previous local verification:");
     expect(stagedFallbackPrompts[1]).toContain("Staged implement materialization subplan.");
     expect(stagedFallbackPrompts[2]).toContain("Target chunk: runner_full");
