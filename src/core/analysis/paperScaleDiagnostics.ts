@@ -83,7 +83,7 @@ export function evaluatePaperScaleDiagnostics(input: {
       target_node: "analyze_results",
       summary: "Headline improvement is consistent with a one-example accuracy change.",
       evidence: oneItemGain,
-      recommended_action: "Report the result as a pilot screening signal and require a larger paired evaluation before claiming a rank/dropout effect.",
+      recommended_action: "Report the result as a pilot screening signal and require a larger paired evaluation before claiming a condition-parameter effect.",
       recheck_condition: "The leading-vs-baseline delta is supported by more than a one-example change or by robust paired statistics."
     });
   }

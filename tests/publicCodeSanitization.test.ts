@@ -5,6 +5,7 @@ import path from "node:path";
 
 const ROOT = process.cwd();
 const CODE_DIRS = ["src", "tests", "docs", path.join(".codex", "skills")];
+const SHIPPED_CODE_DIRS = ["src", "docs", path.join(".codex", "skills")];
 const TEXT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".md"]);
 
 function walkCodeFiles(dir: string): string[] {
@@ -115,6 +116,44 @@ describe("public code sanitization", () => {
         .filter((pattern) => pattern.test(text))
         .map((pattern) => ({ relativePath, pattern: pattern.source }));
       return [...literalOffenders, ...patternOffenders];
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("does not bake one-off pilot output details into shipped source, docs, or local skills", () => {
+    const bannedLiterals = [
+      chars([82, 101, 99, 111, 118, 101, 114, 101, 100, 32, 99, 97, 99, 104, 101, 100, 32, 102, 117, 108, 108, 32, 116, 101, 120, 116]),
+      chars([99, 111, 109, 112, 97, 99, 116, 32, 80, 69, 70, 84, 32, 114, 101, 99, 105, 112, 101]),
+      chars([114, 97, 110, 107, 47, 100, 114, 111, 112, 111, 117, 116]),
+      chars([114, 97, 110, 107, 45, 100, 114, 111, 112, 111, 117, 116]),
+      chars([97, 114, 99, 95, 99, 104, 97, 108, 108, 101, 110, 103, 101]),
+      chars([104, 101, 108, 108, 97, 115, 119, 97, 103]),
+      chars([84, 105, 110, 121, 76, 108, 97, 109, 97]),
+      chars([113, 95, 112, 114, 111, 106]),
+      chars([107, 95, 112, 114, 111, 106]),
+      chars([118, 95, 112, 114, 111, 106]),
+      chars([111, 95, 112, 114, 111, 106]),
+      chars([103, 97, 116, 101, 95, 112, 114, 111, 106]),
+      chars([117, 112, 95, 112, 114, 111, 106]),
+      chars([100, 111, 119, 110, 95, 112, 114, 111, 106]),
+      chars([108, 101, 97, 114, 110, 105, 110, 103, 32, 114, 97, 116, 101, 32, 48, 46, 48, 48, 48, 50]),
+      chars([103, 114, 97, 100, 105, 101, 110, 116, 32, 97, 99, 99, 117, 109, 117, 108, 97, 116, 105, 111, 110, 32, 52]),
+      chars([52, 32, 111, 112, 116, 105, 109, 105, 122, 101, 114, 32, 115, 116, 101, 112, 115]),
+      chars([54, 32, 111, 112, 116, 105, 109, 105, 122, 101, 114, 32, 115, 116, 101, 112, 115]),
+      chars([52, 56, 32, 116, 114, 97, 105, 110, 105, 110, 103, 32, 101, 120, 97, 109, 112, 108, 101, 115]),
+      chars([51, 50, 32, 116, 114, 97, 105, 110, 105, 110, 103, 32, 101, 120, 97, 109, 112, 108, 101, 115]),
+      chars([53, 48, 54, 56]),
+      chars([48, 46, 54, 52, 49, 55]),
+      chars([48, 46, 48, 56, 51, 51]),
+      chars([102, 105, 118, 101, 32, 114, 101, 112, 101, 97, 116, 101, 100, 32, 99, 101, 108, 108, 115]),
+      chars([102, 105, 118, 101, 32, 115, 101, 101, 100, 115, 32, 112, 101, 114, 32, 99, 101, 108, 108])
+    ];
+    const offenders = SHIPPED_CODE_DIRS.flatMap(walkCodeFiles).flatMap((relativePath) => {
+      const text = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+      return bannedLiterals
+        .filter((literal) => text.toLocaleLowerCase().includes(literal.toLocaleLowerCase()))
+        .map((literal) => ({ relativePath, pattern: literal }));
     });
 
     expect(offenders).toEqual([]);

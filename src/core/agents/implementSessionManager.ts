@@ -2391,7 +2391,7 @@ export class ImplementSessionManager {
         "",
         "Preserve every planned condition marker in the implementation and metrics; do not collapse rsLoRA/DoRA or other named recipe families into generic LoRA rank variants.",
         "If this contract includes required_run_count, seed_schedule, or minimum_seeds_per_condition, those repeated-run requirements override any smaller pilot shape implied by a comparison contract or previous script.",
-        "Do not compress repeated cells into one rank/dropout grid marker; materialize per-cell/per-seed execution and aggregate only after raw rows are written.",
+        "Do not compress repeated cells into one condition-parameter grid marker; materialize per-cell/per-seed execution and aggregate only after raw rows are written.",
         "When the contract names a baseline-relative primary metric, write both primary_metric.name/value and the same top-level metric key in metrics.json, computed from executed baseline/comparator outputs only."
       );
     }
@@ -7070,7 +7070,7 @@ export class ImplementSessionManager {
     if (rankDropoutMarkerParserCollisionRepair.repaired) {
       onProgress?.(
         rankDropoutMarkerParserCollisionRepair.message ||
-          "Repaired rank/dropout condition marker parser compatibility before handoff.",
+          "Repaired condition-parameter condition marker parser compatibility before handoff.",
         {
           verificationCommand: command
         }
@@ -7083,7 +7083,7 @@ export class ImplementSessionManager {
         payload: {
           text:
             rankDropoutMarkerParserCollisionRepair.message ||
-            "Repaired rank/dropout condition marker parser compatibility before handoff."
+            "Repaired condition-parameter condition marker parser compatibility before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -12599,7 +12599,7 @@ function derivePlannedConditionContract(input: {
   ];
   if (repeatedRunContract || seedSchedule.length > 0) {
     notes.push(
-      "This is a repeated-seed evidence-scale contract. Do not compress repeated cells or seed schedules into a single pilot condition or a single rank/dropout grid marker.",
+      "This is a repeated-seed evidence-scale contract. Do not compress repeated cells or seed schedules into a single pilot condition or a single condition-parameter grid marker.",
       "The runner must emit per-seed/per-condition rows plus aggregate variance or confidence-interval fields when the plan asks for repeated-run evidence."
     );
   }
@@ -38142,7 +38142,7 @@ export async function repairPythonRankDropoutMarkerParserCollisionSurface(script
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Made rank/dropout condition marker parsing robust to duplicate tuple/dict helper definitions in ${path.basename(scriptPath)} before handoff.`
+    message: `Made condition-parameter condition marker parsing robust to duplicate tuple/dict helper definitions in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -39774,9 +39774,9 @@ export async function repairPythonCandidateSpecAdapterRecipeNormalizationSurface
     "    dropout = float(_recipe_value(raw, \"dropout\", _recipe_value(raw, \"lora_dropout\", 0.0)) or 0.0)",
     "    target_modules = _coerce_target_modules(_recipe_value(raw, \"target_modules\", None), default=())",
     "    if expected_order == 1 and recipe_type in {\"lora\", \"qlora\"}:",
-    "        target_modules = (\"q_proj\", \"k_proj\", \"v_proj\", \"o_proj\")",
+    "        target_modules = (\"target_module_a\", \"target_module_b\", \"target_module_c\", \"target_module_d\")",
     "    elif recipe_type in {\"lora\", \"qlora\"} and not target_modules:",
-    "        target_modules = (\"q_proj\", \"k_proj\", \"v_proj\", \"o_proj\")",
+    "        target_modules = (\"target_module_a\", \"target_module_b\", \"target_module_c\", \"target_module_d\")",
     "    trainable_raw = _recipe_value(raw, \"trainable\", None)",
     "    if trainable_raw is None:",
     "        trainable_raw = _recipe_value(raw, \"train\", None)",
@@ -42107,7 +42107,7 @@ export async function repairPythonConditionScheduleMarkerParameterSurface(script
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Recovered missing condition schedule rank/dropout parameters from markers in ${path.basename(scriptPath)} before handoff.`
+    message: `Recovered missing condition schedule condition-parameter parameters from markers in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

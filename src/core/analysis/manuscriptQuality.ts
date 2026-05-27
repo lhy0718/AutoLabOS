@@ -1529,7 +1529,7 @@ function buildAppendixLeakagePatterns(): Array<{ code: string; pattern: RegExp; 
     },
     {
       code: "appendix_internal_text",
-      pattern: /\bfive repeated cells and five seeds per cell|five repeated cells|five seeds per cell\b/iu,
+      pattern: /\brepeated condition cells with recorded seed coverage|repeated condition cells|recorded seed coverage\b/iu,
       fix: "Replace stale repeated-seed appendix language with condition-coverage language that matches the executed pilot."
     }
   ];

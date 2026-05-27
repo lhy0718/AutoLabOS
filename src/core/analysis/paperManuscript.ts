@@ -504,7 +504,7 @@ function repairMainTableClaims(
             "Baseline and leading-condition comparison quantities visible in the condensed record."
           )
           .replace(
-            /\bMean accuracy is shown for all eight rank\/dropout cells;?\s*/giu,
+            /\bMean accuracy is shown for all condition-parameter cells;?\s*/giu,
             ""
           )
           .replace(
@@ -558,8 +558,16 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
       "The leading observed condition cell provides the clearest follow-up signal: its baseline-relative average-accuracy gain is $1 in the reported comparison."
     )
     .replace(
-      /\bThe fixed search space includes Fixed training settings included learning rate 0\.0002,\s*per-device train batch size 1,\s*gradient accumulation 4,\s*maximum sequence length 256,\s*4 optimizer steps,\s*and 1800-second timeout\.?,\s*reported run details records 48 training examples for the reported pilot\.?,\s*and the condition-parameter tuning grid\./giu,
-      "The fixed search space held condition parameters as the manipulated factors while keeping learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, a 1,800-second timeout, and 48 training examples fixed for the reported pilot."
+      /\bThe fixed search space includes Fixed training settings included ([^.]+)\.?,\s*reported run details records ([^.]+)\.?,\s*and the condition-parameter tuning grid\./giu,
+      "The fixed search space held the manipulated condition parameters while keeping run-recorded training settings and sample-count details fixed for the reported pilot."
+    )
+    .replace(
+      /\bThe fixed search space includes\s*Fixed training settings included [^.]+\.?,\s*reported run details records [^.]+\.?,\s*and the condition-parameter tuning grid\.?/giu,
+      "The fixed search space held the manipulated condition parameters while keeping run-recorded training settings and sample-count details fixed for the reported pilot."
+    )
+    .replace(
+      /\bThe run also remained inexpensive,\s*completing (?:the|all)?\s*planned conditions in [0-9.]+\s*(?:s|seconds?)\s*with about ([0-9.]+)\s*GB of peak allocated CUDA memory\./giu,
+      "The run also remained inexpensive, completing the planned conditions under the declared time limit with about $1 GB of peak allocated CUDA memory."
     );
   if (/^\s*\[(?:warning|error|fail|failed|pass|passed)\]\s*[^:]{0,80}:/iu.test(cleaned)) {
     return "";
@@ -727,7 +735,7 @@ function ensureMainBodyResultFigure(input: {
   }
   return [
     {
-      caption: "Baseline-relative mean accuracy gain by evaluated rank/dropout condition.",
+      caption: "Baseline-relative mean accuracy gain by evaluated condition-parameter condition.",
       bars: rows,
       source_refs: [
         { kind: "artifact", id: DERIVED_MAIN_FIGURE_SOURCE_REF_ID },
@@ -798,7 +806,7 @@ function buildTaskLevelLeadingConditionFigure(
   }
   return {
     caption:
-      "Task-level and average accuracy for the leading condition; paired bars compare the locked baseline with the best observed rank/dropout cell.",
+      "Task-level and average accuracy for the leading condition; paired bars compare the locked baseline with the best observed condition-parameter cell.",
     bars,
     source_refs: [
       { kind: "artifact", id: DERIVED_MAIN_FIGURE_SOURCE_REF_ID },
@@ -933,23 +941,23 @@ function repairSubmissionAbstract(abstract: string): string {
     )
     .replace(
       /\bThe protocol targeted a 4 x 2 factorial sweep over condition parameters,\s*with average accuracy across Benchmark Task A and Benchmark Task B as the primary performance measure and locked baseline condition as the locked in-grid baseline\./giu,
-      "The protocol targeted a configured 4 x 2 condition sweep. Average accuracy across Benchmark Task A and Benchmark Task B was the primary performance measure, and the locked in-grid baseline was designated in advance."
+      "The protocol targeted a configured configured condition sweep. Average accuracy across Benchmark Task A and Benchmark Task B was the primary performance measure, and the locked in-grid baseline was designated in advance."
     )
     .replace(
       /\bthe leading observed condition\b/giu,
       "the leading observed condition"
     )
     .replace(
-      /\bThe run also remained inexpensive,\s*completing (?:the|all) eight planned conditions in [0-9.]+\s*(?:s|seconds?)\s*with about ([0-9.]+)\s*GB of peak allocated CUDA memory\./giu,
-      "The run also remained inexpensive, completing all eight planned conditions under the declared time limit with about $1 GB of peak allocated CUDA memory."
+      /\bThe run also remained inexpensive,\s*completing (?:the|all) planned conditions in [0-9.]+\s*(?:s|seconds?)\s*with about ([0-9.]+)\s*GB of peak allocated CUDA memory\./giu,
+      "The run also remained inexpensive, completing all planned conditions under the declared time limit with about $1 GB of peak allocated CUDA memory."
     )
     .replace(
-      /\bThe same artifact completed all eight requested conditions,\s*reported [0-9.]+\s*(?:s|seconds?) wall-clock time,\s*and used approximately ([0-9.]+)\s*GB of peak allocated GPU memory\./giu,
-      "The same artifact completed all eight requested conditions under the declared time limit and retained peak allocated GPU memory as a secondary feasibility diagnostic."
+      /\bThe same artifact completed all requested conditions,\s*reported [0-9.]+\s*(?:s|seconds?) wall-clock time,\s*and used approximately ([0-9.]+)\s*GB of peak allocated GPU memory\./giu,
+      "The same artifact completed all requested conditions under the declared time limit and retained peak allocated GPU memory as a secondary feasibility diagnostic."
     )
     .replace(
       /\bThe sweep was also lightweight,\s*with [0-9.]+\s*(?:s|seconds?)\s*wall-clock runtime and [0-9,]+ bytes of peak allocated memory\./giu,
-      "The sweep also completed all eight planned conditions under the declared time and memory budgets."
+      "The sweep also completed all planned conditions under the declared time and memory budgets."
     ));
 }
 
@@ -1038,12 +1046,12 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "No broader replication is reported here, so the documented gain remains a single-run preflight observation."
     )
     .replace(
-      /\bOperationally,\s*the run was inexpensive and clean\.\s*The summarized record reports completion of all eight planned conditions,\s*a wall-clock runtime of [0-9.]+\s*(?:s|seconds?),\s*and peak allocated CUDA memory of ([0-9,]+) bytes,\s*or about ([0-9.]+)\s*GB\.\s*The runtime stayed far below the configured 1,800 s limit\./giu,
-      "Operationally, the run was inexpensive and clean. The summarized record reports completion of all eight planned conditions under the configured 1,800 s limit, with peak allocated CUDA memory of $1 bytes, or about $2 GB."
+      /\bOperationally,\s*the run was inexpensive and clean\.\s*The summarized record reports completion of the planned conditions,\s*a wall-clock runtime of [0-9.]+\s*(?:s|seconds?),\s*and peak allocated CUDA memory of ([0-9,]+) bytes,\s*or about ([0-9.]+)\s*GB\.\s*The runtime stayed within the configured time limit\./giu,
+      "Operationally, the run was inexpensive and clean. The summarized record reports completion of the planned conditions under the configured time limit, with peak allocated CUDA memory of $1 bytes, or about $2 GB."
     )
     .replace(
-      /\bThe record reports 8 requested conditions,\s*8 recorded conditions,\s*and 8 completed conditions,\s*together with wall-clock runtime of [0-9.]+\s*(?:s|seconds?),\s*peak allocated CUDA memory of [0-9,]+ bytes,\s*and a timeout budget of 1,800 s\./giu,
-      "The compact record reports all eight requested, recorded, and completed conditions under the configured 1,800 s timeout, with peak allocated CUDA memory retained as a run-level feasibility diagnostic."
+      /\bThe record reports (\d+) requested conditions,\s*\1 recorded conditions,\s*and \1 completed conditions,\s*together with wall-clock runtime of [0-9.]+\s*(?:s|seconds?),\s*peak allocated CUDA memory of [0-9,]+ bytes,\s*and a timeout budget of [0-9,]+ s\./giu,
+      "The compact record reports the requested, recorded, and completed condition counts under the configured timeout, with peak allocated CUDA memory retained as a run-level feasibility diagnostic."
     )
     .replace(
       /\b(?:negative|non-confirmatory)\s+(?:follow-up|supplemental)\s+evidence\b/giu,
@@ -1054,8 +1062,8 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "the current manuscript does not report a broader replication that would establish the same improvement beyond this preflight."
     )
     .replace(
-      /\bThe fixed search space includes Fixed training settings included learning rate 0\.0002,\s*per-device train batch size 1,\s*gradient accumulation 4,\s*maximum sequence length 256,\s*4 optimizer steps,\s*and 1800-second timeout\.,\s*reported run details records 48 training examples for the reported pilot\.,\s*and the condition-parameter tuning grid\./giu,
-      "The fixed search space held condition parameters as the manipulated factors while keeping learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and an 1800-second timeout fixed for the reported pilot."
+      /\bThe fixed search space includes Fixed training settings included ([^.]+)\.,\s*reported run details records ([^.]+)\.,\s*and the condition-parameter tuning grid\./giu,
+      "The fixed search space held condition parameters as the manipulated factors while keeping run-recorded training settings and sample-count details fixed for the reported pilot."
     )
     .replace(
       /\bThe fixed search space includes\s*Fixed training settings included ([^.]+)\.,\s*reported run details records ([^.]+)\.,\s*and the condition-parameter tuning grid\./giu,
@@ -1065,19 +1073,19 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       /\bResults reports the best observed cell against the locked baseline condition;\s*Table 1 reports condition mean accuracies and identifies only that locked row as the baseline\./giu,
       headingKey === "method"
         ? ""
-        : "Table 1 reports all eight condition mean accuracies and identifies only the locked locked baseline row as the baseline."
+        : "Table 1 reports the condition mean accuracies and identifies only the locked baseline row as the baseline."
     )
     .replace(
       /\bThe available summary does not expose a full eight-cell accuracy table,\s*so this manuscript does not attempt to infer a detailed ordering among all configurations beyond the reported best-versus-baseline comparison\./giu,
-      "Table 1 reports all eight condition mean accuracies, so the manuscript uses the visible rows as the condition-level table while avoiding a fine-grained ranking beyond the reported best-versus-baseline comparison."
+      "Table 1 reports the condition mean accuracies, so the manuscript uses the visible rows as the condition-level table while avoiding a fine-grained ranking beyond the reported best-versus-baseline comparison."
     )
     .replace(
-      /\bHowever,\s*because the compact writing record does not expose the full per-cell table,\s*we describe this as the best reported comparison in the available artifact rather than a definitive ordering of all eight cells\./giu,
-      "However, because the visible table reports condition-level mean accuracies without complete per-cell uncertainty and auxiliary metrics, we describe this as the best reported comparison rather than a definitive ordering of all eight cells."
+      /\bHowever,\s*because the compact writing record does not expose the full per-cell table,\s*we describe this as the best reported comparison in the available artifact rather than a definitive ordering of all cells\./giu,
+      "However, because the visible table reports condition-level mean accuracies without complete per-cell uncertainty and auxiliary metrics, we describe this as the best reported comparison rather than a definitive ordering of all cells."
     )
     .replace(
       /\bThe available summary does not expose a full eight-cell accuracy table\./giu,
-      "Table 1 reports all eight condition mean accuracies."
+      "Table 1 reports the condition mean accuracies."
     )
     .replace(
       /\bTable 1 therefore serves as the main numeric summary of the executed grid together with the reported task split,\s*uncertainty bounds,\s*training-loss comparison,\s*and execution totals used in the interpretation\./giu,
@@ -1088,7 +1096,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "The table supplies the baseline-to-leading comparison view, while the figure emphasizes how the locked baseline and leading observed setting behave across the two evaluation tasks."
     )
     .replace(
-      /\bTable 1 exposes the eight condition means\b/giu,
+      /\bTable 1 exposes the condition means\b/giu,
       "Table 1 exposes the baseline-to-leading comparison quantities visible in the condensed record"
     )
     .replace(
@@ -1108,8 +1116,8 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "complete per-cell uncertainty and resource tables"
     )
     .replace(
-      /\ba fully exposed table of all eight cells\b/giu,
-      "complete per-cell uncertainty and resource tables for all eight cells"
+      /\ba fully exposed table of all cells\b/giu,
+      "complete per-cell uncertainty and resource tables for all cells"
     )
     .replace(
       /\ba full per-condition numerical table\b/giu,
@@ -1128,12 +1136,12 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "Table 1 provides a mean-performance row for every factorial cell, but the compact summary does not provide complete per-cell uncertainty or auxiliary-metric tables and does not document the exact procedure used to compute the reported confidence intervals."
     )
     .replace(
-      /\bAlthough all eight planned configurations were completed,\s*the reported summary does not expose a full per-condition performance table sufficient for estimating rank main effects,\s*dropout main effects,\s*or their interaction across the whole grid\./giu,
-      "Although all eight planned configurations were completed and Table 1 reports the condition-level mean accuracies, the compact summary does not expose complete per-cell uncertainty and auxiliary-metric tables sufficient for estimating rank main effects, dropout main effects, or their interaction across the whole grid."
+      /\bAlthough the planned configurations were completed,\s*the reported summary does not expose a full per-condition performance table sufficient for estimating condition main effects or interactions across the whole grid\./giu,
+      "Although the planned configurations were completed and Table 1 reports the condition-level mean accuracies, the compact summary does not expose complete per-cell uncertainty and auxiliary-metric tables sufficient for estimating condition main effects or interactions across the whole grid."
     )
     .replace(
-      /\bthe reported summary does not expose a full per-condition performance table sufficient for estimating rank main effects,\s*dropout main effects,\s*or their interaction across the whole grid\b/giu,
-      "Table 1 reports condition-level mean accuracies, while the compact summary does not expose complete per-cell uncertainty and auxiliary-metric tables sufficient for estimating rank main effects, dropout main effects, or their interaction across the whole grid"
+      /\bthe reported summary does not expose a full per-condition performance table sufficient for estimating condition main effects or interactions across the whole grid\b/giu,
+      "Table 1 reports condition-level mean accuracies, while the compact summary does not expose complete per-cell uncertainty and auxiliary-metric tables sufficient for estimating condition main effects or interactions across the whole grid"
     )
     .replace(
       /\bthe reported analyses does not report optimizer choice,\s*learning rate,\s*batch size,\s*LoRA target modules,\s*or the exact procedure used to compute the reported 95% intervals\b/giu,
@@ -1245,8 +1253,8 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
     .replace(/\bbenchmark_task_b_accuracy\b/giu, "Benchmark Task B accuracy");
   if (headingKey === "limitations") {
     repaired = repaired.replace(
-      /\bIt provides the locked baseline,\s*the factorial design,\s*the headline comparison,\s*and operational measurements,\s*but it does not expose a full condition-by-condition main-text score table for all eight cells,\s*an untuned reference,\s*or a full-fine-tuning comparator\./giu,
-      "It provides the locked baseline, the factorial design, the headline comparison, operational measurements, and a full condition-by-condition main-text score table for all eight cells, but it does not include an untuned reference or a full-fine-tuning comparator."
+      /\bIt provides the locked baseline,\s*the factorial design,\s*the headline comparison,\s*and operational measurements,\s*but it does not expose a full condition-by-condition main-text score table for all cells,\s*an untuned reference,\s*or a full-fine-tuning comparator\./giu,
+      "It provides the locked baseline, the factorial design, the headline comparison, operational measurements, and a full condition-by-condition main-text score table for all cells, but it does not include an untuned reference or a full-fine-tuning comparator."
     ).replace(
       /\bThe protocol clearly specifies the preferred backbone and fallback option,\s*but the summarized materials do not fully disambiguate the realized checkpoint used in the analyzed slice\./giu,
       "The protocol specifies the preferred backbone and fallback option, and the executed metrics identify the selected backbone as the selected backbone for the analyzed slice."
@@ -1267,16 +1275,16 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "The manuscript supplements the compact reporting materials with verified execution metadata identifying the selected backbone as the selected backbone."
     ).replace(
       /\bThe second limitation is incomplete disclosure of the quantitative setup and outputs\.\s*The compact summary does not provide the full eight-cell metric table,\s*does not report optimizer,\s*learning-rate,\s*batch-size,\s*or step-level details,\s*and does not explain how the 95% confidence intervals were constructed\.\s*It also does not include a direct with-versus-without ablation of the benchmark-gated reporting protocol\.\s*Those omissions do not invalidate the preflight,\s*but they prevent stronger causal or interaction-level claims\./giu,
-      "The second limitation is bounded disclosure of auxiliary setup and uncertainty details. The visible manuscript reports the eight condition-level mean accuracies and fixed training settings, but it still lacks optimizer family, adapter-scaling, target-module, interval-construction, and with-versus-without reporting-ablation details. Those omissions do not invalidate the preflight, but they prevent stronger causal or interaction-level claims."
+      "The second limitation is bounded disclosure of auxiliary setup and uncertainty details. The visible manuscript reports the condition-level mean accuracies and fixed training settings, but it still lacks optimizer family, adapter-scaling, target-module, interval-construction, and with-versus-without reporting-ablation details. Those omissions do not invalidate the preflight, but they prevent stronger causal or interaction-level claims."
     ).replace(
       /\bThe second limitation is incomplete disclosure of the quantitative setup and outputs\.\s*The reported summary does not provide the full eight-cell metric table,\s*does not report optimizer,\s*learning-rate,\s*batch-size,\s*or step-level details,\s*and does not explain how the 95% confidence intervals were constructed\.\s*It also does not include a direct with-versus-without ablation of the benchmark-gated reporting protocol\.\s*Those omissions do not invalidate the preflight,\s*but they prevent stronger causal or interaction-level claims\./giu,
-      "The second limitation is bounded disclosure of auxiliary setup and uncertainty details. The visible manuscript reports the eight condition-level mean accuracies and fixed training settings, but it still lacks optimizer family, adapter-scaling, target-module, interval-construction, and with-versus-without reporting-ablation details. Those omissions do not invalidate the preflight, but they prevent stronger causal or interaction-level claims."
+      "The second limitation is bounded disclosure of auxiliary setup and uncertainty details. The visible manuscript reports the condition-level mean accuracies and fixed training settings, but it still lacks optimizer family, adapter-scaling, target-module, interval-construction, and with-versus-without reporting-ablation details. Those omissions do not invalidate the preflight, but they prevent stronger causal or interaction-level claims."
     ).replace(
       /\bThe compact summary does not provide the full eight-cell metric table,\s*does not report optimizer,\s*learning-rate,\s*batch-size,\s*or step-level details,\s*and does not explain how the 95% confidence intervals were constructed\./giu,
-      "The visible manuscript reports the eight condition-level mean accuracies and fixed training settings, but it still lacks optimizer family, adapter-scaling, target-module, and interval-construction details."
+      "The visible manuscript reports the condition-level mean accuracies and fixed training settings, but it still lacks optimizer family, adapter-scaling, target-module, and interval-construction details."
     ).replace(
       /\bThe reported summary does not provide the full eight-cell metric table,\s*does not report optimizer,\s*learning-rate,\s*batch-size,\s*or step-level details,\s*and does not explain how the 95% confidence intervals were constructed\./giu,
-      "The visible manuscript reports the eight condition-level mean accuracies and fixed training settings, but it still lacks optimizer family, adapter-scaling, target-module, and interval-construction details."
+      "The visible manuscript reports the condition-level mean accuracies and fixed training settings, but it still lacks optimizer family, adapter-scaling, target-module, and interval-construction details."
     ).replace(
       /\bit omits optimizer settings,\s*batch size,\s*LoRA target modules,\s*a full per-condition score table,\s*and the exact interval-construction procedure\./giu,
       "it omits optimizer settings, LoRA target modules, adapter scaling, and the exact interval-construction procedure, while Table 1 provides the condition-level mean accuracy table."
@@ -1300,7 +1308,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
   if (headingKey === "related work" || headingKey === "related_work") {
     repaired = repaired
       .replace(
-        /\bThe cited work therefore motivates the design and claim ceiling,\s*but it is not treated as a condition-matched baseline for the local 4x2 rank\/dropout preflight\./giu,
+        /\bThe cited work therefore motivates the design and claim ceiling,\s*but it is not treated as a condition-matched baseline for the local condition-grid preflight\./giu,
       "Relative to memory-efficient finetuning work, this study holds quantization and adapter family fixed; relative to broader benchmark papers, it narrows evaluation to Benchmark Task A and Benchmark Task B; and relative to adapter-variant work, it tests configured condition choices rather than proposing a new adapter architecture."
       )
       .replace(
@@ -1341,7 +1349,7 @@ function removeRepeatedDiscussionScreeningRestatements(paragraphs: string[]): st
     if (isPositiveScreeningRestatement || isWeakTriageRestatement) {
       if (!insertedScreeningSynthesis) {
         result.push(
-          "For this fixed-budget condition-parameter pilot, the result is most useful as triage: the leading observed condition improved average accuracy by 0.0833 in the analyzed run, which justifies follow-up but not a general adapter rule."
+          "For this fixed-budget condition-parameter pilot, the result is most useful as triage: the leading observed condition improved the primary metric in the analyzed run, which justifies follow-up but not a general tuning rule."
         );
         insertedScreeningSynthesis = true;
       }
@@ -1425,7 +1433,7 @@ function repairMethodKnownExecutionDetails(paragraphs: string[]): string[] {
     ) {
       if (!insertedBackbone) {
         result.push(
-          "The executed metrics identify the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means. The realized data and evaluation settings were the configured training dataset train split, 48 training examples, Benchmark Task A and Benchmark Task B validation slices with 6 examples per task, and seed 17. The fixed training settings visible in the available artifacts were learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, 4 optimizer steps, maximum sequence length 256, and a 1,800 s timeout; uncertainty summaries are treated as descriptive screening intervals rather than significance tests."
+          "The executed metrics identify the selected backbone for the analyzed run; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means. The realized data, evaluation settings, seed, sample counts, and fixed training settings are drawn from the execution artifacts rather than from hardcoded manuscript defaults; uncertainty summaries are treated as descriptive screening intervals rather than significance tests."
         );
         insertedBackbone = true;
         insertedSettings = true;
@@ -1439,7 +1447,7 @@ function repairMethodKnownExecutionDetails(paragraphs: string[]): string[] {
     ) {
       if (!insertedSettings) {
         result.push(
-          "The fixed training settings visible in the available artifacts were learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, 4 optimizer steps, maximum sequence length 256, and a 1,800 s timeout. Lower-level scheduler, adapter target-module, epoch-count, and stopping-rule details still need a fuller reproduction appendix, so the claim remains preflight-scale."
+          "The fixed training settings visible in the available artifacts are summarized from the run record. Lower-level scheduler, adapter target-module, epoch-count, and stopping-rule details still need a fuller reproduction appendix when absent from those artifacts, so the claim remains preflight-scale."
         );
         insertedSettings = true;
       }
@@ -1536,9 +1544,9 @@ function readerFacingParagraphTopicKey(headingKey: string, paragraph: string): s
   }
   if (headingKey === "method") {
     if (/\b4\s*x\s*2\b|\bfactorial sweep\b/.test(text)) return "method:grid";
-    if (/\bqwen\/qwen2\.5-1\.5b\b|\btinyllama\b/.test(text)) return "method:backbone_data";
+    if (/\b(?:model|backbone)\b/.test(text) && /\b(?:selected|fallback|identifier)\b/.test(text)) return "method:backbone_data";
     if (/\bprimary endpoint\b|\bsecondary reporting\b|\bmeaningful improvement\b/.test(text)) return "method:endpoints";
-    if (/\bseed 42\b|\bseed 17\b|\bprotocol drift\b/.test(text)) return "method:protocol_drift";
+    if (/\bseed 42\b|\bthe recorded seed\b|\bprotocol drift\b/.test(text)) return "method:protocol_drift";
     if (/\blearning rate\b|\bgradient accumulation\b|\boptimizer steps\b|\bmaximum sequence length\b/.test(text)) return "method:fixed_training";
     if (/\breproducibility\b|\brun identifiers\b|\bevent traces\b/.test(text)) return "method:reproducibility";
   }
@@ -1560,7 +1568,7 @@ function readerFacingParagraphTopicKey(headingKey: string, paragraph: string): s
     if (/\bpractical adoption\b|\bfollow-up\b/.test(text)) return "discussion:practical";
   }
   if (headingKey === "limitations") {
-    if (/\bscale\b|\bprotocol drift\b|\bseed 17\b|\b48 training examples\b/.test(text)) return "limitations:scale_drift";
+    if (/\bscale\b|\bprotocol drift\b|\bseed\b|\btraining examples\b/.test(text)) return "limitations:scale_drift";
     if (/\bimplementation disclosure\b|\boptimizer\b|\bloRA target modules\b|\badapter scaling\b/.test(text)) return "limitations:implementation";
     if (/\bbenchmark scope\b|\blarger model\b|\bevaluation suite\b/.test(text)) return "limitations:scope";
     if (/\bconfidence interval\b|\b12 predictions\b/.test(text)) return "limitations:uncertainty";
@@ -1568,7 +1576,7 @@ function readerFacingParagraphTopicKey(headingKey: string, paragraph: string): s
   if (headingKey === "conclusion") {
     if (/\bleading observed condition\b|\baverage accuracy\b/.test(text)) return "conclusion:result";
     if (/\bfixed-budget\b|\btransparent factorial\b|\bmethodological\b/.test(text)) return "conclusion:method";
-    if (/\bdiagnostic value\b|\ball eight cells\b/.test(text)) return "conclusion:diagnostic";
+    if (/\bdiagnostic value\b|\ball cells\b/.test(text)) return "conclusion:diagnostic";
   }
   return null;
 }
@@ -1645,16 +1653,16 @@ function repairAppendixSections(sections: PaperManuscriptSection[]): PaperManusc
               "A later replication should preserve locked-baseline accounting, expose complete task-wise and resource tables, and rerun the leading condition under a broader benchmark suite before claiming general LoRA regularization behavior."
             )
             .replace(
-              /\bThe study used a fixed 4x2 grid over condition parameters,\s*with baseline condition serving as the locked baseline\.\s*The run was designed for a dual-RTX-4090-class local workstation and used seed 42\.\s*The preferred backbone in the protocol was the selected backbone,\s*with the configured fallback backbone reserved as a fallback\.\s*The training source was the configured training dataset under a cap of 10000 examples,\s*although the summarized preflight reported here used 48 examples\./giu,
-              "The study used a fixed 4x2 grid over condition parameters, with the locked baseline serving as the locked baseline. The executed summary identifies the selected backbone as the selected backbone, keeps the configured fallback backbone as a fallback candidate only, and reports seed 17 with 48 the configured training dataset training examples."
+              /\bThe study used a fixed configured grid over condition parameters,\s*with baseline condition serving as the locked baseline\.\s*The run was designed for a dual-RTX-4090-class local workstation and used seed 42\.\s*The preferred backbone in the protocol was the selected backbone,\s*with the configured fallback backbone reserved as a fallback\.\s*The training source was the configured training dataset under a cap of 10000 examples,\s*although the summarized preflight reported here used 48 examples\./giu,
+              "The study used a fixed configured grid over condition parameters, with the locked baseline serving as the locked baseline. The executed summary identifies the selected backbone as the selected backbone, keeps the configured fallback backbone as a fallback candidate only, and reports the recorded seed with 48 the configured training dataset training examples."
             )
             .replace(
               /\bBecause the manuscript source used for writing does not expose the full interval-construction procedure\b/giu,
               "Because the available summary does not expose the full interval-construction procedure"
             )
             .replace(
-              /\bthe full numeric table for all eight rank-dropout conditions is not completely exposed in the manuscript source\./giu,
-              "Table 1 exposes the eight condition means, while complete per-cell uncertainty and auxiliary metric tables remain outside the reader-visible summary."
+              /\bthe full numeric table for all condition-parameter conditions is not completely exposed in the manuscript source\./giu,
+              "Table 1 exposes the condition means, while complete per-cell uncertainty and auxiliary metric tables remain outside the reader-visible summary."
             )
         )
         .filter((paragraph) =>
@@ -1744,7 +1752,7 @@ function repairAppendixTableLabels(
     caption: cleanString(table.caption)
       .replace(
         /\bDesign constants and realized preflight scale\.?/giu,
-        "Planned protocol constants for the rank/dropout design."
+        "Planned protocol constants for the condition-parameter design."
       )
       .replace(
         /\band realized preflight scale\b/giu,
@@ -2686,7 +2694,7 @@ function buildAutomaticManuscriptAppendix(
 
   const trialSentence =
     hasPlannedRepeatedSeedGrid
-      ? `The executed design contained ${executedTrials} completed train-and-evaluate runs out of ${totalTrials} scheduled runs, organized as five repeated cells with five seeds per cell.`
+      ? `The executed design contained ${executedTrials} completed train-and-evaluate runs out of ${totalTrials} scheduled runs, organized as repeated condition cells with recorded seed coverage.`
       : typeof executedTrials === "number" && typeof totalTrials === "number"
         ? `The executed design contained ${executedTrials} completed condition runs out of ${totalTrials} scheduled runs in the reported pilot.`
       : "The executed design was organized around repeated train-and-evaluate cells rather than a single-run comparison.";
@@ -2697,7 +2705,7 @@ function buildAutomaticManuscriptAppendix(
     ? "The repeated-seed design is therefore used as a screening instrument: a favorable mean can identify a follow-up candidate, but seed dispersion and overlapping intervals keep the conclusion conditional."
     : "The interval summaries are therefore used as a screening instrument: a favorable observed mean can identify a follow-up candidate, but the narrow single-run condition coverage keeps the conclusion conditional.";
   const reproducibilitySeedSentence = hasPlannedRepeatedSeedGrid
-    ? "The reported pilot keeps the five repeated cells, their seed coverage, and the locked baseline visible as the comparison unit, while treating any stronger stability claim as future work."
+    ? "The reported pilot keeps the repeated condition cells, their seed coverage, and the locked baseline visible as the comparison unit, while treating any stronger stability claim as future work."
     : "The reported pilot keeps the completed condition cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work.";
   const claimCeilingEvidenceSentence = hasPlannedRepeatedSeedGrid
     ? "The executed run supplies a locked internal baseline, complete repeated-cell coverage, and condition-level accuracy summaries, so the result supports saying that one evaluated cell is a plausible follow-up candidate under the local budget."
@@ -2751,7 +2759,7 @@ function buildAutomaticManuscriptAppendix(
         `${trialSentence} ${conditionCoverageSentence} This appendix records the design details that support the paper's narrow preflight interpretation without turning the local study into a broader model-family result.`,
         `${objectiveSentence} ${comparisonSentence} The baseline is internal to the executed experiment, so the numerical comparison should not be read as a literature-level leaderboard result.`,
         budgetSentence ||
-          "The training budget was fixed across the reported cells so that rank and dropout remained the primary manipulated factors.",
+          "The training budget was fixed across the reported cells so that condition parameters remained the primary manipulated factors.",
         resourceSentence ||
           "Resource measurements were collected as secondary diagnostics and are not used to rank the conditions by efficiency."
       ]
@@ -2768,7 +2776,7 @@ function buildAutomaticManuscriptAppendix(
       heading: "Supplementary Boundary Notes",
       paragraphs: [
         `The strongest allowed claim is a bounded candidate-selection claim. ${claimCeilingEvidenceSentence} The same evidence does not support a general claim about LoRA regularization, broader instruction-following quality, or superiority over external PEFT methods.`,
-        "Comparative language is tied only to the executed rank/dropout grid. External papers motivate the design space and the need for budget-aware evaluation, but they are not treated as condition-matched baselines. This is why the related-work section frames prior work as context and why the discussion keeps the observed signal separate from mechanism-level or model-family conclusions.",
+        "Comparative language is tied only to the executed condition-parameter grid. External papers motivate the design space and the need for budget-aware evaluation, but they are not treated as condition-matched baselines. This is why the related-work section frames prior work as context and why the discussion keeps the observed signal separate from mechanism-level or model-family conclusions.",
         "Quantitative claims are restricted to values that are present in the result table, metric table, or structured statistical summary. Runtime, memory, and train-loss dispersion are reported as feasibility and reproducibility diagnostics because the available records do not establish a condition-level efficiency ranking. The run accounting used here reports scheduled and executed trials explicitly.",
         "The result is therefore best read as a bounded preflight report: it has a research question, a comparator, executed experiments, quantitative tables, uncertainty notes, and limitations, while still naming the larger replication required before a stronger paper claim would be justified."
       ]
@@ -2964,7 +2972,7 @@ function shouldRenderSubmissionCitationsForParagraph(heading: string, paragraph:
     return /\b(?:prior|Related Work|low-budget evidence|fixed-budget studies|PEFT|QLoRA|adapter|benchmarking|literature)\b/iu.test(paragraph);
   }
   if (key === "limitations") {
-    return /\b(?:Qwen\/Qwen2\.5|the configured fallback backbone|Benchmark Task A|Benchmark Task B|PEFT|QLoRA|MAPLE|LoRA|adapter|benchmark)\b/iu.test(paragraph);
+    return /\b(?:model identifier\/Qwen2\.5|the configured fallback backbone|Benchmark Task A|Benchmark Task B|PEFT|QLoRA|MAPLE|LoRA|adapter|benchmark)\b/iu.test(paragraph);
   }
   if (key === "conclusion") {
     return /\b(?:PEFT|QLoRA|MAPLE|adapter|benchmark studies|literature)\b/iu.test(paragraph);

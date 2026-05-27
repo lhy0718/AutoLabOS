@@ -3043,7 +3043,7 @@ function sanitizeFinalPaperParagraph(heading: string, paragraph: string, index: 
     if (/\b-\s*Primary metric:/iu.test(paragraph) || /\bfailed-run visibility\b/iu.test(paragraph)) {
       return "The contribution is a cautious local preflight over a configured condition set. It keeps the baseline or comparator, completed condition coverage, uncertainty, and resource measurements visible so that the best observed condition can be treated as a follow-up candidate rather than as a broad rule.";
     }
-    if (/^This paper studies how LoRA rank and dropout interact\b/iu.test(paragraph)) {
+    if (/^This paper studies how LoRA condition parameters interact\b/iu.test(paragraph)) {
       return "";
     }
   }
@@ -3068,7 +3068,7 @@ function sanitizeFinalPaperParagraph(heading: string, paragraph: string, index: 
       return "The contribution is a cautious local preflight over a configured condition set. It keeps the baseline or comparator, completed condition coverage, uncertainty, and resource measurements visible so that the best observed condition can be treated as a follow-up candidate rather than as a broad rule.";
     }
     if (/^discussion$/iu.test(heading)) {
-      return "The practical implication is limited but useful: under this local budget, rank and dropout should be treated as jointly testable choices, and any larger recommendation should wait for a rerun with more evaluation examples, more seeds, and condition-level resource aggregation.";
+      return "The practical implication is limited but useful: under this local budget, condition parameters should be treated as jointly testable choices, and any larger recommendation should wait for a rerun with more evaluation examples, more seeds, and condition-level resource aggregation.";
     }
     if (/^conclusion$/iu.test(heading)) {
       return "The study therefore supports a narrow next step: rerun the leading observed condition under a larger and better instrumented protocol before treating the observed gain as stable.";
@@ -3183,19 +3183,19 @@ function repairFinalTableAvailabilityClaim(heading: string, paragraph: string): 
   let repaired = paragraph
     .replace(
       /\bA remaining reporting limitation is that the writing bundle exposes detailed numeric comparisons for the best cell,\s*but not a full published table for all eight cells;\s*the study can therefore support claims about coverage and the best observed comparison more confidently than claims about the complete ordering of the grid\./giu,
-      "Table 1 reports all eight condition mean accuracies, while the compact record still lacks complete per-cell uncertainty, resource, and auxiliary-metric tables. The study can therefore support claims about condition coverage and the best observed comparison more confidently than claims about the complete interaction surface."
+      "Table 1 reports all reported condition mean accuracies, while the compact record still lacks complete per-cell uncertainty, resource, and auxiliary-metric tables. The study can therefore support claims about condition coverage and the best observed comparison more confidently than claims about the complete interaction surface."
     )
     .replace(
-      /\bBecause the reported analyses surfaces a best-cell comparison rather than a complete per-condition table,\s*this should be read as a reported observation from the present preflight record,\s*not as a full characterization of the rank-dropout response surface\./giu,
-      "Table 1 reports all eight condition mean accuracies, while the current compact record does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables. The reported best-cell comparison should therefore be read as a preflight observation rather than a full characterization of the rank-dropout response surface."
+      /\bBecause the reported analyses surfaces a best-cell comparison rather than a complete per-condition table,\s*this should be read as a reported observation from the present preflight record,\s*not as a full characterization of the condition-parameter response surface\./giu,
+      "Table 1 reports all reported condition mean accuracies, while the current compact record does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables. The reported best-cell comparison should therefore be read as a preflight observation rather than a full characterization of the condition-parameter response surface."
     )
     .replace(
-      /\bBecause the reported analysis surfaces a best-cell comparison rather than a complete per-condition table,\s*this should be read as a reported observation from the present preflight record,\s*not as a full characterization of the rank-dropout response surface\./giu,
-      "Table 1 reports all eight condition mean accuracies, while the current compact record does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables. The reported best-cell comparison should therefore be read as a preflight observation rather than a full characterization of the rank-dropout response surface."
+      /\bBecause the reported analysis surfaces a best-cell comparison rather than a complete per-condition table,\s*this should be read as a reported observation from the present preflight record,\s*not as a full characterization of the condition-parameter response surface\./giu,
+      "Table 1 reports all reported condition mean accuracies, while the current compact record does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables. The reported best-cell comparison should therefore be read as a preflight observation rather than a full characterization of the condition-parameter response surface."
     )
     .replace(
       /\b(?:the\s+)?(?:reported analyses|reported analysis|available summary|compact summary)\s+(?:surfaces|surface|does not expose|do not expose)\s+(?:a best-cell comparison rather than )?(?:a complete|the full)\s+per-condition table\b/giu,
-      "Table 1 reports all eight condition mean accuracies, while the compact record does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables"
+      "Table 1 reports all reported condition mean accuracies, while the compact record does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables"
     )
     .replace(
       /\bthe currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate,\s*such as direct numerical comparisons of candidate condition b with and without dropout or baseline condition with and without dropout\b/giu,
@@ -3251,7 +3251,7 @@ function sanitizeFinalRelatedWorkParagraph(heading: string, paragraph: string, i
   }
   return index % 2 === 0
     ? "Nearby PEFT, LoRA, and instruction-tuning studies provide context for memory efficiency, benchmark sensitivity, and adapter design, but they do not replace the locked baseline comparison in this study."
-    : "For this manuscript, prior work is used to motivate the rank/dropout question and local-budget evaluation design; numerical claims remain grounded in the executed run artifacts.";
+    : "For this manuscript, prior work is used to motivate the condition-parameter question and local-budget evaluation design; numerical claims remain grounded in the executed run artifacts.";
 }
 
 function isReaderHostileFinalRelatedWorkParagraph(paragraph: string): boolean {
@@ -5001,7 +5001,7 @@ function inferRunArtifactRefsForClaim(
   const unlinkedExperimentClaim =
     claim.evidence_ids.length === 0
     && claim.citation_paper_ids.length === 0
-    && /this study|present study|experiment|run|baseline|comparator|metric|result|accuracy|objective|condition|seed|rank|dropout|arc|benchmark_task_b|qwen|tinyllama|alpaca/iu.test(text);
+    && /this study|present study|experiment|run|baseline|comparator|metric|result|accuracy|objective|condition|seed|rank|dropout|benchmark|model|dataset/iu.test(text);
   if (!experimentSection && !unlinkedExperimentClaim) {
     return [];
   }
@@ -5013,7 +5013,7 @@ function inferRunArtifactRefsForClaim(
   const resultLike =
     /result|accuracy|metric|delta|baseline|comparator|confidence|interval|ci\b|uncertainty|seed|task|arc|benchmark_task_b|condition|rank|dropout|runtime|memory|vram|completed|failed|objective|improvement|inconclusive|promising|feasibility|preflight|continuation|generalization|study scope|supplemental artifact|compute-side|compute budget/iu.test(text);
   const methodLike =
-    /method|protocol|design|dataset|model|backbone|qwen|tinyllama|alpaca|seed|condition|rank|dropout|baseline|harness|preprocess|token|budget|reproducib|run identifier|command line/iu.test(text);
+    /method|protocol|design|dataset|model|backbone|model|dataset|seed|condition|rank|dropout|baseline|harness|preprocess|token|budget|reproducib|run identifier|command line/iu.test(text);
   const runStateLike =
     /completed|failed|run visibility|failed attempts|execution status|run identifier|command line|environment|reproducib/iu.test(text);
 
@@ -5744,7 +5744,7 @@ def render_with_matplotlib(figure):
         ax.set_xticks(ranks, labels=[f"{rank:g}" for rank in ranks])
         ax.set_xlabel("LoRA rank", fontsize=8)
         ax.set_ylabel("Average\naccuracy", fontsize=8, rotation=0, labelpad=30, va="center")
-        ax.set_title("Accuracy across rank/dropout grid", fontsize=9, pad=6)
+        ax.set_title("Accuracy across condition grid", fontsize=9, pad=6)
         ax.grid(axis="y", color="#d9d9d9", linewidth=0.6)
         ax.set_axisbelow(True)
         for spine in ["top", "right"]:
@@ -5878,7 +5878,7 @@ def render_figure(figure):
         colors = [(0.231, 0.400, 0.722), (0.784, 0.373, 0.000), (0.239, 0.604, 0.314)]
         content = []
         content.append("1 1 1 rg 0 0 306 190 re f\n")
-        content.append(text_cmd(10, 176, "Accuracy across rank/dropout grid", 8.5))
+        content.append(text_cmd(10, 176, "Accuracy across condition grid", 8.5))
         content.append(text_cmd(130, 8, "LoRA rank", 6, (0.12, 0.12, 0.12)))
         content.append(text_cmd(margin_l, 158, "Mean accuracy", 5.8, (0.12, 0.12, 0.12)))
         content.append(line_cmd(margin_l, margin_b, margin_l + plot_w, margin_b))

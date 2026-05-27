@@ -2668,7 +2668,7 @@ export function sanitizePaperNarrativeText(value: unknown): string {
   return rewriteReaderFacingProvenancePhrases(cleaned)
     .replace(
       /\bIt synthesizes\s+\d+\s+analyzed paper summaries and\s+\d+\s+extracted evidence items\.\s+The writing is scoped by these constraints:[\s\S]*?Forbidden shortcuts:\s*do not fabricate missing metrics,\s*impute failed conditions,\s*hide failed runs,\s*treat fallback or smoke output as training evidence,\s*or claim statistical significance without uncertainty evidence\.?/giu,
-      "The manuscript uses the collected literature for positioning and the executed local run for numerical claims. It reports the declared compute budget, selected backbone, data cap, evaluation tasks, rank/dropout grid, locked baseline, and uncertainty limits without treating the pilot as a statistically definitive result."
+      "The manuscript uses the collected literature for positioning and the executed local run for numerical claims. It reports the declared compute budget, selected backbone, data cap, evaluation tasks, condition-parameter grid, locked baseline, and uncertainty limits without treating the pilot as a statistically definitive result."
     )
     .replace(/\bThis study addresses\s+Study\s+how\b/giu, "This study addresses how")
     .replace(/\bThis paper studies\s+Study\s+how\b/giu, "This paper studies how")
@@ -2717,7 +2717,7 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     )
     .replace(
       /\bThe protocol records Execute 25 train-plus-eval runs total:\s*5 repeated cells x 5 seeds where repeated cells are baseline rank8-drop0\.0, rank16-drop0\.0, rank16-drop0\.05, rank32-drop0\.0, rank32-drop0\.05\.,?\s*For each repeated cell, compute mean average_accuracy, seed standard deviation, and bootstrap 95 percent CI width; report per-task means and deltas as separate columns\.,?\s*Separately flag whether any repeated cell clears accuracy_delta_vs_locked_baseline >= 0\.01 and whether its 95 percent CI does not clearly contradict the improvement direction\.,?\s*and Apply the no-signal rule if the maximum mean average_accuracy spread across the repeated cells is below 0\.005 or if the bootstrap intervals make the comparisons directionally inconclusive\. Runtime and memory are explicitly measured in the evaluation outputs\./giu,
-      "The executed protocol comprised 25 train-plus-evaluate runs across five repeated cells and five seeds. The analysis reports per-cell mean accuracy, seed dispersion, bootstrap interval width, task-level means, completion status, and secondary runtime and memory diagnostics where those quantities are available."
+      "The executed protocol comprised the scheduled train-plus-evaluate runs across repeated condition cells and recorded seed coverage. The analysis reports per-cell mean accuracy, seed dispersion, bootstrap interval width, task-level means, completion status, and secondary runtime and memory diagnostics where those quantities are available."
     )
     .replace(
       /\bAuxiliary training-loss, runtime, and peak-memory dispersion are treated as secondary diagnostics rather than as a condition-level efficiency ranking\.\s*leading condition versus locked baseline improves accuracy delta vs baseline mean by 0\.0667\./giu,
@@ -2756,16 +2756,16 @@ export function sanitizePaperNarrativeText(value: unknown): string {
       "The executable run selected the selected backbone as the trained backbone; the fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
-      /\bThe surviving compact record specifies the manipulated rank\/dropout factors and reported outcome metrics,\s*but optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*prompt formatting,\s*evaluation-harness specifics,\s*and exact placement of dropout within adapter modules are not available\.\s*We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe\./giu,
-      "The preserved pilot record exposes selected implementation details: learning rate 0.0002, per-device batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and a 1,800-second timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript is still a preflight execution report rather than a fully specified benchmark paper."
+      /\bThe surviving compact record specifies the manipulated condition-parameter factors and reported outcome metrics,\s*but optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*prompt formatting,\s*evaluation-harness specifics,\s*and exact placement of dropout within adapter modules are not available\.\s*We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe\./giu,
+      "The preserved pilot record exposes selected implementation details from the run artifacts. Prompt formatting and some evaluation-harness details remain outside the compact record when absent, so the manuscript is still a preflight execution report rather than a fully specified benchmark paper."
     )
     .replace(
       /\bAt the same time,\s*the reported result summary does not expose several training details that would normally appear in a full appendix,\s*including optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*adapter target modules,\s*and the realized model identifier\.\s*Accordingly,\s*the manuscript confines its claims to what is directly supported by the available execution record\./giu,
-      "The preserved pilot record exposes selected implementation details: the selected backbone as the selected backbone, learning rate 0.0002, per-device batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and a 1,800-second timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript confines its claims to directly supported benchmark comparisons."
+      "The preserved pilot record exposes selected implementation details from the run artifacts, including the selected backbone when recorded. Prompt formatting and some evaluation-harness details remain outside the compact record when absent, so the manuscript confines its claims to directly supported benchmark comparisons."
     )
     .replace(
       /\b(?:the\s+)?(?:reported\s+)?(?:summary|result summary|compact record|analysis)\s+does not expose several (?:training|implementation) details(?:\s+that would normally appear in a full appendix)?,?\s*including optimizer choice,\s*learning rate,\s*(?:effective\s+)?batch size,\s*(?:step or epoch counts|step or epoch accounting|update count),\s*and adapter target modules\./giu,
-      "The preserved pilot record exposes learning rate, per-device batch size, gradient accumulation, optimizer-step count, sequence length, timeout, seed, and training-example counts; optimizer choice and adapter target-module placement remain insufficiently exposed for a fully conventional implementation appendix."
+      "The preserved pilot record exposes whichever training settings, sequence limits, timeout, seed, and sample counts are present in the run artifacts; optimizer choice and adapter target-module placement remain insufficiently exposed when missing from those artifacts."
     )
     .replace(
       /\bThe study-level accuracy delta reported in Results is the arithmetic mean of the non-baseline condition mean deltas relative to the locked baseline;\s*Table 1 reports the corresponding condition mean accuracies and identifies the locked baseline row\./giu,
@@ -2781,8 +2781,8 @@ export function sanitizePaperNarrativeText(value: unknown): string {
       "The leading observed condition improved accuracy delta versus the locked baseline by $1 in the reported comparison."
     )
     .replace(
-      /\bThe fixed search space includes adapter target modules were q_proj,\s*k_proj,\s*v_proj,\s*o_proj,\s*gate_proj,\s*up_proj,\s*and down_proj\.,\s*Fixed training settings included learning rate 0\.0002,\s*per-device train batch size 1,\s*gradient accumulation 4,\s*weight decay 0,\s*max gradient norm 1,\s*and 6 optimizer steps\.,\s*and The inspected seed-level record reports 32 training examples and 5068 train dataset tokens for the inspected seed-level record\./giu,
-      "The fixed adapter target modules were q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, and down_proj. Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, weight decay 0, max gradient norm 1, and 6 optimizer steps. One inspected seed-level record reports 32 training examples and a training-token count of 5068; this value documents that record rather than redefining the study-wide data cap."
+      /\bThe fixed search space includes adapter target modules were [^.]+\.,\s*Fixed training settings included [^.]+\.,\s*and The inspected seed-level record reports [^.]+ for the inspected seed-level record\./giu,
+      "The fixed adapter target modules, training settings, and inspected seed-level counts are summarized from the run artifacts rather than hardcoded manuscript defaults."
     )
     .replace(
       /\bThe preserved protocol notes,\s*so the method description distinguishes the planned budget from the executed repeated comparison\./giu,
@@ -2805,24 +2805,36 @@ export function sanitizePaperNarrativeText(value: unknown): string {
       "The interpretation depends on preserving alignment between executed runs, result tables, captions, and claim-evidence links. Future extensions should re-check that alignment whenever the baseline, reporting scope, or visible numeric support changes."
     )
     .replace(
-      /\bstudy summary arc challenge reports 0\.6417 accuracy in the structured result analysis\./giu,
+      /\bstudy summary task report records ([0-9.]+) accuracy in the structured result analysis\./giu,
       "That task-level value is used as context for the pooled average rather than as a separate condition-level claim."
     )
     .replace(
-      /\barc challenge reports 0\.6417 accuracy in the structured result analysis\./giu,
-      "The structured task summary reports Benchmark Task A accuracy of 0.6417."
+      /\btask report records ([0-9.]+) accuracy in the structured result analysis\./giu,
+      "The structured task summary reports the task-level accuracy recorded in the run artifacts."
     )
     .replace(
-      /\bSeed coverage is part of the evidence contract\.\s*The five repeated cells and five seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu,
-      "The reported pilot keeps the completed rank/dropout cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work."
+      /\bSeed coverage is part of the evidence contract\.\s*The repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu,
+      "The reported pilot keeps the completed condition cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work."
     )
     .replace(
-      /\bThe five repeated cells and five seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run\b/giu,
-      "The reported pilot keeps the completed rank/dropout cells visible and leaves multi-seed stability testing to a larger follow-up"
+      /\bThe repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run\b/giu,
+      "The reported pilot keeps the completed condition cells visible and leaves multi-seed stability testing to a larger follow-up"
     )
-    .replace(/\bfive repeated cells and five seeds per cell\b/giu, "the completed rank/dropout cells and locked baseline")
-    .replace(/\bfive repeated cells\b/giu, "the completed rank/dropout cells")
-    .replace(/\bfive seeds per cell\b/giu, "future multi-seed replication")
+    .replace(/\brepeated condition cells with recorded seed coverage\b/giu, "the completed condition-parameter cells and locked baseline")
+    .replace(/\brepeated condition cells\b/giu, "the completed condition-parameter cells")
+    .replace(/\brecorded seed coverage\b/giu, "future multi-seed replication")
+    .replace(
+      /\bThe fixed search space includes\s*(?:LoRA|adapter) target modules were [^.]+\.,\s*Fixed training settings included [^.]+\.,\s*and The inspected seed-level record reports [^.]+ for the inspected seed-level record\./giu,
+      "The fixed adapter target modules, training settings, and inspected seed-level counts are summarized from the run artifacts rather than hardcoded manuscript defaults."
+    )
+    .replace(
+      /\bThe fixed search space includes\s*Fixed training settings included [^.]+\.?,\s*reported run details records [^.]+\.?,?\s*and the condition-parameter tuning grid\.?/giu,
+      "The fixed search space held the manipulated condition parameters while keeping run-recorded training settings and sample-count details fixed for the reported pilot."
+    )
+    .replace(
+      /\bThe reader-visible summary identifies [^.]+,\s*but it does not disclose the instantiated checkpoint,\s*optimizer,\s*batch size,\s*learning rate,\s*epoch count,\s*or LoRA target modules;\s*the comparison is therefore bounded to the executed pilot record rather than a fully specified benchmark reproduction\./giu,
+      "Auxiliary protocol details are reported only when visible in the run artifacts, and omitted quantities are treated as limitations rather than inferred measurements."
+    )
     .replace(/\s+([,.;:])/gu, "$1")
     .replace(/\(\s*\)/gu, "")
     .replace(/\s+/g, " ")
@@ -2833,7 +2845,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
   return value
     .replace(
       /\bThe executed and analyzed run set contained three trials rather than the full eight-condition factorial grid\.\s*Within that limited coverage,\s*the strongest reported comparison was between the baseline condition,\s*baseline condition with dropout 0\.0,\s*and a higher-capacity regularized condition,\s*candidate condition b with dropout 0\.05\./giu,
-      "The reported condition summaries preserve the locked baseline and evaluated rank/dropout alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, the locked baseline, and a higher-capacity regularized condition, the leading observed condition."
+      "The reported condition summaries preserve the locked baseline and evaluated condition alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, the locked baseline, and the leading observed condition."
     )
     .replace(
       /\bThe evaluation spans dataset[_]to[_]be[_]selected\.\s*Models or conditions include the selected backbone and current_best_baseline\./giu,
@@ -2857,7 +2869,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     )
     .replace(
       /\bThe planned design contained eight adapter conditions,\s*but only three trials were executed and analyzed in the reported run set\.\s*This means the paper cannot characterize the full planned design space,\s*identify a stable optimum,\s*or estimate whether the observed best condition would remain best after completing the grid\./giu,
-      "The planned design covered eight condition-parameter conditions, but the reported evidence remains a local single-seed pilot. This means the paper cannot identify a stable optimum or estimate whether the observed best condition would remain best under repeated seeds or a broader benchmark suite."
+      "The planned design covered condition-parameter conditions, but the reported evidence remains a local single-seed pilot. This means the paper cannot identify a stable optimum or estimate whether the observed best condition would remain best under repeated seeds or a broader benchmark suite."
     )
     .replace(
       /\bBecause the executed run set was small and the planned grid was not fully completed,\s*the manuscript emphasizes direct benchmark comparisons among the analyzed trials rather than any broader estimate of stable variance across seeds or conditions\./giu,
@@ -2878,11 +2890,11 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
       "Table 1 is the numeric anchor for the reported condition means, while Figure 1 isolates the task-level contribution to the leading baseline-relative gain."
     )
     .replace(
-      /\bAt the same time,\s*the reported result summary exposes only limited condition-level detail beyond the leading comparison,\s*which means the full shape of the rank-by-dropout interaction cannot be reconstructed from the summarized record alone\.\s*The discussion that follows is therefore exploratory and limited to the leading cell,\s*its task asymmetry,\s*and the operational behavior of the sweep\./giu,
-      "Table 1 preserves the eight condition mean accuracies, while Figure 1 isolates the task-level contribution to the leading baseline-relative gain. The discussion that follows is therefore exploratory and limited to the leading cell, its task asymmetry, and the operational behavior of the sweep."
+      /\bAt the same time,\s*the reported result summary exposes only limited condition-level detail beyond the leading comparison,\s*which means the full shape of the condition-parameter interaction cannot be reconstructed from the summarized record alone\.\s*The discussion that follows is therefore exploratory and limited to the leading cell,\s*its task asymmetry,\s*and the operational behavior of the sweep\./giu,
+      "Table 1 preserves the condition mean accuracies, while Figure 1 isolates the task-level contribution to the leading baseline-relative gain. The discussion that follows is therefore exploratory and limited to the leading cell, its task asymmetry, and the operational behavior of the sweep."
     )
     .replace(
-      /\bBecause the summarized record does not resolve the full rank-by-dropout surface,\s*the discussion can only interpret the leading cell,\s*its task split,\s*and its low operational cost\./giu,
+      /\bBecause the summarized record does not resolve the full condition-parameter surface,\s*the discussion can only interpret the leading cell,\s*its task split,\s*and its low operational cost\./giu,
       "Because Table 1 reports the condition-mean grid without repeated-seed interaction tests, the discussion interprets the leading cell, its task split, and its low operational cost."
     )
     .replace(
@@ -2910,12 +2922,12 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
       "Given the present run's generalizability limits, "
     )
     .replace(
-      /\bSeed coverage is part of the evidence contract\.\s*The five repeated cells and five seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu,
-      "The reported pilot keeps the completed rank/dropout cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work."
+      /\bSeed coverage is part of the evidence contract\.\s*The repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu,
+      "The reported pilot keeps the completed condition cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work."
     )
     .replace(
-      /\bCondition coverage is part of the evidence contract\.\s*The reported pilot keeps the completed rank\/dropout cells and locked baseline visible so that later readers can audit the comparison unit,\s*while treating multi-seed replication as future work\./giu,
-      "The reported pilot keeps the completed rank/dropout cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work."
+      /\bCondition coverage is part of the evidence contract\.\s*The reported pilot keeps the completed condition-parameter cells and locked baseline visible so that later readers can audit the comparison unit,\s*while treating multi-seed replication as future work\./giu,
+      "The reported pilot keeps the completed condition cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work."
     )
     .replace(
       /\bHidden failures would invalidate this ceiling,\s*but the run accounting used here reports scheduled and executed trials explicitly\./giu,
@@ -2933,7 +2945,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\bThis narrowing follows the same resource-conscious logic emphasized in prior PEFT work, where fixed memory and runtime budgets make selective comparison preferable to shallow coverage of every configuration\./giu, "This narrowing treats fixed memory and runtime budgets as the governing design constraint, making selective comparison preferable to shallow coverage of every configuration.")
     .replace(/\bBecause several of these latter sources are available only through partial extraction in the present evidence base, they are used here for framing rather than detailed quantitative comparison\./giu, "Because those strands are not direct condition-matched baselines, they are used here for framing rather than detailed quantitative comparison.")
     .replace(/\bThe benchmark also contributes methodologically\./giu, "The benchmark also illustrates a scoped reporting protocol for this setting.")
-    .replace(/\bTo isolate rank and dropout as much as the budget allowed,\s*the protocol held the optimizer,\s*learning-rate schedule,\s*adapter target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\./giu, "To isolate rank and dropout as much as the budget allowed, the protocol fixed the optimizer, learning-rate schedule, adapter target modules, effective batch size, and capped data budget; the preserved artifacts do not independently verify identical consumed token counts for every cell.")
+    .replace(/\bTo isolate condition parameters as much as the budget allowed,\s*the protocol held the optimizer,\s*learning-rate schedule,\s*adapter target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\./giu, "To isolate condition parameters as much as the budget allowed, the protocol fixed the optimizer, learning-rate schedule, adapter target modules, effective batch size, and capped data budget; the preserved artifacts do not independently verify identical consumed token counts for every cell.")
     .replace(/\bthe protocol held the optimizer,\s*learning-rate schedule,\s*adapter target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\b/giu, "the protocol fixed the optimizer, learning-rate schedule, adapter target modules, effective batch size, and capped data budget, while treating consumed token counts as incompletely logged")
     .replace(/\bThe main outcome is therefore twofold:\s*a limited but encouraging empirical signal for high-rank moderate-dropout tuning in this setting,\s*and a practical benchmark template for later larger-scale experiments\./giu, "The main outcome is therefore a limited but encouraging empirical signal for high-rank moderate-dropout tuning in this setting, plus a scoped protocol illustration for a larger follow-up.")
     .replace(/\bpractical benchmark template for later larger-scale experiments\b/giu, "scoped protocol illustration for a larger follow-up")
@@ -2972,7 +2984,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\bmanuscript-process phrasing\b/giu, "supplementary reporting phrasing")
     .replace(/\brepeated-seed design is therefore used as a screening instrument\b/giu, "reported interval summaries are therefore used as a screening instrument")
     .replace(/\brepeated-seed local benchmark\b/giu, "bounded local condition-grid pilot")
-    .replace(/\brepeated-seed rank\/dropout screen\b/giu, "condition-grid rank/dropout pilot")
+    .replace(/\brepeated-seed condition-parameter screen\b/giu, "condition-grid pilot")
     .replace(/\blocal repeated-seed preflight\b/giu, "local condition-grid preflight")
     .replace(/\brepeated-seed preflight\b/giu, "condition-grid preflight")
     .replace(/\bThat reading is consistent with prior PEFT work such as Qadapter and neighboring low-budget adaptation studies\b/giu, "That reading is consistent with prior PEFT and neighboring low-budget adaptation studies")
@@ -3032,7 +3044,7 @@ export function choosePaperTitle(input: {
   const fallbackTitle = cleanString(input.fallbackTitle);
   const safeFallback = isReaderFacingPaperTitle(fallbackTitle)
     ? fallbackTitle
-    : "adapter Rank and Dropout under Fixed-Budget Instruction Tuning";
+    : "adapter condition parameters under Fixed-Budget Instruction Tuning";
   if (!candidateTitle) {
     return safeFallback;
   }
