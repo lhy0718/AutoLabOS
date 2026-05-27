@@ -817,8 +817,16 @@ export class ImplementSessionManager {
         promptTaskSpec.context.runner_feedback,
         isolation.workspaceRoot
       );
+      const implementationSkeletonFeedback = isRecoverableUnfilledAutolabosSectionFeedback(
+        promptTaskSpec.context.implementation_contract_feedback
+      );
+      const bundleRecoveryFeedback = promptTaskSpec.context.runner_feedback ?? (
+        implementationSkeletonFeedback
+          ? promptTaskSpec.context.implementation_contract_feedback as unknown as RunVerifierReport
+          : undefined
+      );
       const deterministicBundleRepairFeedback = isRecoverableBundleDeterministicRepairFeedback(
-        promptTaskSpec.context.runner_feedback,
+        bundleRecoveryFeedback,
         runnerFeedbackDiagnosticText
       );
       if (commandRepairFeedback || deterministicBundleRepairFeedback) {
@@ -844,7 +852,7 @@ export class ImplementSessionManager {
         if (deterministicBundleRepairFeedback && previousScriptPath) {
           const preflightRunnerRepair = await applyRecoverableBundleDeterministicRepairs({
             scriptPath: previousScriptPath,
-            runnerFeedback: promptTaskSpec.context.runner_feedback,
+            runnerFeedback: bundleRecoveryFeedback,
             runnerFeedbackDiagnosticText
           });
           if (preflightRunnerRepair.repaired) {
@@ -874,7 +882,7 @@ export class ImplementSessionManager {
           hasPaperCritiqueFeedback: Boolean(promptTaskSpec.context.paper_critique_feedback),
           commandRepairFeedback: commandRepairFeedback || deterministicBundleRepairFeedback
         }),
-        runnerFeedback: promptTaskSpec.context.runner_feedback,
+        runnerFeedback: bundleRecoveryFeedback,
         runnerFeedbackDiagnosticText
       });
       const commandRepairRecovery =
@@ -1058,8 +1066,16 @@ export class ImplementSessionManager {
             promptTaskSpec.context.runner_feedback,
             isolation.workspaceRoot
           );
+          const implementationSkeletonFeedback = isRecoverableUnfilledAutolabosSectionFeedback(
+            promptTaskSpec.context.implementation_contract_feedback
+          );
+          const bundleRecoveryFeedback = promptTaskSpec.context.runner_feedback ?? (
+            implementationSkeletonFeedback
+              ? promptTaskSpec.context.implementation_contract_feedback as unknown as RunVerifierReport
+              : undefined
+          );
           const deterministicBundleRepairFeedback = isRecoverableBundleDeterministicRepairFeedback(
-            promptTaskSpec.context.runner_feedback,
+            bundleRecoveryFeedback,
             runnerFeedbackDiagnosticText
           );
           const recovered = await recoverStructuredResultFromPublicBundle({
@@ -1080,7 +1096,7 @@ export class ImplementSessionManager {
                 hasPaperCritiqueFeedback: Boolean(promptTaskSpec.context.paper_critique_feedback),
                 commandRepairFeedback: commandRepairFeedback || deterministicBundleRepairFeedback
               }),
-            runnerFeedback: promptTaskSpec.context.runner_feedback,
+            runnerFeedback: bundleRecoveryFeedback,
             runnerFeedbackDiagnosticText
           });
           if (!recovered) {
@@ -13841,11 +13857,17 @@ async function recoverStructuredResultFromPublicBundle(params: {
         runnerFeedback: params.runnerFeedback,
         runnerFeedbackDiagnosticText: params.runnerFeedbackDiagnosticText
       });
+      const resolvedSkeletonFeedback = isResolvedSkeletonRepairFeedbackForScript({
+        source: repairedSource,
+        runnerFeedback: params.runnerFeedback,
+        runnerFeedbackDiagnosticText: params.runnerFeedbackDiagnosticText
+      });
       if (
         !alreadyRepaired &&
         !repairResult.repaired &&
         !hasRecoverableBundleDeterministicRepairMarker(repairedSource) &&
-        !staleMetricsPayloadFeedback
+        !staleMetricsPayloadFeedback &&
+        !resolvedSkeletonFeedback
       ) {
         continue;
       }
@@ -14026,7 +14048,12 @@ async function recoveredBundleHasUnfilledAutolabosSections(bundleDir: string): P
 }
 
 function buildRecoverableRunnerFeedbackText(
-  report: RunVerifierReport | undefined,
+  report: {
+    summary?: string;
+    stderr_excerpt?: string;
+    stdout_excerpt?: string;
+    suggested_next_action?: string;
+  } | undefined,
   diagnosticText = ""
 ): string {
   return [
@@ -14036,6 +14063,26 @@ function buildRecoverableRunnerFeedbackText(
     report?.suggested_next_action,
     diagnosticText
   ].filter((value): value is string => Boolean(value)).join("\n");
+}
+
+function isRecoverableUnfilledAutolabosSectionFeedback(report: {
+  summary?: string;
+  stderr_excerpt?: string;
+  suggested_next_action?: string;
+} | undefined): boolean {
+  const feedbackText = buildRecoverableRunnerFeedbackText(report);
+  return /AUTOLABOS SECTION skeleton markers|Unfilled or unstripped section marker|Final experiment scripts must contain executable code/iu.test(feedbackText);
+}
+
+function isResolvedSkeletonRepairFeedbackForScript(params: {
+  source: string;
+  runnerFeedback?: RunVerifierReport;
+  runnerFeedbackDiagnosticText?: string;
+}): boolean {
+  if (!isRecoverableUnfilledAutolabosSectionFeedback(params.runnerFeedback)) {
+    return false;
+  }
+  return !/AUTOLABOS SECTION/u.test(params.source);
 }
 
 function isStaleMetricsPayloadRepairFeedbackForScript(params: {
@@ -14766,6 +14813,7 @@ function isRecoverableBundleDeterministicRepairFeedback(
     /AttributeError:\s*['"][^'"]+['"] object has no attribute ['"]get['"]/u.test(summary) ||
     /status=failed; completed=0\/\d+; baseline_first=True/u.test(summary) ||
     /Experiment metrics payload reports success=false/u.test(summary) ||
+    /AUTOLABOS SECTION skeleton markers|Unfilled or unstripped section marker|Final experiment scripts must contain executable code/iu.test(summary) ||
     /Unable to locate (?:a |the )study (?:runner|execution) function/u.test(summary) ||
     /Unable to locate the experiment sweep runner callable/u.test(summary)
   );
