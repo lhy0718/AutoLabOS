@@ -1,10 +1,12 @@
 import path from "node:path";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 import { AgentRoleId, GraphNodeId } from "../types.js";
 import { normalizeFsPath } from "../utils/fs.js";
 import { buildRunsDbFile, IndexedRunEvent, RunIndexDatabase } from "./runs/runIndexDatabase.js";
 import { buildRunEventsPath } from "./runs/runPaths.js";
+
+const repairedEventLogPaths = new Set<string>();
 
 export type EventType =
   | "PLAN_CREATED"
@@ -165,8 +167,72 @@ function createEventRecord(event: Omit<AutoLabOSEvent, "id" | "timestamp">): Aut
 function persistEventToRunLog(runsDir: string, event: AutoLabOSEvent): string {
   const eventPath = runEventLogPath(runsDir, event.runId);
   mkdirSync(path.dirname(eventPath), { recursive: true });
+  repairMalformedRunEventLogOnce(eventPath);
   appendFileSync(eventPath, `${JSON.stringify(event)}\n`, "utf8");
   return normalizeFsPath(eventPath);
+}
+
+function repairMalformedRunEventLogOnce(eventPath: string): void {
+  const normalizedPath = normalizeFsPath(eventPath);
+  if (repairedEventLogPaths.has(normalizedPath) || !existsSync(eventPath)) {
+    return;
+  }
+  repairedEventLogPaths.add(normalizedPath);
+
+  const lockDir = `${eventPath}.repair.lock`;
+  if (!acquireRepairLock(lockDir)) {
+    return;
+  }
+
+  try {
+    const raw = readFileSync(eventPath, "utf8");
+    const validLines: string[] = [];
+    const malformedLines: string[] = [];
+    for (const line of raw.split("\n")) {
+      if (!line) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(line);
+        if (isAutoLabOSEvent(parsed)) {
+          validLines.push(JSON.stringify(parsed));
+        } else {
+          malformedLines.push(line);
+        }
+      } catch {
+        malformedLines.push(line);
+      }
+    }
+
+    if (malformedLines.length === 0) {
+      return;
+    }
+
+    const stamp = `${Date.now()}-${process.pid}`;
+    writeFileSync(`${eventPath}.malformed-${stamp}.jsonl`, malformedLines.map((line) => `${line}\n`).join(""), "utf8");
+    const repairedPath = `${eventPath}.repair-${stamp}.tmp`;
+    writeFileSync(repairedPath, validLines.map((line) => `${line}\n`).join(""), "utf8");
+    renameSync(repairedPath, eventPath);
+  } finally {
+    rmSync(lockDir, { recursive: true, force: true });
+  }
+}
+
+function acquireRepairLock(lockDir: string): boolean {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      mkdirSync(lockDir);
+      return true;
+    } catch {
+      sleepSync(25);
+    }
+  }
+  return false;
+}
+
+function sleepSync(milliseconds: number): void {
+  const buffer = new SharedArrayBuffer(4);
+  Atomics.wait(new Int32Array(buffer), 0, 0, milliseconds);
 }
 
 function runEventLogPath(runsDir: string, runId: string): string {

@@ -15,6 +15,56 @@ Path placeholders:
 
 ---
 
+## Issue: LV-449
+
+- Status: reproduced in same-flow P6 validation on 2026-05-29; source repair implemented; validation-workspace harness revalidation passed on 2026-05-29
+- Validation target: persisted run event logs should remain parseable JSONL even after prior helper cancellation or process interruption, so harness validation and Doctor do not block recovery with stale malformed event lines.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after analyze_results correctly recommended backtracking and the run was reset to generate_hypotheses.
+
+- Reproduction steps:
+  1. Continue the existing P6 run through the helper after multiple prior cancellations and retries.
+  2. Observe Doctor/harness validation report events_log_malformed for the active run's events.jsonl.
+  3. Inspect the event log and find one malformed JSONL line where an OBS_RECEIVED event was partially written and a NODE_RETRY event was appended on the same line.
+  4. Observe generate_hypotheses still begin, but the helper later reaches a timeout boundary while the malformed event log remains a blocking harness finding for future runs.
+
+- Expected behavior:
+  - A stale partial event line should not permanently poison a run's event log.
+  - Before appending new events for a run, AutoLabOS should quarantine malformed lines and rewrite the canonical event log as valid JSONL.
+  - The repair must preserve valid events and keep the malformed evidence in an adjacent quarantine artifact for auditability.
+
+- Actual behavior:
+  - events.jsonl contained a malformed line with two event fragments interleaved.
+  - Harness validation failed with events_log_malformed until a new source-level repair was added and the run emitted another event.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this defect depends on a long-running persisted P6 run with prior interrupted helper activity.
+  - Existing session: the malformed event log was reproduced and inspected directly in the active validation run.
+  - Divergence: this is a persisted artifact hygiene issue, not a hypothesis-generation content issue.
+
+- Root cause hypothesis:
+  - Type: persisted_state_bug
+  - Hypothesis: event appends are synchronous for ordinary operation, but process interruption can leave a partial JSONL line. Later appends preserve the partial line, so a single historical malformed line makes harness validation fail even though subsequent events are valid.
+
+- Code/test changes:
+  - Code: src/core/events.ts now performs a once-per-process per-run event-log repair before appending. It preserves valid events, quarantines malformed lines to an adjacent events.jsonl.malformed-* file, rewrites the canonical log through a temporary file, and uses a short lock directory to avoid concurrent repairs.
+  - Tests: tests/events.test.ts now covers a valid/malformed/valid event log and verifies that a subsequent emit leaves only parseable JSONL plus a quarantine artifact.
+
+- Regression status:
+  - Automated regression passed: npm test -- --run tests/events.test.ts.
+  - Build passed: npm run build.
+  - Artifact revalidation passed: the active run's events.jsonl now parses fully, and the malformed fragment is preserved in events.jsonl.malformed-*.
+  - Validation-workspace harness passed: node <repo-root>/dist/cli/validateHarness.js from <validation-workspace> checked 1 issue entry, 1 run store, and 1 run with no structural violations.
+
+- Remaining risks:
+  - The active P6 run is now paused at generate_hypotheses after a helper timeout; this is a separate long-running hypothesis-generation boundary.
+  - Doctor output from the first retry may still show the pre-repair harness failure because it was printed before the first new event triggered repair; subsequent validation of the same run store passes.
+
+- Evidence/artifacts:
+  - <repo-root>/outputs/p6-preflight/p6-continue-generate_hypotheses-output.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/events.jsonl
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/events.jsonl.malformed-*
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json
+
 ## Issue: LV-448
 
 - Status: reproduced in same-flow P6 validation on 2026-05-28; source repair implemented; same-flow revalidation passed through implement_experiments, run_experiments, and analyze_results on 2026-05-28

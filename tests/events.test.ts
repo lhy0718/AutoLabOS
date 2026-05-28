@@ -53,4 +53,48 @@ describe("persisted event stream", () => {
       index.close();
     }
   });
+
+  it("quarantines malformed event log lines before appending new events", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-events-repair-"));
+    const runsDir = path.join(root, ".autolabos", "runs");
+    const runDir = path.join(runsDir, "run-1");
+    await fs.mkdir(runDir, { recursive: true });
+    const validBefore = {
+      type: "NODE_STARTED",
+      runId: "run-1",
+      payload: {},
+      id: "evt_before",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+    const validAfter = {
+      type: "NODE_COMPLETED",
+      runId: "run-1",
+      payload: {},
+      id: "evt_after",
+      timestamp: "2026-01-01T00:00:01.000Z"
+    };
+    await fs.writeFile(
+      path.join(runDir, "events.jsonl"),
+      [
+        JSON.stringify(validBefore),
+        '{"type":"OBS_RECEIVED","runId":"run-1","payload":{"text":"partial"}',
+        JSON.stringify(validAfter)
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const stream = new PersistedEventStream(runsDir);
+    const appended = stream.emit({
+      type: "OBS_RECEIVED",
+      runId: "run-1",
+      node: "collect_papers",
+      payload: { text: "after repair" }
+    });
+
+    const raw = await fs.readFile(path.join(runDir, "events.jsonl"), "utf8");
+    const parsed = raw.trim().split("\n").map((line) => JSON.parse(line));
+    expect(parsed.map((event) => event.id)).toEqual(["evt_before", "evt_after", appended.id]);
+    expect((await fs.readdir(runDir)).some((name) => name.includes(".malformed-"))).toBe(true);
+  });
+
 });
