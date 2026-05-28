@@ -140,6 +140,16 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def helper_timeout_message(node: str, timeout: float, max_wall_seconds: float | None = None) -> str:
+    effective_timeout = max_wall_seconds if max_wall_seconds is not None else timeout
+    if max_wall_seconds is not None and int(max_wall_seconds) != int(timeout):
+        return (
+            f"P6 helper timed out waiting for {node} stop boundary after {int(effective_timeout)} seconds "
+            f"(base idle timeout {int(timeout)} seconds)."
+        )
+    return f"P6 helper timed out waiting for {node} stop boundary after {int(effective_timeout)} seconds."
+
+
 def persist_helper_timeout_boundary(workspace: Path, run_id: str, node: str, message: str) -> bool:
     run_dir = workspace / ".autolabos" / "runs" / run_id
     record_path = run_dir / "run_record.json"
@@ -702,6 +712,14 @@ def run_selftest() -> int:
         if not (record_dir / timeout_node / "p6_helper_timeout.json").exists():
             print("FAIL: helper timeout diagnostic artifact was not written")
             return 1
+        bounded_message = helper_timeout_message(timeout_node, 1800, 7200)
+        if "7200 seconds" not in bounded_message or "base idle timeout 1800 seconds" not in bounded_message:
+            print("FAIL: helper timeout message did not report the effective bounded max-wall cap")
+            return 1
+        unbounded_message = helper_timeout_message(timeout_node, 1800, 1800)
+        if "7200 seconds" in unbounded_message or "base idle timeout" in unbounded_message:
+            print("FAIL: helper timeout message should not mention max-wall when it equals the idle timeout")
+            return 1
     if not should_observe_active_running(analyze_running, force_run_active=False):
         print("FAIL: active-running run was not selected for observation")
         return 1
@@ -1053,7 +1071,7 @@ def main() -> int:
             buffer_text = exc.transcript
     except WaitTimeout as exc:
         output_path.write_text(exc.transcript, encoding="utf-8")
-        timeout_message = f"P6 helper timed out waiting for {wait_node} stop boundary after {int(timeout)} seconds."
+        timeout_message = helper_timeout_message(wait_node, timeout, max_wall_seconds)
         if persist_helper_timeout_boundary(workspace, run_id, wait_node, timeout_message):
             print(f"INFO: persisted helper-timeout boundary for {wait_node}.")
         print(f"FAIL: P6 continue timed out waiting for {exc.pattern}; output={output_path}")

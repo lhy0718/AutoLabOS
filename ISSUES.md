@@ -17,7 +17,7 @@ Path placeholders:
 
 ## Issue: LV-451
 
-- Status: reproduced in same-flow P6 validation on 2026-05-29; source repair implemented; automated validation passed on 2026-05-29; same-flow retry pending
+- Status: reproduced in same-flow P6 validation on 2026-05-29; source repair implemented; automated validation passed on 2026-05-29; same-flow retry advanced past the original fixed timeout but hit the bounded max-wall cap
 - Validation target: the P6 continue helper should not terminate a target node solely because a fixed wall-clock timeout elapsed while persisted node progress is still advancing.
 - Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, during implement_experiments staged materialization after LV-450 design-contract repair.
 
@@ -47,6 +47,7 @@ Path placeholders:
 
 - Code/test changes:
   - Code: scripts/p6-approve-and-run-next.py now tracks node-local status progress signatures and extends the stop-boundary wait when progress changes, capped by AUTOLABOS_P6_NEXT_MAX_WALL_SEC.
+  - Code: scripts/p6-approve-and-run-next.py now reports the effective bounded max-wall duration in persisted helper-timeout diagnostics instead of always reporting the base idle timeout.
   - Code: scripts/p6-preflight.mjs no longer bakes the live validation experiment's model, dataset, topic, or objective strings into public source; those values are now environment-configurable and neutral by default.
   - Tests: P6 helper self-test now covers bounded deadline extension; tests/publicCodeSanitization.test.ts now scans scripts as public code; analyze/run-constraint fixtures were neutralized away from the live experiment.
 
@@ -57,10 +58,15 @@ Path placeholders:
   - Build passed: npm run build.
   - Harness validation passed: npm run validate:harness.
   - Public-code scan passed for the reported concrete experiment identifiers and cached-text phrase after neutralization.
-  - Same-flow retry with the progress-aware helper is still required.
+  - Same-flow retry result: the progress-aware helper did not fail at the original 1800-second idle boundary; it continued observing active staged LLM progress until the bounded max-wall cap (7200 seconds) was reached.
+  - Same-flow retry remaining failure: implement_experiments was persisted as p6_helper_timeout/failed after 1160 progress updates while attempt 3/3 was still re-subdividing staged materialization chunks. This narrows the remaining blocker to implement_experiments chunk-size/recovery behavior, not the original progress-blind helper timeout.
+  - Follow-up regression passed after diagnostic-message repair: python3 -m py_compile scripts/p6-approve-and-run-next.py.
+  - Follow-up regression passed after diagnostic-message repair: AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py.
+  - Follow-up regression passed after diagnostic-message repair: npm test -- tests/publicCodeSanitization.test.ts tests/p6ContinueScript.test.ts.
 
 - Remaining risks:
-  - The max-wall cap can still stop a very long generation; if that happens while progress is continuing, the implement node itself likely needs chunk-size or recovery improvements rather than further helper timeout expansion.
+  - The max-wall cap can still stop a very long generation; this happened on the same-flow retry. The implement node itself likely needs chunk-size or recovery improvements rather than further helper timeout expansion.
+  - The helper timeout diagnostic-message bug has a source-level fix, but the same live flow has not yet been rerun with that message-only repair.
   - Public source still contains generic logic for domain-specific topics when the user explicitly supplies such topics; this issue only removes one-off live-validation defaults and fixtures.
 
 - Evidence/artifacts:
