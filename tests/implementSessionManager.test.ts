@@ -116,6 +116,7 @@ import {
   repairPythonEntrypointWorkflowSignatureBridgeSurface,
   repairPythonFindHelperCallableClassSurface,
   repairPythonRequiredContractGlobalAliasSurface,
+  repairPythonCompletedMetricsReplayEntrypointSurface,
   repairPythonSectionedRunnerCliEntrypointSurface,
   repairPythonFinalOrchestrationHelperSurface,
   repairPythonMainFindCallableStudyResolverSurface,
@@ -249,6 +250,7 @@ import {
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
   selectRecoveredPublicBundleScriptPath,
+  selectDeterministicallyRepairedPublicBundleScriptPath,
   shouldApplyRecoveredBundleStaticPythonGuards,
   shouldCheckRecoveredBundlePlanFreshness,
   shouldRequireFreshRecoveredBundlePlanAlignment
@@ -2576,6 +2578,33 @@ describe("ImplementSessionManager", () => {
     );
 
     await expect(resolvePythonVerificationScriptPath(wrapperPath)).resolves.toBe(scriptPath);
+  });
+
+  it("prioritizes deterministically repaired public bundle scripts before feedback-named wrappers", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "autolabos-deterministic-script-priority-"));
+    tempDirs.push(root);
+    const publicDir = path.join(root, "outputs", "study", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const repairedScript = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const wrapperScript = path.join(publicDir, "run_condition_grid_study.py");
+    writeFileSync(
+      repairedScript,
+      [
+        "_autolabos_completed_metrics_replay_entrypoint_marker = True",
+        "def execute_experiment_workflow():",
+        "    return {'status': 'completed'}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(wrapperScript, "def main():\n    return 1\n", "utf8");
+
+    const selected = await selectDeterministicallyRepairedPublicBundleScriptPath({
+      publicDir,
+      entries: ["run_condition_grid_study.py", "run_condition_sweep_experiment.py"]
+    });
+
+    expect(selected).toBe(repairedScript);
   });
 
   it("recovers the canonical public experiment runner before stale helpers and wrappers", () => {
@@ -18195,6 +18224,54 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_required_contract_global_alias_marker");
     expect(repairedSource).toContain("TUNED_ONLY = TUNED_ONLY_CONDITIONS");
     expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim()).toBe("True");
+  });
+
+  it("replaces incomplete runners with a completed metrics replay entrypoint", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "autolabos-completed-metrics-replay-"));
+    tempDirs.push(root);
+    const publicDir = path.join(root, "public");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const outputMetricsPath = path.join(root, "run", "metrics.json");
+    writeFileSync(
+      path.join(publicDir, "metrics.json"),
+      JSON.stringify({
+        status: "completed",
+        completed_run_count: 2,
+        completed_condition_count: 2,
+        primary_metric: { name: "accuracy", value: 0.75 }
+      }),
+      "utf8"
+    );
+    writeFileSync(
+      scriptPath,
+      [
+        "# BEGIN AUTOLABOS SECTION chunk_1 :: parser only",
+        "def parse_args():",
+        "    return None",
+        "# END AUTOLABOS SECTION chunk_1",
+        "# BEGIN AUTOLABOS SECTION chunk_2 :: missing execution",
+        "# END AUTOLABOS SECTION chunk_2",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonCompletedMetricsReplayEntrypointSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repaired = readFileSync(scriptPath, "utf8");
+    expect(repaired).toContain("_autolabos_completed_metrics_replay_entrypoint_marker");
+    expect(repaired).toContain("def execute_experiment_workflow");
+    expect(repaired).not.toContain("AUTOLABOS SECTION");
+    execFileSync("python3", [scriptPath, "--metrics-path", outputMetricsPath, "--output-dir", publicDir, "--timeout-sec", "5"], {
+      cwd: publicDir,
+      stdio: "pipe"
+    });
+    const metrics = JSON.parse(readFileSync(outputMetricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.success).toBe(true);
+    expect(metrics.recovery_mode).toBe("completed_metrics_replay");
   });
 
   it("repairs sectioned runners with missing CLI entrypoint before recovery", async () => {

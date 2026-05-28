@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-05-28
+Last updated: 2026-05-29
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -14,6 +14,65 @@ Path placeholders:
 - `<repo-root>` means the local AutoLabOS implementation checkout.
 
 ---
+
+## Issue: LV-448
+
+- Status: reproduced in same-flow P6 validation on 2026-05-28; source repair implemented; same-flow revalidation passed through implement_experiments, run_experiments, and analyze_results on 2026-05-28
+- Validation target: implement_experiments should reuse an already repaired completed-metrics replay runner instead of re-entering staged generation when the deterministic repair marker is already present.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, continued after LV-447 bounded snapshot repair and LV-445 deterministic bundle-recovery work.
+
+- Reproduction steps:
+  1. Continue the existing P6 run from implement_experiments after a prior deterministic completed-metrics replay repair has already replaced the selected public runner.
+  2. Observe run_experiments feedback still requesting a callable-compatible runner surface.
+  3. Observe implement_experiments rewrite the public wrapper but fall back into staged_llm generation because the replay runner was already marked as repaired and therefore did not set the preflight recovery script path.
+  4. Observe staged_llm later fail with Codex OAuth stream aborted rather than reusing the locally completed metrics bundle.
+
+- Expected behavior:
+  - If the selected runner already contains the deterministic completed-metrics replay marker and the public bundle contains completed metrics, implement_experiments should fast-path the recovered result.
+  - The fast path should not require the repair function to modify the file again on every retry.
+  - Public source and tests should describe this behavior with neutral fixture names, not one-off experiment, benchmark, model, or condition identifiers.
+
+- Actual behavior:
+  - The first retry after the repair could replace the runner, but the next retry saw the marker and returned repaired=false.
+  - Because deterministicPreflightScriptPath was only set when a fresh repair occurred, recoverCompletedMetricsReplayTurnResult was skipped.
+  - The node re-entered staged_llm generation and failed before producing a runnable implementation.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this is specifically a persisted-run retry defect in the active P6 validation flow.
+  - Existing session: the same run had a completed public metrics bundle and a marker-bearing replay runner, but the in-memory preflight projection did not reuse it.
+  - Divergence: this is a retry-state projection bug, not a generated-paper content issue.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: the deterministic preflight path treated only newly applied repairs as reusable recovery candidates. It did not re-read the selected runner after a no-op repair to detect an existing deterministic replay marker.
+
+- Code/test changes:
+  - Code: src/core/agents/implementSessionManager.ts now re-reads the selected runner after deterministic repair attempts and sets deterministicPreflightScriptPath whenever the completed-metrics replay marker is present.
+  - Code: existing public-bundle recovery now prioritizes marker-bearing Python runners before feedback-named wrappers when deterministic repair feedback is active.
+  - Code: incomplete public runners can be replaced with a generic completed-metrics replay entrypoint only when completed public metrics already exist.
+  - Tests: tests/implementSessionManager.test.ts adds neutral fixture coverage for completed-metrics replay entrypoint replacement and marker-priority script selection.
+  - Hygiene: ISSUES.md wording was neutralized so validation notes do not repeat one-off fixture strings; generic metric lexicons remain allowed.
+
+- Regression status:
+  - Automated focused regression passed: npm test -- --run tests/implementSessionManager.test.ts -t "completed metrics replay|deterministically repaired public bundle scripts".
+  - Public hygiene regression passed: npm test -- --run tests/publicCodeSanitization.test.ts.
+  - Public exact scan returned no matches for the flagged method-specific runner, benchmark, condition, cached-text, or compact-method fixture strings in src, tests, docs, and .codex.
+  - Build passed: npm run build.
+  - Harness validation passed: npm run validate:harness.
+  - Same-flow revalidation passed: implement_experiments logged "Reused the existing governed experiment bundle after deterministic runner-entrypoint repair instead of re-entering Codex," verified the repaired runner with python3 -m py_compile, and completed.
+  - Same-flow downstream check: run_experiments completed from the repaired runner, then analyze_results correctly reported the objective was not met and recommended backtracking instead of paper drafting.
+
+- Remaining risks:
+  - The active P6 run is scientifically blocked_for_paper_scale because the objective metric was not met; the next governed action is to backtrack to generate_hypotheses or redesign the experiment, not to manually edit the paper output.
+  - Historical run artifacts may contain concrete experiment identifiers because they are the evidence trail; public source, tests, docs, and local skills must stay neutral.
+
+- Evidence/artifacts:
+  - <repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt
+  - <repo-root>/outputs/p6-preflight/p6-continue-run_experiments-output.txt
+  - <repo-root>/outputs/p6-preflight/p6-continue-analyze_results-output.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/transition_recommendation.json
 
 ## Issue: LV-447
 
@@ -161,7 +220,7 @@ Path placeholders:
 - Regression status:
   - Same-flow reproduction: confirmed on 2026-05-28.
   - Guard behavior: confirmed that run_experiments did not let failed metrics advance to analysis or paper writing.
-  - Public source hygiene scan: src, tests, docs, and .codex contain no matches for the previously flagged experiment-specific fixture strings such as compact PEFT, run_peft_instruction_study, arc_challenge, hellaswag, or concrete rank/dropout condition IDs; only the generic metric lexicon in paperAnalyzer.ts remains.
+  - Public source hygiene scan: src, tests, docs, and .codex contain no matches for the previously flagged experiment-specific fixture families such as method-specific runner names, benchmark slugs, or concrete condition IDs; only the generic metric lexicon in paperAnalyzer.ts remains.
   - Repair validation: focused implementSessionManager regression tests passed, including existing-bundle planned_run deterministic repair, sectioned CLI repair, sectioned CLI existing-bundle recovery before Codex, and required-contract-global alias repair; npm run build passed; publicCodeSanitization test passed; exact public-source leak scan returned no matches for the flagged experiment-specific fixture strings. Same-flow P6 rerun first showed the persisted bundle still fell into staged generation because unfilled section markers blocked recovery; after disk cleanup the persisted runner received the sectioned CLI repair, then exposed a second import-time contract alias drift that is now covered by source/test repair and still needs same-flow live validation.
 
 - Follow-up risks:
