@@ -213,6 +213,7 @@ import {
   repairPythonInvalidInfinityLiteralSurface,
   repairPythonRankDropoutMarkerParserCollisionSurface,
   repairPythonImportedHelperRunnerResolverSurface,
+  repairPythonCallableResolverClassSelectionSurface,
   applyImplementationContractLocalizationGuard,
   applyRunnerFeedbackLocalizationGuard,
   repairPythonStudyInvokeContractKwargSurface,
@@ -16252,6 +16253,83 @@ describe("ImplementSessionManager", () => {
       runner: "locked_adapter_study",
       status: "ok"
     });
+  });
+
+  it("repairs callable resolvers that select condition dataclass classes by token", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-callable-resolver-class-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "from dataclasses import dataclass",
+        "from typing import Any, Sequence",
+        "",
+        "@dataclass(frozen=True)",
+        "class ConditionSpec:",
+        "    marker: str",
+        "    rank: int",
+        "    dropout: float",
+        "",
+        "def build_governed_condition_specs(seed_schedule=None, required_condition_markers=None, baseline_condition_marker=None):",
+        "    return [{'condition_marker': 'baseline_condition'}]",
+        "",
+        "def _resolve_callable_by_names(",
+        "    *candidate_names: str,",
+        "    substrings: Sequence[str] | None = None,",
+        ") -> Any:",
+        "    for name in candidate_names:",
+        "        if not name:",
+        "            continue",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    lowered_substrings = tuple(part.lower() for part in (substrings or ()) if part)",
+        "    if not lowered_substrings:",
+        "        return None",
+        "    ranked_matches: list[tuple[int, int, int, str, Any]] = []",
+        "    for name, value in globals().items():",
+        "        if not callable(value):",
+        "            continue",
+        "        lowered_name = name.lower()",
+        "        if all(part in lowered_name for part in lowered_substrings):",
+        "            ranked_matches.append((0 if lowered_name.startswith('_') else 1, sum(lowered_name.count(part) for part in lowered_substrings), -len(lowered_name), lowered_name, value))",
+        "    if not ranked_matches:",
+        "        return None",
+        "    ranked_matches.sort(reverse=True)",
+        "    return ranked_matches[0][-1]",
+        "",
+        "def main():",
+        "    build_conditions = _resolve_callable_by_names(",
+        "        'build_condition_specs',",
+        "        '_build_condition_specs',",
+        "        'materialize_condition_specs',",
+        "        '_materialize_condition_specs',",
+        "        substrings=('condition', 'spec'),",
+        "    )",
+        "    print(build_conditions())",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toThrow(
+      /missing 3 required positional arguments/
+    );
+
+    const repair = await repairPythonCallableResolverClassSelectionSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_callable_resolver_skip_classes_marker");
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })).toContain(
+      "baseline_condition"
+    );
   });
 
   it("repairs generated linear scheduler calls for get_linear_schedule_with_warmup", async () => {
