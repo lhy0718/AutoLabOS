@@ -3320,6 +3320,33 @@ export class ImplementSessionManager {
     validateContent?: (content: string) => Promise<string | undefined>;
   }): Promise<{ content: string; threadId?: string }> {
     const chunkArtifactId = buildMaterializationChunkArtifactId(input);
+    const localUtilityContent = buildLocalPythonUtilityChunkContent(input.unit.target_path || "", input.chunk);
+    if (localUtilityContent) {
+      input.emitImplementObservation(
+        "codex",
+        `Using local Python utility materialization for ${input.chunk.title} (${formatArtifactPath(input.unit.target_path || "")})`,
+        {
+          attempt: input.attempt,
+          threadId: input.threadId,
+          publicDir: input.publicDir
+        }
+      );
+      const validationContent = appendDraftSection(input.chunkDraftSoFar, localUtilityContent);
+      const validationError = await input.validateContent?.(validationContent);
+      if (!validationError) {
+        return {
+          content: localUtilityContent,
+          threadId: input.threadId
+        };
+      }
+      const chunkErrorPath = path.join(
+        input.runDir,
+        IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR,
+        `${chunkArtifactId}_local_utility_error.txt`
+      );
+      await ensureDir(path.dirname(chunkErrorPath));
+      await fs.writeFile(chunkErrorPath, validationError, "utf8");
+    }
     const chunkPrompt = this.buildStagedImplementFileChunkPrompt({
       taskSpec: input.taskSpec,
       searchLocalization: input.searchLocalization,
@@ -11885,6 +11912,106 @@ function inferMaterializationChunkKindForPath(
     return "code_section";
   }
   return "text_section";
+}
+
+export function buildLocalPythonUtilityChunkContent(
+  filePath: string,
+  chunk: Pick<DynamicMaterializationChunk, "title" | "purpose" | "content_kind">
+): string | undefined {
+  if (!isPythonMaterializationPath(filePath) || chunk.content_kind !== "code_section") {
+    return undefined;
+  }
+  const responsibilityText = `${chunk.title} ${chunk.purpose}`.toLowerCase();
+  const isJsonPathSerializationHelper =
+    /\bjson\b/u.test(responsibilityText) &&
+    /\b(?:path|paths|directory|directories|serialization|serializable|artifact|atomic|write|writer|persistence)\b/u.test(
+      responsibilityText
+    ) &&
+    /\b(?:helper|helpers|utility|utilities|serialization|persistence|writer|writers)\b/u.test(responsibilityText);
+  if (!isJsonPathSerializationHelper) {
+    return undefined;
+  }
+
+  return [
+    "def utc_now_iso():",
+    "    return datetime.now(timezone.utc).isoformat().replace(\"+00:00\", \"Z\")",
+    "",
+    "",
+    "def ensure_dir(path_value):",
+    "    Path(path_value).mkdir(parents=True, exist_ok=True)",
+    "    return Path(path_value)",
+    "",
+    "",
+    "def ensure_parent_dir(path_value):",
+    "    path_obj = Path(path_value)",
+    "    path_obj.parent.mkdir(parents=True, exist_ok=True)",
+    "    return path_obj",
+    "",
+    "",
+    "def to_jsonable(value):",
+    "    if hasattr(value, \"to_dict\") and callable(value.to_dict):",
+    "        return to_jsonable(value.to_dict())",
+    "    if hasattr(value, \"__dataclass_fields__\"):",
+    "        return to_jsonable(asdict(value))",
+    "    if isinstance(value, Path):",
+    "        return str(value)",
+    "    if isinstance(value, Mapping):",
+    "        return {str(key): to_jsonable(item) for key, item in value.items()}",
+    "    if isinstance(value, (list, tuple, set)):",
+    "        return [to_jsonable(item) for item in value]",
+    "    if isinstance(value, float) and not math.isfinite(value):",
+    "        return None",
+    "    return value",
+    "",
+    "",
+    "def atomic_write_json(path_value, payload):",
+    "    path_obj = ensure_parent_dir(path_value)",
+    "    tmp_path = path_obj.with_suffix(path_obj.suffix + \".tmp\")",
+    "    with tmp_path.open(\"w\", encoding=\"utf-8\") as handle:",
+    "        json.dump(to_jsonable(payload), handle, indent=2, sort_keys=True)",
+    "        handle.write(\"\\n\")",
+    "    os.replace(tmp_path, path_obj)",
+    "    return path_obj",
+    "",
+    "",
+    "def write_json_atomic(path_value, payload):",
+    "    return atomic_write_json(path_value, payload)",
+    "",
+    "",
+    "def write_json_file(path_value, payload):",
+    "    return atomic_write_json(path_value, payload)",
+    "",
+    "",
+    "def read_json_file(path_value, default=None):",
+    "    path_obj = Path(path_value)",
+    "    if not path_obj.exists():",
+    "        return default",
+    "    with path_obj.open(\"r\", encoding=\"utf-8\") as handle:",
+    "        return json.load(handle)",
+    "",
+    "",
+    "def append_jsonl(path_value, payload):",
+    "    path_obj = ensure_parent_dir(path_value)",
+    "    with path_obj.open(\"a\", encoding=\"utf-8\") as handle:",
+    "        handle.write(json.dumps(to_jsonable(payload), sort_keys=True))",
+    "        handle.write(\"\\n\")",
+    "    return path_obj",
+    "",
+    "",
+    "def safe_float(value, default=None):",
+    "    try:",
+    "        result = float(value)",
+    "    except Exception:",
+    "        return default",
+    "    return result if math.isfinite(result) else default",
+    "",
+    "",
+    "def safe_int(value, default=None):",
+    "    try:",
+    "        return int(value)",
+    "    except Exception:",
+    "        return default"
+  ].join("\n");
 }
 
 function parseDynamicMaterializationChunk(value: unknown): DynamicMaterializationChunk | undefined {

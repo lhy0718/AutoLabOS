@@ -17,6 +17,7 @@ import path from "node:path";
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import {
+  buildLocalPythonUtilityChunkContent,
   buildLocalChunkSubdivisionPlanForChunk,
   extractWorkspacePathsFromCommand,
   evaluateImplementBootstrapContract,
@@ -405,6 +406,46 @@ function initGitWorkspace(workspace: string, trackedFiles: string[]): void {
 }
 
 describe("ImplementSessionManager", () => {
+  it("materializes generic Python JSON/path helper chunks locally", () => {
+    const content = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
+      title: "JSON, path, and small serialization helpers",
+      purpose: "Add compact utility helpers for directory creation, JSON reading/writing, and artifact serialization.",
+      content_kind: "code_section"
+    });
+
+    expect(content).toContain("def atomic_write_json(path_value, payload):");
+    expect(content).toContain("def append_jsonl(path_value, payload):");
+    expect(content).not.toContain("TRAIN_MICRO_BATCH_SIZE");
+
+    const root = mkdtempSync(path.join(os.tmpdir(), "autolabos-local-python-utility-"));
+    try {
+      const scriptPath = path.join(root, "runner.py");
+      writeFileSync(
+        scriptPath,
+        [
+          "import json",
+          "import math",
+          "import os",
+          "from dataclasses import asdict, dataclass",
+          "from datetime import datetime, timezone",
+          "from pathlib import Path",
+          "from typing import Mapping",
+          content || "",
+          "",
+          "target = Path('out') / 'metrics.json'",
+          "atomic_write_json(target, {'status': 'completed', 'score': safe_float('1.0')})",
+          "append_jsonl(Path('out') / 'rows.jsonl', {'row': 1})",
+          "assert read_json_file(target)['status'] == 'completed'",
+          "",
+        ].join("\n"),
+        "utf8"
+      );
+      execFileSync("python3", [scriptPath], { cwd: root });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("excludes regenerated dependency and model caches from attempt snapshots", () => {
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", ".cache", "hf", "models--provider--model"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", ".hf_cache", "models--provider--model"))).toBe(true);

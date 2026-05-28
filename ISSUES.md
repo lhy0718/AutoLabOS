@@ -15,6 +15,58 @@ Path placeholders:
 
 ---
 
+## Issue: LV-452
+
+- Status: reproduced in same-flow P6 validation on 2026-05-29; source repair implemented; focused automated validation passed; same-flow retry pending
+- Validation target: implement_experiments staged materialization should not spend the live paper run's bounded helper window repeatedly asking the LLM to generate generic Python JSON/path/serialization utility helpers.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after LV-451 progress-aware helper repair and design-contract regeneration.
+
+- Reproduction steps:
+  1. Resume the active P6 validation run at implement_experiments through scripts/p6-approve-and-run-next.py with AUTOLABOS_P6_NEXT_TIMEOUT_SEC=1800 and AUTOLABOS_P6_NEXT_MAX_WALL_SEC=7200.
+  2. Observe attempt 3/3 materialize a sectioned Python runner through staged_llm.
+  3. Observe the first materialization chunk progress through subchunks and resubchunks; the generic JSON/path helper section triggers validation/re-subdivision and the helper reaches the max-wall cap before a natural node boundary.
+
+- Expected behavior:
+  - AutoLabOS should reserve LLM materialization budget for experiment-specific logic.
+  - Generic Python utility sections such as directory creation, JSON read/write, atomic persistence, and JSON-safe conversion should be materialized deterministically when their section title/purpose is generic enough.
+  - The generated runner should still be node-owned and validated; the coding agent must not hand-author the run artifact as a substitute.
+
+- Actual behavior:
+  - The live run spent many persisted progress updates generating and repairing a generic helper section.
+  - The failed chunk response referenced additional uppercase training/config constants unrelated to the requested JSON/path helper responsibility, forcing more subdivision.
+  - The helper hit the bounded max-wall cap after 1160 progress updates while implement_experiments was still running.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not reproduced; the failure was observed in the existing long-running P6 paper-readiness validation run.
+  - Existing session: reproduced on the active resumed run while regenerating the experiment runner after upstream design repair.
+  - Divergence: no UI-only divergence observed; the blocker is a node-local staged materialization budget/recovery issue.
+
+- Root cause hypothesis:
+  - Type: race_timing_bug
+  - Hypothesis: staged materialization treats generic Python utility sections the same as experiment-specific sections, so a small helper section can consume multiple LLM requests, validation repairs, and retry subdivisions before the node reaches later experiment-specific sections.
+
+- Code/test changes:
+  - Code: src/core/agents/implementSessionManager.ts now locally materializes generic Python JSON/path/serialization utility chunks when a section's title/purpose is clearly generic, then still validates the local content before accepting it.
+  - Tests: tests/implementSessionManager.test.ts covers local generic Python JSON/path helper materialization and executes the generated helper snippet.
+
+- Regression status:
+  - Focused regression passed: npm test -- tests/implementSessionManager.test.ts -t "generic Python JSON/path helper chunks".
+  - Public-code guard passed: npm test -- tests/publicCodeSanitization.test.ts.
+  - Build passed: npm run build.
+  - Same-flow retry is still required.
+
+- Remaining risks:
+  - This repair addresses the observed generic helper-section loop only. Later experiment-specific sections may still expose generated-runner contract or execution issues that must be fixed through the same node-owned loop.
+  - The active run's persisted failure message still reflects the previous helper timeout until the node is retried.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/events.jsonl
+  - <validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py
+  - <repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt
+
+---
+
 ## Issue: LV-451
 
 - Status: reproduced in same-flow P6 validation on 2026-05-29; source repair implemented; automated validation passed on 2026-05-29; same-flow retry advanced past the original fixed timeout but hit the bounded max-wall cap
