@@ -15,6 +15,59 @@ Path placeholders:
 
 ---
 
+## Issue: LV-451
+
+- Status: reproduced in same-flow P6 validation on 2026-05-29; source repair implemented; automated validation passed on 2026-05-29; same-flow retry pending
+- Validation target: the P6 continue helper should not terminate a target node solely because a fixed wall-clock timeout elapsed while persisted node progress is still advancing.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, during implement_experiments staged materialization after LV-450 design-contract repair.
+
+- Reproduction steps:
+  1. Approve design_experiments for the active P6 validation run and start implement_experiments through scripts/p6-approve-and-run-next.py.
+  2. Let the helper observe staged LLM generation with repeated status/progress updates.
+  3. Observe the helper exit at AUTOLABOS_P6_NEXT_TIMEOUT_SEC even though the node-local status.json progressCount and updatedAt were still changing shortly before timeout.
+
+- Expected behavior:
+  - If a node is truly idle past the timeout, the helper should persist a durable helper-timeout failure boundary.
+  - If the target node is still producing persisted progress, the helper should extend the idle deadline within a bounded max-wall cap rather than killing the owner process mid-generation.
+  - The behavior must remain bounded and observable; active progress should not become an unbounded wait.
+
+- Actual behavior:
+  - The helper closed the live P6 process after 1800 seconds and persisted implement_experiments as p6_helper_timeout/failed.
+  - Recent events showed staged generation was still receiving streamed output and had reached later resubchunks.
+  - This forced another manual retry even though the underlying node had not reached a natural stop boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not reproduced; this occurred in the active P6 validation run under long staged generation.
+  - Existing session: reproduced on the active paper-readiness validation run after source-level design repairs.
+  - Divergence: no UI-only divergence observed; this is helper timeout policy interacting with a long-running node.
+
+- Root cause hypothesis:
+  - Type: race_timing_bug
+  - Hypothesis: wait_for_stop_boundary used AUTOLABOS_P6_NEXT_TIMEOUT_SEC as a hard wall-clock deadline even when node-local status progress advanced. The helper therefore treated live, slow staged generation like an idle/hung node.
+
+- Code/test changes:
+  - Code: scripts/p6-approve-and-run-next.py now tracks node-local status progress signatures and extends the stop-boundary wait when progress changes, capped by AUTOLABOS_P6_NEXT_MAX_WALL_SEC.
+  - Code: scripts/p6-preflight.mjs no longer bakes the live validation experiment's model, dataset, topic, or objective strings into public source; those values are now environment-configurable and neutral by default.
+  - Tests: P6 helper self-test now covers bounded deadline extension; tests/publicCodeSanitization.test.ts now scans scripts as public code; analyze/run-constraint fixtures were neutralized away from the live experiment.
+
+- Regression status:
+  - Automated regression passed: python3 -m py_compile scripts/p6-approve-and-run-next.py.
+  - Automated regression passed: AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py.
+  - Automated regression passed: npm test -- --run tests/runConstraints.test.ts tests/analyzePapers.test.ts tests/publicCodeSanitization.test.ts tests/p6ContinueScript.test.ts.
+  - Build passed: npm run build.
+  - Harness validation passed: npm run validate:harness.
+  - Public-code scan passed for the reported concrete experiment identifiers and cached-text phrase after neutralization.
+  - Same-flow retry with the progress-aware helper is still required.
+
+- Remaining risks:
+  - The max-wall cap can still stop a very long generation; if that happens while progress is continuing, the implement node itself likely needs chunk-size or recovery improvements rather than further helper timeout expansion.
+  - Public source still contains generic logic for domain-specific topics when the user explicitly supplies such topics; this issue only removes one-off live-validation defaults and fixtures.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/events.jsonl
+  - <repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt
+
 ## Issue: LV-450
 
 - Status: reproduced in same-flow P6 validation on 2026-05-29; source repair implemented; same-flow design_experiments revalidation passed on 2026-05-29

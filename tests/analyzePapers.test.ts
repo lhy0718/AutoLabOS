@@ -2280,34 +2280,34 @@ describe("analyzePapers node", () => {
 
   });
 
-  it("keeps fallback shortlist focused on strong title anchors for the LoRA instruction-following brief", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-lora-fallback-guard-"));
+  it("keeps fallback shortlist focused on strong title anchors for a neutral configuration brief", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-config-fallback-guard-"));
     tempDirs.push(root);
     process.chdir(root);
 
-    const runId = "run-analyze-lora-fallback-guard";
+    const runId = "run-analyze-config-fallback-guard";
     const run = {
       ...makeRun(runId),
-      title: "LoRA rank × dropout interaction for Mistral-7B instruction-following",
+      title: "Window size and cache policy interaction for streaming summarization",
       topic:
-        "Measure how LoRA rank and dropout affect Mistral-7B instruction-following quality against a fixed baseline."
+        "Measure how window size and cache policy affect streaming summarization quality against a fixed baseline."
     };
     await writeCorpus(runId, [
       {
-        paper_id: "relevant_bactrian",
-        title: "Bactrian-X: Multilingual Replicable Instruction-Following Models with Low-Rank Adaptation",
+        paper_id: "relevant_windowed_context",
+        title: "Windowed Context Control for Streaming Summarization",
         abstract:
-          "Instruction tuning with low-rank adaptation improves multilingual instruction-following models.",
+          "Windowed context control improves streaming summarization under bounded latency.",
         authors: ["Alice"],
         citation_count: 87,
         year: 2023,
         pdf_url: "https://example.com/bactrian.pdf"
       },
       {
-        paper_id: "relevant_rank_dropout",
-        title: "Rank and Dropout Trade-offs in Low-Rank Adaptation for Instruction-Following Language Models",
+        paper_id: "relevant_cache_policy",
+        title: "Cache Policy Trade-offs in Streaming Text Summarization",
         abstract:
-          "A controlled study of rank and dropout settings for LoRA-based instruction-following language models.",
+          "A controlled study of cache policy settings for streaming text summarization systems.",
         authors: ["Bob"],
         citation_count: 12,
         year: 2025,
@@ -2317,7 +2317,7 @@ describe("analyzePapers node", () => {
         paper_id: "off_topic_medical_notes",
         title: "Using fine-tuned large language models to parse clinical notes in musculoskeletal pain disorders",
         abstract:
-          "A clinical-note parsing study that fine-tunes LLaMA models and references the Alpaca dataset.",
+          "A clinical-note parsing study that uses unrelated domain-specific annotation data.",
         authors: ["Cara"],
         citation_count: 38,
         year: 2023,
@@ -2327,7 +2327,7 @@ describe("analyzePapers node", () => {
         paper_id: "off_topic_medical_vision",
         title: "Point, Detect, Count: Multi-Task Medical Image Understanding with Instruction-Tuned Vision-Language Models",
         abstract:
-          "A medical-image instruction-tuned VLM paper that applies LoRA to multimodal detection and counting tasks.",
+          "A medical-image vision-language paper that targets multimodal detection and counting tasks.",
         authors: ["Dana"],
         citation_count: 2,
         year: 2025,
@@ -2373,11 +2373,11 @@ describe("analyzePapers node", () => {
 
     const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
     const manifest = JSON.parse(manifestRaw);
-    expect(new Set(manifest.selectedPaperIds)).toEqual(new Set(["relevant_bactrian", "relevant_rank_dropout"]));
+    expect(new Set(manifest.selectedPaperIds)).toEqual(new Set(["relevant_windowed_context", "relevant_cache_policy"]));
 
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
-    expect(summariesRaw).toContain('"paper_id":"relevant_bactrian"');
-    expect(summariesRaw).toContain('"paper_id":"relevant_rank_dropout"');
+    expect(summariesRaw).toContain('"paper_id":"relevant_windowed_context"');
+    expect(summariesRaw).toContain('"paper_id":"relevant_cache_policy"');
     expect(summariesRaw).not.toContain('"paper_id":"off_topic_medical_notes"');
     expect(summariesRaw).not.toContain('"paper_id":"off_topic_medical_vision"');
   });

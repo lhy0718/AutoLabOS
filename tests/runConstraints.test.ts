@@ -67,18 +67,18 @@ describe("normalizeConstraintProfile", () => {
     });
   });
 
-  it("builds tighter deterministic candidates for LoRA instruction-tuning topics when llm queries are absent", () => {
+  it("builds tighter deterministic candidates for adaptive reasoning topics when llm queries are absent", () => {
     const candidates = buildLiteratureQueryCandidates({
       runTopic:
-        "Measure how LoRA rank and LoRA dropout interact for instruction tuning on Mistral-7B-v0.3"
+        "Measure how adaptive test-time reasoning behaves for small language models under inference budgets"
     });
 
     expect(candidates).toContainEqual({
-      query: '+"low-rank adaptation" +"instruction tuning"',
+      query: '+"small language models" +"test-time reasoning"',
       reason: "run_topic"
     });
     expect(candidates).toContainEqual({
-      query: '+"low-rank adaptation" +"instruction tuning" +"mistral 7b"',
+      query: '+"inference budget" +"small language models" +"test-time reasoning"',
       reason: "run_topic"
     });
   });

@@ -298,6 +298,32 @@ def record_boundary_signature(record: dict, node: str) -> tuple[str, str, str, s
     return (str(record.get("status") or ""), current_node(record), node_status(record, node), updated_at)
 
 
+def node_progress_signature(workspace: Path, run_id: str, node: str) -> tuple[str, str, str, str] | None:
+    status_path = workspace / ".autolabos" / "runs" / run_id / node / "status.json"
+    try:
+        status_record = json.loads(status_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return (
+        str(status_record.get("status") or ""),
+        str(status_record.get("stage") or ""),
+        str(status_record.get("updatedAt") or ""),
+        str(status_record.get("progressCount") or ""),
+    )
+
+
+def extend_deadline_for_progress(
+    *,
+    now: float,
+    current_deadline: float,
+    base_timeout: float,
+    max_wall_deadline: float,
+) -> float:
+    if max_wall_deadline <= current_deadline:
+        return current_deadline
+    return max(current_deadline, min(max_wall_deadline, now + base_timeout))
+
+
 def has_fresh_record_stop_boundary(
     record: dict | None,
     node: str,
@@ -424,9 +450,12 @@ def wait_for_stop_boundary(
     node: str,
     initial_signature: tuple[str, str, str, str] | None = None,
     stable_seconds: float = STOP_BOUNDARY_STABLE_SECONDS,
-    accept_live_prompt_boundary: bool = False
+    accept_live_prompt_boundary: bool = False,
+    max_wall_seconds: float | None = None
 ) -> str:
-    deadline = time.time() + timeout
+    start_time = time.time()
+    deadline = start_time + timeout
+    max_wall_deadline = start_time + (max_wall_seconds if max_wall_seconds is not None else timeout)
     regex = re.compile(pattern, re.MULTILINE)
     joined = buffer_text[-MAX_TRANSCRIPT_CHARS:]
     searchable = ""
@@ -434,11 +463,22 @@ def wait_for_stop_boundary(
     candidate_signature: tuple[str, str, str, str] | None = None
     candidate_seen_at = 0.0
     observed_target_running = False
+    progress_signature = node_progress_signature(workspace, run_id, node)
     while time.time() < deadline:
         record = try_load_run_record(workspace, run_id)
         if is_target_node_running(record, node) and not observed_target_running:
             observed_target_running = True
             searchable_after_target_running = ""
+        current_progress_signature = node_progress_signature(workspace, run_id, node)
+        if observed_target_running and current_progress_signature and current_progress_signature != progress_signature:
+            now = time.time()
+            progress_signature = current_progress_signature
+            deadline = extend_deadline_for_progress(
+                now=now,
+                current_deadline=deadline,
+                base_timeout=timeout,
+                max_wall_deadline=max_wall_deadline,
+            )
         signature = fresh_record_stop_boundary_signature(record, node, initial_signature)
         now = time.time()
         if signature:
@@ -732,6 +772,15 @@ def run_selftest() -> int:
     if stable_stop_boundary_ready(None, advanced_signature, 100.0, 102.1, 2.0):
         print("FAIL: missing signature was treated as a stable boundary")
         return 1
+    if extend_deadline_for_progress(now=10.0, current_deadline=20.0, base_timeout=30.0, max_wall_deadline=100.0) != 40.0:
+        print("FAIL: progress extension did not extend to the next bounded idle deadline")
+        return 1
+    if extend_deadline_for_progress(now=95.0, current_deadline=96.0, base_timeout=30.0, max_wall_deadline=100.0) != 100.0:
+        print("FAIL: progress extension exceeded the max wall deadline")
+        return 1
+    if extend_deadline_for_progress(now=10.0, current_deadline=20.0, base_timeout=30.0, max_wall_deadline=15.0) != 20.0:
+        print("FAIL: progress extension moved a deadline beyond an already-reached wall cap")
+        return 1
     existing = "+ [OK] readiness: ok\n+ [OK] harness-validation: 0 issue(s), 0 run(s) checked\n"
     if wait_for(-1, r"harness-validation:", 0.01, existing) != existing:
         print("FAIL: wait_for did not match an already-buffered doctor line")
@@ -860,6 +909,7 @@ def main() -> int:
     node_args = os.environ.get("AUTOLABOS_P6_NEXT_NODE_ARGS", default_node_args).strip()
     command_override = os.environ.get("AUTOLABOS_P6_COMMAND", "").strip()
     timeout = float(os.environ.get("AUTOLABOS_P6_NEXT_TIMEOUT_SEC", "3600"))
+    max_wall_seconds = float(os.environ.get("AUTOLABOS_P6_NEXT_MAX_WALL_SEC", str(max(timeout, timeout * 4))))
     handoff_grace_seconds = float(os.environ.get("AUTOLABOS_P6_HANDOFF_GRACE_SEC", str(HANDOFF_GRACE_SECONDS)))
     dist_main = repo_root / "dist" / "cli" / "main.js"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -949,7 +999,8 @@ def main() -> int:
             run_id=run_id,
             node=wait_node,
             initial_signature=initial_signature,
-            accept_live_prompt_boundary=False
+            accept_live_prompt_boundary=False,
+            max_wall_seconds=max_wall_seconds
         )
         observed_handoffs = 0
         while observed_handoffs < 3:
@@ -989,7 +1040,8 @@ def main() -> int:
                 run_id=run_id,
                 node=wait_node,
                 initial_signature=initial_signature,
-                accept_live_prompt_boundary=False
+                accept_live_prompt_boundary=False,
+                max_wall_seconds=max_wall_seconds
             )
         send_line(master_fd, "/quit")
         try:

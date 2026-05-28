@@ -15,29 +15,23 @@ const briefSource = join(repoRoot, "docs", "status", "p6-paper-ready-validation-
 const briefRelativePath = join("briefs", "p6-paper-ready-validation-brief.md");
 const briefTarget = join(workspaceRoot, briefRelativePath);
 
-const requiredPythonModules = ["torch", "transformers", "datasets", "peft", "trl", "accelerate"];
-const optionalPythonModules = ["lm_eval"];
-const preferredModelCache = join(
-  process.env.HF_HOME || join(process.env.HOME || "", ".cache", "huggingface"),
-  "hub",
-  "models--Qwen--Qwen2.5-1.5B"
-);
-const fallbackModelCache = join(
-  process.env.HF_HOME || join(process.env.HOME || "", ".cache", "huggingface"),
-  "hub",
-  "models--TinyLlama--TinyLlama-1.1B-Chat-v1.0"
-);
-const datasetCacheRoot = join(
-  process.env.HF_HOME || join(process.env.HOME || "", ".cache", "huggingface"),
-  "datasets"
-);
-const expectedDatasets = [
-  "yahma___alpaca-cleaned",
-  "allenai___ai2_arc",
-  "ai2_arc",
-  "hellaswag",
-  "Rowan___hellaswag"
-];
+function csvEnv(name, fallback = []) {
+  const raw = process.env[name] || "";
+  const values = raw.split(",").map((value) => value.trim()).filter(Boolean);
+  return values.length > 0 ? values : fallback;
+}
+
+const requiredPythonModules = csvEnv("AUTOLABOS_P6_REQUIRED_PYTHON_MODULES", [
+  "torch",
+  "transformers",
+  "datasets",
+  "accelerate"
+]);
+const optionalPythonModules = csvEnv("AUTOLABOS_P6_OPTIONAL_PYTHON_MODULES", ["lm_eval"]);
+const hfCacheRoot = process.env.HF_HOME || join(process.env.HOME || "", ".cache", "huggingface");
+const modelCacheCandidates = csvEnv("AUTOLABOS_P6_MODEL_CACHE_DIRS").map((name) => join(hfCacheRoot, "hub", name));
+const datasetCacheRoot = join(hfCacheRoot, "datasets");
+const expectedDatasets = csvEnv("AUTOLABOS_P6_EXPECTED_DATASET_CACHE_DIRS");
 
 function run(command, args, options = {}) {
   try {
@@ -108,11 +102,11 @@ function ensureWorkspace() {
       "  max_results: 80",
       "  per_second_limit: 1",
       "research:",
-      "  default_topic: PEFT LoRA rank dropout interaction",
+      `  default_topic: ${process.env.AUTOLABOS_P6_DEFAULT_TOPIC || "bounded condition-sweep validation"}`,
       "  default_constraints:",
-      "    - fixed instruction-tuning budget",
+      "    - fixed execution budget",
       "    - explicit baseline and comparator result table",
-      "  default_objective_metric: ARC-Challenge and HellaSwag average accuracy",
+      `  default_objective_metric: ${process.env.AUTOLABOS_P6_DEFAULT_OBJECTIVE_METRIC || "primary metric delta versus baseline"}`,
       "workflow:",
       "  mode: agent_approval",
       "  wizard_enabled: true",
@@ -201,12 +195,8 @@ async function doctorReport() {
 }
 
 function buildChecks({ pythonReport, doctor }) {
-  const preferredModelCached = existsDirectory(preferredModelCache);
-  const fallbackModelCached = existsDirectory(fallbackModelCache);
+  const cachedModelDirs = modelCacheCandidates.filter((candidatePath) => existsDirectory(candidatePath));
   const datasetDirs = expectedDatasets.filter((name) => existsDirectory(join(datasetCacheRoot, name)));
-  const alpacaCached = datasetDirs.includes("yahma___alpaca-cleaned");
-  const arcCached = datasetDirs.includes("allenai___ai2_arc") || datasetDirs.includes("ai2_arc");
-  const hellaswagCached = datasetDirs.includes("hellaswag") || datasetDirs.includes("Rowan___hellaswag");
   const commands = {
     node: run("node", ["--version"]),
     npm: run("npm", ["--version"]),
@@ -251,14 +241,18 @@ function buildChecks({ pythonReport, doctor }) {
       detail: pythonReport.torch_cuda_names ? pythonReport.torch_cuda_names.join("; ") : pythonReport.torch_cuda_error || "unknown"
     },
     {
-      id: "preferred_or_fallback_model_cached",
-      ok: preferredModelCached || fallbackModelCached,
-      detail: `preferred=${preferredModelCached ? "yes" : "no"}, fallback=${fallbackModelCached ? "yes" : "no"}`
+      id: "model_cache_available",
+      ok: modelCacheCandidates.length === 0 || cachedModelDirs.length > 0,
+      detail: modelCacheCandidates.length === 0
+        ? "no model cache candidates configured"
+        : `${cachedModelDirs.length}/${modelCacheCandidates.length} configured model cache candidate(s) present`
     },
     {
       id: "datasets_cached",
-      ok: alpacaCached && arcCached && hellaswagCached,
-      detail: `alpaca=${alpacaCached ? "yes" : "no"}, arc=${arcCached ? "yes" : "no"}, hellaswag=${hellaswagCached ? "yes" : "no"}`
+      ok: expectedDatasets.length === 0 || datasetDirs.length === expectedDatasets.length,
+      detail: expectedDatasets.length === 0
+        ? "no dataset cache directories configured"
+        : `${datasetDirs.length}/${expectedDatasets.length} configured dataset cache directories present`
     },
     {
       id: "evaluator_available",

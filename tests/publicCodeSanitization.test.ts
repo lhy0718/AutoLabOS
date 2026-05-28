@@ -4,8 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
-const CODE_DIRS = ["src", "tests", "docs", path.join(".codex", "skills")];
-const SHIPPED_CODE_DIRS = ["src", "docs", path.join(".codex", "skills")];
+const CODE_DIRS = ["src", "tests", "docs", "scripts", path.join(".codex", "skills")];
+const SHIPPED_CODE_DIRS = ["src", "docs", "scripts", path.join(".codex", "skills")];
 const TEXT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".md"]);
 
 function walkCodeFiles(dir: string): string[] {
