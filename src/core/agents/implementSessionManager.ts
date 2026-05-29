@@ -823,8 +823,12 @@ export class ImplementSessionManager {
       const implementationSkeletonFeedback = isRecoverableUnfilledAutolabosSectionFeedback(
         promptTaskSpec.context.implementation_contract_feedback
       );
+      const implementationContractDeterministicFeedback = isRecoverableBundleDeterministicRepairFeedback(
+        promptTaskSpec.context.implementation_contract_feedback as unknown as RunVerifierReport | undefined,
+        runnerFeedbackDiagnosticText
+      );
       const bundleRecoveryFeedback = promptTaskSpec.context.runner_feedback ?? (
-        implementationSkeletonFeedback
+        implementationSkeletonFeedback || implementationContractDeterministicFeedback
           ? promptTaskSpec.context.implementation_contract_feedback as unknown as RunVerifierReport
           : undefined
       );
@@ -15316,6 +15320,7 @@ function isRecoverableBundleDeterministicRepairFeedback(
       /Study finished with status=failed\s+exit_code=2/u.test(summary)
     ) ||
     /does not expose any supported delegate entrypoint/u.test(summary) ||
+    /PUBLIC_RUN_COUNT_CONTRACTED/u.test(summary) ||
     /KeyError:\s*['"]planned_run['"]/u.test(summary) ||
     /Unable to resolve required callable from candidates/u.test(summary) ||
     /AUTOLABOS SECTION skeleton markers|Unfilled or unstripped section marker|Final experiment scripts must contain executable code/iu.test(summary) ||
