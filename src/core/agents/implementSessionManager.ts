@@ -15287,6 +15287,7 @@ function isRecoverableBundleDeterministicRepairFeedback(
       /Experiment metrics payload reports failed status/u.test(summary) &&
       /Study finished with status=failed\s+exit_code=2/u.test(summary)
     ) ||
+    /does not expose any supported delegate entrypoint/u.test(summary) ||
     /KeyError:\s*['"]planned_run['"]/u.test(summary) ||
     /Unable to resolve required callable from candidates/u.test(summary) ||
     /AUTOLABOS SECTION skeleton markers|Unfilled or unstripped section marker|Final experiment scripts must contain executable code/iu.test(summary) ||
@@ -30406,6 +30407,36 @@ function hasGenericExperimentEntrypointSurface(source: string): boolean {
   return /(^|\n)def\s+(?:execute_experiment_workflow|run_experiment_workflow|execute_study_workflow|run_study_workflow|execute_experiment|run_experiment|execute_locked_study|run_locked_study|orchestrate_locked_study|orchestrate_experiment|orchestrate_study|run_study|main)\s*\(/u.test(source);
 }
 
+async function delegateWrapperTargetLacksSupportedEntrypoint(
+  scriptPath: string,
+  source: string
+): Promise<boolean> {
+  if (
+    !source.includes("_DELEGATE_ENTRYPOINT_NAMES") ||
+    !source.includes("_resolve_study_delegate") ||
+    !source.includes("supported delegate entrypoint")
+  ) {
+    return false;
+  }
+
+  const filenameMatch = source.match(/_STUDY_FILENAME\s*=\s*["']([^"']+\.py)["']/u);
+  const moduleMatch = source.match(/_STUDY_MODULE_NAME\s*=\s*["']([^"']+)["']/u);
+  const siblingFilename = filenameMatch?.[1] || (moduleMatch?.[1] ? `${moduleMatch[1].replace(/\./gu, path.sep)}.py` : "");
+  if (!siblingFilename) {
+    return false;
+  }
+
+  const siblingPath = path.resolve(path.dirname(scriptPath), siblingFilename);
+  let siblingSource: string;
+  try {
+    siblingSource = await fs.readFile(siblingPath, "utf8");
+  } catch {
+    return false;
+  }
+
+  return !/(^|\n)def\s+(?:main|cli_main|run)\s*\(/u.test(siblingSource);
+}
+
 export async function repairPythonCompletedMetricsReplayEntrypointSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
@@ -30424,7 +30455,8 @@ export async function repairPythonCompletedMetricsReplayEntrypointSurface(
   if (source.includes(marker)) {
     return { repaired: false };
   }
-  if (!source.includes("AUTOLABOS SECTION") && hasGenericExperimentEntrypointSurface(source)) {
+  const brokenDelegateWrapper = await delegateWrapperTargetLacksSupportedEntrypoint(scriptPath, source);
+  if (!source.includes("AUTOLABOS SECTION") && hasGenericExperimentEntrypointSurface(source) && !brokenDelegateWrapper) {
     return { repaired: false };
   }
 

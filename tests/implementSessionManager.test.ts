@@ -18861,6 +18861,74 @@ describe("ImplementSessionManager", () => {
     expect(metrics.recovery_mode).toBe("completed_metrics_replay");
   });
 
+  it("replaces delegate wrappers when the sibling study module lacks a CLI entrypoint", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "autolabos-delegate-wrapper-replay-"));
+    tempDirs.push(root);
+    const publicDir = path.join(root, "public");
+    mkdirSync(publicDir, { recursive: true });
+    const wrapperPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const siblingPath = path.join(publicDir, "run_condition_sweep_study.py");
+    const outputMetricsPath = path.join(root, "run", "metrics.json");
+
+    writeFileSync(
+      path.join(publicDir, "metrics.json"),
+      JSON.stringify({
+        status: "completed",
+        completed_run_count: 3,
+        completed_condition_count: 2,
+        primary_metric: { name: "accuracy", value: 0.8 }
+      }),
+      "utf8"
+    );
+    writeFileSync(
+      siblingPath,
+      [
+        "def build_condition_specs():",
+        "    return ['baseline_condition', 'candidate_condition_a']",
+        "",
+        "def execute_condition(condition):",
+        "    return {'condition': condition, 'status': 'completed'}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      wrapperPath,
+      [
+        "import sys",
+        "from pathlib import Path",
+        "_THIS_DIR = Path(__file__).resolve().parent",
+        "_STUDY_MODULE_NAME = 'run_condition_sweep_study'",
+        "_STUDY_FILENAME = f'{_STUDY_MODULE_NAME}.py'",
+        "_DELEGATE_ENTRYPOINT_NAMES = ('main', 'cli_main', 'run')",
+        "def _resolve_study_delegate():",
+        "    raise AttributeError(\"Sibling study runner module does not expose any supported delegate entrypoint\")",
+        "def main(argv=None):",
+        "    delegate = _resolve_study_delegate()",
+        "    return delegate(argv)",
+        "if __name__ == '__main__':",
+        "    sys.exit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonCompletedMetricsReplayEntrypointSurface(wrapperPath);
+
+    expect(repair.repaired).toBe(true);
+    const repaired = readFileSync(wrapperPath, "utf8");
+    expect(repaired).toContain("_autolabos_completed_metrics_replay_entrypoint_marker");
+    expect(repaired).toContain("def main(argv: Optional[Sequence[str]] = None) -> int:");
+    execFileSync("python3", [wrapperPath, "--metrics-path", outputMetricsPath, "--public-dir", publicDir], {
+      cwd: publicDir,
+      stdio: "pipe"
+    });
+    const metrics = JSON.parse(readFileSync(outputMetricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.success).toBe(true);
+    expect(metrics.recovery_mode).toBe("completed_metrics_replay");
+  });
+
   it("repairs sectioned runners with missing CLI entrypoint before recovery", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-sectioned-cli-repair-"));
     tempDirs.push(workspace);
