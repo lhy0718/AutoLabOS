@@ -482,11 +482,13 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       );
       emitLog(`Public experiment outputs are available at ${publicOutputs.sectionDirRelative}.`);
 
+      const selectionSummary = `Generated ${normalizedCandidates.length} executable experiment design candidate(s). Panel selected "${panelResult.selected.title}" via ${panelResult.selection.mode}.`;
+
       return {
         status: "success",
         summary: design.fallbackReason
-          ? `${design.summary} Selected "${panelResult.selected.title}" via ${panelResult.selection.mode}. Falling back after: ${design.fallbackReason}. Public outputs: ${publicOutputs.outputRootRelative}.`
-          : `${design.summary} Selected "${panelResult.selected.title}" via ${panelResult.selection.mode}. Public outputs: ${publicOutputs.outputRootRelative}.`,
+          ? `${selectionSummary} Falling back after: ${design.fallbackReason}. Public outputs: ${publicOutputs.outputRootRelative}.`
+          : `${selectionSummary} Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         toolCallsUsed: 1
       };

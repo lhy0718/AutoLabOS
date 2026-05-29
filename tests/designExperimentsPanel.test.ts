@@ -136,4 +136,37 @@ describe("designExperimentsPanel", () => {
       "statistical_reviewer"
     );
   });
+
+  it("breaks otherwise equal design ties toward stronger evidence and replication surfaces", () => {
+    const resourcePreservation = candidate({
+      id: "resource_preservation",
+      title: "Resource-reallocated preservation duel",
+      plan_summary:
+        "Test whether a lower-resource condition preserves model quality without losing accuracy under the same budget.",
+      evaluation_steps: ["Evaluate every completed run on the full validation split."],
+      risks: ["The resource-preservation framing may be uninformative for the primary quality objective."]
+    });
+    const evidenceFocused = candidate({
+      id: "evidence_focused",
+      title: "Condition interaction confirmation table",
+      plan_summary:
+        "Repeat the baseline and primary condition across seeds, report a complete condition table, raw N, and confidence intervals.",
+      evaluation_steps: [
+        "Evaluate every completed run on the full validation split.",
+        "Report raw N, per-condition metrics, and paired confidence intervals."
+      ],
+      risks: ["Repeated seeds are required to avoid a one-run artifact."]
+    });
+
+    const result = runDesignExperimentsPanel({
+      candidates: [resourcePreservation, evidenceFocused],
+      objectiveProfile: accuracyObjective,
+      managedBundleSupported: false
+    });
+
+    expect(result.selected.id).toBe("evidence_focused");
+    expect(result.selection.scores.find((score) => score.candidate_id === "evidence_focused")?.evidence_strength_score).toBeGreaterThan(
+      result.selection.scores.find((score) => score.candidate_id === "resource_preservation")?.evidence_strength_score || 0
+    );
+  });
 });

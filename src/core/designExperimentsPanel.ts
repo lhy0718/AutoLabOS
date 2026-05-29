@@ -23,6 +23,7 @@ export interface DesignExperimentsPanelCandidateScore {
   feasibility_score: number;
   statistical_score: number;
   ops_fit_score: number;
+  evidence_strength_score: number;
   total_score: number;
 }
 
@@ -55,7 +56,7 @@ export function runDesignExperimentsPanel(input: {
   }
 
   const scores = input.candidates.map((candidate) =>
-    buildCandidateScore(candidate, reviews)
+    buildCandidateScore(candidate, reviews, input.objectiveProfile)
   );
   const nonBlocked = scores.filter((item) => item.blocked_by.length === 0);
   const selectionPool = nonBlocked.length > 0 ? nonBlocked : scores;
@@ -268,7 +269,8 @@ function buildOpsCapacityReview(
 
 function buildCandidateScore(
   candidate: ExperimentDesignCandidate,
-  reviews: DesignExperimentsPanelReview[]
+  reviews: DesignExperimentsPanelReview[],
+  objectiveProfile: ObjectiveMetricProfile
 ): DesignExperimentsPanelCandidateScore {
   const candidateReviews = reviews.filter((review) => review.candidate_id === candidate.id);
   const feasibilityScore = candidateReviews.find((review) => review.reviewer_id === "feasibility_reviewer")?.score_1_to_5 || 0;
@@ -277,6 +279,7 @@ function buildCandidateScore(
   const blockedBy = candidateReviews
     .filter((review) => review.hard_block)
     .map((review) => review.reviewer_id);
+  const evidenceStrengthScore = buildEvidenceStrengthScore(candidate, objectiveProfile);
 
   return {
     candidate_id: candidate.id,
@@ -284,8 +287,52 @@ function buildCandidateScore(
     feasibility_score: feasibilityScore,
     statistical_score: statisticalScore,
     ops_fit_score: opsFitScore,
-    total_score: Number((feasibilityScore * 0.4 + statisticalScore * 0.4 + opsFitScore * 0.2).toFixed(2))
+    evidence_strength_score: evidenceStrengthScore,
+    total_score: Number((feasibilityScore * 0.32 + statisticalScore * 0.32 + opsFitScore * 0.16 + evidenceStrengthScore * 0.2).toFixed(2))
   };
+}
+
+function buildEvidenceStrengthScore(
+  candidate: ExperimentDesignCandidate,
+  objectiveProfile: ObjectiveMetricProfile
+): number {
+  const objectiveText = uniqueStrings([
+    objectiveProfile.primaryMetric || "",
+    objectiveProfile.raw || "",
+    ...(objectiveProfile.preferredMetricKeys || [])
+  ]).join(" ").toLowerCase().replace(/[_-]+/g, " ");
+  const candidateText = [
+    candidate.title,
+    candidate.plan_summary,
+    candidate.metrics.join(" "),
+    candidate.baselines.join(" "),
+    candidate.evaluation_steps.join(" "),
+    candidate.risks.join(" "),
+    candidate.resource_notes.join(" ")
+  ].join(" ").toLowerCase().replace(/[_-]+/g, " ");
+  const titleSummaryText = [candidate.title, candidate.plan_summary]
+    .join(" ")
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  const modelQualityObjective =
+    /\b(accuracy|pass@?1|f1|auc|rouge|bleu|perplexity|benchmark|score|quality|delta)\b/u.test(objectiveText);
+  let score = 3;
+
+  if (/\b(repeat(?:ed)?|replication|replicate|seed|confidence|interval|bootstrap|paired|stability)\b/u.test(candidateText)) {
+    score += 1;
+  }
+  if (/\b(full\s+(?:validation|test|split|grid)|all\s+cells?|complete\s+(?:table|grid)|raw\s+n|sample\s+size|per\s+condition|condition\s+table)\b/u.test(candidateText)) {
+    score += 1;
+  }
+  if (
+    modelQualityObjective &&
+    /\b(resource|budget|memory|runtime|throughput|efficiency|cost|lower\s+memory)\b/u.test(titleSummaryText) &&
+    /\b(without\s+losing|not\s+lose|non\s+inferior|lower\s+memory|efficiency|resource|budget)\b/u.test(titleSummaryText)
+  ) {
+    score -= 1;
+  }
+
+  return clampScore(score);
 }
 
 function buildSelectionRationale(
@@ -298,7 +345,7 @@ function buildSelectionRationale(
       ? "All candidates were hard-blocked, so the panel selected the least-bad option to preserve a valid plan output."
       : "The panel selected the highest-scoring non-blocked candidate.",
     score
-      ? `Scores - feasibility ${score.feasibility_score}, statistics ${score.statistical_score}, ops ${score.ops_fit_score}.`
+      ? `Scores - feasibility ${score.feasibility_score}, statistics ${score.statistical_score}, ops ${score.ops_fit_score}, evidence ${score.evidence_strength_score}.`
       : "",
     `Selected design: ${candidate.title}.`
   ]).slice(0, 3);
@@ -312,6 +359,7 @@ function compareScores(
     right.total_score - left.total_score ||
     left.blocked_by.length - right.blocked_by.length ||
     right.statistical_score - left.statistical_score ||
+    right.evidence_strength_score - left.evidence_strength_score ||
     left.candidate_id.localeCompare(right.candidate_id)
   );
 }
