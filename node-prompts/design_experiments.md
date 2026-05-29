@@ -18,4 +18,4 @@ Plans must be concrete, measurable, and implementable.
 Plans must declare the paper-scale evidence floor: evaluation sample size per task, seed count, baseline/comparator, train budget, raw-count reporting, and statistical/uncertainty method.
 If the proposed claim is only supportable as a pilot, encode that ceiling explicitly instead of designing a paper-ready claim path.
 For interaction claims, require enough cells, samples, and repeated seeds to separate interaction effects from a one-example or one-seed artifact.
-For method-centered topics such as LoRA/QLoRA/PEFT, preserve canonical-reference requirements so collect/analyze nodes can verify related-work grounding.
+For method-centered topics, preserve canonical-reference requirements so collect/analyze nodes can verify related-work grounding.

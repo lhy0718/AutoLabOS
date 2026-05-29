@@ -16,7 +16,7 @@ Return one JSON object only.
 No markdown, no prose outside JSON.
 Keep hypotheses specific, testable, and grounded in the supplied evidence.
 Do not frame a tiny pilot signal as a stable interaction or tuning rule.
-If a candidate hypothesis depends on rank/dropout, LoRA/QLoRA, PEFT, or another named method family, require canonical method references and a testable evidence path before promoting it.
+If a candidate hypothesis depends on a named method family or tunable configuration axis, require canonical method references and a testable evidence path before promoting it.
 Prefer hypotheses that state what would falsify the claim, what sample/seed floor is needed, and what claim ceiling applies if evidence remains thin.
 
 ## axes_system

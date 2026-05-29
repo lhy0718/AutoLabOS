@@ -4,8 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
-const CODE_DIRS = ["src", "tests", "docs", "scripts", path.join(".codex", "skills")];
-const SHIPPED_CODE_DIRS = ["src", "docs", "scripts", path.join(".codex", "skills")];
+const CODE_DIRS = ["src", "tests", "docs", "scripts", "node-prompts", path.join(".codex", "skills")];
+const SHIPPED_CODE_DIRS = ["src", "docs", "scripts", "node-prompts", path.join(".codex", "skills")];
 const TEXT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".md"]);
 
 function walkCodeFiles(dir: string): string[] {
@@ -102,6 +102,8 @@ describe("public code sanitization", () => {
       chars([80, 69, 70, 84, 32, 115, 116, 117, 100, 121]),
       chars([66, 97, 115, 101, 108, 105, 110, 101, 45, 102, 105, 114, 115, 116, 32, 80, 69, 70, 84]),
       chars([99, 111, 109, 112, 97, 99, 116, 32, 80, 69, 70, 84, 32, 114, 101, 99, 105, 112, 101]),
+      chars([76, 111, 82, 65, 47, 81, 76, 111, 82, 65, 47, 80, 69, 70, 84]),
+      chars([114, 97, 110, 107, 47, 100, 114, 111, 112, 111, 117, 116, 44, 32, 76, 111, 82, 65, 47, 81, 76, 111, 82, 65, 44, 32, 80, 69, 70, 84]),
       chars([80, 69, 70, 84, 32, 114, 101, 99, 105, 112, 101]),
       chars([105, 100, 101, 110, 116, 105, 102, 121, 45, 119, 104, 105, 99, 104, 45, 108, 105, 103, 104, 116, 119, 101, 105, 103, 104, 116, 45, 112, 97, 114, 97, 109, 101, 116, 101, 114, 45, 101, 102, 102, 105, 99, 105, 101, 110, 116, 45, 105, 45, 55, 51, 48, 53, 48, 102, 56, 53]),
       chars([100, 97, 116, 97, 115, 101, 116, 95, 116, 111, 95, 98, 101, 95, 115, 101, 108, 101, 99, 116, 101, 100]),

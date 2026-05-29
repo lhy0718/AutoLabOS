@@ -164,7 +164,7 @@ At minimum:
 - the paper should position the proposed experiment against concrete prior approaches
 - related work should not be purely metadata-level when stronger evidence is available
 - if full-text grounding is limited, the manuscript should say so explicitly
-- for method-centered LoRA/QLoRA/PEFT papers, canonical method papers must be collected or the review gate should record a related-work gap
+- for method-centered papers, canonical method papers must be collected or the review gate should record a related-work gap
 
 ## 9) Method/result consistency
 The method and result sections must agree on what was actually run.
