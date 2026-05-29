@@ -7249,7 +7249,10 @@ export class ImplementSessionManager {
     }
 
     const callableResolverClassSelectionRepair =
-      await repairPythonCallableResolverClassSelectionSurface(executionScriptPath);
+      await repairPythonIssueAcrossSurfaces(
+        pythonVerificationSurfacePaths,
+        repairPythonCallableResolverClassSelectionSurface
+      );
     if (callableResolverClassSelectionRepair.repaired) {
       onProgress?.(
         callableResolverClassSelectionRepair.message ||
@@ -7295,7 +7298,10 @@ export class ImplementSessionManager {
 
 
     const findFirstCallableClassSelectionRepair =
-      await repairPythonFindFirstCallableClassSelectionSurface(executionScriptPath);
+      await repairPythonIssueAcrossSurfaces(
+        pythonVerificationSurfacePaths,
+        repairPythonFindFirstCallableClassSelectionSurface
+      );
     if (findFirstCallableClassSelectionRepair.repaired) {
       onProgress?.(
         findFirstCallableClassSelectionRepair.message ||
@@ -17546,6 +17552,28 @@ async function detectPythonIssueAcrossSurfaces(
     }
   }
   return undefined;
+}
+
+async function repairPythonIssueAcrossSurfaces(
+  scriptPaths: string[],
+  repairer: (scriptPath?: string) => Promise<{ repaired: boolean; message?: string }>
+): Promise<{ repaired: boolean; message?: string }> {
+  const messages: string[] = [];
+  let repaired = false;
+  for (const scriptPath of scriptPaths) {
+    const result = await repairer(scriptPath);
+    if (!result.repaired) {
+      continue;
+    }
+    repaired = true;
+    if (result.message) {
+      messages.push(result.message);
+    }
+  }
+  return {
+    repaired,
+    message: messages.length > 0 ? messages.join(" ") : undefined
+  };
 }
 
 function summarizeVerification(
