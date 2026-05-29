@@ -175,6 +175,92 @@ describe("run_experiments execution profile behavior", () => {
     );
   });
 
+  it("passes overwrite intent to reusable public runners that expose an overwrite flag", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-reusable-output-"));
+    process.chdir(root);
+    const run = makeRun("run-reusable-output");
+    run.objectiveMetric = "accuracy >= 0.9";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const publicDir = path.join(root, "outputs", "public-runner");
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+
+    const scriptPath = path.join(publicDir, "run_condition_sweep.py");
+    await writeFile(
+      scriptPath,
+      [
+        "import argparse",
+        "parser = argparse.ArgumentParser()",
+        "parser.add_argument('--output-dir')",
+        "parser.add_argument('--metrics-path')",
+        "parser.add_argument('--overwrite-output', action='store_true')",
+        "parser.parse_args()"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(path.join(publicDir, "study_results.json"), JSON.stringify({ status: "previous" }), "utf8");
+
+    const metricsPath = path.join(runDir, "metrics.json");
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put(
+      "implement_experiments.run_command",
+      `python3 ${JSON.stringify(scriptPath)} --output-dir ${JSON.stringify(publicDir)} --metrics-path ${JSON.stringify(metricsPath)}`
+    );
+    await runContext.put("implement_experiments.cwd", publicDir);
+    await runContext.put("implement_experiments.public_dir", publicDir);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const aci = {
+      runCommand: vi.fn(async (command: string) => {
+        expect(command).toContain("--overwrite-output");
+        await writeFile(
+          metricsPath,
+          JSON.stringify(
+            {
+              status: "completed",
+              accuracy: 0.95,
+              primary_metric: { name: "accuracy", value: 0.95, target: 0.9, met: true }
+            },
+            null,
+            2
+          ),
+          "utf8"
+        );
+        return {
+          status: "ok" as const,
+          stdout: "runner completed",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 10
+        };
+      }),
+      runTests: vi.fn()
+    };
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: aci as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(aci.runCommand).toHaveBeenCalledTimes(1);
+    expect(aci.runTests).not.toHaveBeenCalled();
+  });
+
   it("fails verification when a successful command writes incomplete comparator metrics", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-incomplete-comparator-"));
     process.chdir(root);

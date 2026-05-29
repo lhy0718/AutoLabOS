@@ -288,10 +288,19 @@ function resolveFailureCategory(
   if (stage === "supplemental") {
     return "supplemental_failure";
   }
+  if (looksStructuralCommandFailure(summary)) {
+    return "command_failure";
+  }
   if (looksTransient(summary)) {
     return "transient_command_failure";
   }
   return "command_failure";
+}
+
+function looksStructuralCommandFailure(summary: string): boolean {
+  return /rerun with --overwrite-output|unrecognized arguments?|missing required|syntaxerror|indentationerror|typeerror|attributeerror/iu.test(
+    summary
+  );
 }
 
 function looksTransient(summary: string): boolean {

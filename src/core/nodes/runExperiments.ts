@@ -616,6 +616,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         resolved.cwd,
         resolveRunExperimentsBudgetTimeoutSec(deps.config)
       );
+      primaryCommand = await appendPythonOverwriteOutputArgIfAccepted(primaryCommand, resolved.cwd);
       primaryCommand = wrapCommandForExecutionProfile({
         profile: deps.executionProfile || "local",
         command: primaryCommand,
@@ -2880,6 +2881,57 @@ async function appendPythonTimeoutArgIfAccepted(
     return `${command} --budget-timeout-sec ${timeoutSec}`;
   }
   return command;
+}
+
+async function appendPythonOverwriteOutputArgIfAccepted(command: string, cwd: string): Promise<string> {
+  if (hasCommandFlag(command, "--overwrite-output")) {
+    return command;
+  }
+  const scriptPath = extractPythonScriptPathFromCommand(command, cwd);
+  if (!scriptPath || path.extname(scriptPath) !== ".py" || !(await fileExists(scriptPath))) {
+    return command;
+  }
+  const outputDir =
+    extractCommandPathFlagValue(command, cwd, "--output-dir") ||
+    extractCommandPathFlagValue(command, cwd, "--public-dir");
+  if (!outputDir || !(await looksLikeReusableExperimentOutputDir(outputDir))) {
+    return command;
+  }
+  const source = await fs.readFile(scriptPath, "utf8");
+  const acceptedFlags = extractPythonArgparseLongFlagsForRunCommand(source);
+  return acceptedFlags.has("--overwrite-output") ? `${command} --overwrite-output` : command;
+}
+
+function hasCommandFlag(command: string, flag: string): boolean {
+  const escaped = escapeRegex(flag);
+  return new RegExp(`(?:^|\\s)${escaped}(?:\\s|=|$)`, "u").test(command);
+}
+
+function extractCommandPathFlagValue(command: string, cwd: string, flag: string): string | undefined {
+  const inlinePattern = new RegExp(`${escapeRegex(flag)}=("[^"]*"|'[^']*'|\\S+)`, "u");
+  const inlineMatch = command.match(inlinePattern);
+  const spacedPattern = new RegExp(`${escapeRegex(flag)}\\s+("[^"]*"|'[^']*'|\\S+)`, "u");
+  const spacedMatch = command.match(spacedPattern);
+  const rawValue = inlineMatch?.[1] || spacedMatch?.[1];
+  if (!rawValue) {
+    return undefined;
+  }
+  const value = unquoteShellToken(rawValue);
+  return path.isAbsolute(value) ? value : path.resolve(cwd, value);
+}
+
+async function looksLikeReusableExperimentOutputDir(dirPath: string): Promise<boolean> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(dirPath);
+  } catch {
+    return false;
+  }
+  return entries.some((entry) =>
+    /^(study_results|latest_results|aggregate_results|condition_results|result_table|metrics|summary)\.(json|jsonl|csv|tsv|md)$/iu.test(
+      entry
+    )
+  );
 }
 
 function extractPythonArgparseLongFlagsForRunCommand(source: string): Set<string> {
