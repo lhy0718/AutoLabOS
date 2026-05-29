@@ -15,6 +15,60 @@ Path placeholders:
 
 ---
 
+## Issue: LV-453
+
+- Status: reproduced in same-flow P6 validation on 2026-05-30; source repair implemented and committed; focused automated validation passed; same-flow retry pending
+- Validation target: run_experiments must reject a generated runner that emits a fatal runtime traceback and fails to write fresh required metrics, instead of recovering stale public-bundle metrics from a previous attempt.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after implement_experiments completed and run_experiments invoked the generated condition-sweep runner.
+
+- Reproduction steps:
+  1. Resume the active P6 validation run and approve the handoff from implement_experiments to run_experiments.
+  2. Let run_experiments execute the node-owned command for the generated runner.
+  3. Observe the command stderr report "Experiment execution failed before normal finalization" with "TypeError: _as_path() missing 1 required positional argument: fallback".
+  4. Observe that no fresh required metrics file was written at the expected run metrics path.
+
+- Expected behavior:
+  - A zero-exit command with a fatal Python traceback and no fresh required metrics must be treated as a run_experiments failure.
+  - Stale public-bundle metrics from a previous attempt must not satisfy the current node contract.
+  - The failure should feed back into the governed workflow so the implementation node can repair its own generated runner.
+
+- Actual behavior:
+  - run_experiments recovered metrics.json from the public experiment bundle even though the current command emitted a fatal traceback.
+  - The recovered metrics were stale and reflected old condition markers/counts rather than the current locked condition contract.
+  - The workflow moved forward with misleading experiment evidence instead of forcing a runner repair.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately reproduced; the issue was observed in the existing active P6 validation run.
+  - Existing session: reproduced in persisted run artifacts and run_experiments logs for run 3bc89107-909f-4315-9340-d75ce02eb0e0.
+  - Divergence: no UI-only divergence observed; the defect is a node-level artifact freshness and runtime-failure classification gap.
+
+- Root cause hypothesis:
+  - Type: persisted_state_bug
+  - Hypothesis: run_experiments treated public-bundle metrics as a recovery candidate without checking that the file was modified during the current command attempt, and it did not classify fatal stderr from a zero-exit Python runner as a hard failure when required metrics were missing.
+
+- Code/test changes:
+  - Code: src/core/nodes/runExperiments.ts now records the command start time, rejects zero-exit fatal runtime tracebacks when required metrics are missing, and skips public-bundle metrics whose modification time predates the current command attempt.
+  - Tests: tests/runExperimentsExecutionProfile.test.ts covers zero-exit traceback rejection and verifies stale public metrics are not recovered while previous metrics are restored.
+  - Commit: e0fde5c Reject stale metrics after runner tracebacks.
+
+- Regression status:
+  - Focused regression passed: TMPDIR=/tmp npm test -- tests/runExperimentsExecutionProfile.test.ts.
+  - Public-code guard passed: TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts.
+  - Build passed: npm run build.
+  - Whitespace check passed: git diff --check.
+  - Full npm test did not pass; observed unrelated existing failures in implementSessionManager repair tests and paperAnalyzer confidence expectation. Same-flow retry is still required.
+
+- Remaining risks:
+  - The generated runner still needs to be repaired by AutoLabOS through the governed implement_experiments/run_experiments loop; this entry only prevents stale metrics from masking that failure.
+  - Existing public run-output directories may still contain historical experiment-specific names, but source/tests/docs/skills must remain domain-neutral.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/events.jsonl
+  - <validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/metrics.json
+
+---
+
 ## Issue: LV-452
 
 - Status: reproduced in same-flow P6 validation on 2026-05-29; source repair implemented; focused automated validation passed; same-flow retry pending
