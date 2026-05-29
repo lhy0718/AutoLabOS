@@ -672,7 +672,7 @@ function inferExperimentProtocolKind(
     experiment_portfolio: resultAnalysis?.experiment_portfolio
   }).toLowerCase();
   if (
-    /\b(adapter|quantized_adapter|peft|llm|language model|instruction tuning|token budget|vram|gpu)\b/u.test(
+    /\b(adapter|quantized_adapter|llm|language model|instruction tuning|token budget|vram|gpu)\b/u.test(
       haystack
     )
   ) {
@@ -5875,13 +5875,13 @@ function softenLmBenchmarkPilotTitle(title: string): string {
 function compactReaderFacingMethodParagraphs(paragraphs: string[]): string[] {
   const compacted = compactMethodProtocolParagraphs(paragraphs);
   const sectionText = compacted.join(" ");
-  const isAdapterRankDropoutPreflight =
+  const isAdapterConditionParameterPreflight =
     /\badapter\b/iu.test(sectionText)
     && /\brank\b/iu.test(sectionText)
     && /\bdropout\b/iu.test(sectionText)
     && /\bBenchmark Task A\b/iu.test(sectionText)
     && /\bBenchmark Task B\b/iu.test(sectionText);
-  if (!isAdapterRankDropoutPreflight) {
+  if (!isAdapterConditionParameterPreflight) {
     return compacted;
   }
   const hasProtocolCore = compacted.some((paragraph) =>
@@ -5929,13 +5929,13 @@ function compactReaderFacingDiscussionParagraphs(paragraphs: string[]): string[]
     paragraphs.map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph)).filter(Boolean)
   );
   const sectionText = cleaned.join(" ");
-  const isAdapterRankDropoutPreflight =
+  const isAdapterConditionParameterPreflight =
     /\badapter\b/iu.test(sectionText)
     && /\brank\b/iu.test(sectionText)
     && /\bdropout\b/iu.test(sectionText)
     && /\bBenchmark Task A\b/iu.test(sectionText)
     && /\bBenchmark Task B\b/iu.test(sectionText);
-  if (!isAdapterRankDropoutPreflight) {
+  if (!isAdapterConditionParameterPreflight) {
     return uniqueStrings(cleaned);
   }
   const hasTriageParagraph = cleaned.some((paragraph) =>
@@ -6095,7 +6095,7 @@ function strengthenRelatedWorkSectionWithPaperContrasts(
 }
 
 function shouldUseadapterRelatedWorkFallback(sectionText: string): boolean {
-  if (!/\badapter\b|\bquantized adapter\b|\bPEFT\b|parameter-efficient/iu.test(sectionText)) {
+  if (!/\badapter\b|\bquantized adapter\b|\bparameter-efficient\b|parameter-efficient/iu.test(sectionText)) {
     return false;
   }
   if (/rank[^.]{0,80}dropout|dropout[^.]{0,80}rank/iu.test(sectionText)) {
@@ -8841,9 +8841,9 @@ function collectModelNames(
     asString(metricsModelSelection.model_id) || "",
     ...asStringArray(protocol.models),
     ...asStringArray(selectedDesign.baselines),
-    ...asStringArray(selectedDesign.implementation_notes).filter((item) => /llm|language model|backbone|base model|adapter|peft/iu.test(item)),
-    ...asStringArray(selectedDesign.baselines).filter((item) => /llm|language model|backbone|base model|adapter|peft/iu.test(item)),
-    ...asStringArray(selectedDesign.metrics).filter((item) => /bert|tree|forest|regression|svm|xgboost|workflow|nested|llm|adapter|peft/iu.test(item)),
+    ...asStringArray(selectedDesign.implementation_notes).filter((item) => /llm|language model|backbone|base model|adapter/iu.test(item)),
+    ...asStringArray(selectedDesign.baselines).filter((item) => /llm|language model|backbone|base model|adapter/iu.test(item)),
+    ...asStringArray(selectedDesign.metrics).filter((item) => /bert|tree|forest|regression|svm|xgboost|workflow|nested|llm|adapter/iu.test(item)),
     ...datasetSummaries.flatMap((item) => Object.keys(asRecord(asRecord(item.workflows).nested).models || {})),
     ...datasetSummaries.flatMap((item) => Object.keys(asRecord(item.models)))
   ]).filter(Boolean).slice(0, 8);

@@ -149,12 +149,12 @@ describe("paperWriting related-work support", () => {
         matched_metric_key: "accuracy_delta_vs_baseline_mean",
         observed_value: 0.0667,
         target_description: ">= 0.01",
-        selected_design_title: "5-seed high-rank dropout stability against locked baseline",
+        selected_design_title: "5-seed condition-parameter stability against locked baseline",
         execution_runs: 25
       },
       plan_context: {
         selected_design: {
-          title: "5-seed high-rank dropout stability against locked baseline",
+          title: "5-seed condition-parameter stability against locked baseline",
           summary: "Compare condition-parameter conditions against the locked baseline."
         }
       },

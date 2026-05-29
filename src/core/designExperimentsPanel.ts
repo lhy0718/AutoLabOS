@@ -215,7 +215,7 @@ function isLikelyObjectiveDrift(
     /\bnot\s+a\s+model[- ]quality\s+experiment\b/u.test(candidateText) ||
     /\bdoes\s+not\s+answer\s+the\s+model[- ]quality\s+hypothesis\b/u.test(candidateText);
   const modelExperimentSurface =
-    /\b(lora|rank|dropout|factorial|adapter|arc|benchmark_task_b|training condition|train\/eval)\b/u.test(candidateText);
+    /\b(adapter|rank|dropout|factorial|arc|benchmark_task_b|training condition|train\/eval)\b/u.test(candidateText);
   const primaryQualityMetric = candidate.metrics
     .slice(0, 2)
     .some((metric) => /\b(avg accuracy|mean accuracy|accuracy|f1|auc|rouge|bleu|pass@?1|delta.*baseline)\b/u.test(metric.toLowerCase().replace(/[_-]+/g, " ")));

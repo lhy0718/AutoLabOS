@@ -95,14 +95,15 @@ import {
   repairPythonMainCallableResolverSpecificitySurface,
   repairPythonRunContextHelperFallbackSurface,
   repairPythonMainStudyRunnerDeviceBridgeSurface,
-  repairPythonRankDropoutStudyCallableBridgeSurface,
+  repairPythonConditionParameterStudyCallableBridgeSurface,
   repairPythonLockedSweepExecutorResolverSurface,
-  repairPythonRankDropoutSweepControllerResolverSurface,
+  repairPythonConditionParameterSweepControllerResolverSurface,
   repairPythonLockedSweepPerRunExecutorBridgeSurface,
   repairPythonSweepCallableClassResolverSurface,
   repairPythonScheduleExecutorArgumentBridgeSurface,
   repairPythonLockedStudyRunsEntrypointAliasSurface,
   repairPythonBaselineFirstSweepEntrypointAliasSurface,
+  repairPythonBaselineFirstStudyEntrypointAliasSurface,
   repairPythonLockedSweepPlanBuilderAliasSurface,
   repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface,
   repairPythonEntrypointLockedConditionSeedSweepCandidateSurface,
@@ -112,7 +113,7 @@ import {
   repairPythonSingleConditionExecutorBridgeSurface,
   repairPythonParameterSummaryRecordSurface,
   repairPythonMultipleChoiceDataclassChoiceAliasSurface,
-  repairPythonPeftAcronymClassAliasSurface,
+  repairPythonUppercaseAdapterAcronymClassAliasSurface,
   repairPythonEntrypointMetricsAggregationBridgeSurface,
   repairPythonEntrypointWorkflowSignatureBridgeSurface,
   repairPythonFindHelperCallableClassSurface,
@@ -184,7 +185,7 @@ import {
   repairPythonRecipeExecutionOrchestratorAlias,
   repairPythonRecipeSpecUntunedNoTrainingHyperparameterSurface,
   repairPythonRecipeSpecTrainAdapterSurface,
-  repairPythonPeftVirtualTokenEvaluationAlignmentSurface,
+  repairPythonAdapterVirtualTokenEvaluationAlignmentSurface,
   repairPythonIa3FeedforwardSubsetSurface,
   repairPythonDependencyCheckerCallSurface,
   repairPythonRuntimeDependencyHelperAlias,
@@ -212,7 +213,7 @@ import {
   repairPythonUnexpectedKeywordParameterSurface,
   repairPythonNamespaceGetNoneDefaultSurface,
   repairPythonInvalidInfinityLiteralSurface,
-  repairPythonRankDropoutMarkerParserCollisionSurface,
+  repairPythonConditionParameterMarkerParserCollisionSurface,
   repairPythonImportedHelperRunnerResolverSurface,
   repairPythonCallableResolverClassSelectionSurface,
   repairPythonLookupCallableClassSelectionSurface,
@@ -550,7 +551,7 @@ describe("ImplementSessionManager", () => {
           adapter_r: 16,
           adapter_alpha: 32,
           adapter_dropout: 0.05,
-          target_modules: ["q_proj", "v_proj"]
+          target_modules: ["module_a", "module_c"]
         }
       ]
     });
@@ -566,7 +567,7 @@ describe("ImplementSessionManager", () => {
         r: 16,
         adapter_alpha: 32,
         adapter_dropout: 0.05,
-        target_modules: ["q_proj", "v_proj"],
+        target_modules: ["module_a", "module_c"],
         quantization: "4bit"
       }
     ]);
@@ -600,8 +601,8 @@ describe("ImplementSessionManager", () => {
         "    adapter_alpha: 32",
         "    adapter_dropout: 0.05",
         "    target_modules:",
-        "      - q_proj",
-        "      - v_proj",
+        "      - module_a",
+        "      - module_c",
         ""
       ].join("\n"),
       "utf8"
@@ -713,14 +714,14 @@ describe("ImplementSessionManager", () => {
     const paths = extractWorkspacePathsFromCommand(
       [
         `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
-        `python3 ${JSON.stringify(scriptPath)} --help >/tmp/peft_study_help.txt 2> ${JSON.stringify(stderrPath)} >>${JSON.stringify(helpPath)}`
+        `python3 ${JSON.stringify(scriptPath)} --help >/tmp/adapter_study_help.txt 2> ${JSON.stringify(stderrPath)} >>${JSON.stringify(helpPath)}`
       ].join(" && "),
       workspace,
       workspace
     );
 
     expect(paths).toContain(scriptPath);
-    expect(paths).not.toContain("/tmp/peft_study_help.txt");
+    expect(paths).not.toContain("/tmp/adapter_study_help.txt");
     expect(paths).not.toContain(stderrPath);
     expect(paths).not.toContain(helpPath);
   });
@@ -16424,7 +16425,7 @@ describe("ImplementSessionManager", () => {
 
     expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/too many values to unpack/);
 
-    const repair = await repairPythonRankDropoutMarkerParserCollisionSurface(scriptPath);
+    const repair = await repairPythonConditionParameterMarkerParserCollisionSurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
@@ -23345,7 +23346,7 @@ describe("ImplementSessionManager", () => {
     writeFileSync(
       scriptPath,
       [
-        "get_peft_model = object",
+        "get_adapter_model = object",
         "",
         "def continuation_nll(model, tokenizer, prompt: str, continuation: str, device, max_length: int = 768) -> float:",
         "    full_text = prompt + ' ' + continuation",
@@ -23367,7 +23368,7 @@ describe("ImplementSessionManager", () => {
       "utf8"
     );
 
-    const repair = await repairPythonPeftVirtualTokenEvaluationAlignmentSurface(scriptPath);
+    const repair = await repairPythonAdapterVirtualTokenEvaluationAlignmentSurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
@@ -23391,9 +23392,9 @@ describe("ImplementSessionManager", () => {
         "        self.target_modules = list(target_modules or ())",
         "        self.feedforward_modules = list(feedforward_modules or ())",
         "",
-        "def infer_peft_targets(base_model, recipe):",
-        "    common_attn = ['q_proj', 'v_proj']",
-        "    common_mlp = ['gate_proj', 'up_proj']",
+        "def infer_adapter_targets(base_model, recipe):",
+        "    common_attn = ['module_a', 'module_c']",
+        "    common_mlp = ['module_e', 'module_f']",
         "    linear_suffixes = set(common_attn + common_mlp)",
         "    if recipe == 'ia3':",
         "        target = common_attn[:]",
@@ -23406,8 +23407,8 @@ describe("ImplementSessionManager", () => {
         "    target = common_attn + common_mlp",
         "    return {'target_modules': target}",
         "",
-        "def make_peft_model(deps, base_model, recipe):",
-        "    targets = infer_peft_targets(base_model, recipe)",
+        "def make_adapter_model(deps, base_model, recipe):",
+        "    targets = infer_adapter_targets(base_model, recipe)",
         "    cfg = deps['IA3Config'](",
         "        task_type='CAUSAL_LM',",
         "        target_modules=targets['target_modules'],",
@@ -23416,9 +23417,9 @@ describe("ImplementSessionManager", () => {
         "    return cfg",
         "",
         "def main():",
-        "    cfg = make_peft_model({'IA3Config': FakeIA3Config}, object(), 'ia3')",
+        "    cfg = make_adapter_model({'IA3Config': FakeIA3Config}, object(), 'ia3')",
         "    assert set(cfg.feedforward_modules).issubset(set(cfg.target_modules))",
-        "    assert cfg.target_modules == ['q_proj', 'v_proj', 'gate_proj', 'up_proj']",
+        "    assert cfg.target_modules == ['module_a', 'module_c', 'module_e', 'module_f']",
         "    return 0",
         "",
         "if __name__ == '__main__':",
@@ -25239,7 +25240,7 @@ describe("ImplementSessionManager", () => {
         "    is_locked_adapter_baseline: bool = False",
         "    hyperparameter_metadata: Mapping[str, Any] = field(default_factory=dict)",
         "    implementation_notes: str = ''",
-        "    required_peft_features: Tuple[str, ...] = field(default_factory=tuple)",
+        "    required_adapter_features: Tuple[str, ...] = field(default_factory=tuple)",
         "    failure_if_unsupported: bool = True",
         "",
         "def _condition_config_class() -> Any:",
@@ -26639,17 +26640,17 @@ describe("ImplementSessionManager", () => {
         "import json",
         "",
         "@dataclass",
-        "class PeftConditionConfig:",
+        "class AbcdConditionConfig:",
         "    name: str",
         "    is_baseline: bool = False",
         "",
         "@dataclass",
         "class StudyConfig:",
-        "    conditions: Tuple[PeftConditionConfig, ...] = field(default_factory=tuple)",
+        "    conditions: Tuple[AbcdConditionConfig, ...] = field(default_factory=tuple)",
         "",
         "CONDITION_DESCRIPTORS = (",
-        "    PEFTConditionConfig('unmodified_base', True),",
-        "    PEFTConditionConfig('adapter_baseline', False),",
+        "    ABCDConditionConfig('unmodified_base', True),",
+        "    ABCDConditionConfig('adapter_baseline', False),",
         ")",
         "",
         "def main():",
@@ -26665,15 +26666,15 @@ describe("ImplementSessionManager", () => {
     );
 
     expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
-      /PEFTConditionConfig/
+      /ABCDConditionConfig/
     );
 
-    const repair = await repairPythonPeftAcronymClassAliasSurface(scriptPath);
+    const repair = await repairPythonUppercaseAdapterAcronymClassAliasSurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("# _autolabos_peft_acronym_alias_marker");
-    expect(repairedSource).toContain("PEFTConditionConfig = PeftConditionConfig");
+    expect(repairedSource).toContain("# _autolabos_adapter_acronym_alias_marker");
+    expect(repairedSource).toContain("ABCDConditionConfig = AbcdConditionConfig");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       condition_count: 2,
@@ -26707,9 +26708,9 @@ describe("ImplementSessionManager", () => {
         "    target_modules: Tuple[str, ...] = field(default_factory=tuple)",
         "    use_decomposed_adapter: bool = False",
         "    adapter_name: Optional[str] = None",
-        "    peft_method: Optional[str] = None",
+        "    adapter_method: Optional[str] = None",
         "    neftune_noise_alpha: Optional[float] = None",
-        "    peft_kwargs: Mapping[str, Any] = field(default_factory=dict)",
+        "    adapter_kwargs: Mapping[str, Any] = field(default_factory=dict)",
         "    trainer_kwargs: Mapping[str, Any] = field(default_factory=dict)",
         "    notes: Tuple[str, ...] = field(default_factory=tuple)",
         "",
@@ -26727,9 +26728,9 @@ describe("ImplementSessionManager", () => {
         "    target_modules = None,",
         "    use_decomposed_adapter: bool = False,",
         "    adapter_name: Optional[str] = None,",
-        "    peft_method: Optional[str] = None,",
+        "    adapter_method: Optional[str] = None,",
         "    neftune_noise_alpha: Optional[float] = None,",
-        "    peft_kwargs: Optional[Mapping[str, Any]] = None,",
+        "    adapter_kwargs: Optional[Mapping[str, Any]] = None,",
         "    trainer_kwargs: Optional[Mapping[str, Any]] = None,",
         "    notes = None,",
         ") -> ConditionSpec:",
@@ -26746,9 +26747,9 @@ describe("ImplementSessionManager", () => {
         "        target_modules=tuple(target_modules or ()),",
         "        use_decomposed_adapter=use_decomposed_adapter,",
         "        adapter_name=adapter_name,",
-        "        peft_method=peft_method,",
+        "        adapter_method=adapter_method,",
         "        neftune_noise_alpha=neftune_noise_alpha,",
-        "        peft_kwargs=dict(peft_kwargs or {}),",
+        "        adapter_kwargs=dict(adapter_kwargs or {}),",
         "        trainer_kwargs=dict(trainer_kwargs or {}),",
         "        notes=tuple(notes or ()),",
         "    )",
@@ -26761,7 +26762,7 @@ describe("ImplementSessionManager", () => {
         "    family: str,",
         "    recipe_kind: str,",
         "    description: str,",
-        "    peft_config = None,",
+        "    adapter_config = None,",
         "    training_overrides = None,",
         "    feature_flags = None,",
         "    expected_support: str = 'required',",
@@ -26776,7 +26777,7 @@ describe("ImplementSessionManager", () => {
         "            family=family,",
         "            recipe_kind=recipe_kind,",
         "            description=description,",
-        "            peft_config=dict(peft_config or {}),",
+        "            adapter_config=dict(adapter_config or {}),",
         "            training_overrides=dict(training_overrides or {}),",
         "            feature_flags=dict(feature_flags or {}),",
         "            expected_support=expected_support,",
@@ -26791,7 +26792,7 @@ describe("ImplementSessionManager", () => {
         "    family='adapter',",
         "    recipe_kind='comparator',",
         "    description='decomposed adapter comparator',",
-        "    peft_config={'r': 16, 'adapter_alpha': 32, 'target_modules': ['q_proj'], 'use_decomposed_adapter': True},",
+        "    adapter_config={'r': 16, 'adapter_alpha': 32, 'target_modules': ['module_a'], 'use_decomposed_adapter': True},",
         "    training_overrides={'train': True, 'adapter': 'decomposed_adapter', 'neftune_noise_alpha': 5},",
         "    feature_flags={'use_decomposed_adapter': True},",
         "    notes=['locked'],",
@@ -26810,7 +26811,7 @@ describe("ImplementSessionManager", () => {
     );
 
     expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
-      /unexpected keyword argument 'peft_config'/
+      /unexpected keyword argument 'adapter_config'/
     );
 
     const repair = await repairPythonConditionSpecFactoryKwargBridgeSurface(scriptPath);
@@ -26824,12 +26825,12 @@ describe("ImplementSessionManager", () => {
       trainable: true,
       adapter_r: 16,
       adapter_alpha: 32,
-      target_modules: ["q_proj"],
+      target_modules: ["module_a"],
       use_decomposed_adapter: true,
       adapter_name: "decomposed_adapter",
-      peft_method: "decomposed_adapter",
+      adapter_method: "decomposed_adapter",
       neftune_noise_alpha: 5,
-      peft_kwargs: { r: 16, adapter_alpha: 32, use_decomposed_adapter: true },
+      adapter_kwargs: { r: 16, adapter_alpha: 32, use_decomposed_adapter: true },
       trainer_kwargs: { train: true, adapter: "decomposed_adapter", neftune_noise_alpha: 5 },
       notes: ["locked"]
     });
@@ -28433,7 +28434,7 @@ describe("ImplementSessionManager", () => {
 
     expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
 
-    const repair = await repairPythonRankDropoutStudyCallableBridgeSurface(scriptPath);
+    const repair = await repairPythonConditionParameterStudyCallableBridgeSurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
@@ -28642,7 +28643,7 @@ describe("ImplementSessionManager", () => {
       /study sweep controller/
     );
 
-    const repair = await repairPythonRankDropoutSweepControllerResolverSurface(scriptPath);
+    const repair = await repairPythonConditionParameterSweepControllerResolverSurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
@@ -29211,6 +29212,76 @@ describe("ImplementSessionManager", () => {
       completed_run_count: 2,
       executor: "execute_locked_baseline_first_sweep",
       has_device_kwarg: true
+    });
+  });
+
+  it("aliases baseline-first locked study executors into final study entrypoint names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-study-entrypoint-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Sequence",
+        "",
+        "def execute_locked_baseline_first_study(args: argparse.Namespace, **kwargs: Any) -> dict[str, Any]:",
+        "    payload = {",
+        "        \"status\": \"completed\",",
+        "        \"completed_run_count\": 1,",
+        "        \"executor\": \"execute_locked_baseline_first_study\",",
+        "        \"metrics_path\": str(getattr(args, \"metrics_path\", \"metrics.json\")),",
+        "    }",
+        "    Path(\"executed.json\").write_text(json.dumps(payload), encoding=\"utf-8\")",
+        "    return payload",
+        "",
+        "def _autolabos_invoke_helper(names: Sequence[str], args: argparse.Namespace):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate(args)",
+        "    raise RuntimeError(\"No study execution helper was found; cannot run the locked experiment.\")",
+        "",
+        "def main(argv: Sequence[str] | None = None) -> int:",
+        "    args = argparse.Namespace(metrics_path=\"metrics.json\")",
+        "    payload = _autolabos_invoke_helper(",
+        "        (",
+        "            \"run_study\",",
+        "            \"execute_study\",",
+        "            \"run_experiment\",",
+        "            \"execute_experiment\",",
+        "            \"run_locked_study\",",
+        "            \"execute_locked_study\",",
+        "        ),",
+        "        args,",
+        "    )",
+        "    return 0 if payload.get(\"status\") == \"completed\" else 1",
+        "",
+        "if __name__ == \"__main__\":",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No study execution helper/
+    );
+
+    const repair = await repairPythonBaselineFirstStudyEntrypointAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_study_entrypoint_alias_marker");
+    expect(repairedSource).toContain("execute_locked_study = execute_locked_baseline_first_study");
+    expect(repairedSource).toContain("run_study = execute_locked_baseline_first_study");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      completed_run_count: 1,
+      executor: "execute_locked_baseline_first_study"
     });
   });
 
@@ -33985,7 +34056,7 @@ describe("ImplementSessionManager", () => {
         "    train_dataset_name: str = 'alpaca'",
         "    train_subset_size: int = 32",
         "    train_seed: int = 42",
-        "    adapter_target_modules: Tuple[str, ...] = ('q_proj', 'v_proj')",
+        "    adapter_target_modules: Tuple[str, ...] = ('module_a', 'module_c')",
         "    enabled: bool = True",
         "",
         "LOCKED_BASE_MODEL_NAME = 'tiny'",
@@ -34003,7 +34074,7 @@ describe("ImplementSessionManager", () => {
         "LOCKED_WEIGHT_DECAY = 0.0",
         "",
         "LOCKED_RECIPE_METADATA: List[Dict[str, Any]] = [",
-        "    {'recipe_id': 'base_unmodified', 'display_name': 'Base', 'peft_method': 'none', 'dataset_name': 'alpaca', 'subset_size': 16, 'subset_seed': 7, 'target_modules': []},",
+        "    {'recipe_id': 'base_unmodified', 'display_name': 'Base', 'adapter_method': 'none', 'dataset_name': 'alpaca', 'subset_size': 16, 'subset_seed': 7, 'target_modules': []},",
         "]",
         "",
         "def _coerce_recipe_metadata_to_config(metadata: Mapping[str, Any]) -> Any:",
@@ -34032,8 +34103,8 @@ describe("ImplementSessionManager", () => {
         "        field_aliases: Dict[str, str] = {",
         "            'name': 'recipe_id',",
         "            'id': 'recipe_id',",
-        "            'method': 'peft_method',",
-        "            'adapter_type': 'peft_method',",
+        "            'method': 'adapter_method',",
+        "            'adapter_type': 'adapter_method',",
         "            'train': 'should_train',",
         "            'train_adapter': 'should_train',",
         "            'base_model_name': 'model_name',",
@@ -34094,19 +34165,19 @@ describe("ImplementSessionManager", () => {
         "    value = _recipe_attr(recipe, 'recipe_id', 'name', default='recipe')",
         "    return _canonical_string(value, default='recipe').lower()",
         "",
-        "def _recipe_peft_type(recipe: Any) -> str:",
-        "    value = _recipe_attr(recipe, 'peft_type', 'adapter_type', default='unknown')",
+        "def _recipe_adapter_type(recipe: Any) -> str:",
+        "    value = _recipe_attr(recipe, 'adapter_type', 'adapter_type', default='unknown')",
         "    return _canonical_string(value, default='unknown').lower()",
         "",
         "LOCKED_BASELINE_FIRST_RECIPES: List[Dict[str, Any]] = [",
-        "    {'recipe_id': 'Base Checkpoint', 'peft_type': 'none'},",
-        "    {'recipe_id': 'Vanilla adapter', 'peft_type': 'adapter'},",
+        "    {'recipe_id': 'Base Checkpoint', 'adapter_type': 'none'},",
+        "    {'recipe_id': 'Vanilla adapter', 'adapter_type': 'adapter'},",
         "]",
         "LOCKED_BASELINE_FIRST_IDS = [_recipe_identity(recipe) for recipe in LOCKED_BASELINE_FIRST_RECIPES]",
         "",
         "if __name__ == '__main__':",
         "    assert LOCKED_BASELINE_FIRST_IDS[0] == 'base_checkpoint'",
-        "    assert _recipe_peft_type(LOCKED_BASELINE_FIRST_RECIPES[1]) == 'adapter'",
+        "    assert _recipe_adapter_type(LOCKED_BASELINE_FIRST_RECIPES[1]) == 'adapter'",
         ""
       ].join("\n"),
       "utf8"
@@ -35292,7 +35363,7 @@ describe("ImplementSessionManager", () => {
                 "def _make_recipe(",
                 "    recipe_id: str,",
                 "    display_name: str,",
-                "    peft_type: str,",
+                "    adapter_type: str,",
                 "    rank: Optional[int],",
                 "    alpha: Optional[int],",
                 "    dropout: float,",
@@ -35306,7 +35377,7 @@ describe("ImplementSessionManager", () => {
                 "    kwargs = {",
                 "        'recipe_id': recipe_id,",
                 "        'display_name': display_name,",
-                "        'peft_type': peft_type,",
+                "        'adapter_type': adapter_type,",
                 "        'rank': rank,",
                 "        'alpha': alpha,",
                 "        'dropout': dropout,",
@@ -35322,7 +35393,7 @@ describe("ImplementSessionManager", () => {
                 "    return AdapterRecipe(**init_kwargs)",
                 "",
                 "def main():",
-                "    _make_recipe('standard_adapter', 'Standard adapter', 'adapter', 8, 16, 0.05, ('q_proj',), 1, 1e-4, 1, 1)",
+                "    _make_recipe('standard_adapter', 'Standard adapter', 'adapter', 8, 16, 0.05, ('module_a',), 1, 1e-4, 1, 1)",
                 "    return 0",
                 "",
                 "if __name__ == '__main__':",
@@ -35349,11 +35420,11 @@ describe("ImplementSessionManager", () => {
     const result = await manager.run(run);
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
     expect(repairedSource).toContain("class AdapterRecipe:");
-    expect(repairedSource).toContain("def peft_kwargs(self) -> Dict[str, Any]:");
+    expect(repairedSource).toContain("def adapter_kwargs(self) -> Dict[str, Any]:");
     expect(result.testCommand).toContain("py_compile");
   });
 
-  it("repairs a missing RecipeSpec peft_type alias before handing a python runner off to run_experiments", async () => {
+  it("repairs a missing RecipeSpec adapter_type alias before handing a python runner off to run_experiments", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-adapter-type-repair-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -35362,7 +35433,7 @@ describe("ImplementSessionManager", () => {
 
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
-      title: "Repair RecipeSpec peft_type",
+      title: "Repair RecipeSpec adapter_type",
       topic: "agent reasoning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
@@ -35410,19 +35481,19 @@ describe("ImplementSessionManager", () => {
                 "class RecipeSpec:",
                 "    recipe_id: str",
                 "    display_name: str",
-                "    peft_type: str",
+                "    adapter_type: str",
                 "    description: str",
                 "",
                 "def _recipe_spec_kwargs(**kwargs: Any) -> Dict[str, Any]:",
                 "    recipe_fields = getattr(RecipeSpec, '__dataclass_fields__', {})",
                 "    return {key: value for key, value in kwargs.items() if key in recipe_fields}",
                 "",
-                "def make_recipe_spec(recipe_id: str, name: str, peft_method: str, description: str) -> RecipeSpec:",
+                "def make_recipe_spec(recipe_id: str, name: str, adapter_method: str, description: str) -> RecipeSpec:",
                 "    kwargs = _recipe_spec_kwargs(",
                 "        recipe_id=recipe_id,",
                 "        display_name=name,",
-                "        peft_method=peft_method,",
-                "        adapter_type=peft_method,",
+                "        adapter_method=adapter_method,",
+                "        adapter_type=adapter_method,",
                 "        description=description,",
                 "    )",
                 "    return RecipeSpec(**kwargs)",
@@ -35454,7 +35525,7 @@ describe("ImplementSessionManager", () => {
 
     const result = await manager.run(run);
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
-    expect(repairedSource).toContain("peft_type=peft_method");
+    expect(repairedSource).toContain("adapter_type=adapter_method");
     expect(result.testCommand).toContain("py_compile");
   });
 
@@ -35512,7 +35583,7 @@ describe("ImplementSessionManager", () => {
                 "from dataclasses import dataclass",
                 "from typing import Any, Dict",
                 "",
-                "PEFT_TASK_TYPE = 'CAUSAL_LM'",
+                "ADAPTER_TASK_TYPE = 'CAUSAL_LM'",
                 "",
                 "@dataclass(frozen=True)",
                 "class RecipeSpec:",
@@ -35535,7 +35606,7 @@ describe("ImplementSessionManager", () => {
                 "        'recipe_id': recipe_id,",
                 "        'display_name': display_name,",
                 "        'description': description,",
-                "        'task_type': PEFT_TASK_TYPE,",
+                "        'task_type': ADAPTER_TASK_TYPE,",
                 "    }",
                 "    for field_name in field_names:",
                 "        if field_name in aliases:",
@@ -35632,7 +35703,7 @@ describe("ImplementSessionManager", () => {
                 "    display_name: str",
                 "    recipe_type: str",
                 "    description: str = ''",
-                "    peft_type: Optional[str] = None",
+                "    adapter_type: Optional[str] = None",
                 "    adapter_type: Optional[str] = None",
                 "    target_modules: Tuple[str, ...] = field(default_factory=tuple)",
                 "",
@@ -35655,8 +35726,8 @@ describe("ImplementSessionManager", () => {
                 "def _coerce_recipe_spec_kwargs(raw_kwargs: Mapping[str, Any]) -> Dict[str, Any]:",
                 "    field_names = _recipe_spec_field_names()",
                 "    aliases: Dict[str, Tuple[str, ...]] = {",
-                "        'peft_type': ('adapter_type', 'method'),",
-                "        'adapter_type': ('peft_type', 'method'),",
+                "        'adapter_type': ('adapter_type', 'method'),",
+                "        'adapter_type': ('adapter_type', 'method'),",
                 "    }",
                 "    kwargs: Dict[str, Any] = {}",
                 "    for field_name in field_names:",
@@ -35670,13 +35741,13 @@ describe("ImplementSessionManager", () => {
                 "    for field_name in _recipe_spec_required_field_names() - set(kwargs):",
                 "        lower = field_name.lower()",
                 "        recipe_name = str(raw_kwargs.get('name', raw_kwargs.get('recipe_id', 'recipe')))",
-                "        peft_type = str(raw_kwargs.get('peft_type', raw_kwargs.get('adapter_type', 'none')))",
+                "        adapter_type = str(raw_kwargs.get('adapter_type', raw_kwargs.get('adapter_type', 'none')))",
                 "        if 'name' in lower:",
                 "            kwargs[field_name] = recipe_name",
                 "        elif 'display' in lower:",
                 "            kwargs[field_name] = raw_kwargs.get('display_name', recipe_name)",
                 "        elif 'type' in lower:",
-                "            kwargs[field_name] = peft_type",
+                "            kwargs[field_name] = adapter_type",
                 "        else:",
                 "            kwargs[field_name] = raw_kwargs.get(field_name, None)",
                 "    return kwargs",
@@ -35688,7 +35759,7 @@ describe("ImplementSessionManager", () => {
                 "    make_recipe_spec(",
                 "        name='unmodified_base',",
                 "        display_name='Unmodified base checkpoint',",
-                "        peft_type='none',",
+                "        adapter_type='none',",
                 "        adapter_type='none',",
                 "    ),",
                 ")",
@@ -35778,7 +35849,7 @@ describe("ImplementSessionManager", () => {
                 "class RecipeSpec:",
                 "    recipe_id: str",
                 "    display_name: str",
-                "    peft_type: str",
+                "    adapter_type: str",
                 "",
                 "ADAPTER_RECIPES = [RecipeSpec('baseline', 'Untouched baseline', 'none')]",
                 "",
@@ -35879,9 +35950,9 @@ describe("ImplementSessionManager", () => {
         "from dataclasses import dataclass",
         "from typing import Optional",
         "",
-        "PEFT_METHOD_NONE = 'none'",
-        "PEFT_METHOD_LORA = 'adapter'",
-        "SUPPORTED_PEFT_METHODS = {PEFT_METHOD_NONE, PEFT_METHOD_LORA}",
+        "ADAPTER_METHOD_NONE = 'none'",
+        "ADAPTER_METHOD_TUNED = 'adapter'",
+        "SUPPORTED_ADAPTER_METHODS = {ADAPTER_METHOD_NONE, ADAPTER_METHOD_TUNED}",
         "",
         "@dataclass(frozen=True)",
         "class RecipeSpec:",
@@ -35894,11 +35965,11 @@ describe("ImplementSessionManager", () => {
         "    max_train_steps: Optional[int]",
         "",
         "    def __post_init__(self) -> None:",
-        "        if self.method not in SUPPORTED_PEFT_METHODS:",
+        "        if self.method not in SUPPORTED_ADAPTER_METHODS:",
         "            raise ValueError('unsupported method')",
-        "        if self.method == PEFT_METHOD_NONE and self.requires_training:",
+        "        if self.method == ADAPTER_METHOD_NONE and self.requires_training:",
         "            raise ValueError('untuned baseline cannot require training')",
-        "        if self.method != PEFT_METHOD_NONE and not self.requires_training:",
+        "        if self.method != ADAPTER_METHOD_NONE and not self.requires_training:",
         "            raise ValueError('tuned adapter recipe must require training')",
         "        if self.learning_rate <= 0.0:",
         "            raise ValueError(f\"Recipe {self.recipe_id!r} learning_rate must be positive\")",
@@ -35910,7 +35981,7 @@ describe("ImplementSessionManager", () => {
         "LOCKED_BASELINE_RECIPE = RecipeSpec(",
         "    recipe_id='baseline_unmodified_base',",
         "    display_name='Unmodified base checkpoint',",
-        "    method=PEFT_METHOD_NONE,",
+        "    method=ADAPTER_METHOD_NONE,",
         "    requires_training=False,",
         "    learning_rate=0.0,",
         "    train_epochs=0.0,",
@@ -35923,7 +35994,7 @@ describe("ImplementSessionManager", () => {
         "        RecipeSpec(",
         "            recipe_id='bad_tuned_adapter',",
         "            display_name='Bad tuned adapter',",
-        "            method=PEFT_METHOD_LORA,",
+        "            method=ADAPTER_METHOD_TUNED,",
         "            requires_training=True,",
         "            learning_rate=0.0,",
         "            train_epochs=1.0,",
@@ -41794,7 +41865,7 @@ describe("ImplementSessionManager", () => {
                   "    display_name: str",
                   "    role: str",
                   "    train: bool",
-                  "    peft_type: str",
+                  "    adapter_type: str",
                   "    run_order: int",
                   "    is_locked_baseline: bool = False",
                   "    target_modules: Tuple[str, ...] = field(default_factory=tuple)",
@@ -41811,7 +41882,7 @@ describe("ImplementSessionManager", () => {
                   "        display_name='adapter baseline condition',",
                   "        recipe_type='adapter',",
                   "        **{'rank': 2, 'alpha': 4, 'dropout': 0.1},",
-                  "        target_modules=('q_proj', 'v_proj'),",
+                  "        target_modules=('module_a', 'module_c'),",
                   "        is_locked_baseline=True,",
                   "    ),",
                   ")",
@@ -41889,7 +41960,7 @@ describe("ImplementSessionManager", () => {
         "",
         "CANDIDATE_SPECS = (",
         "    CandidateSpec('base_unmodified', 'Base', 'unmodified_base', 'no training', False),",
-        "    CandidateSpec('adapter_baseline_all_linear', 'Vanilla adapter', 'adapter', 'locked tuned baseline', True, adapter_r=EXPECTED_ADAPTER_R, adapter_alpha=EXPECTED_ADAPTER_ALPHA, adapter_dropout=EXPECTED_ADAPTER_DROPOUT, target_modules=('q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj')),",
+        "    CandidateSpec('adapter_baseline_all_linear', 'Vanilla adapter', 'adapter', 'locked tuned baseline', True, adapter_r=EXPECTED_ADAPTER_R, adapter_alpha=EXPECTED_ADAPTER_ALPHA, adapter_dropout=EXPECTED_ADAPTER_DROPOUT, target_modules=('module_a', 'module_b', 'module_c', 'module_d', 'module_e')),",
         ")",
         "",
         "def _recipe_value(raw: Any, key: str, default: Any = None) -> Any:",
@@ -41899,7 +41970,7 @@ describe("ImplementSessionManager", () => {
         "        return raw.get(key, default)",
         "    return getattr(raw, key, default)",
         "",
-        "def _coerce_target_modules(value: Any, default: Sequence[str] = ('q_proj', 'k_proj', 'v_proj', 'o_proj')) -> Tuple[str, ...]:",
+        "def _coerce_target_modules(value: Any, default: Sequence[str] = ('module_a', 'module_b', 'module_c', 'module_d')) -> Tuple[str, ...]:",
         "    if value is None:",
         "        return tuple(default)",
         "    return tuple(value)",
@@ -42013,7 +42084,7 @@ describe("ImplementSessionManager", () => {
                 "class RecipeSpec:",
                 "    recipe_id: str",
                 "    display_name: str",
-                "    peft_type: str",
+                "    adapter_type: str",
                 "",
                 "ADAPTER_RECIPES = [",
                 "    RecipeSpec('standard_adapter_baseline', 'Standard adapter baseline', 'adapter'),",
@@ -42034,10 +42105,10 @@ describe("ImplementSessionManager", () => {
                 "def _recipe_is_reference(recipe: Any) -> bool:",
                 "    recipe_id = _recipe_identifier(recipe).lower()",
                 "    recipe_dict = _recipe_as_dict(recipe)",
-                "    peft_type = str(recipe_dict.get('peft_type', recipe_dict.get('type', ''))).lower()",
+                "    adapter_type = str(recipe_dict.get('adapter_type', recipe_dict.get('type', ''))).lower()",
                 "    return (",
                 "        recipe_id in {'reference', 'untuned_reference', 'base', 'base_reference', 'no_tuning'}",
-                "        or peft_type in {'none', 'reference', 'base', 'untuned'}",
+                "        or adapter_type in {'none', 'reference', 'base', 'untuned'}",
                 "        or bool(recipe_dict.get('is_reference', False))",
                 "    )",
                 "",
@@ -42123,7 +42194,7 @@ describe("ImplementSessionManager", () => {
         "    recipe_id: str",
         "",
         "STANDARD_LORA_BASELINE_RECIPE = AdapterRecipe(recipe_id=STANDARD_LORA_BASELINE_ID)",
-        "PEFT_CANDIDATE_RECIPES = (",
+        "ADAPTER_CANDIDATE_RECIPES = (",
         "    STANDARD_LORA_BASELINE_RECIPE,",
         "    AdapterRecipe(recipe_id='attention_only_candidate_condition'),",
         ")",
@@ -42134,7 +42205,7 @@ describe("ImplementSessionManager", () => {
         "    return str(recipe.recipe_id)",
         "",
         "def _candidate_recipe_sequence() -> List[Any]:",
-        "    return list(PEFT_CANDIDATE_RECIPES)",
+        "    return list(ADAPTER_CANDIDATE_RECIPES)",
         "",
         "def build_locked_candidate_order(candidates: Optional[Sequence[Any]] = None) -> List[Any]:",
         "    ordered_candidates = list(_candidate_recipe_sequence() if candidates is None else candidates)",
@@ -42216,8 +42287,8 @@ describe("ImplementSessionManager", () => {
         "            ordered.append(recipe_id)",
         "    first_config = dict(catalog.get(ordered[0], {}))",
         "    second_config = dict(catalog.get(ordered[1], {}))",
-        "    first_is_base = ordered[0] == BASELINE_UNMODIFIED_RECIPE_ID or bool(first_config.get('is_unmodified_base')) or str(first_config.get('peft_type', '')).lower() in {'none', 'base'}",
-        "    second_is_adapter = ordered[1] == VANILLA_LORA_BASELINE_RECIPE_ID or bool(second_config.get('is_locked_baseline')) or str(second_config.get('peft_type', '')).lower() == 'adapter'",
+        "    first_is_base = ordered[0] == BASELINE_UNMODIFIED_RECIPE_ID or bool(first_config.get('is_unmodified_base')) or str(first_config.get('adapter_type', '')).lower() in {'none', 'base'}",
+        "    second_is_adapter = ordered[1] == VANILLA_LORA_BASELINE_RECIPE_ID or bool(second_config.get('is_locked_baseline')) or str(second_config.get('adapter_type', '')).lower() == 'adapter'",
         "    if not first_is_base or not second_is_adapter:",
         "        raise RuntimeError('Baseline-first comparison contract cannot be satisfied; missing/invalid order: unmodified base checkpoint first, vanilla adapter baseline second')",
         "    return ordered",
@@ -42552,7 +42623,7 @@ describe("ImplementSessionManager", () => {
         "",
         "COMPARISON_MODE = 'baseline_first_locked'",
         "BROADER_TARGET_LORA_RECIPE_ID = 'candidate_condition_extended'",
-        "BROADER_LORA_TARGET_MODULES = ('q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj')",
+        "BROADER_LORA_TARGET_MODULES = ('module_a', 'module_b', 'module_c', 'module_d', 'module_e', 'module_f', 'module_g')",
         "",
         "@dataclass(frozen=True)",
         "class CandidateRecipe:",

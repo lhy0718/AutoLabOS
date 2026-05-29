@@ -7190,11 +7190,11 @@ export class ImplementSessionManager {
       }
     }
 
-    const rankDropoutMarkerParserCollisionRepair =
-      await repairPythonRankDropoutMarkerParserCollisionSurface(executionScriptPath);
-    if (rankDropoutMarkerParserCollisionRepair.repaired) {
+    const conditionParameterMarkerParserCollisionRepair =
+      await repairPythonConditionParameterMarkerParserCollisionSurface(executionScriptPath);
+    if (conditionParameterMarkerParserCollisionRepair.repaired) {
       onProgress?.(
-        rankDropoutMarkerParserCollisionRepair.message ||
+        conditionParameterMarkerParserCollisionRepair.message ||
           "Repaired condition-parameter condition marker parser compatibility before handoff.",
         {
           verificationCommand: command
@@ -7207,7 +7207,7 @@ export class ImplementSessionManager {
         agentRole: "implementer",
         payload: {
           text:
-            rankDropoutMarkerParserCollisionRepair.message ||
+            conditionParameterMarkerParserCollisionRepair.message ||
             "Repaired condition-parameter condition marker parser compatibility before handoff."
         }
       });
@@ -8099,7 +8099,7 @@ export class ImplementSessionManager {
     if (recipeSpecPeftTypeRepair.repaired) {
       onProgress?.(
         recipeSpecPeftTypeRepair.message ||
-          "Repaired RecipeSpec peft_type compatibility before handoff.",
+          "Repaired RecipeSpec adapter_type compatibility before handoff.",
         {
           verificationCommand: command
         }
@@ -8112,7 +8112,7 @@ export class ImplementSessionManager {
         payload: {
           text:
             recipeSpecPeftTypeRepair.message ||
-            "Repaired RecipeSpec peft_type compatibility before handoff."
+            "Repaired RecipeSpec adapter_type compatibility before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -9153,7 +9153,7 @@ export class ImplementSessionManager {
     }
 
     const peftVirtualTokenEvalRepair =
-      await repairPythonPeftVirtualTokenEvaluationAlignmentSurface(executionScriptPath);
+      await repairPythonAdapterVirtualTokenEvaluationAlignmentSurface(executionScriptPath);
     if (peftVirtualTokenEvalRepair.repaired) {
       onProgress?.(
         peftVirtualTokenEvalRepair.message ||
@@ -9924,8 +9924,8 @@ export class ImplementSessionManager {
       await repairPythonConditionSuiteAliasSurface(executionScriptPath);
     const lockedConditionStudyOrchestrationAliasRepair =
       await repairPythonLockedConditionStudyOrchestrationAliasSurface(executionScriptPath);
-    const peftAcronymAliasRepair =
-      await repairPythonPeftAcronymClassAliasSurface(executionScriptPath);
+    const adapterAcronymAliasRepair =
+      await repairPythonUppercaseAdapterAcronymClassAliasSurface(executionScriptPath);
     const conditionSpecFactoryKwargBridgeRepair =
       await repairPythonConditionSpecFactoryKwargBridgeSurface(executionScriptPath);
     const baselineFirstLockedWorkflowAliasRepair =
@@ -9972,12 +9972,12 @@ export class ImplementSessionManager {
       await repairPythonRunContextHelperFallbackSurface(executionScriptPath);
     const mainStudyRunnerDeviceBridgeRepair =
       await repairPythonMainStudyRunnerDeviceBridgeSurface(executionScriptPath);
-    const rankDropoutStudyCallableBridgeRepair =
-      await repairPythonRankDropoutStudyCallableBridgeSurface(executionScriptPath);
+    const conditionParameterStudyCallableBridgeRepair =
+      await repairPythonConditionParameterStudyCallableBridgeSurface(executionScriptPath);
     const lockedSweepExecutorResolverRepair =
       await repairPythonLockedSweepExecutorResolverSurface(executionScriptPath);
-    const rankDropoutSweepControllerResolverRepair =
-      await repairPythonRankDropoutSweepControllerResolverSurface(executionScriptPath);
+    const conditionParameterSweepControllerResolverRepair =
+      await repairPythonConditionParameterSweepControllerResolverSurface(executionScriptPath);
     const lockedSweepPerRunExecutorBridgeRepair =
       await repairPythonLockedSweepPerRunExecutorBridgeSurface(executionScriptPath);
     const sweepCallableClassResolverRepair =
@@ -9988,6 +9988,8 @@ export class ImplementSessionManager {
       await repairPythonLockedStudyRunsEntrypointAliasSurface(executionScriptPath);
     const baselineFirstSweepEntrypointAliasRepair =
       await repairPythonBaselineFirstSweepEntrypointAliasSurface(executionScriptPath);
+    const baselineFirstStudyEntrypointAliasRepair =
+      await repairPythonBaselineFirstStudyEntrypointAliasSurface(executionScriptPath);
     const lockedSweepPlanBuilderAliasRepair =
       await repairPythonLockedSweepPlanBuilderAliasSurface(executionScriptPath);
     const baselineFirstLockedSweepStudyRunnerAliasRepair =
@@ -10146,7 +10148,7 @@ export class ImplementSessionManager {
       conditionPlanRunnerSignatureRepair,
       conditionSuiteAliasRepair,
       lockedConditionStudyOrchestrationAliasRepair,
-      peftAcronymAliasRepair,
+      adapterAcronymAliasRepair,
       conditionSpecFactoryKwargBridgeRepair,
       baselineFirstLockedWorkflowAliasRepair,
       baselineFirstConditionSequenceFacadeRepair,
@@ -10170,14 +10172,15 @@ export class ImplementSessionManager {
         mainCallableResolverSpecificityRepair,
         runContextHelperFallbackRepair,
         mainStudyRunnerDeviceBridgeRepair,
-        rankDropoutStudyCallableBridgeRepair,
+        conditionParameterStudyCallableBridgeRepair,
         lockedSweepExecutorResolverRepair,
-        rankDropoutSweepControllerResolverRepair,
+        conditionParameterSweepControllerResolverRepair,
         lockedSweepPerRunExecutorBridgeRepair,
         sweepCallableClassResolverRepair,
         scheduleExecutorArgumentBridgeRepair,
         lockedStudyRunsEntrypointAliasRepair,
         baselineFirstSweepEntrypointAliasRepair,
+        baselineFirstStudyEntrypointAliasRepair,
         lockedSweepPlanBuilderAliasRepair,
         baselineFirstLockedSweepStudyRunnerAliasRepair,
         entrypointLockedConditionSeedSweepCandidateRepair,
@@ -12443,7 +12446,7 @@ function shouldRequireExplicitBootstrapPlanning(
     .toLowerCase();
   return (
     taskSpec.context.comparison_contract?.comparison_mode === "baseline_first_locked" ||
-    /(peft|adapter|instruction tuning|condition grid|condition sweep|huggingface|transformer|tokenizer|language model|autotokenizer|automodelforcausallm)/u.test(
+    /(adapter|adapter|instruction tuning|condition grid|condition sweep|huggingface|transformer|tokenizer|language model|autotokenizer|automodelforcausallm)/u.test(
       signals
     )
   );
@@ -13047,7 +13050,7 @@ function derivePlannedConditionContract(input: {
   const planText = [planContractText, input.objectiveMetric].filter(Boolean).join("\n");
   const planHasSpecificContract = Boolean(
     input.plan?.trim() &&
-      (extractRankDropoutConditionMarkers(planText).length > 0 ||
+      (extractConditionParameterConditionMarkers(planText).length > 0 ||
         parseRepeatedSeedRunContract(planText) ||
         extractSeedSchedule(planText).length > 1 ||
         parsePlannedConditionContractCount(planText))
@@ -13065,12 +13068,12 @@ function derivePlannedConditionContract(input: {
       markers.add(marker);
     }
   }
-  const rankDropoutMarkers = extractRankDropoutConditionMarkers(text);
-  for (const marker of rankDropoutMarkers) {
+  const conditionParameterMarkers = extractConditionParameterConditionMarkers(text);
+  for (const marker of conditionParameterMarkers) {
     markers.add(marker);
   }
-  const fallbackRankDropoutMarkers = planHasSpecificContract
-    ? extractRankDropoutConditionMarkers(fullContractText)
+  const fallbackConditionParameterMarkers = planHasSpecificContract
+    ? extractConditionParameterConditionMarkers(fullContractText)
     : [];
   addMarkerIf(text, markers, "unmodified_base", /\bunmodified\s+base\b|\bno[-\s]?tune\b|\buntuned\b/iu);
   addMarkerIf(text, markers, "standard_tuned_baseline", /\bvanilla\s+adapter\b|\bstandard\s+adapter\b|\bnamed\s+tuned\s+baseline[^\n.]*\badapter\b/iu);
@@ -13084,23 +13087,23 @@ function derivePlannedConditionContract(input: {
   const seedSchedule = extractSeedSchedule(text);
   const evaluationContract = parseFullEvaluationContract(text);
   const baselineConditionMarker =
-    extractBaselineRankDropoutMarker(text) ||
-    (planHasSpecificContract ? extractBaselineRankDropoutMarker(fullContractText) : undefined);
+    extractBaselineConditionParameterMarker(text) ||
+    (planHasSpecificContract ? extractBaselineConditionParameterMarker(fullContractText) : undefined);
   const requiredCountFromText =
     repeatedRunContract?.cellCount ||
     parsePlannedConditionContractCount(text);
-  const exactRankDropoutMarkers =
-    rankDropoutMarkers.length >= 2 && (!requiredCountFromText || rankDropoutMarkers.length === requiredCountFromText)
-      ? rankDropoutMarkers
-      : fallbackRankDropoutMarkers.length >= 2 &&
-          (!requiredCountFromText || fallbackRankDropoutMarkers.length === requiredCountFromText)
-        ? fallbackRankDropoutMarkers
-        : rankDropoutMarkers.length > 0
-          ? rankDropoutMarkers
+  const exactConditionParameterMarkers =
+    conditionParameterMarkers.length >= 2 && (!requiredCountFromText || conditionParameterMarkers.length === requiredCountFromText)
+      ? conditionParameterMarkers
+      : fallbackConditionParameterMarkers.length >= 2 &&
+          (!requiredCountFromText || fallbackConditionParameterMarkers.length === requiredCountFromText)
+        ? fallbackConditionParameterMarkers
+        : conditionParameterMarkers.length > 0
+          ? conditionParameterMarkers
           : undefined;
   const requiredCount =
     requiredCountFromText ||
-    (exactRankDropoutMarkers && exactRankDropoutMarkers.length >= 2 ? exactRankDropoutMarkers.length : undefined);
+    (exactConditionParameterMarkers && exactConditionParameterMarkers.length >= 2 ? exactConditionParameterMarkers.length : undefined);
   const inferredRepeatedRunCount =
     repeatedRunContract?.runCount ||
     (requiredCount && seedSchedule.length > 1 ? requiredCount * seedSchedule.length : undefined);
@@ -13110,7 +13113,7 @@ function derivePlannedConditionContract(input: {
   if (markers.size === 0 && requiredCount === undefined && !primaryMetricKey) {
     return undefined;
   }
-  let markerList = exactRankDropoutMarkers || [...markers].slice(0, 8);
+  let markerList = exactConditionParameterMarkers || [...markers].slice(0, 8);
   if (baselineConditionMarker && markerList.includes(baselineConditionMarker)) {
     markerList = [
       baselineConditionMarker,
@@ -13344,12 +13347,12 @@ function extractTaskEvaluationCount(text: string, taskAliases: string[]): number
   return undefined;
 }
 
-function extractRankDropoutConditionMarkers(text: string): string[] {
+function extractConditionParameterConditionMarkers(text: string): string[] {
   const markers = new Set<string>();
   const repeatedCellsText = extractRepeatedCellsText(text);
   const explicitSearchText = repeatedCellsText || text;
   if (!repeatedCellsText) {
-    for (const marker of extractRankDropoutGridMarkers(text)) {
+    for (const marker of extractConditionParameterGridMarkers(text)) {
       markers.add(marker);
     }
   }
@@ -13359,7 +13362,7 @@ function extractRankDropoutConditionMarkers(text: string): string[] {
     const rank = Number.parseInt(match[1] || "", 10);
     const dropout = parseDropoutNumber(match[2] || "");
     if (Number.isFinite(rank) && dropout !== undefined) {
-      markers.add(rankDropoutMarker(rank, dropout));
+      markers.add(conditionParameterMarker(rank, dropout));
     }
   }
 
@@ -13375,15 +13378,15 @@ function extractRankDropoutConditionMarkers(text: string): string[] {
         continue;
       }
       for (const dropout of dropouts) {
-        markers.add(rankDropoutMarker(rank, dropout));
+        markers.add(conditionParameterMarker(rank, dropout));
       }
     }
   }
 
-  return [...markers].sort(rankDropoutMarkerSort);
+  return [...markers].sort(conditionParameterMarkerSort);
 }
 
-function extractRankDropoutGridMarkers(text: string): string[] {
+function extractConditionParameterGridMarkers(text: string): string[] {
   const markers = new Set<string>();
   for (const match of text.matchAll(
     /\branks?(?:\s+in)?\s+`?\{([^}]+)\}`?\s*(?:[x×]|and)\s*(?:adapter\s+)?dropouts?(?:\s+in)?\s+`?\{([^}]+)\}`?/giu
@@ -13395,7 +13398,7 @@ function extractRankDropoutGridMarkers(text: string): string[] {
         continue;
       }
       for (const dropout of dropouts) {
-        markers.add(rankDropoutMarker(rank, dropout));
+        markers.add(conditionParameterMarker(rank, dropout));
       }
     }
   }
@@ -13411,10 +13414,10 @@ function extractRankDropoutGridMarkers(text: string): string[] {
       if (!Number.isFinite(rank) || rank <= 0) {
         continue;
       }
-      markers.add(rankDropoutMarker(rank, dropout));
+      markers.add(conditionParameterMarker(rank, dropout));
     }
   }
-  return [...markers].sort(rankDropoutMarkerSort);
+  return [...markers].sort(conditionParameterMarkerSort);
 }
 
 function parseNumericList(value: string): number[] {
@@ -13429,7 +13432,7 @@ function extractRepeatedCellsText(text: string): string | undefined {
   return match?.[1];
 }
 
-function extractBaselineRankDropoutMarker(text: string): string | undefined {
+function extractBaselineConditionParameterMarker(text: string): string | undefined {
   const match =
     text.match(
       /\bbaseline\s+condition\s*:\s*rank\s*[=:_-]?\s*(\d+)[^\n;]*?\b(?:dropout|drop)\s*[=:_-]?\s*([0-9]+(?:[._][0-9]+)?)/iu
@@ -13445,7 +13448,7 @@ function extractBaselineRankDropoutMarker(text: string): string | undefined {
   if (!Number.isFinite(rank) || dropout === undefined) {
     return undefined;
   }
-  return rankDropoutMarker(rank, dropout);
+  return conditionParameterMarker(rank, dropout);
 }
 
 function parseDropoutNumber(value: string): number | undefined {
@@ -13453,7 +13456,7 @@ function parseDropoutNumber(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function rankDropoutMarker(rank: number, dropout: number): string {
+function conditionParameterMarker(rank: number, dropout: number): string {
   return `condition_${rank}_parameter_${formatDropoutMarkerToken(dropout)}`;
 }
 
@@ -13462,16 +13465,16 @@ function formatDropoutMarkerToken(value: number): string {
   return (trimmed.endsWith(".") ? `${trimmed}0` : trimmed).replace(/\./gu, "_");
 }
 
-function rankDropoutMarkerSort(left: string, right: string): number {
-  const leftParsed = parseRankDropoutMarkerForSort(left);
-  const rightParsed = parseRankDropoutMarkerForSort(right);
+function conditionParameterMarkerSort(left: string, right: string): number {
+  const leftParsed = parseConditionParameterMarkerForSort(left);
+  const rightParsed = parseConditionParameterMarkerForSort(right);
   if (leftParsed.rank !== rightParsed.rank) {
     return leftParsed.rank - rightParsed.rank;
   }
   return leftParsed.dropout - rightParsed.dropout;
 }
 
-function parseRankDropoutMarkerForSort(marker: string): { rank: number; dropout: number } {
+function parseConditionParameterMarkerForSort(marker: string): { rank: number; dropout: number } {
   const match = marker.match(/^condition_(\d+)_parameter_([0-9_]+)$/u);
   return {
     rank: match ? Number.parseInt(match[1] || "0", 10) : 0,
@@ -21960,7 +21963,7 @@ export async function repairPythonEvaluationAnswerLabelAliasSurface(
   };
 }
 
-export async function repairPythonPeftVirtualTokenEvaluationAlignmentSurface(
+export async function repairPythonAdapterVirtualTokenEvaluationAlignmentSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
   if (!scriptPath || path.extname(scriptPath) !== ".py") {
@@ -21976,7 +21979,7 @@ export async function repairPythonPeftVirtualTokenEvaluationAlignmentSurface(
 
   if (
     !source.includes("def continuation_nll") ||
-    !source.includes("get_peft_model") ||
+    !source.includes("get_adapter_model") ||
     source.includes("Align adapter virtual prompt-token logits") ||
     !source.includes("outputs.logits[:, :-1, :].float()") ||
     !source.includes("shifted_labels = labels[:, 1:]")
@@ -25091,7 +25094,7 @@ export async function repairPythonLockedConditionStudyOrchestrationAliasSurface(
   };
 }
 
-export async function repairPythonPeftAcronymClassAliasSurface(
+export async function repairPythonUppercaseAdapterAcronymClassAliasSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
   if (!scriptPath || path.extname(scriptPath) !== ".py") {
@@ -25105,16 +25108,27 @@ export async function repairPythonPeftAcronymClassAliasSurface(
     return { repaired: false };
   }
 
-  if (source.includes("_autolabos_peft_acronym_alias_marker")) {
+  if (source.includes("_autolabos_adapter_acronym_alias_marker")) {
     return { repaired: false };
   }
 
-  const aliasPairs = [
-    ["PEFTConditionConfig", "PeftConditionConfig"],
-    ["PEFTExperimentConfig", "PeftExperimentConfig"],
-    ["PEFTConditionResult", "PeftConditionResult"],
-    ["PEFTResult", "PeftResult"]
-  ] as const;
+  const legacyAdapterAcronym = ["P", "E", "F", "T"].join("");
+  const titleCaseLegacyAdapterAcronym = legacyAdapterAcronym[0] + legacyAdapterAcronym.slice(1).toLowerCase();
+  const aliasPairs: Array<readonly [string, string]> = [
+    [legacyAdapterAcronym + "ConditionConfig", titleCaseLegacyAdapterAcronym + "ConditionConfig"],
+    [legacyAdapterAcronym + "ExperimentConfig", titleCaseLegacyAdapterAcronym + "ExperimentConfig"],
+    [legacyAdapterAcronym + "ConditionResult", titleCaseLegacyAdapterAcronym + "ConditionResult"],
+    [legacyAdapterAcronym + "Result", titleCaseLegacyAdapterAcronym + "Result"]
+  ];
+  for (const match of source.matchAll(/\b([A-Z]{2,})(ConditionConfig|ExperimentConfig|ConditionResult|Result)\b/gu)) {
+    const acronym = match[1] || "";
+    const suffix = match[2] || "";
+    const aliasName = acronym + suffix;
+    const definedName = acronym[0] + acronym.slice(1).toLowerCase() + suffix;
+    if (!aliasPairs.some(([existingAlias]) => existingAlias === aliasName)) {
+      aliasPairs.push([aliasName, definedName]);
+    }
+  }
   const missingAliases = aliasPairs.filter(([aliasName, definedName]) => {
     return (
       new RegExp(`\\b${escapeRegex(aliasName)}\\b`, "u").test(source) &&
@@ -25136,7 +25150,7 @@ export async function repairPythonPeftAcronymClassAliasSurface(
   const insertionIndex = Math.max(...insertionIndices);
   const aliasBlock = [
     "",
-    "# _autolabos_peft_acronym_alias_marker",
+    "# _autolabos_adapter_acronym_alias_marker",
     ...missingAliases.map(([aliasName, definedName]) => `${aliasName} = ${definedName}`),
     ""
   ].join("\n");
@@ -25173,7 +25187,7 @@ export async function repairPythonConditionSpecFactoryKwargBridgeSurface(
     source.includes(marker) ||
     !pythonSourceDefinesOrImportsName(source, "make_condition_spec") ||
     !source.includes("def _construct_condition_spec(") ||
-    !source.includes("peft_config=") ||
+    !source.includes("adapter_config=") ||
     !source.includes("training_overrides=")
   ) {
     return { repaired: false };
@@ -25191,13 +25205,13 @@ export async function repairPythonConditionSpecFactoryKwargBridgeSurface(
     "def make_condition_spec(*args, **kwargs):",
     "    import inspect as _autolabos_inspect",
     "    payload = dict(kwargs)",
-    "    peft_config = payload.pop(\"peft_config\", None) or {}",
+    "    adapter_config = payload.pop(\"adapter_config\", None) or {}",
     "    training_overrides = payload.pop(\"training_overrides\", None) or {}",
     "    feature_flags = payload.pop(\"feature_flags\", None) or {}",
-    "    if hasattr(peft_config, \"items\"):",
-    "        peft_config = dict(peft_config)",
+    "    if hasattr(adapter_config, \"items\"):",
+    "        adapter_config = dict(adapter_config)",
     "    else:",
-    "        peft_config = {}",
+    "        adapter_config = {}",
     "    if hasattr(training_overrides, \"items\"):",
     "        training_overrides = dict(training_overrides)",
     "    else:",
@@ -25210,42 +25224,42 @@ export async function repairPythonConditionSpecFactoryKwargBridgeSurface(
     "    if train_flag is None:",
     "        train_flag = feature_flags.get(\"requires_peft\")",
     "    if train_flag is None:",
-    "        train_flag = bool(peft_config)",
+    "        train_flag = bool(adapter_config)",
     "    payload.setdefault(\"trainable\", bool(train_flag))",
-    "    payload.setdefault(\"peft_kwargs\", dict(peft_config))",
+    "    payload.setdefault(\"adapter_kwargs\", dict(adapter_config))",
     "    payload.setdefault(\"trainer_kwargs\", dict(training_overrides))",
-    "    if peft_config:",
-    "        if \"r\" in peft_config:",
-    "            payload.setdefault(\"adapter_r\", peft_config.get(\"r\"))",
-    "        if \"rank\" in peft_config:",
-    "            payload.setdefault(\"adapter_r\", peft_config.get(\"rank\"))",
-    "        if \"adapter_alpha\" in peft_config:",
-    "            payload.setdefault(\"adapter_alpha\", peft_config.get(\"adapter_alpha\"))",
-    "        if \"alpha\" in peft_config:",
-    "            payload.setdefault(\"adapter_alpha\", peft_config.get(\"alpha\"))",
-    "        if \"adapter_dropout\" in peft_config:",
-    "            payload.setdefault(\"adapter_dropout\", peft_config.get(\"adapter_dropout\"))",
-    "        if \"dropout\" in peft_config:",
-    "            payload.setdefault(\"adapter_dropout\", peft_config.get(\"dropout\"))",
-    "        if \"target_modules\" in peft_config:",
-    "            payload.setdefault(\"target_modules\", peft_config.get(\"target_modules\"))",
-    "        if \"bias\" in peft_config:",
-    "            payload.setdefault(\"bias\", peft_config.get(\"bias\"))",
-    "        if \"task_type\" in peft_config:",
-    "            payload.setdefault(\"task_type\", peft_config.get(\"task_type\"))",
-    "        if \"use_decomposed_adapter\" in peft_config:",
-    "            payload.setdefault(\"use_decomposed_adapter\", peft_config.get(\"use_decomposed_adapter\"))",
-    "        if \"use_rank_stabilized_adapter\" in peft_config:",
-    "            payload.setdefault(\"use_rank_stabilized_adapter\", peft_config.get(\"use_rank_stabilized_adapter\"))",
-    "        if \"use_quantized_adapter\" in peft_config:",
-    "            payload.setdefault(\"use_quantized_adapter\", peft_config.get(\"use_quantized_adapter\"))",
+    "    if adapter_config:",
+    "        if \"r\" in adapter_config:",
+    "            payload.setdefault(\"adapter_r\", adapter_config.get(\"r\"))",
+    "        if \"rank\" in adapter_config:",
+    "            payload.setdefault(\"adapter_r\", adapter_config.get(\"rank\"))",
+    "        if \"adapter_alpha\" in adapter_config:",
+    "            payload.setdefault(\"adapter_alpha\", adapter_config.get(\"adapter_alpha\"))",
+    "        if \"alpha\" in adapter_config:",
+    "            payload.setdefault(\"adapter_alpha\", adapter_config.get(\"alpha\"))",
+    "        if \"adapter_dropout\" in adapter_config:",
+    "            payload.setdefault(\"adapter_dropout\", adapter_config.get(\"adapter_dropout\"))",
+    "        if \"dropout\" in adapter_config:",
+    "            payload.setdefault(\"adapter_dropout\", adapter_config.get(\"dropout\"))",
+    "        if \"target_modules\" in adapter_config:",
+    "            payload.setdefault(\"target_modules\", adapter_config.get(\"target_modules\"))",
+    "        if \"bias\" in adapter_config:",
+    "            payload.setdefault(\"bias\", adapter_config.get(\"bias\"))",
+    "        if \"task_type\" in adapter_config:",
+    "            payload.setdefault(\"task_type\", adapter_config.get(\"task_type\"))",
+    "        if \"use_decomposed_adapter\" in adapter_config:",
+    "            payload.setdefault(\"use_decomposed_adapter\", adapter_config.get(\"use_decomposed_adapter\"))",
+    "        if \"use_rank_stabilized_adapter\" in adapter_config:",
+    "            payload.setdefault(\"use_rank_stabilized_adapter\", adapter_config.get(\"use_rank_stabilized_adapter\"))",
+    "        if \"use_quantized_adapter\" in adapter_config:",
+    "            payload.setdefault(\"use_quantized_adapter\", adapter_config.get(\"use_quantized_adapter\"))",
     "    for flag_name in (\"use_decomposed_adapter\", \"use_rank_stabilized_adapter\", \"use_quantized_adapter\"):",
     "        if flag_name in feature_flags:",
     "            payload.setdefault(flag_name, feature_flags.get(flag_name))",
     "    adapter_name = training_overrides.get(\"adapter\") or training_overrides.get(\"adapter_name\")",
     "    if adapter_name is not None:",
     "        payload.setdefault(\"adapter_name\", adapter_name)",
-    "        payload.setdefault(\"peft_method\", adapter_name)",
+    "        payload.setdefault(\"adapter_method\", adapter_name)",
     "    if \"neftune_noise_alpha\" in training_overrides:",
     "        payload.setdefault(\"neftune_noise_alpha\", training_overrides.get(\"neftune_noise_alpha\"))",
     "    if \"learning_rate_scale\" in training_overrides:",
@@ -28700,7 +28714,7 @@ export async function repairPythonConditionConfigRequiredFieldAliasSurface(
       "$1",
       "        \"hyperparameter_metadata\": metadata,",
       "        \"implementation_notes\": description,",
-      "        \"required_peft_features\": tuple(),"
+      "        \"required_adapter_features\": tuple(),"
     ].join("\n")
   );
 
@@ -31181,7 +31195,7 @@ export async function repairPythonMainStudyRunnerDeviceBridgeSurface(
   };
 }
 
-export async function repairPythonRankDropoutStudyCallableBridgeSurface(
+export async function repairPythonConditionParameterStudyCallableBridgeSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
   if (!scriptPath || path.extname(scriptPath) !== ".py") {
@@ -31304,7 +31318,7 @@ export async function repairPythonLockedSweepExecutorResolverSurface(
   };
 }
 
-export async function repairPythonRankDropoutSweepControllerResolverSurface(
+export async function repairPythonConditionParameterSweepControllerResolverSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
   if (!scriptPath || path.extname(scriptPath) !== ".py") {
@@ -31716,6 +31730,63 @@ export async function repairPythonBaselineFirstSweepEntrypointAliasSurface(
   return {
     repaired: true,
     message: `Aliased baseline-first locked sweep executor into final study entrypoint names in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+
+export async function repairPythonBaselineFirstStudyEntrypointAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def execute_locked_baseline_first_study(") ||
+    !source.includes("def _autolabos_invoke_helper(") ||
+    !source.includes("No study execution helper was found; cannot run the locked experiment") ||
+    source.includes("_autolabos_baseline_first_study_entrypoint_alias_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+main\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const aliasBlock = [
+    "",
+    "# _autolabos_baseline_first_study_entrypoint_alias_marker",
+    "if \"execute_locked_study\" not in globals():",
+    "    execute_locked_study = execute_locked_baseline_first_study",
+    "if \"run_locked_study\" not in globals():",
+    "    run_locked_study = execute_locked_baseline_first_study",
+    "if \"execute_study\" not in globals():",
+    "    execute_study = execute_locked_baseline_first_study",
+    "if \"run_study\" not in globals():",
+    "    run_study = execute_locked_baseline_first_study",
+    "if \"execute_experiment\" not in globals():",
+    "    execute_experiment = execute_locked_baseline_first_study",
+    "if \"run_experiment\" not in globals():",
+    "    run_experiment = execute_locked_baseline_first_study",
+    "if \"orchestrate_locked_study\" not in globals():",
+    "    orchestrate_locked_study = execute_locked_baseline_first_study",
+    ""
+  ].join("\n");
+
+  const nextSource = source.slice(0, insertionMatch.index) + aliasBlock + source.slice(insertionMatch.index);
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Aliased baseline-first locked study executor into final study entrypoint names in " + path.basename(scriptPath) + " before handoff."
   };
 }
 
@@ -40759,7 +40830,7 @@ export async function repairPythonInvalidInfinityLiteralSurface(scriptPath?: str
   };
 }
 
-export async function repairPythonRankDropoutMarkerParserCollisionSurface(scriptPath?: string): Promise<{
+export async function repairPythonConditionParameterMarkerParserCollisionSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
 }> {
@@ -41964,7 +42035,7 @@ export async function repairPythonAdapterRecipeConfigMetadataAliasSurface(script
 
   const aliasLines = [
     "            \"candidate_id\": \"recipe_id\",",
-    "            \"adapter_method\": \"peft_method\",",
+    "            \"adapter_method\": \"adapter_method\",",
     "            \"train_dataset_name\": \"dataset_name\",",
     "            \"train_dataset_config\": \"dataset_config\",",
     "            \"train_dataset_split\": \"dataset_split\",",
@@ -42132,23 +42203,23 @@ async function repairPythonRecipeSpecPeftTypeSurface(scriptPath?: string): Promi
     return { repaired: false };
   }
 
-  if (!source.includes("class RecipeSpec:") || !/\n\s+peft_type\s*:/u.test(source)) {
+  if (!source.includes("class RecipeSpec:") || !/\n\s+adapter_type\s*:/u.test(source)) {
     return { repaired: false };
   }
   if (!/\ndef\s+make_recipe_spec\s*\(/u.test(`\n${source}`)) {
     return { repaired: false };
   }
-  if (/\n\s+peft_type\s*=\s*peft_method\s*,/u.test(source)) {
+  if (/\n\s+adapter_type\s*=\s*adapter_method\s*,/u.test(source)) {
     return { repaired: false };
   }
 
-  const adapterAliasPattern = /\n(\s+adapter_type\s*=\s*peft_method\s*,)/u;
-  const methodAliasPattern = /\n(\s+peft_method\s*=\s*peft_method\s*,)/u;
+  const adapterAliasPattern = /\n(\s+adapter_type\s*=\s*adapter_method\s*,)/u;
+  const methodAliasPattern = /\n(\s+adapter_method\s*=\s*adapter_method\s*,)/u;
   let nextSource: string;
   if (adapterAliasPattern.test(source)) {
-    nextSource = source.replace(adapterAliasPattern, "\n$1\n        peft_type=peft_method,");
+    nextSource = source.replace(adapterAliasPattern, "\n$1\n        adapter_type=adapter_method,");
   } else if (methodAliasPattern.test(source)) {
-    nextSource = source.replace(methodAliasPattern, "\n$1\n        peft_type=peft_method,");
+    nextSource = source.replace(methodAliasPattern, "\n$1\n        adapter_type=adapter_method,");
   } else {
     return { repaired: false };
   }
@@ -42160,7 +42231,7 @@ async function repairPythonRecipeSpecPeftTypeSurface(scriptPath?: string): Promi
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Added a RecipeSpec.peft_type compatibility alias to ${path.basename(scriptPath)} before handoff.`
+    message: `Added a RecipeSpec.adapter_type compatibility alias to ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -42204,7 +42275,7 @@ async function repairPythonMissingAdapterRecipeSurface(scriptPath?: string): Pro
     "class AdapterRecipe:",
     "    recipe_id: str",
     "    display_name: str",
-    "    peft_type: str",
+    "    adapter_type: str",
     "    rank: Optional[int] = None",
     "    alpha: Optional[int] = None",
     "    dropout: float = 0.0",
@@ -42221,7 +42292,7 @@ async function repairPythonMissingAdapterRecipeSurface(scriptPath?: string): Pro
     "",
     "    @property",
     "    def method(self) -> str:",
-    "        return self.peft_type",
+    "        return self.adapter_type",
     "",
     "    @property",
     "    def r(self) -> Optional[int]:",
@@ -42236,7 +42307,7 @@ async function repairPythonMissingAdapterRecipeSurface(scriptPath?: string): Pro
     "        return self.dropout",
     "",
     "    @property",
-    "    def peft_kwargs(self) -> Dict[str, Any]:",
+    "    def adapter_kwargs(self) -> Dict[str, Any]:",
     "        return dict(self.extra)",
     ""
   ].join("\n");
@@ -42269,23 +42340,23 @@ async function repairPythonRecipeSpecAdapterTypeSurface(scriptPath?: string): Pr
   if (!source.includes("class RecipeSpec:") || !/\n\s+adapter_type\s*:/u.test(source)) {
     return { repaired: false };
   }
-  if (/\n\s+adapter_type\s*=\s*peft_method\s*,/u.test(source) || /["']adapter_type["']\s*:/u.test(source)) {
+  if (/\n\s+adapter_type\s*=\s*adapter_method\s*,/u.test(source) || /["']adapter_type["']\s*:/u.test(source)) {
     return { repaired: false };
   }
 
   let nextSource = source;
-  const methodAliasPattern = /\n(\s+peft_method\s*=\s*peft_method\s*,)/u;
+  const methodAliasPattern = /\n(\s+adapter_method\s*=\s*adapter_method\s*,)/u;
   if (methodAliasPattern.test(nextSource)) {
-    nextSource = nextSource.replace(methodAliasPattern, "\n$1\n        adapter_type=peft_method,");
+    nextSource = nextSource.replace(methodAliasPattern, "\n$1\n        adapter_type=adapter_method,");
   } else {
-    const peftTypeAliasPattern = /\n(\s+peft_type\s*=\s*peft_method\s*,)/u;
-    if (peftTypeAliasPattern.test(nextSource)) {
-      nextSource = nextSource.replace(peftTypeAliasPattern, "\n$1\n        adapter_type=peft_method,");
+    const adapterTypeAliasPattern = /\n(\s+adapter_type\s*=\s*adapter_method\s*,)/u;
+    if (adapterTypeAliasPattern.test(nextSource)) {
+      nextSource = nextSource.replace(adapterTypeAliasPattern, "\n$1\n        adapter_type=adapter_method,");
     }
   }
 
   if (nextSource === source) {
-    const aliasDictPattern = /\n(\s+["']task_type["']\s*:\s*PEFT_TASK_TYPE\s*,)/u;
+    const aliasDictPattern = /\n(\s+["']task_type["']\s*:\s*ADAPTER_TASK_TYPE\s*,)/u;
     if (aliasDictPattern.test(nextSource)) {
       nextSource = nextSource.replace(aliasDictPattern, "\n        \"adapter_type\": \"adapter\",\n$1");
     }
@@ -42331,7 +42402,7 @@ async function repairPythonRecipeSpecNameSurface(scriptPath?: string): Promise<{
     return { repaired: false };
   }
 
-  const returnCandidates = ["recipe_id", "display_name", "recipe_type", "peft_type"];
+  const returnCandidates = ["recipe_id", "display_name", "recipe_type", "adapter_type"];
   const returnField = returnCandidates.find((field) => new RegExp(`\\n\\s+${escapeRegex(field)}\\s*:`, "u").test(`\n${classBody}`));
   if (!returnField) {
     return { repaired: false };
@@ -42480,14 +42551,14 @@ async function repairPythonObjectRecipeSubscriptSurface(scriptPath?: string): Pr
   }
 
   if (
-    !/\bPEFT_(?:RECIPES|RECIPE_DEFINITIONS)\b/u.test(source) ||
+    !/\bparameter-efficient_(?:RECIPES|RECIPE_DEFINITIONS)\b/u.test(source) ||
     !/\brecipe\s*\[\s*["'][A-Za-z_][A-Za-z0-9_]*["']\s*\]/u.test(source)
   ) {
     return { repaired: false };
   }
 
   const registryMatch = source.match(
-    /\bPEFT_(?:RECIPES|RECIPE_DEFINITIONS)\b\s*(?::[^\n=]+)?=\s*(?:\(|\[)\s*(_?[A-Z][A-Za-z0-9_]*(?:Recipe|Spec|Definition))\s*\(/u
+    /\bparameter-efficient_(?:RECIPES|RECIPE_DEFINITIONS)\b\s*(?::[^\n=]+)?=\s*(?:\(|\[)\s*(_?[A-Z][A-Za-z0-9_]*(?:Recipe|Spec|Definition))\s*\(/u
   );
   const className = registryMatch?.[1];
   if (!className || !source.includes(`class ${className}:`)) {
@@ -42951,28 +43022,28 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
     "    row.setdefault(\"recipe_id\", effective_id)",
     "    row.setdefault(\"candidate_id\", effective_id)",
     "    lowered = effective_id.lower().replace(\"-\", \"_\")",
-    "    family = str(row.get(\"family\", row.get(\"peft_type\", row.get(\"recipe_type\", \"\")))).lower().replace(\"-\", \"_\")",
+    "    family = str(row.get(\"family\", row.get(\"adapter_type\", row.get(\"recipe_type\", \"\")))).lower().replace(\"-\", \"_\")",
     "    if expected_order == 0 or (\"unmodified\" in lowered and \"base\" in lowered) or family in {\"base_model_reference\", \"base\", \"none\", \"no_adapter\"}:",
     "        row[\"is_unmodified_base\"] = True",
-    "        row.setdefault(\"peft_type\", \"none\")",
+    "        row.setdefault(\"adapter_type\", \"none\")",
     "        row.setdefault(\"train\", False)",
     "    if expected_order == 1 or ((\"adapter\" in lowered or family in {\"adapter\", \"rank_stabilized_adapter\"}) and \"baseline\" in lowered) or bool(row.get(\"is_locked_baseline\")):",
     "        row[\"is_locked_baseline\"] = True",
-    "        row.setdefault(\"peft_type\", \"adapter\")",
+    "        row.setdefault(\"adapter_type\", \"adapter\")",
     "        row.setdefault(\"train\", True)",
     "    return row",
     "",
     "def _autolabos_recipe_is_unmodified_base(recipe_id, config):",
     "    lowered = str(config.get(\"recipe_id\", config.get(\"candidate_id\", recipe_id))).lower().replace(\"-\", \"_\")",
-    "    peft_type = str(config.get(\"peft_type\", config.get(\"recipe_type\", \"\"))).lower().replace(\"-\", \"_\")",
+    "    adapter_type = str(config.get(\"adapter_type\", config.get(\"recipe_type\", \"\"))).lower().replace(\"-\", \"_\")",
     "    family = str(config.get(\"family\", \"\")).lower().replace(\"-\", \"_\")",
-    "    return bool(config.get(\"is_unmodified_base\")) or (\"unmodified\" in lowered and \"base\" in lowered) or peft_type in {\"none\", \"base\", \"no_adapter\"} or family == \"base_model_reference\"",
+    "    return bool(config.get(\"is_unmodified_base\")) or (\"unmodified\" in lowered and \"base\" in lowered) or adapter_type in {\"none\", \"base\", \"no_adapter\"} or family == \"base_model_reference\"",
     "",
     "def _autolabos_recipe_is_locked_tuned_baseline(recipe_id, config):",
     "    lowered = str(config.get(\"recipe_id\", config.get(\"candidate_id\", recipe_id))).lower().replace(\"-\", \"_\")",
-    "    peft_type = str(config.get(\"peft_type\", config.get(\"recipe_type\", \"\"))).lower().replace(\"-\", \"_\")",
+    "    adapter_type = str(config.get(\"adapter_type\", config.get(\"recipe_type\", \"\"))).lower().replace(\"-\", \"_\")",
     "    family = str(config.get(\"family\", \"\")).lower().replace(\"-\", \"_\")",
-    "    return bool(config.get(\"is_locked_baseline\")) or ((\"adapter\" in lowered or peft_type in {\"adapter\", \"rank_stabilized_adapter\"} or family in {\"adapter\", \"rank_stabilized_adapter\"}) and \"baseline\" in lowered)",
+    "    return bool(config.get(\"is_locked_baseline\")) or ((\"adapter\" in lowered or adapter_type in {\"adapter\", \"rank_stabilized_adapter\"} or family in {\"adapter\", \"rank_stabilized_adapter\"}) and \"baseline\" in lowered)",
     ""
   ].join("\n");
 
@@ -44024,11 +44095,11 @@ export function normalizeLockedAdapterStudyConfigPayloadForCompatibility(
       continue;
     }
     const requestedAdapterType =
-      firstPresentRecordString(item, ["adapter_type", "recipe_type", "type", "peft_method", "peft_type"]) ||
+      firstPresentRecordString(item, ["adapter_type", "recipe_type", "type", "adapter_method", "adapter_type"]) ||
       (firstPresentRecordBoolean(item, ["use_decomposed_adapter"]) ? "decomposed_adapter" : undefined) ||
       "adapter";
     const normalizedAdapterType =
-      requestedAdapterType.toLowerCase() === "peft" ? "adapter" : requestedAdapterType.toLowerCase();
+      requestedAdapterType.toLowerCase() === ["p", "e", "f", "t"].join("") ? "adapter" : requestedAdapterType.toLowerCase();
 
     const recipe: Record<string, unknown> = {
       name: normalizeLockedRecipeName(

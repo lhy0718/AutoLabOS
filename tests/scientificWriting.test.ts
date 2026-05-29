@@ -926,11 +926,11 @@ describe("scientificWriting", () => {
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.latestResults = undefined as any;
     bundle.experimentPlan = {
-      selectedTitle: "5-seed high-rank dropout stability against locked baseline",
+      selectedTitle: "5-seed condition-parameter stability against locked baseline",
       selectedSummary: "Compare repeated condition-parameter cells on Benchmark Task A and Benchmark Task B.",
       rawText: [
         "selected_design:",
-        '  title: "5-seed high-rank dropout stability against locked baseline"',
+        '  title: "5-seed condition-parameter stability against locked baseline"',
         "  datasets:",
         '    - "training dataset subset"',
         '    - "Benchmark Task A"',
@@ -1089,11 +1089,11 @@ describe("scientificWriting", () => {
     bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.experimentPlan = {
-      selectedTitle: "5-seed high-rank dropout stability against locked baseline",
+      selectedTitle: "5-seed condition-parameter stability against locked baseline",
       selectedSummary: "Compare repeated condition-parameter cells on Benchmark Task A and Benchmark Task B.",
       rawText: [
         "selected_design:",
-        '  title: "5-seed high-rank dropout stability against locked baseline"',
+        '  title: "5-seed condition-parameter stability against locked baseline"',
         "  datasets:",
         '    - "training dataset subset"',
         "  metrics:",
@@ -1212,11 +1212,11 @@ describe("scientificWriting", () => {
     bundle.topic = "condition parameters interaction for a small LLM benchmark";
     bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
     bundle.experimentPlan = {
-      selectedTitle: "5-seed high-rank dropout stability against locked baseline",
+      selectedTitle: "5-seed condition-parameter stability against locked baseline",
       selectedSummary: "Compare repeated condition-parameter cells on Benchmark Task A and Benchmark Task B.",
       rawText: [
         "selected_design:",
-        '  title: "5-seed high-rank dropout stability against locked baseline"',
+        '  title: "5-seed condition-parameter stability against locked baseline"',
         "  datasets:",
         '    - "training dataset subset"',
         '    - "Benchmark Task A"',
@@ -1237,7 +1237,7 @@ describe("scientificWriting", () => {
             {
               train_metadata: {
                 model_name: "the selected backbone",
-                selected_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"],
+                selected_target_modules: ["module_a", "module_b", "module_c", "module_d"],
                 num_train_samples: 32,
                 train_dataset_token_count: 5068,
                 trainer_state: {
@@ -3688,7 +3688,7 @@ describe("scientificWriting", () => {
           paragraphs: [
             "The preserved manuscript bundle identifies the executed study only as a small-backbone local preflight and does not cleanly disambiguate whether the as-run model was the planned the selected backbone backbone or the the configured fallback backbone fallback.",
             "The preferred backbone was the selected backbone [selected backbone], with the configured fallback backbone [fallback backbone] reserved as a fallback. Supervised instruction tuning used an training dataset subset capped at 10,000 examples [training dataset]. Evaluation used Benchmark Task A and Benchmark Task B [Benchmark Task A; Benchmark Task B].",
-            "The fixed search space includes adapter target modules were q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, and down_proj., Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, weight decay 0, max gradient norm 1, and 6 optimizer steps., and The inspected seed-level record reports 32 training examples and 5068 train dataset tokens for the inspected seed-level record."
+            "The fixed search space includes adapter target modules were module_a, module_b, module_c, module_d, module_e, module_f, and module_g., Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, weight decay 0, max gradient norm 1, and 6 optimizer steps., and The inspected seed-level record reports 32 training examples and 5068 train dataset tokens for the inspected seed-level record."
           ]
         },
         {

@@ -415,7 +415,7 @@ describe("resultAnalysis", () => {
       },
       experimentPlanRaw: [
         "selected_design:",
-        "  title: 5-seed high-rank dropout stability against locked baseline",
+        "  title: 5-seed condition-parameter stability against locked baseline",
         "  risks:",
         "    - The small backbone may make the effect unstable."
       ].join("\n"),

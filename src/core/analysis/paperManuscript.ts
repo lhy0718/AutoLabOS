@@ -838,11 +838,11 @@ function scoreLeadingCondition(
 
 function isConditionDeltaSurfaceFigure(figure: PaperManuscriptFigure): boolean {
   const caption = cleanString(figure.caption);
-  const rankDropoutRows = figure.bars.filter((bar) => /\brank\b.*\bdropout\b/iu.test(bar.label)).length;
+  const conditionParameterRows = figure.bars.filter((bar) => /\brank\b.*\bdropout\b/iu.test(bar.label)).length;
   const zeroRows = figure.bars.filter((bar) => Math.abs(bar.value) < 0.0005).length;
   return (
     /\bbaseline-relative\b.*\b(rank|dropout|condition)\b/iu.test(caption)
-    || (figure.bars.length >= 4 && rankDropoutRows >= 3 && zeroRows >= figure.bars.length - 1)
+    || (figure.bars.length >= 4 && conditionParameterRows >= 3 && zeroRows >= figure.bars.length - 1)
   );
 }
 
@@ -962,7 +962,7 @@ function repairSubmissionAbstract(abstract: string): string {
 }
 
 function repairReaderVisibleManuscriptCoherence(sections: PaperManuscriptSection[]): PaperManuscriptSection[] {
-  const shouldPruneRepeatedTopics = isAdapterRankDropoutPreflightManuscript(sections);
+  const shouldPruneRepeatedTopics = isAdapterConditionParameterPreflightManuscript(sections);
   return sections.map((section) => {
     const headingKey = normalizeHeadingKey(section.heading);
     let paragraphs = section.paragraphs.map((paragraph) =>
@@ -995,7 +995,7 @@ function repairReaderVisibleManuscriptCoherence(sections: PaperManuscriptSection
   });
 }
 
-function isAdapterRankDropoutPreflightManuscript(sections: PaperManuscriptSection[]): boolean {
+function isAdapterConditionParameterPreflightManuscript(sections: PaperManuscriptSection[]): boolean {
   const text = sections.flatMap((section) => section.paragraphs).join(" ");
   return (
     /\badapter\b/iu.test(text) &&

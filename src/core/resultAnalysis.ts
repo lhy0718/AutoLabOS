@@ -1978,12 +1978,12 @@ function buildResultsArrayConditionComparison(args: {
     resultRows.find((row) => hasLockedBaselineMarker(row) || asString(row.recipe_type)?.toLowerCase() === "locked_baseline") ||
     resultRows.find((row) => {
       const recipe = asString(row.recipe)?.toLowerCase();
-      const peftType = asString(row.peft_type)?.toLowerCase();
+      const adapterType = asString(row.adapter_type)?.toLowerCase();
       const conditionId = asString(row.condition_id)?.toLowerCase();
       return (
         recipe === "baseline" ||
         isLikelyBaselineCondition(recipe || "") ||
-        peftType === "none" ||
+        adapterType === "none" ||
         conditionId === "baseline" ||
         isLikelyBaselineCondition(conditionId || "") ||
         row.is_baseline_reference === true
@@ -2677,8 +2677,8 @@ function baselineConditionTextScore(text: string): number {
     /(?:^|[_\s-])(?:unmodified|pretrained|zero[_\s-]?shot|untuned|no[_\s-]?tuning|base)(?:[_\s-]|$)/u.test(lower);
   const explicitBaseline = /(?:^|[_\s-])baseline(?:[_\s-]|$)/u.test(lower);
   const tunedBaseline =
-    /(?:^|[_\s-])(?:lora|peft|adapter|tuned|locked)[\w\s-]*baseline(?:[_\s-]|$)/u.test(lower) ||
-    /(?:^|[_\s-])baseline[\w\s-]*(?:lora|peft|adapter|tuned|locked)(?:[_\s-]|$)/u.test(lower);
+    /(?:^|[_\s-])(?:adapter|tuned|locked)[\w\s-]*baseline(?:[_\s-]|$)/u.test(lower) ||
+    /(?:^|[_\s-])baseline[\w\s-]*(?:adapter|tuned|locked)(?:[_\s-]|$)/u.test(lower);
 
   if (tunedBaseline && !referenceBaseline) {
     return 4;
