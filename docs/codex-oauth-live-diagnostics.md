@@ -129,7 +129,7 @@ Interpretation:
 
 - the bootstrap-specific compaction is a real improvement, not just a cosmetic size reduction
 - the dominant provider boundary is no longer always bootstrap
-- the current highest-value failure surface is the late PEFT execution / aggregate-metrics chunk family inside staged materialization
+- the current highest-value failure surface is the late adapter execution / aggregate-metrics chunk family inside staged materialization
 
 ### 7. Per-chunk materialization artifacts are now visible
 
@@ -145,12 +145,12 @@ Interpretation:
     - `Baseline-first adapter comparison, reporting, and entrypoint`
   - file materialization then generated per-chunk prompt and response artifacts
 - Observed prompt artifacts:
-  - `unit_chunk_prompts/peft_runner__runner_core_setup__d0__chunk_1_2_subchunk_1_3.txt` (`12910` bytes)
-  - `unit_chunk_prompts/peft_runner__runner_core_data__d0__chunk_1_2_subchunk_2_3.txt` (`13973` bytes)
-  - `unit_chunk_prompts/peft_runner__runner_core_eval__d0__chunk_1_2_subchunk_3_3.txt` (`14128` bytes)
+  - `unit_chunk_prompts/condition_runner__runner_core_setup__d0__chunk_1_2_subchunk_1_3.txt` (`12910` bytes)
+  - `unit_chunk_prompts/condition_runner__runner_core_data__d0__chunk_1_2_subchunk_2_3.txt` (`13973` bytes)
+  - `unit_chunk_prompts/condition_runner__runner_core_eval__d0__chunk_1_2_subchunk_3_3.txt` (`14128` bytes)
 - Observed response artifacts:
-  - `unit_chunk_responses/peft_runner__runner_core_setup__d0__chunk_1_2_subchunk_1_3.txt` (`15955` bytes)
-  - `unit_chunk_responses/peft_runner__runner_core_data__d0__chunk_1_2_subchunk_2_3.txt` (`17838` bytes)
+  - `unit_chunk_responses/condition_runner__runner_core_setup__d0__chunk_1_2_subchunk_1_3.txt` (`15955` bytes)
+  - `unit_chunk_responses/condition_runner__runner_core_data__d0__chunk_1_2_subchunk_2_3.txt` (`17838` bytes)
 
 Interpretation:
 

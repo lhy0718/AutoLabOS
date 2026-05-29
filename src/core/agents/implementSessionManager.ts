@@ -10278,7 +10278,7 @@ export class ImplementSessionManager {
       }
     }
 
-    const lockedConfigRepair = await repairLockedPeftStudyConfigSurface(executionConfigPath);
+    const lockedConfigRepair = await repairLockedAdapterStudyConfigSurface(executionConfigPath);
     if (lockedConfigRepair.repaired) {
       onProgress?.(
         lockedConfigRepair.message || "Normalized locked adapter study config compatibility before handoff.",
@@ -43983,7 +43983,7 @@ function normalizeLockedRecipeName(rawName: string, seenNames: Set<string>): str
   return next;
 }
 
-export function normalizeLockedPeftStudyConfigPayloadForCompatibility(
+export function normalizeLockedAdapterStudyConfigPayloadForCompatibility(
   rawPayload: unknown
 ): { repaired: boolean; payload?: Record<string, unknown>; message?: string } {
   if (!isPlainObject(rawPayload)) {
@@ -44092,7 +44092,7 @@ export function normalizeLockedPeftStudyConfigPayloadForCompatibility(
   };
 }
 
-export async function repairLockedPeftStudyConfigSurface(configPath?: string): Promise<{
+export async function repairLockedAdapterStudyConfigSurface(configPath?: string): Promise<{
   repaired: boolean;
   message?: string;
 }> {
@@ -44119,7 +44119,7 @@ export async function repairLockedPeftStudyConfigSurface(configPath?: string): P
     return { repaired: false };
   }
 
-  const normalized = normalizeLockedPeftStudyConfigPayloadForCompatibility(parsed);
+  const normalized = normalizeLockedAdapterStudyConfigPayloadForCompatibility(parsed);
   if (!normalized.repaired || !normalized.payload) {
     return { repaired: false };
   }

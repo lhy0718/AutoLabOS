@@ -29,7 +29,7 @@ import {
   shouldSkipAttemptSnapshotPath,
   isMalformedJsonStagedLlmChunkError,
   isTransientStagedLlmProviderError,
-  normalizeLockedPeftStudyConfigPayloadForCompatibility,
+  normalizeLockedAdapterStudyConfigPayloadForCompatibility,
   repairPythonOrchestrationArgumentSurface,
   repairPythonAutolabosMetricsWriterCompatibleCallSurface,
   repairPythonEntrypointMetricsWriterCallOrderSurface,
@@ -236,7 +236,7 @@ import {
   repairPythonExecutionPlanMappingSequenceKeySurface,
   repairPythonTupleReturningMainArgsSurface,
   repairPythonWriteJsonMetricsAliasSurface,
-  repairLockedPeftStudyConfigSurface,
+  repairLockedAdapterStudyConfigSurface,
   repairPythonLockedConditionCountSurface,
   repairPythonConditionSeedPlanDispatchSurface,
   repairPythonWorkflowSingleRunExecutorCandidateSurface,
@@ -525,8 +525,8 @@ describe("ImplementSessionManager", () => {
   });
 
   it("normalizes a locked adapter config from conditions to recipes-only runtime schema", () => {
-    const normalized = normalizeLockedPeftStudyConfigPayloadForCompatibility({
-      experiment_name: "locked_peft",
+    const normalized = normalizeLockedAdapterStudyConfigPayloadForCompatibility({
+      experiment_name: "locked_adapter",
       baseline_first_required: true,
       loading: {
         use_quantization_for_tuned_runs: true,
@@ -544,8 +544,8 @@ describe("ImplementSessionManager", () => {
         {
           id: "named_tuned_baseline",
           label: "adapter_qv_r16",
-          kind: "peft",
-          peft_method: "adapter",
+          kind: "adapter",
+          adapter_type: "adapter",
           enabled: true,
           adapter_r: 16,
           adapter_alpha: 32,
@@ -573,13 +573,13 @@ describe("ImplementSessionManager", () => {
   });
 
   it("repairs locked adapter config files in place before handoff", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-peft-config-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-adapter-config-"));
     tempDirs.push(workspace);
     const configPath = path.join(workspace, "experiment_config.yaml");
     writeFileSync(
       configPath,
       [
-        "experiment_name: locked_peft",
+        "experiment_name: locked_adapter",
         "baseline_first_required: true",
         "loading:",
         "  use_quantization_for_tuned_runs: true",
@@ -593,8 +593,8 @@ describe("ImplementSessionManager", () => {
         "    evaluate_only: true",
         "  - id: named_tuned_baseline",
         "    label: adapter_qv_r16",
-        "    kind: peft",
-        "    peft_method: adapter",
+        "    kind: adapter",
+        "    adapter_type: adapter",
         "    enabled: true",
         "    adapter_r: 16",
         "    adapter_alpha: 32",
@@ -607,7 +607,7 @@ describe("ImplementSessionManager", () => {
       "utf8"
     );
 
-    const repair = await repairLockedPeftStudyConfigSurface(configPath);
+    const repair = await repairLockedAdapterStudyConfigSurface(configPath);
     expect(repair.repaired).toBe(true);
     const repaired = readFileSync(configPath, "utf8");
     expect(repaired).toContain("recipes:");
@@ -1507,7 +1507,7 @@ describe("ImplementSessionManager", () => {
     const privateScriptPath = path.join(runDir, "run_instruction_study.py");
     const publicDir = buildPublicExperimentDir(workspace, run);
     const publicScriptPath = path.join(publicDir, "run_instruction_study.py");
-    const deferredRootResultPath = path.join(publicDir, "peft_instruction_study_results.json");
+    const deferredRootResultPath = path.join(publicDir, "adapter_condition_results.json");
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
         writeFileSync(privateScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
