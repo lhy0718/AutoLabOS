@@ -17916,10 +17916,15 @@ export function extractWorkspacePathsFromCommand(command: string, cwd: string, w
   const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) || [];
   const paths = new Set<string>();
   let skipNextOutputRedirectTarget = false;
+  let skipNextRuntimeOutputOptionTarget = false;
   let parseNextShellCommandString = false;
   for (const token of tokens) {
     if (skipNextOutputRedirectTarget) {
       skipNextOutputRedirectTarget = false;
+      continue;
+    }
+    if (skipNextRuntimeOutputOptionTarget) {
+      skipNextRuntimeOutputOptionTarget = false;
       continue;
     }
     if (parseNextShellCommandString) {
@@ -17933,6 +17938,14 @@ export function extractWorkspacePathsFromCommand(command: string, cwd: string, w
     const shellOptionToken = token.trim();
     if (/^-[a-z]*c[a-z]*$/iu.test(shellOptionToken)) {
       parseNextShellCommandString = true;
+      continue;
+    }
+    const runtimeOutputOption = classifyRuntimeOutputOptionToken(shellOptionToken);
+    if (runtimeOutputOption === "separate-target") {
+      skipNextRuntimeOutputOptionTarget = true;
+      continue;
+    }
+    if (runtimeOutputOption === "attached-target") {
       continue;
     }
     const outputRedirection = classifyShellOutputRedirectionToken(token);
@@ -17960,6 +17973,22 @@ export function extractWorkspacePathsFromCommand(command: string, cwd: string, w
     }
   }
   return [...paths];
+}
+
+type RuntimeOutputOptionToken = "none" | "separate-target" | "attached-target";
+
+function classifyRuntimeOutputOptionToken(token: string): RuntimeOutputOptionToken {
+  const value = token.trim().replace(/^['"]|['"]$/g, "");
+  if (!value) {
+    return "none";
+  }
+  const optionPattern =
+    /^(?:--?(?:output|out|results?|reports?|logs?|cache)[_-]?(?:dir|directory|path|file)?|--?(?:metrics|results?)[_-]?path)$/iu;
+  const assignmentMatch = value.match(/^([^=]+)=.+$/u);
+  if (assignmentMatch?.[1] && optionPattern.test(assignmentMatch[1])) {
+    return "attached-target";
+  }
+  return optionPattern.test(value) ? "separate-target" : "none";
 }
 
 type ShellOutputRedirectionToken = "none" | "separate-target" | "attached-target";

@@ -815,6 +815,33 @@ describe("ImplementSessionManager", () => {
     expect(paths).not.toContain(helpPath);
   });
 
+  it("does not treat runtime output option targets as required verification artifacts", () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-output-option-paths-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "outputs", "experiment", "run_instruction_study.py");
+    const smokeDir = path.join(workspace, "outputs", "experiment", "smoke_results");
+    const attachedResultsDir = path.join(workspace, "outputs", "experiment", "attached_results");
+    const inputConfigPath = path.join(workspace, "inputs", "config.yaml");
+    mkdirSync(path.dirname(scriptPath), { recursive: true });
+    mkdirSync(path.dirname(inputConfigPath), { recursive: true });
+    writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
+    writeFileSync(inputConfigPath, "topic: neutral fixture\n", "utf8");
+
+    const paths = extractWorkspacePathsFromCommand(
+      [
+        `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        `python3 ${JSON.stringify(scriptPath)} --config ${JSON.stringify(inputConfigPath)} --output-dir ${JSON.stringify(smokeDir)} --results-dir=${JSON.stringify(attachedResultsDir)}`
+      ].join(" && "),
+      workspace,
+      workspace
+    );
+
+    expect(paths).toContain(scriptPath);
+    expect(paths).toContain(inputConfigPath);
+    expect(paths).not.toContain(smokeDir);
+    expect(paths).not.toContain(attachedResultsDir);
+  });
+
   it("extracts workspace paths from nested bash -lc verification commands without treating the command string as an artifact", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-shell-c-paths-"));
     tempDirs.push(workspace);

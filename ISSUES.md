@@ -15,6 +15,55 @@ Path placeholders:
 
 ---
 
+## Issue: LV-464
+
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression partially passed; same-flow revalidation pending.
+- Validation target: lightweight implement-stage verification should not treat runtime output option targets such as `--output-dir` or `--results-dir` as pre-existing required artifacts.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, during same-flow revalidation of LV-463.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` through the P6 continue helper after the LV-463 source repair.
+  2. Let staged implementation attempt 1 generate the public Python runner and `run_command.sh`.
+  3. Observe local verification prepare a command that compiles the runner and then runs a smoke check with a runtime output directory.
+
+- Expected behavior:
+  - The verifier should require generated input artifacts such as the runnable script to exist before verification starts.
+  - Paths passed through runtime output options should be allowed to be created by the command itself.
+
+- Actual behavior:
+  - Attempt 1 generated and localized the runner, rewrote `run_command.sh`, and materialized the planned condition/seed contract.
+  - Verification did not start because `outputs/.../experiment/smoke_results` was missing, even though that path was passed as `--output-dir` and should be created during smoke execution.
+
+- Fresh vs existing session comparison:
+  - Fresh session: targeted parser regression now covers a neutral runner command with `--config`, `--output-dir`, and attached `--results-dir=...` paths.
+  - Existing session: the active run shows the same false missing-artifact boundary in `implement_experiments/progress.jsonl`.
+  - Divergence: no session divergence observed; this is a verifier command-path classification bug.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `extractWorkspacePathsFromCommand(...)` classified every workspace-looking token in a verification command as a required existing artifact. That is correct for scripts and input files, but too strict for runtime output option values.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now skips path targets of runtime output options such as `--output-dir`, `--results-dir`, `--log-dir`, and attached `--results-dir=...` while preserving input path extraction.
+  - Test: `tests/implementSessionManager.test.ts` adds a neutral regression ensuring `--config` remains required while output option targets are ignored by the path extractor.
+
+- Regression status:
+  - Focused regression passed: `TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t 'runtime output option targets'`.
+  - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
+  - Build passed: `TMPDIR=/tmp npm run build`.
+  - Same-flow revalidation: pending because the already-running retry is using the pre-repair process image.
+
+- Remaining risks:
+  - The active process may still fail on the old verifier behavior and require another retry after rebuilding/rerunning with this repair.
+  - Long staged generation remains a separate risk; this repair only removes the false missing-output-directory gate.
+
+- Evidence/artifacts:
+  - <repo-root>/src/core/agents/implementSessionManager.ts
+  - <repo-root>/tests/implementSessionManager.test.ts
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/progress.jsonl
+
+---
+
 ## Issue: LV-463
 
 - Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression partially passed; same-flow revalidation pending.
