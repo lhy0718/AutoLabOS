@@ -1,5 +1,13 @@
 import { GovernanceBenchmarkConditionName } from "../core/benchmark/governanceCondition.js";
+import type { MetaHarnessNode } from "../core/metaHarness/metaHarness.js";
 import { NodeOptionPackageName } from "../types.js";
+
+const META_HARNESS_CLI_NODES = [
+  "generate_hypotheses",
+  "design_experiments",
+  "analyze_results",
+  "review"
+] as const satisfies readonly MetaHarnessNode[];
 
 export type CliAction =
   | { kind: "run"; packageName?: NodeOptionPackageName; benchmarkCondition?: GovernanceBenchmarkConditionName }
@@ -16,7 +24,7 @@ export type CliAction =
   | {
       kind: "meta-harness";
       runs: number;
-      nodes: ("analyze_results" | "review")[];
+      nodes: MetaHarnessNode[];
       externalRunRoots: string[];
       noApply: boolean;
       dryRun: boolean;
@@ -546,7 +554,7 @@ export function resolveCliAction(args: string[]): CliAction {
   if (first === "meta-harness") {
     let runs = 5;
     let runsProvided = false;
-    const nodes: ("analyze_results" | "review")[] = [];
+    const nodes: MetaHarnessNode[] = [];
     const externalRunRoots: string[] = [];
     let noApply = false;
     let dryRun = false;
@@ -580,13 +588,13 @@ export function resolveCliAction(args: string[]): CliAction {
         if (!value) {
           return { kind: "error", message: "Missing value for --node." };
         }
-        if (value !== "analyze_results" && value !== "review") {
+        if (!(META_HARNESS_CLI_NODES as readonly string[]).includes(value)) {
           return {
             kind: "error",
-            message: `Unsupported meta-harness node: ${value}. Expected analyze_results or review.`
+            message: `Unsupported meta-harness node: ${value}. Expected ${META_HARNESS_CLI_NODES.join(", ")}.`
           };
         }
-        nodes.push(value);
+        nodes.push(value as MetaHarnessNode);
         index += 1;
         continue;
       }

@@ -18,7 +18,14 @@ import { OllamaClient } from "../../integrations/ollama/ollamaClient.js";
 import { DEFAULT_OLLAMA_BASE_URL } from "../../integrations/ollama/modelCatalog.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
 
-export type MetaHarnessNode = "analyze_results" | "review";
+export const META_HARNESS_PROMPT_NODES = [
+  "generate_hypotheses",
+  "design_experiments",
+  "analyze_results",
+  "review"
+] as const;
+
+export type MetaHarnessNode = (typeof META_HARNESS_PROMPT_NODES)[number];
 
 export interface MetaHarnessOptions {
   cwd: string;
@@ -40,6 +47,18 @@ export interface MetaHarnessResult {
 interface MetaHarnessRunSummary {
   run: RunRecord;
   paperReadinessScore: number | null;
+}
+
+interface PromptTargetMapEntry {
+  run_id: string;
+  source_artifact: string;
+  target_node: string;
+  recommended_prompt_node: MetaHarnessNode;
+  prompt_file: string;
+  priority?: string;
+  diagnostic_ids?: string[];
+  problem_summary?: string;
+  recheck_condition?: string;
 }
 
 interface MetaHarnessDeps {
@@ -168,12 +187,8 @@ async function buildMetaHarnessContext(input: {
   await ensureDir(input.contextDir);
   await writeTaskFile(input.contextDir);
 
-  for (const node of input.nodes) {
-    const promptPath = path.join(input.cwd, "node-prompts", `${node}.md`);
-    if (await fileExists(promptPath)) {
-      await copyFileToContext(promptPath, path.join(input.contextDir, "node-prompts", `${node}.md`));
-    }
-  }
+  const requestedPromptNodes = new Set<MetaHarnessNode>(input.nodes);
+  const promptTargetMap: PromptTargetMapEntry[] = [];
 
   const evalHistoryPath = path.join(input.cwd, "outputs", "eval-harness", "history.jsonl");
   if (await fileExists(evalHistoryPath)) {
@@ -200,23 +215,15 @@ async function buildMetaHarnessContext(input: {
         "utf8"
       );
 
-      const nodeArtifactPaths = node === "analyze_results"
-        ? [path.join(runRoot, "result_analysis.json")]
-        : [
-            path.join(runRoot, "review", "decision.json"),
-            path.join(runRoot, "review", "minimum_gate.json"),
-            path.join(runRoot, "review", "paper_quality_evaluation.json"),
-            path.join(runRoot, "review", "paper_scale_diagnostics.json"),
-            path.join(runRoot, "review", "node_strengthening_recommendations.json"),
-            path.join(runRoot, "review", "readiness_risks.json"),
-            path.join(runRoot, "review", "paper_critique.json")
-          ];
+      const nodeArtifactPaths = nodeArtifactPathsForMetaHarnessNode(node, runRoot);
       for (const nodeArtifactPath of nodeArtifactPaths) {
         if (await fileExists(nodeArtifactPath)) {
           await copyFileToContext(nodeArtifactPath, path.join(runContextDir, path.basename(nodeArtifactPath)));
         }
       }
     }
+
+    promptTargetMap.push(...await collectPromptTargetMapEntries(runRoot, run.id));
 
     const paperArtifactPaths = [
       path.join(runRoot, "paper", "paper_readiness.json"),
@@ -236,6 +243,21 @@ async function buildMetaHarnessContext(input: {
     }
   }
 
+  for (const entry of promptTargetMap) {
+    requestedPromptNodes.add(entry.recommended_prompt_node);
+  }
+  for (const node of META_HARNESS_PROMPT_NODES) {
+    const promptPath = path.join(input.cwd, "node-prompts", `${node}.md`);
+    if ((requestedPromptNodes.has(node) || await fileExists(promptPath)) && await fileExists(promptPath)) {
+      await copyFileToContext(promptPath, path.join(input.contextDir, "node-prompts", `${node}.md`));
+    }
+  }
+  await fs.writeFile(
+    path.join(input.contextDir, "prompt_target_map.json"),
+    `${JSON.stringify({ generated_at: new Date().toISOString(), targets: promptTargetMap }, null, 2)}\n`,
+    "utf8"
+  );
+
   await copyExternalRunContexts({
     contextDir: input.contextDir,
     externalRunRoots: input.externalRunRoots
@@ -247,6 +269,7 @@ async function writeTaskFile(contextDir: string): Promise<void> {
     "당신은 harness 엔지니어입니다. 위의 소스 코드, 실행 traces, 점수를 모두 읽으세요.",
     "paper_readiness.overall_score를 높일 수 있는 노드 프롬프트 파일의 개선안을 하나 제안하세요.",
     "review/node_strengthening_recommendations.json 또는 review/paper_scale_diagnostics.json이 있으면, 그 artifact가 지목한 target_node와 recheck_condition을 우선 반영하세요.",
+    "prompt_target_map.json이 있으면, target_node가 직접 node-prompts 파일을 갖지 않는 경우에도 recommended_prompt_node를 사용해 가장 가까운 강화 가능 프롬프트로 결함을 되돌리세요.",
     "paper/render_validation.json, paper/submission_validation.json, paper/gate_decision.json이 있으면 템플릿, 인용, 표/그림, page-budget 결함도 원인 노드로 되돌려 분석하세요.",
     "샘플 수 부족, seed 반복 부재, 한 문제 차이의 headline gain, smoke-test 수준 train budget, 핵심 문헌 누락은 polish가 아니라 upstream node 강화 대상으로 다루세요.",
     "반드시 다음 형식으로만 출력하세요:",
@@ -385,6 +408,122 @@ function formatExternalRunLines(externalRunRoots: string[]): string[] {
 
 function filterRunEventsByNode(events: AutoLabOSEvent[], node: MetaHarnessNode): AutoLabOSEvent[] {
   return events.filter((event) => event.node === node);
+}
+
+function nodeArtifactPathsForMetaHarnessNode(node: MetaHarnessNode, runRoot: string): string[] {
+  if (node === "analyze_results") {
+    return [path.join(runRoot, "result_analysis.json")];
+  }
+  if (node === "review") {
+    return [
+      path.join(runRoot, "review", "decision.json"),
+      path.join(runRoot, "review", "minimum_gate.json"),
+      path.join(runRoot, "review", "paper_quality_evaluation.json"),
+      path.join(runRoot, "review", "paper_scale_diagnostics.json"),
+      path.join(runRoot, "review", "node_strengthening_recommendations.json"),
+      path.join(runRoot, "review", "readiness_risks.json"),
+      path.join(runRoot, "review", "paper_critique.json")
+    ];
+  }
+  return [];
+}
+
+async function collectPromptTargetMapEntries(runRoot: string, runId: string): Promise<PromptTargetMapEntry[]> {
+  const entries: PromptTargetMapEntry[] = [];
+  const strengtheningPath = path.join(runRoot, "review", "node_strengthening_recommendations.json");
+  const strengthening = await readJsonObjectIfPresent(strengtheningPath);
+  const recommendations = Array.isArray(strengthening?.recommendations) ? strengthening.recommendations : [];
+  for (const recommendation of recommendations) {
+    if (!isRecord(recommendation)) {
+      continue;
+    }
+    const targetNode = asString(recommendation.node);
+    const promptNode = mapStrengtheningTargetToPromptNode(targetNode);
+    if (!targetNode || !promptNode) {
+      continue;
+    }
+    entries.push({
+      run_id: runId,
+      source_artifact: "review/node_strengthening_recommendations.json",
+      target_node: targetNode,
+      recommended_prompt_node: promptNode,
+      prompt_file: `node-prompts/${promptNode}.md`,
+      priority: asString(recommendation.priority) || undefined,
+      diagnostic_ids: asStringArray(recommendation.diagnostic_ids),
+      problem_summary: asString(recommendation.problem_summary) || undefined,
+      recheck_condition: asString(recommendation.recheck_condition) || undefined
+    });
+  }
+
+  const diagnosticsPath = path.join(runRoot, "review", "paper_scale_diagnostics.json");
+  const diagnostics = await readJsonObjectIfPresent(diagnosticsPath);
+  const diagnosticRows = Array.isArray(diagnostics?.diagnostics) ? diagnostics.diagnostics : [];
+  for (const diagnostic of diagnosticRows) {
+    if (!isRecord(diagnostic)) {
+      continue;
+    }
+    const targetNode = asString(diagnostic.target_node) || asString(diagnostic.source_node);
+    const promptNode = mapStrengtheningTargetToPromptNode(targetNode);
+    if (!targetNode || !promptNode) {
+      continue;
+    }
+    entries.push({
+      run_id: runId,
+      source_artifact: "review/paper_scale_diagnostics.json",
+      target_node: targetNode,
+      recommended_prompt_node: promptNode,
+      prompt_file: `node-prompts/${promptNode}.md`,
+      priority: asString(diagnostic.severity) === "blocking" ? "high" : "medium",
+      diagnostic_ids: [asString(diagnostic.id)].filter(Boolean),
+      problem_summary: asString(diagnostic.summary) || undefined,
+      recheck_condition: asString(diagnostic.recheck_condition) || undefined
+    });
+  }
+  return entries;
+}
+
+function mapStrengtheningTargetToPromptNode(targetNode: string): MetaHarnessNode | undefined {
+  if ((META_HARNESS_PROMPT_NODES as readonly string[]).includes(targetNode)) {
+    return targetNode as MetaHarnessNode;
+  }
+  if (targetNode === "implement_experiments" || targetNode === "run_experiments") {
+    return "design_experiments";
+  }
+  if (targetNode === "write_paper" || targetNode === "figure_audit") {
+    return "review";
+  }
+  if (targetNode === "collect_papers" || targetNode === "analyze_papers") {
+    return "generate_hypotheses";
+  }
+  return undefined;
+}
+
+async function readJsonObjectIfPresent(filePath: string): Promise<Record<string, unknown> | undefined> {
+  if (!(await fileExists(filePath))) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const values = value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return values.length > 0 ? values : undefined;
 }
 
 async function selectRecentRuns(runtime: AutoLabOSRuntime, count: number): Promise<MetaHarnessRunSummary[]> {

@@ -36,6 +36,25 @@ describe("runMetaHarness", () => {
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "decision.json"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "node_strengthening_recommendations.json"))).resolves.toBeTruthy();
     expect(task).toContain("node_strengthening_recommendations.json");
+    expect(task).toContain("prompt_target_map.json");
+    const promptTargetMap = JSON.parse(await fs.readFile(path.join(result.contextDir, "prompt_target_map.json"), "utf8")) as {
+      targets: Array<{ target_node: string; recommended_prompt_node: string; prompt_file: string }>;
+    };
+    expect(promptTargetMap.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          target_node: "run_experiments",
+          recommended_prompt_node: "design_experiments",
+          prompt_file: "node-prompts/design_experiments.md"
+        }),
+        expect.objectContaining({
+          target_node: "write_paper",
+          recommended_prompt_node: "review",
+          prompt_file: "node-prompts/review.md"
+        })
+      ])
+    );
+    await expect(fs.stat(path.join(result.contextDir, "node-prompts", "design_experiments.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "paper_readiness.json"))).resolves.toBeTruthy();
   });
 
@@ -306,7 +325,18 @@ async function createWorkspaceWithCompletedRun(): Promise<string> {
   );
   await fs.writeFile(
     path.join(runRoot, "review", "node_strengthening_recommendations.json"),
-    JSON.stringify({ recommendations: [{ node: "run_experiments", priority: "high" }] }, null, 2),
+    JSON.stringify({
+      recommendations: [
+        { node: "run_experiments", priority: "high" },
+        {
+          node: "write_paper",
+          priority: "high",
+          diagnostic_ids: ["finding:paper_repeated_citation_bundle"],
+          problem_summary: "Paper surface defect must be blocked before accepting the manuscript.",
+          recheck_condition: "paper/render_validation.json passes and repeated citations are gone."
+        }
+      ]
+    }, null, 2),
     "utf8"
   );
   await fs.writeFile(path.join(runRoot, "review", "readiness_risks.json"), JSON.stringify({ risks: [] }, null, 2), "utf8");
@@ -318,6 +348,7 @@ async function createWorkspaceWithCompletedRun(): Promise<string> {
     "utf8"
   );
   await fs.writeFile(path.join(workspace, "node-prompts", "analyze_results.md"), "Prompt\n", "utf8");
+  await fs.writeFile(path.join(workspace, "node-prompts", "design_experiments.md"), "Design prompt\n", "utf8");
   await fs.writeFile(path.join(workspace, "node-prompts", "review.md"), "Review prompt\n", "utf8");
   await fs.writeFile(path.join(workspace, "outputs", "eval-harness", "history.jsonl"), "{\"timestamp\":\"2026-04-02T00:00:00.000Z\"}\n", "utf8");
   return workspace;

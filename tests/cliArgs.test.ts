@@ -131,10 +131,10 @@ describe("resolveCliAction", () => {
   });
 
   it("supports meta-harness mode", () => {
-    expect(resolveCliAction(["meta-harness", "--runs", "2", "--node", "review", "--no-apply"])).toEqual({
+    expect(resolveCliAction(["meta-harness", "--runs", "2", "--node", "design_experiments", "--node", "review", "--no-apply"])).toEqual({
       kind: "meta-harness",
       runs: 2,
-      nodes: ["review"],
+      nodes: ["design_experiments", "review"],
       externalRunRoots: [],
       noApply: true,
       dryRun: false
