@@ -886,6 +886,83 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("blocks Python study runners that define but never invoke the CLI entrypoint", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-cli-entrypoint-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "study_runner.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-cli-entrypoint", "metrics.json");
+    const markers = [
+      "baseline_condition",
+      "candidate_condition_a",
+      "candidate_condition_b",
+      "candidate_condition_c",
+      "candidate_condition_d",
+      "candidate_condition_e",
+      "candidate_condition_f",
+      "candidate_condition_g"
+    ];
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "PLANNED_CONDITION_MARKERS = (",
+        ...markers.map((marker) => `  '${marker}',`),
+        ")",
+        "REQUIRED_CONDITION_COUNT = 8",
+        "REQUIRED_RUN_COUNT = 32",
+        "SEED_SCHEDULE = [42, 43, 44, 45]",
+        "PRIMARY_METRIC_KEY = 'quality_delta_vs_baseline'",
+        "def run_single_condition_seed(condition, seed, output_dir):",
+        "    return {'condition_marker': condition, 'seed': seed, 'quality_delta_vs_baseline': 0.0}",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    return parser",
+        "def parse_args(argv=None):",
+        "    return build_arg_parser().parse_args(argv)",
+        "def run_public_study(args=None):",
+        "    return {'completed_run_count': 32, 'quality_delta_vs_baseline': 0.0}",
+        "def main(argv=None):",
+        "    args = parse_args(argv)",
+        "    return run_public_study(args=args)"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 8,
+        required_run_count: 32,
+        seed_schedule: [42, 43, 44, 45],
+        baseline_condition_marker: markers[0],
+        required_condition_markers: markers
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_RUNTIME_CLI_ENTRYPOINT_NOT_INVOKED",
+          severity: "block",
+          evidence: expect.stringContaining("main_guard=missing")
+        })
+      ])
+    );
+  });
+
   it("does not require args keyword on per-run condition-seed helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-per-run-entrypoint-"));
     tempDirs.push(workspace);

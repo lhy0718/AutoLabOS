@@ -417,6 +417,20 @@ function validatePlannedConditionImplementationSurface(input: {
       });
     }
 
+    const missingCliInvocationEvidence = findMissingCliEntrypointInvocationEvidence(
+      input.scriptText,
+      input.runCommand
+    );
+    if (missingCliInvocationEvidence) {
+      findings.push({
+        code: "PLANNED_RUNTIME_CLI_ENTRYPOINT_NOT_INVOKED",
+        severity: "block",
+        message:
+          "The implementation defines a planned study runner but the Python CLI surface will not invoke it when run_experiments executes the script.",
+        evidence: missingCliInvocationEvidence
+      });
+    }
+
     const unresolvedRuntimeGuardEvidence = findUnresolvedRuntimeGuardEvidence(input.scriptText);
     if (unresolvedRuntimeGuardEvidence) {
       findings.push({
@@ -569,6 +583,31 @@ function splitPythonParameterList(parameters: string): string[] {
     parts.push(current);
   }
   return parts;
+}
+
+function findMissingCliEntrypointInvocationEvidence(scriptText: string, runCommand: string): string | undefined {
+  if (!scriptText || !runCommandExecutesPythonScript(runCommand)) {
+    return undefined;
+  }
+  const hasMainGuard = /\n\s*if\s+__name__\s*==\s*["']__main__["']\s*:/u.test(`\n${scriptText}`);
+  if (hasMainGuard) {
+    return undefined;
+  }
+  const callableEntrypoints = extractPublicStudyEntrypointSignatures(scriptText)
+    .map((signature) => `${signature.name}:${signature.line}`)
+    .slice(0, 8);
+  const hasParserSurface =
+    /\n\s*def\s+(?:parse_args|parse_cli_args|build_arg_parser)\s*\(/u.test(`\n${scriptText}`) ||
+    /--metrics-path/u.test(scriptText);
+  const commandPassesRuntimeFlags = /--(?:metrics-path|metrics-out|output-dir|results-dir|cache-dir)\b/u.test(runCommand);
+  if (callableEntrypoints.length === 0 || (!hasParserSurface && !commandPassesRuntimeFlags)) {
+    return undefined;
+  }
+  return `run_command_executes_python_script=true; main_guard=missing; entrypoints=${callableEntrypoints.join(", ") || "none"}; cli_surface=${hasParserSurface ? "present" : "not_detected"}; command_runtime_flags=${commandPassesRuntimeFlags ? "present" : "not_detected"}`;
+}
+
+function runCommandExecutesPythonScript(runCommand: string): boolean {
+  return /(?:^|\s)(?:python3?|python)\b[\s\S]*?\.py(?:["\\']|\s|$)/u.test(runCommand);
 }
 
 function findUnresolvedRuntimeGuardEvidence(scriptText: string): string | undefined {

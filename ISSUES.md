@@ -15,6 +15,55 @@ Path placeholders:
 
 ---
 
+## Issue: LV-461
+
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated validator regression passed; same-flow rerun pending.
+- Validation target: `implement_experiments` must not hand off a generated Python study runner that compiles but has no CLI invocation path, because `run_experiments` can then execute the file, exit 0, and produce no metrics.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after `implement_experiments` generated a large condition-study runner and `run_experiments` attempted to execute it.
+
+- Reproduction steps:
+  1. Resume the active validation run through the P6 continue helper and advance from `implement_experiments` to `run_experiments`.
+  2. Let `run_experiments` execute the generated Python runner with `--output-dir` and `--metrics-path`.
+  3. Observe that the process exits with code 0 while the required metrics file is not newly written.
+
+- Expected behavior:
+  - A planned condition-study runner executed as `python ...py` should include an actual CLI invocation guard, such as `if __name__ == "__main__": raise SystemExit(main())`, that calls the metrics-writing study entrypoint.
+  - `implement_experiments` design-to-implementation validation should block handoff before `run_experiments` if the script only defines entrypoint functions and parser helpers without invoking them.
+
+- Actual behavior:
+  - The generated runner compiled and declared parser/metrics/study helper surfaces.
+  - Its tail ended after parser helper definitions, with no visible `__main__` invocation guard.
+  - `run_experiments` executed the file, received exit code 0, and failed with `Experiment finished without metrics output at <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic validator regression reproduced the missing class with a neutral planned-condition runner fixture.
+  - Existing session: the active validation run failed at the no-metrics boundary after a compiled generated runner exited 0.
+  - Divergence: no fresh/existing divergence observed; this is a handoff validation gap in generated runner executability.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: staged implementation materialization preserved callable study and metrics-writing surfaces but failed to wire the final module execution guard. Compile-only and surface-name checks were too permissive because they treated defined functions as equivalent to an executable CLI path.
+
+- Code/test changes:
+  - Code: `src/core/experiments/designImplementationValidator.ts` now blocks planned Python study runners whose `run_command` executes a `.py` file while the script lacks an `if __name__ == "__main__"` guard and only exposes callable entrypoint/parser surfaces.
+  - Test: `tests/designImplementationValidator.test.ts` adds a neutral public-code fixture proving that a defined but never invoked CLI entrypoint blocks handoff.
+
+- Regression status:
+  - Focused regression passed: `TMPDIR=/tmp npm test -- tests/designImplementationValidator.test.ts -t "CLI entrypoint"`.
+  - Full validator regression passed: `TMPDIR=/tmp npm test -- tests/designImplementationValidator.test.ts`.
+  - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
+  - Same-flow revalidation pending: rerun `implement_experiments` from the active validation run so AutoLabOS, not a manual artifact edit, regenerates or repairs the runner before `run_experiments`.
+
+- Remaining risks:
+  - This fix prevents another silent no-op handoff for planned Python study runners; it does not by itself guarantee the regenerated runner will complete the real experiment under provider/runtime limits.
+  - If future generated runners execute through a shell wrapper that hides the Python target, wrapper-aware detection may need another validator extension.
+
+- Evidence/artifacts:
+  - <repo-root>/src/core/experiments/designImplementationValidator.ts
+  - <repo-root>/tests/designImplementationValidator.test.ts
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json
+  - <validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_experiment.py
+
 ## Issue: LV-460
 
 - Status: source repair implemented on 2026-05-31; focused helper validation passed; same-flow research loop remains blocked by provider quota until model access resets or a model switch is selected.
