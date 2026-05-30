@@ -15,6 +15,58 @@ Path placeholders:
 
 ---
 
+## Issue: LV-463
+
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression partially passed; same-flow revalidation pending.
+- Validation target: `implement_experiments` should locally materialize generic condition/seed metric-row, baseline-delta, and aggregate helper sections instead of asking the provider to generate long boilerplate chunks for reusable metrics-table plumbing.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, during same-flow revalidation of LV-462.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` through the P6 continue helper after the LV-462 source repair.
+  2. Let staged implementation generation proceed through chunk-local re-subdivision after provider stream termination.
+  3. Observe the node spend most of the P6 wall budget generating reusable metric-row and evaluation aggregation helper code before reaching a runnable checkpoint.
+
+- Expected behavior:
+  - Reusable metric-row normalization, baseline delta computation, and condition/seed summary helpers should be generated deterministically by AutoLabOS when their responsibility is generic.
+  - Provider work should stay focused on experiment-specific execution logic and final orchestration, not repeated metrics boilerplate.
+
+- Actual behavior:
+  - LV-462's stream-abort classifier worked: terminated chunks were re-subdivided instead of immediately failing the whole node.
+  - The retry still exceeded the P6 helper wall boundary while generating generic metrics/evaluation plumbing.
+  - The run record was paused by the helper timeout while the per-node progress status still showed the active staged request, leaving a stale-running projection in the node status artifact.
+
+- Fresh vs existing session comparison:
+  - Fresh session: targeted unit tests now cover the newly local-materialized generic metric-row helper path with neutral fixture names.
+  - Existing session: the active run shows long staged generation of reusable metric-row/aggregation chunks before the P6 helper timeout.
+  - Divergence: no semantic divergence; the fresh test isolates the boilerplate generation path observed in the live run.
+
+- Root cause hypothesis:
+  - Type: race_timing_bug
+  - Hypothesis: staged implementation decomposition correctly split large code sections, but still delegated reusable metrics-table boilerplate to the provider. Re-subdivision reduced all-or-nothing failure but did not reduce total provider work enough to fit the P6 wall budget.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now recognizes generic metric-row normalization, baseline-delta, repeated-seed aggregation, and metrics-table assembly responsibilities as local Python utility materialization candidates.
+  - Test: `tests/implementSessionManager.test.ts` adds a neutral metric-row/baseline-delta local materialization regression that executes the generated Python helper.
+
+- Regression status:
+  - Focused regression passed: `TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t 'materializes generic Python metric row'`.
+  - Existing local metrics helper regression passed: `TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t 'materializes generic Python metrics payload helper chunks locally'`.
+  - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
+  - Build passed: `TMPDIR=/tmp npm run build`.
+  - Same-flow revalidation: pending.
+
+- Remaining risks:
+  - This reduces provider-generated boilerplate but does not eliminate all long staged generation in `implement_experiments`.
+  - The stale-running node status after P6 wall timeout may need a separate projection/status repair if it recurs after this materialization reduction.
+
+- Evidence/artifacts:
+  - <repo-root>/src/core/agents/implementSessionManager.ts
+  - <repo-root>/tests/implementSessionManager.test.ts
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/progress.jsonl
+
+---
+
 ## Issue: LV-462
 
 - Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.

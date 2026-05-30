@@ -492,6 +492,47 @@ describe("ImplementSessionManager", () => {
     }
   });
 
+  it("materializes generic Python metric row and baseline delta chunks locally", () => {
+    const content = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
+      title: "Per-seed result row normalization and metric derivation",
+      purpose:
+        "Convert each execution outcome into a stable per-condition/per-seed metrics row containing condition marker, seed, status, loss, runtime, parameter counts, task accuracies, average accuracy, and failure evidence fields.",
+      content_kind: "code_section"
+    });
+
+    expect(content).toContain("def normalize_condition_seed_metric_row");
+    expect(content).toContain("def apply_baseline_metric_deltas");
+    expect(content).not.toContain("TRAIN_MICRO_BATCH_SIZE");
+
+    const root = mkdtempSync(path.join(os.tmpdir(), "autolabos-local-python-row-metrics-"));
+    try {
+      const scriptPath = path.join(root, "runner.py");
+      writeFileSync(
+        scriptPath,
+        [
+          content || "",
+          "",
+          "rows = normalize_condition_seed_metric_rows([",
+          "    {'condition_marker': 'baseline_condition', 'seed': 1, 'task_a_accuracy': 0.4, 'task_b_accuracy': 0.6, 'runtime_seconds': 3},",
+          "    {'condition_marker': 'candidate_condition_a', 'seed': 1, 'task_a_accuracy': 0.7, 'task_b_accuracy': 0.9, 'loss': 0.2},",
+          "], metric_key='accuracy', task_metric_keys=['task_a_accuracy', 'task_b_accuracy'])",
+          "rows = apply_baseline_metric_deltas(rows, baseline_marker='baseline_condition')",
+          "assert rows[0]['average_metric'] == 0.5",
+          "assert abs(rows[1]['metric_delta_vs_baseline'] - 0.3) < 1e-9",
+          "payload = build_success_metrics_payload(rows, baseline_marker='baseline_condition', metric_key='average_metric')",
+          "assert payload['status'] == 'completed'",
+          "assert payload['best_condition_marker'] == 'candidate_condition_a'",
+          "write_metrics_payload(Path('out') / 'metrics.json', payload)",
+          "",
+        ].join("\n"),
+        "utf8"
+      );
+      execFileSync("python3", [scriptPath], { cwd: root });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not locally materialize experiment-specific Python execution chunks as metrics helpers", () => {
     const content = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
       title: "Per-condition per-seed subprocess execution helper",

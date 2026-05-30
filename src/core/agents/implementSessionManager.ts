@@ -12270,7 +12270,28 @@ export function buildLocalPythonUtilityChunkContent(
       responsibilityText
     ) &&
     !/\b(?:train|training|model|tokenizer|dataset|prompt|subprocess|preflight)\b/u.test(responsibilityText);
-  if (isMetricsPayloadHelper) {
+  const isMetricsRowNormalizationHelper =
+    /\b(?:metric|metrics|row|rows|record|records|normalization|derivation)\b/u.test(responsibilityText) &&
+    /\b(?:condition|conditions|seed|seeds|status|failure|evidence)\b/u.test(responsibilityText) &&
+    !/\b(?:model|tokenizer|dataset|prompt|subprocess|preflight)\b/u.test(responsibilityText);
+  const isBaselineDeltaHelper =
+    /\b(?:baseline|reference)\b/u.test(responsibilityText) &&
+    /\b(?:delta|difference|comparison|availability|diagnostic|diagnostics)\b/u.test(responsibilityText) &&
+    /\b(?:metric|metrics|row|rows|condition|conditions)\b/u.test(responsibilityText);
+  const isRepeatedSeedAggregationHelper =
+    /\b(?:aggregate|aggregation|summarize|summary|summaries|variance|confidence|standard error|stderr|sem)\b/u.test(
+      responsibilityText
+    ) && /\b(?:seed|seeds|condition|conditions|row|rows|metric|metrics)\b/u.test(responsibilityText);
+  const isMetricsTableAssemblyHelper =
+    /\b(?:metrics table|table assembly|integrity|planned slots|missing|payload|diagnostics)\b/u.test(responsibilityText) &&
+    /\b(?:condition|conditions|seed|seeds|metric|metrics|row|rows)\b/u.test(responsibilityText);
+  if (
+    isMetricsPayloadHelper ||
+    isMetricsRowNormalizationHelper ||
+    isBaselineDeltaHelper ||
+    isRepeatedSeedAggregationHelper ||
+    isMetricsTableAssemblyHelper
+  ) {
     return buildLocalPythonMetricsPayloadChunkContent();
   }
   if (!isJsonPathSerializationHelper) {
@@ -12430,6 +12451,89 @@ function buildLocalPythonMetricsPayloadChunkContent(): string {
     "        if value is not None and str(value).strip():",
     "            return str(value)",
     "    return default",
+    "",
+    "",
+    "def _autolabos_first_present(mapping, keys, default=None):",
+    "    if not hasattr(mapping, \"get\"):",
+    "        return default",
+    "    for key in keys:",
+    "        value = mapping.get(key)",
+    "        if value is not None:",
+    "            return value",
+    "    return default",
+    "",
+    "",
+    "def _autolabos_average_metric_from_task_keys(record, task_metric_keys=None, metric_key=\"accuracy\"):",
+    "    task_metric_keys = list(task_metric_keys or [])",
+    "    values = []",
+    "    for key in task_metric_keys:",
+    "        value = _autolabos_metric_float(record.get(key)) if hasattr(record, \"get\") else None",
+    "        if value is not None:",
+    "            values.append(value)",
+    "    if values:",
+    "        return sum(values) / len(values)",
+    "    return _autolabos_metric_record_value(record, metric_key=metric_key)",
+    "",
+    "",
+    "def normalize_condition_seed_metric_row(outcome, condition=None, seed=None, metric_key=\"accuracy\", task_metric_keys=None):",
+    "    outcome = outcome or {}",
+    "    condition = condition or outcome.get(\"condition\") or {}",
+    "    marker = _autolabos_condition_marker(outcome, default=_autolabos_condition_marker(condition))",
+    "    seed_value = _autolabos_first_present(outcome, (\"seed\", \"seed_id\"), seed)",
+    "    status = str(_autolabos_first_present(outcome, (\"status\", \"state\"), \"completed\")).lower()",
+    "    average_metric = _autolabos_average_metric_from_task_keys(outcome, task_metric_keys, metric_key)",
+    "    failure = _autolabos_first_present(outcome, (\"failure\", \"error\", \"failure_evidence\", \"stderr\"))",
+    "    row = {",
+    "        \"condition_marker\": marker,",
+    "        \"seed\": seed_value,",
+    "        \"status\": status if average_metric is not None and status not in (\"failed\", \"error\") else \"failed\" if average_metric is None else status,",
+    "        metric_key: average_metric,",
+    "        \"average_metric\": average_metric,",
+    "        \"mean_metric\": average_metric,",
+    "        \"runtime_seconds\": _autolabos_metric_float(_autolabos_first_present(outcome, (\"runtime_seconds\", \"runtime_sec\", \"wall_time_seconds\", \"wall_time_sec\"))),",
+    "        \"loss\": _autolabos_metric_float(_autolabos_first_present(outcome, (\"loss\", \"train_loss\", \"training_loss\"))),",
+    "        \"parameter_count\": _autolabos_metric_float(_autolabos_first_present(outcome, (\"parameter_count\", \"trainable_parameter_count\", \"params\"))),",
+    "        \"failure_evidence\": None if failure is None else str(failure),",
+    "    }",
+    "    for key, value in (condition.items() if hasattr(condition, \"items\") else []):",
+    "        if key not in row and isinstance(value, (str, int, float, bool)):",
+    "            row[key] = value",
+    "    for key in task_metric_keys or []:",
+    "        row[key] = _autolabos_metric_float(outcome.get(key)) if hasattr(outcome, \"get\") else None",
+    "    return _autolabos_metric_to_jsonable(row)",
+    "",
+    "",
+    "def normalize_condition_seed_metric_rows(outcomes, conditions=None, seeds=None, metric_key=\"accuracy\", task_metric_keys=None):",
+    "    rows = []",
+    "    conditions_by_marker = {}",
+    "    for condition in conditions or []:",
+    "        conditions_by_marker[_autolabos_condition_marker(condition)] = condition",
+    "    for outcome in outcomes or []:",
+    "        marker = _autolabos_condition_marker(outcome)",
+    "        rows.append(normalize_condition_seed_metric_row(outcome, conditions_by_marker.get(marker), outcome.get(\"seed\"), metric_key, task_metric_keys))",
+    "    return rows",
+    "",
+    "",
+    "def apply_baseline_metric_deltas(rows, baseline_marker=None, metric_key=\"average_metric\"):",
+    "    rows = [dict(row) for row in rows or []]",
+    "    baseline_row = None",
+    "    for row in rows:",
+    "        if baseline_marker is not None and row.get(\"condition_marker\") == baseline_marker and _autolabos_metric_float(row.get(metric_key)) is not None:",
+    "            baseline_row = row",
+    "            break",
+    "    if baseline_row is None:",
+    "        for row in rows:",
+    "            if _autolabos_metric_float(row.get(metric_key)) is not None:",
+    "                baseline_row = row",
+    "                break",
+    "    baseline_value = None if baseline_row is None else _autolabos_metric_float(baseline_row.get(metric_key))",
+    "    for row in rows:",
+    "        value = _autolabos_metric_float(row.get(metric_key))",
+    "        row[\"baseline_metric\"] = baseline_value",
+    "        row[\"metric_delta_vs_baseline\"] = None if value is None or baseline_value is None else value - baseline_value",
+    "        row[\"accuracy_delta_vs_baseline\"] = row[\"metric_delta_vs_baseline\"]",
+    "        row[\"baseline_available\"] = baseline_value is not None",
+    "    return _autolabos_metric_to_jsonable(rows)",
     "",
     "",
     "def build_condition_metric_summaries(records, baseline_marker=None, metric_key=\"accuracy\"):",
