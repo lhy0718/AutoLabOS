@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-05-30
+Last updated: 2026-05-31
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -14,6 +14,55 @@ Path placeholders:
 - `<repo-root>` means the local AutoLabOS implementation checkout.
 
 ---
+
+## Issue: LV-460
+
+- Status: source repair implemented on 2026-05-31; focused helper validation passed; same-flow research loop remains blocked by provider quota until model access resets or a model switch is selected.
+- Validation target: the P6 live-validation continue helper should classify an observed model usage-limit status as a quota boundary, not wait for the full helper timeout and rewrite the node failure as a generic timeout.
+- Environment/session context: active P6 validation run in <validation-workspace>, while observing an already-running `implement_experiments` node through `scripts/p6-approve-and-run-next.py`.
+
+- Reproduction steps:
+  1. Resume the active validation run with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and the P6 continue helper.
+  2. Let the TUI reach a node-local status projection that says the target node is blocked by a model usage-limit error.
+  3. Observe the helper continue waiting until its max-wall timeout instead of accepting the quota boundary.
+
+- Expected behavior:
+  - Once the target node has been observed running, the helper should recognize `Status: <target node> is blocked by a model usage-limit error.` as a stop boundary.
+  - The persisted run record and node status should name the model usage-limit boundary, preserving the real retry condition.
+
+- Actual behavior:
+  - The helper did not match the usage-limit status text.
+  - It waited until the helper timeout and persisted `P6 helper timed out waiting for implement_experiments stop boundary...`, obscuring the provider-quota root cause.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic helper self-test reproduced the missing boundary class after adding a fixture status line.
+  - Existing session: the active validation run displayed the usage-limit status and then stopped at the helper-timeout boundary.
+  - Divergence: no fresh/existing behavioral divergence; this is a live-helper stop-boundary recognition gap.
+
+- Root cause hypothesis:
+  - Type: refresh_render_bug
+  - Hypothesis: the TUI projection exposed a node-local usage-limit blocker, but the helper stop patterns only recognized completed/failed node text, approval prompts, and a narrower status-error prompt path.
+
+- Code/test changes:
+  - Code: `scripts/p6-approve-and-run-next.py` now detects target-node model usage-limit status text after the target node has been observed running.
+  - Code: the helper persists a `p6_model_usage_limit` diagnostic and closes the node as failed/paused with a quota-specific message instead of falling through to generic timeout handling.
+  - Test: the helper self-test now covers target-node matching, unrelated-node rejection, persisted run-record updates, status-file updates, and diagnostic artifact creation.
+
+- Regression status:
+  - Helper self-test passed: `AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py`.
+  - Python compile passed: `python3 -m py_compile scripts/p6-approve-and-run-next.py`.
+  - Vitest wrapper passed: `TMPDIR=/tmp npm test -- tests/p6ContinueScript.test.ts`.
+  - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
+  - Whitespace check passed: `git diff --check`.
+
+- Remaining risks:
+  - This repair improves blocker classification and avoids wasting the full helper timeout; it does not remove the underlying provider quota.
+  - The active run still needs a successful retry, model switch, or quota reset before `implement_experiments` can complete.
+
+- Evidence/artifacts:
+  - <repo-root>/scripts/p6-approve-and-run-next.py
+  - <repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json
 
 ## Issue: LV-459
 

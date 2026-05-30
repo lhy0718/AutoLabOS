@@ -22,6 +22,9 @@ STOP_PATTERN = (
 STOP_READY_AFTER_STATUS_ERROR_PATTERN = (
     r"Add steering, or wait for the next (?:run or )?approval\."
 )
+MODEL_USAGE_LIMIT_BOUNDARY_PATTERN = (
+    r"Status:\s+{node}\s+is blocked by a model usage-limit error\."
+)
 LIVE_INTERACTIVE_PROMPT_PATTERN = (
     r"(?:Add steering, or wait for the next (?:run or )?approval\.|"
     r"Add steering to redirect the current run\.)"
@@ -113,6 +116,11 @@ def has_node_status_error_stop_text(text: str, node: str) -> bool:
     ))
 
 
+def has_model_usage_limit_stop_text(text: str, node: str) -> bool:
+    pattern = MODEL_USAGE_LIMIT_BOUNDARY_PATTERN.format(node=re.escape(node))
+    return bool(re.search(pattern, text, re.MULTILINE | re.IGNORECASE))
+
+
 def load_run_record(workspace: Path, run_id: str) -> dict:
     record_path = workspace / ".autolabos" / "runs" / run_id / "run_record.json"
     try:
@@ -195,6 +203,66 @@ def persist_helper_timeout_boundary(workspace: Path, run_id: str, node: str, mes
     write_json_atomic(diagnostic_path, {
         "status": "failed",
         "reason": "p6_helper_timeout",
+        "node": node,
+        "message": message,
+        "updatedAt": now,
+    })
+    return True
+
+
+def model_usage_limit_message(node: str) -> str:
+    return (
+        f"P6 helper observed a model usage-limit boundary for {node}; "
+        "switch models or wait for quota reset before retrying."
+    )
+
+
+def persist_model_usage_limit_boundary(workspace: Path, run_id: str, node: str) -> bool:
+    run_dir = workspace / ".autolabos" / "runs" / run_id
+    record_path = run_dir / "run_record.json"
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if current_node(record) != node:
+        return False
+    state = node_state(record, node)
+    if record.get("status") != "running" or state.get("status") != "running":
+        return False
+    now = iso_now()
+    message = model_usage_limit_message(node)
+    record["status"] = "paused"
+    record["updatedAt"] = now
+    record["latestSummary"] = message
+    graph = record.setdefault("graph", {})
+    node_states = graph.setdefault("nodeStates", {})
+    node_states[node] = {
+        **state,
+        "status": "failed",
+        "updatedAt": now,
+        "lastError": message,
+        "note": message,
+    }
+    write_json_atomic(record_path, record)
+    status_path = run_dir / node / "status.json"
+    if status_path.exists():
+        try:
+            status_record = json.loads(status_path.read_text(encoding="utf-8"))
+        except Exception:
+            status_record = {}
+        status_record.update({
+            "status": "failed",
+            "stage": "p6_model_usage_limit",
+            "message": message,
+            "lastError": message,
+            "updatedAt": now,
+        })
+        write_json_atomic(status_path, status_record)
+    diagnostic_path = run_dir / node / "p6_model_usage_limit.json"
+    diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(diagnostic_path, {
+        "status": "failed",
+        "reason": "p6_model_usage_limit",
         "node": node,
         "message": message,
         "updatedAt": now,
@@ -524,6 +592,10 @@ def wait_for_stop_boundary(
             record = try_load_run_record(workspace, run_id)
             if should_accept_node_status_error_text(record, node, initial_signature):
                 return joined
+        if observed_target_running and has_model_usage_limit_stop_text(searchable_after_target_running, node):
+            if persist_model_usage_limit_boundary(workspace, run_id, node):
+                print(f"INFO: persisted model usage-limit boundary for {node}.")
+            return joined
         if (
             accept_live_prompt_boundary
             and observed_target_running
@@ -719,6 +791,56 @@ def run_selftest() -> int:
         unbounded_message = helper_timeout_message(timeout_node, 1800, 1800)
         if "7200 seconds" in unbounded_message or "base idle timeout" in unbounded_message:
             print("FAIL: helper timeout message should not mention max-wall when it equals the idle timeout")
+            return 1
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
+        usage_run_id = "usage-limit-boundary"
+        usage_node = "implement_experiments"
+        record_dir = workspace / ".autolabos" / "runs" / usage_run_id
+        record_dir.mkdir(parents=True)
+        (record_dir / usage_node).mkdir(parents=True)
+        (record_dir / "run_record.json").write_text(json.dumps({
+            "status": "running",
+            "currentNode": usage_node,
+            "graph": {
+                "currentNode": usage_node,
+                "nodeStates": {
+                    usage_node: {"status": "running", "updatedAt": "before"},
+                }
+            },
+        }), encoding="utf-8")
+        (record_dir / usage_node / "status.json").write_text(json.dumps({
+            "status": "running",
+            "stage": "codex",
+            "message": "before",
+        }), encoding="utf-8")
+        usage_text = (
+            "Status: implement_experiments is blocked by a model usage-limit error.\n"
+            "Detail: model usage limit; switch models or wait for quota reset before retrying."
+        )
+        if not has_model_usage_limit_stop_text(usage_text, usage_node):
+            print("FAIL: model usage-limit status text was not detected")
+            return 1
+        if has_model_usage_limit_stop_text(usage_text, "run_experiments"):
+            print("FAIL: model usage-limit status text matched an unrelated node")
+            return 1
+        if not persist_model_usage_limit_boundary(workspace, usage_run_id, usage_node):
+            print("FAIL: model usage-limit boundary was not persisted")
+            return 1
+        usage_record = json.loads((record_dir / "run_record.json").read_text(encoding="utf-8"))
+        usage_state = usage_record["graph"]["nodeStates"][usage_node]
+        usage_status = json.loads((record_dir / usage_node / "status.json").read_text(encoding="utf-8"))
+        if usage_record.get("status") != "paused" or usage_state.get("status") != "failed":
+            print("FAIL: model usage-limit boundary did not pause and fail the running node")
+            return 1
+        if usage_status.get("status") != "failed" or usage_status.get("stage") != "p6_model_usage_limit":
+            print("FAIL: model usage-limit boundary did not close the node status file")
+            return 1
+        if "usage-limit" not in usage_state.get("lastError", ""):
+            print("FAIL: model usage-limit boundary did not preserve the diagnostic")
+            return 1
+        if not (record_dir / usage_node / "p6_model_usage_limit.json").exists():
+            print("FAIL: model usage-limit diagnostic artifact was not written")
             return 1
     if not should_observe_active_running(analyze_running, force_run_active=False):
         print("FAIL: active-running run was not selected for observation")
