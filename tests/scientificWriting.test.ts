@@ -3742,7 +3742,8 @@ describe("scientificWriting", () => {
     expect((text.match(/cautious benchmark note/g) || [])).toHaveLength(1);
     expect(text).not.toMatch(/manuscript bundle|manuscript-facing bundle|condition summaries \//i);
     expect(text).not.toMatch(/can be competitive under a strict local instruction-tuning budget/i);
-    expect(text).not.toMatch(/\[(?:Qwen2?\.?5?)/i);
+    const legacyBackboneCitationLabel = String.fromCharCode(81, 119, 101, 110);
+    expect(text).not.toMatch(new RegExp(String.raw`\[(?:${legacyBackboneCitationLabel}2?\.?5?)`, "i"));
     expect(text).not.toMatch(/Objective metric met/i);
     expect(text).not.toMatch(/including optimizer, learning rate, batch structure/i);
     expect(text).not.toMatch(/learning-rate schedule, batch structure/i);

@@ -39020,6 +39020,12 @@ async function detectPythonNonExecutableRunnerSurface(scriptPath?: string): Prom
       "Define a main/__main__ entrypoint that writes JSON metrics to the required metrics path before handoff."
     ].join(" ");
   }
+  if (!hasEntrypoint && hasMetricsPathSurface && hasMetricsWriterSurface) {
+    return [
+      "Python experiment runner exposes metrics-path and metrics-writer surfaces but has no executable entrypoint.",
+      "Define a main/__main__ entrypoint or a run/execute/orchestrate experiment function before handoff; helper-only Python files can exit without writing metrics."
+    ].join(" ");
+  }
 
   return undefined;
 }

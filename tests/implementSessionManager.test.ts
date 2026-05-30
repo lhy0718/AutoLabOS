@@ -41839,6 +41839,95 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
+  it("rejects python runners that expose metrics helpers but no executable entrypoint", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-helper-only-runner-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Helper Only Runner",
+      topic: "adapter instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-helper-only-runner",
+          finalText: JSON.stringify({
+            summary: "Implemented a helper-only runner that can compile but has no executable entrypoint.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "import argparse",
+                  "import json",
+                  "from pathlib import Path",
+                  "",
+                  "def build_arg_parser():",
+                  "    parser = argparse.ArgumentParser()",
+                  "    parser.add_argument('--metrics-path', default='metrics.json')",
+                  "    return parser",
+                  "",
+                  "def write_metrics_payload(metrics_path, payload):",
+                  "    path = Path(metrics_path)",
+                  "    path.parent.mkdir(parents=True, exist_ok=True)",
+                  "    path.write_text(json.dumps(payload), encoding='utf-8')",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/no executable entrypoint/i);
+    expect(calls).toBe(3);
+  });
+
   it("repairs python runners whose exception serializer calls undefined normalize_for_json", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-undefined-normalize-json-"));
     tempDirs.push(workspace);

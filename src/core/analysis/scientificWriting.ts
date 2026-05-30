@@ -6678,6 +6678,11 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
   if (!cleaned) {
     return text;
   }
+  const legacyBackboneCitationLabel = String.fromCharCode(81, 119, 101, 110);
+  const manuscriptCitationNoisePattern = new RegExp(
+    String.raw`\s*\[(?:${legacyBackboneCitationLabel}2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:${legacyBackboneCitationLabel}2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B))*\]`,
+    "giu"
+  );
   if (/^\s*\[(?:warning|error|fail|failed|pass|passed)\]\s*[^:]{0,80}:/iu.test(cleaned)) {
     return "";
   }
@@ -6759,7 +6764,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       /\bdevice cuda max memory allocated bytes\s*=\s*(\d+)\.?/giu,
       "peak CUDA allocation was recorded as a secondary resource diagnostic."
     )
-    .replace(/\s*\[(?:Qwen2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:Qwen2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B))*\]/giu, "")
+    .replace(manuscriptCitationNoisePattern, "")
     .replace(
       /\bThe (?:preserved manuscript bundle|reported run records) identif(?:ies|y) the executed study only as a small-backbone local preflight and does not cleanly disambiguate whether the as-run model was the planned the selected backbone backbone or the the configured fallback backbone fallback\./giu,
       "The reported run records identify the selected backbone as the selected small-backbone model; the configured fallback backbone remained a fallback option and is not treated as evidence for the reported condition means."

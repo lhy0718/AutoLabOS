@@ -1410,10 +1410,10 @@ function repairResultsSectionReaderFlow(paragraphs: string[]): string[] {
 
 function repairMethodKnownExecutionDetails(paragraphs: string[]): string[] {
   const methodText = paragraphs.join(" ");
-  const hasQwenPlan =
+  const hasBackboneSelectionPlan =
     /the selected backbone/iu.test(methodText)
     && /the configured fallback backbone|the configured fallback backbone/iu.test(methodText);
-  if (!hasQwenPlan) {
+  if (!hasBackboneSelectionPlan) {
     return paragraphs;
   }
 

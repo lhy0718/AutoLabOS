@@ -15,6 +15,57 @@ Path placeholders:
 
 ---
 
+## Issue: LV-465
+
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression partially passed; same-flow revalidation pending.
+- Validation target: implement-stage verification should reject Python runners that compile but expose only helper/metrics surfaces and no executable script entrypoint before handing off to `run_experiments`.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, immediately after LV-464 same-flow revalidation allowed `implement_experiments` to complete.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` through the P6 continue helper after the LV-464 source repair.
+  2. Let AutoLabOS regenerate the Python runner and pass local `python3 -m py_compile` verification.
+  3. Allow workflow-owned `run_experiments` to invoke the generated runner with `--metrics-path .../metrics.json`.
+
+- Expected behavior:
+  - A generated runner that passes compile verification should have an executable `main`/`__main__` path or a discoverable run/execute/orchestrate experiment entrypoint.
+  - The implement node should reject helper-only Python files before `run_experiments` receives them.
+
+- Actual behavior:
+  - `implement_experiments` completed and reported local `py_compile` success.
+  - `run_experiments` invoked the script, but it exited without producing `metrics.json`.
+  - Static inspection showed metrics-path and metrics-writer helper surfaces, but no executable entrypoint or real top-level run/orchestration function, so Python could exit cleanly without running the study.
+
+- Fresh vs existing session comparison:
+  - Fresh session: a neutral helper-only runner fixture now reproduces the compile-pass/no-entrypoint failure class.
+  - Existing session: the active P6 run failed at `run_experiments` with missing metrics immediately after compile-pass handoff.
+  - Divergence: no session divergence observed; this is an implement-stage static verification gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `detectPythonNonExecutableRunnerSurface(...)` treated the presence of metrics writer/path surfaces as enough to avoid a non-executable warning, even when no executable entrypoint existed. Compile-only verification therefore accepted a helper-only script.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now flags Python runners that expose metrics-path and metrics-writer surfaces but no executable entrypoint.
+  - Test: `tests/implementSessionManager.test.ts` adds a neutral `run_condition_sweep_experiment.py` fixture that compiles and defines metrics helpers but lacks any entrypoint; the manager must reject it.
+
+- Regression status:
+  - Focused regression passed: `TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t "metrics helpers but no executable entrypoint"`.
+  - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
+  - Build passed: `TMPDIR=/tmp npm run build`.
+  - Same-flow revalidation: pending; the active run needs another implement retry after this source repair is committed/built.
+
+- Remaining risks:
+  - The next regenerated runner may expose a real entrypoint and then reveal actual runtime/model/dataset/metrics-contract failures.
+  - This repair rejects helper-only scripts; it does not synthesize metrics or patch generated artifacts.
+
+- Evidence/artifacts:
+  - <repo-root>/src/core/agents/implementSessionManager.ts
+  - <repo-root>/tests/implementSessionManager.test.ts
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt
+  - <validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_experiment.py
+
+---
+
 ## Issue: LV-464
 
 - Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression partially passed; same-flow revalidation pending.
