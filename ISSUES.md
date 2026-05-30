@@ -15,6 +15,61 @@ Path placeholders:
 
 ---
 
+## Issue: LV-457
+
+- Status: reproduced in same-flow P6 validation on 2026-05-30; source repair implemented; automated validation passed; same-flow retry blocked by provider quota reset
+- Validation target: provider quota/model/authentication failures during implement_experiments must not be treated as experiment-design or implementation failures that can be repaired by automatic rollback.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after design_experiments regenerated a strengthened executable experiment design and implement_experiments began staged Codex OAuth materialization.
+
+- Reproduction steps:
+  1. Build AutoLabOS with the stale model-pin repair and resume the active P6 validation run from design_experiments into implement_experiments.
+  2. Let implement_experiments stream staged materialization chunks through the Codex OAuth backend.
+  3. Observe the backend return `usage_limit_reached` with HTTP 429 before a runnable implementation is completed.
+  4. Observe the state graph exhaust implement_experiments attempts and roll back to design_experiments.
+
+- Expected behavior:
+  - Provider quota, unsupported model, or missing authentication failures should stop at the current node as environment/configuration failures.
+  - AutoLabOS should not spend retries or rollback to earlier research nodes when no upstream design change can repair the provider account state.
+  - The existing timeout/materialization rollback behavior should remain available for true staged generation stalls.
+
+- Actual behavior:
+  - The run classified the provider quota error as a normal implement_experiments failure before runnable artifacts existed.
+  - It auto-rolled back to design_experiments, which obscured that the immediate blocker was external provider quota rather than a paper/run design defect.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately reproduced; the issue depends on the active provider quota state.
+  - Existing session: reproduced on the active P6 validation run during staged materialization.
+  - Divergence: no UI-only divergence observed; the defect is state-graph retry/rollback classification.
+
+- Root cause hypothesis:
+  - Type: persisted_state_bug
+  - Hypothesis: shouldSkipAutoRetryForFailure recognized all "implementation failed before runnable artifact" failures, but shouldFailWithoutAutoRollback did not distinguish provider quota/configuration failures from materialization failures that may benefit from rollback.
+
+- Code/test changes:
+  - Code: src/core/stateGraph/runtime.ts now classifies implement_experiments provider quota, unsupported model, authentication, and API-key failures as environment failures that skip auto rollback.
+  - Tests: tests/stateGraphRuntime.test.ts covers `usage_limit_reached` and preserves the existing staged LLM timeout rollback behavior.
+
+- Regression status:
+  - Same-flow reproduction complete.
+  - Focused regression passed: TMPDIR=/tmp npm test -- tests/stateGraphRuntime.test.ts -t "staged LLM provider quota".
+  - Adjacent timeout regression passed: TMPDIR=/tmp npm test -- tests/stateGraphRuntime.test.ts -t "rolls back implement_experiments immediately".
+  - State graph regression passed: TMPDIR=/tmp npm test -- tests/stateGraphRuntime.test.ts.
+  - Public-code guard passed: TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts.
+  - Build passed: npm run build.
+  - Whitespace check passed: git diff --check.
+  - Same-flow retry is externally blocked until provider quota is available again.
+
+- Remaining risks:
+  - The active P6 run still cannot complete implement_experiments until the provider quota resets or another configured provider is available.
+  - Once quota is available, the same-flow retry must confirm that the state graph stops provider-environment failures without rollback and that node-owned implementation generation can continue to run_experiments.
+
+- Evidence/artifacts:
+  - <repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/progress.jsonl
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json
+
+---
+
 ## Issue: LV-456
 
 - Status: reproduced in same-flow P6 validation on 2026-05-30; source repair implemented; focused automated validation passed; same-flow retry pending
