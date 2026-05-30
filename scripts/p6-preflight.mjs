@@ -29,6 +29,8 @@ const requiredPythonModules = csvEnv("AUTOLABOS_P6_REQUIRED_PYTHON_MODULES", [
 ]);
 const optionalPythonModules = csvEnv("AUTOLABOS_P6_OPTIONAL_PYTHON_MODULES", ["lm_eval"]);
 const hfCacheRoot = process.env.HF_HOME || join(process.env.HOME || "", ".cache", "huggingface");
+const codexModel = process.env.AUTOLABOS_P6_CODEX_MODEL || "gpt-5.5";
+const openAiModel = process.env.AUTOLABOS_P6_OPENAI_MODEL || codexModel;
 const modelCacheCandidates = csvEnv("AUTOLABOS_P6_MODEL_CACHE_DIRS").map((name) => join(hfCacheRoot, "hub", name));
 const datasetCacheRoot = join(hfCacheRoot, "datasets");
 const expectedDatasets = csvEnv("AUTOLABOS_P6_EXPECTED_DATASET_CACHE_DIRS");
@@ -80,24 +82,24 @@ function ensureWorkspace() {
       "providers:",
       "  llm_mode: codex_chatgpt_only",
       "  codex:",
-      "    model: gpt-5.4",
-      "    chat_model: gpt-5.4",
-      "    experiment_model: gpt-5.4",
+      `    model: ${codexModel}`,
+      `    chat_model: ${codexModel}`,
+      `    experiment_model: ${codexModel}`,
       "    reasoning_effort: high",
       "    chat_reasoning_effort: medium",
       "    experiment_reasoning_effort: high",
       "    auth_required: true",
       "    fast_mode: false",
       "  openai:",
-      "    model: gpt-5.4",
-      "    chat_model: gpt-5.4",
-      "    experiment_model: gpt-5.4",
+      `    model: ${openAiModel}`,
+      `    chat_model: ${openAiModel}`,
+      `    experiment_model: ${openAiModel}`,
       "    reasoning_effort: medium",
       "    chat_reasoning_effort: medium",
       "    experiment_reasoning_effort: high",
       "    api_key_required: true",
       "analysis:",
-      "  responses_model: gpt-5.4",
+      `  responses_model: ${openAiModel}`,
       "papers:",
       "  max_results: 80",
       "  per_second_limit: 1",
@@ -168,7 +170,7 @@ async function doctorReport() {
     {
       llmMode: "codex_chatgpt_only",
       pdfAnalysisMode: "codex_text_image_hybrid",
-      codexResearchModel: "gpt-5.4",
+      codexResearchModel: codexModel,
       workspaceRoot,
       approvalMode: "manual",
       executionApprovalMode: "manual",
