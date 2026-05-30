@@ -2103,6 +2103,7 @@ export class ImplementSessionManager {
       "Use the private run artifact directory only for AutoLabOS metadata, logs, and required metric outputs.",
       "Prefer real executable experiments against actual repo code, benchmarks, and model calls when the workspace supports them.",
       "Use a synthetic validation harness only as a fallback when a real execution path is impossible or clearly underspecified.",
+      "For real_execution handoff, do not make deterministic, simulated, smoke, or fallback metrics satisfy the primary experiment. If real execution cannot run, emit explicit failure diagnostics or mark the bundle synthetic_validation; never present fallback output as training or benchmark evidence.",
       "Before editing, identify the smallest viable set of files to inspect or change.",
       "Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, file_edits.",
       "Use experiment_mode = real_execution | hybrid_validation | synthetic_validation.",
@@ -2190,7 +2191,7 @@ export class ImplementSessionManager {
         "Return a runnable command for the experiment.",
         `Ensure the workflow can write metrics JSON to ${sandboxMetricsPath}.`,
         "Keep reusable scripts, configs, and documentation in the public experiment directory.",
-        "Prefer a real execution path over synthetic validation whenever the workspace supports it."
+        "Prefer a real execution path over synthetic validation whenever the workspace supports it. For real_execution, deterministic or simulated fallback output must be diagnostic-only and must not be the default success path."
       ],
       non_goals: [
         "Do not rewrite git history or perform destructive cleanup.",
@@ -5124,6 +5125,41 @@ export class ImplementSessionManager {
         next_action: "retry_patch",
         stderr_excerpt: pythonMissingConditionWorker,
         summary: buildVerificationFailureSummary(command, "implementation", pythonMissingConditionWorker)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonSyntheticPrimaryEvidence = await detectPythonSyntheticFallbackPrimaryEvidenceSurface(
+      executionScriptPath,
+      attempt.experimentMode
+    );
+    if (pythonSyntheticPrimaryEvidence) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonSyntheticPrimaryEvidence,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonSyntheticPrimaryEvidence)
       };
       this.deps.eventStream.emit({
         type: "TEST_FAILED",
@@ -10395,9 +10431,9 @@ export class ImplementSessionManager {
       };
     }
 
-    if (attempt.experimentMode === "real_execution" && commandRequestsDryRun(attempt.runCommand)) {
+    if (attempt.experimentMode === "real_execution" && commandRequestsNonEvidenceRun(attempt.runCommand)) {
       const dryRunSummary =
-        "Real-execution handoff is blocked because the generated run_command still includes --dry-run and would never emit governed metrics.";
+        "Real-execution handoff is blocked because the generated run_command requests dry-run, smoke, simulated, or synthetic fallback execution and would not produce governed experiment evidence.";
       const report: VerifyReport = {
         status: "fail",
         command: attempt.runCommand,
@@ -15163,6 +15199,13 @@ function commandRequestsDryRun(command: string | undefined): boolean {
     return false;
   }
   return /(^|\s)--dry-run(?=\s|$)/u.test(command);
+}
+
+function commandRequestsNonEvidenceRun(command: string | undefined): boolean {
+  if (!command) {
+    return false;
+  }
+  return /(^|\s)--(?:dry-run|smoke|smoke-test|simulate|simulation-only|force-synthetic)(?=\s|$)/u.test(command);
 }
 
 function stripDryRunFlag(command: string | undefined): string | undefined {
@@ -39119,6 +39162,50 @@ async function detectPythonMissingConcreteConditionWorkerSurface(
     "Generated Python runner has no concrete per-condition execution worker.",
     `The execution resolver at ${path.basename(scriptPath)}:${resolverLine} reports that no condition-level execution callable was found while searching ${callableResolverNames.join(", ")}.`,
     "Generate or preserve a real condition-level train/evaluate callable before handoff; py_compile alone is not sufficient for runnable experiment evidence."
+  ].join(" ");
+}
+
+async function detectPythonSyntheticFallbackPrimaryEvidenceSurface(
+  scriptPath: string | undefined,
+  experimentMode: string | undefined
+): Promise<string | undefined> {
+  if (experimentMode !== "real_execution" || !scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const lower = source.toLowerCase();
+  const exposesSyntheticControls = /--(?:simulate|simulation-only|force-synthetic|smoke|smoke-test)/u.test(source);
+  const hasDeterministicFallbackBackend =
+    /deterministic[_ -](?:fallback|simulation|synthetic)/u.test(lower) ||
+    /(?:synthetic|simulation)[_ -](?:fallback|backend|metrics)/u.test(lower);
+  const defaultsToFallbackBackend =
+    /backend_recommendation\s*=\s*["'](?:deterministic|synthetic|simulation)/u.test(source) ||
+    /selected_backend\s*=\s*["'](?:deterministic|synthetic|simulation)/u.test(source) ||
+    /return\s+run_[a-z0-9_]*(?:deterministic|synthetic|simulation)[a-z0-9_]*\s*\(/iu.test(source) ||
+    /return\s+simulate_[a-z0-9_]*\s*\(/iu.test(source);
+  const canReportSuccess =
+    /["']success["']\s*:\s*true/u.test(source) ||
+    /["']status["']\s*:\s*["'](?:completed|success|ok)["']/u.test(source) ||
+    /return\s+0\b/u.test(source);
+  const clearlyDiagnosticOnly =
+    /diagnostic[- ]only/u.test(lower) ||
+    /synthetic[^\n]{0,120}(?:success["']?\s*:\s*false|status["']?\s*:\s*["']failed)/u.test(lower);
+
+  if (!exposesSyntheticControls || !hasDeterministicFallbackBackend || !defaultsToFallbackBackend || !canReportSuccess || clearlyDiagnosticOnly) {
+    return undefined;
+  }
+
+  return [
+    "Real-execution Python runner can promote deterministic, simulated, or synthetic fallback output to primary metrics.",
+    "Fallback/smoke metrics must be diagnostic-only and must not satisfy governed experiment evidence.",
+    "Generate a real execution path, mark the bundle synthetic_validation, or emit failure metrics when required dependencies or data are unavailable."
   ].join(" ");
 }
 

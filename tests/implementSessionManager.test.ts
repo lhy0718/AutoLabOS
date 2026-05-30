@@ -37740,6 +37740,103 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
+  it("rejects real-execution python runners whose fallback backend can emit primary success metrics", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-primary-fallback-metrics-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Primary Fallback Metrics",
+      topic: "condition sweep under local execution budget",
+      constraints: ["real training evidence required"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-primary-fallback-metrics",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner that can default to deterministic fallback metrics.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "real_execution",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "import argparse",
+                  "import json",
+                  "from pathlib import Path",
+                  "",
+                  "backend_recommendation = 'deterministic_simulation'",
+                  "",
+                  "def run_deterministic_simulation():",
+                  "    return {'success': True, 'status': 'completed', 'accuracy': 0.5}",
+                  "",
+                  "def main(argv=None):",
+                  "    parser = argparse.ArgumentParser()",
+                  "    parser.add_argument('--metrics-path', default='metrics.json')",
+                  "    parser.add_argument('--simulate', action='store_true')",
+                  "    parser.add_argument('--force-synthetic', action='store_true')",
+                  "    args = parser.parse_args(argv)",
+                  "    payload = run_deterministic_simulation()",
+                  "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf8')",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/fallback output to primary metrics/i);
+    expect(calls).toBe(3);
+  });
+
   it("rejects python runners with unguarded optional set_seed calls", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-unguarded-set-seed-"));
     tempDirs.push(workspace);

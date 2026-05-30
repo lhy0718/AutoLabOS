@@ -15,9 +15,62 @@ Path placeholders:
 
 ---
 
-## Issue: LV-466
+## Issue: LV-467
 
 - Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
+- Validation target: real-execution implementations must not promote deterministic, simulated, smoke, or fallback outputs into primary experiment metrics, and implementation generation should be steered away from default-success simulation backends for paper-scale runs.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, immediately after LV-466 allowed implementation generation to proceed past the optional statistical-helper dependency check.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` through the P6 continue helper after the LV-466 source repair.
+  2. Let staged generation proceed into the public Python experiment runner.
+  3. Inspect progress and the partially materialized runner before handoff.
+
+- Expected behavior:
+  - For `real_execution`, a generated runner may include diagnostic fallback controls only if they cannot satisfy governed metrics or paper evidence by default.
+  - If real execution cannot run, the implementation should emit explicit failure diagnostics or classify the bundle as `synthetic_validation` instead of handing off fallback success metrics.
+  - The implementation prompt should make this evidence boundary explicit before generation.
+
+- Actual behavior:
+  - The retry advanced past the missing statistical-helper block, but generation entered a large Python runner path with deterministic fallback/simulation backend surfaces and smoke/synthetic controls.
+  - The partially materialized runner grew to thousands of lines and still contained unfilled sectioned-runner placeholders when the P6 wrapper was stopped.
+  - The fallback backend was capable of returning completed/success-style metrics, which would be unsafe as primary evidence for a real-execution paper-scale run.
+
+- Fresh vs existing session comparison:
+  - Fresh session: a neutral regression fixture now covers a real-execution runner that defaults to deterministic fallback metrics and exposes synthetic controls.
+  - Existing session: the active P6 retry progressed beyond LV-466 but became stuck in the same generated-runner quality boundary before producing a trustworthy runnable implementation.
+  - Divergence: no session divergence observed; this is a generated implementation contract/evidence-boundary issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the staged implementer prompt and verification layer allowed a real-execution runner to include a success-capable fallback backend, so the generator could satisfy local compile/shape pressure with a diagnostic simulation path instead of preserving the paper-scale evidence boundary.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now adds real-execution prompt language that forbids deterministic, simulated, smoke, or fallback metrics from satisfying the primary experiment.
+  - Code: implementation verification now rejects real-execution run commands that request dry-run, smoke, simulated, or synthetic execution.
+  - Code: implementation verification now rejects Python runners that expose synthetic/fallback controls, default to deterministic/synthetic backend selection, and can report success/completed metrics as primary output.
+  - Test: `tests/implementSessionManager.test.ts` adds a neutral regression fixture for a real-execution Python runner whose deterministic fallback backend can emit primary success metrics.
+
+- Regression status:
+  - Focused regression passed: `TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t "fallback backend can emit primary success metrics"`.
+  - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
+  - Build passed: `TMPDIR=/tmp npm run build`.
+  - Same-flow revalidation: pending after this source repair.
+
+- Remaining risks:
+  - The next retry must confirm that the implementation no longer drifts into a success-capable fallback runner and either produces a real executable experiment or blocks/downgrades honestly.
+  - Later nodes still need to verify that any fallback/smoke output is excluded from paper evidence, result analysis, review, and manuscript claims.
+
+- Evidence/artifacts:
+  - <repo-root>/src/core/agents/implementSessionManager.ts
+  - <repo-root>/tests/implementSessionManager.test.ts
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/progress.jsonl
+  - <validation-workspace>/outputs/<run-output>/experiment/<generated-runner>.py
+---
+
+## Issue: LV-466
+
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation advanced past the optional dependency block and surfaced LV-467.
 - Validation target: staged implementation bootstrap should not block code generation only because an optional statistical helper module is unavailable when the generated runner can compute descriptive intervals with local math.
 - Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, immediately after the LV-465 source repair was committed and `implement_experiments` was retried.
 
@@ -52,11 +105,11 @@ Path placeholders:
   - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
   - Build passed: `TMPDIR=/tmp npm run build`.
   - Harness validation passed: `TMPDIR=/tmp npm run validate:harness`.
-  - Same-flow revalidation: pending.
+  - Same-flow revalidation: retry advanced past the optional statistical-helper block and entered generated runner materialization; the next observed blocker is tracked as LV-467.
 
 - Remaining risks:
   - Truly required runtime libraries must still hard-block; this repair only downgrades statistical helper checks when the contract text makes them replaceable helper dependencies.
-  - The next retry may surface the intended LV-465 entrypoint guard or later runtime/model/dataset failures.
+  - Later retries may still surface the intended LV-465 entrypoint guard or runtime/model/dataset failures after LV-467 is addressed.
 
 - Evidence/artifacts:
   - <repo-root>/src/core/agents/implementSessionManager.ts
