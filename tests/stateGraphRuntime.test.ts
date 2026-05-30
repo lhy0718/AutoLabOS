@@ -1047,6 +1047,51 @@ describe("StateGraphRuntime", () => {
     });
   });
 
+  it("fails implement_experiments without rollback when staged LLM provider quota is exhausted", async () => {
+    const registry = new Registry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async () => ({
+          status: "failure",
+          error:
+            "Implementation execution failed before any runnable implementation was produced: Codex OAuth backend request failed: 429 {\"error\":{\"type\":\"usage_limit_reached\",\"message\":\"The usage limit has been reached\"}}",
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Implement provider quota",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.status).toBe("failed");
+    expect(updated.currentNode).toBe("implement_experiments");
+    expect(updated.graph.currentNode).toBe("implement_experiments");
+    expect(updated.graph.retryCounters.implement_experiments).toBe(3);
+    expect(updated.graph.rollbackCounters.implement_experiments).toBeUndefined();
+    expect(updated.graph.nodeStates.design_experiments.status).toBe("completed");
+    expect(updated.graph.nodeStates.implement_experiments.status).toBe("failed");
+    expect(updated.graph.nodeStates.implement_experiments.lastError).toContain("usage_limit_reached");
+    expect(updated.latestSummary).toContain("usage_limit_reached");
+  });
+
 
   it("preserves a successful generate_hypotheses result when abort arrives after artifacts are written", async () => {
     const controller = new AbortController();

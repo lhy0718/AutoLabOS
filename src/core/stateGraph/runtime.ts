@@ -1419,6 +1419,10 @@ function getAutoRetrySkipObservation(node: GraphNodeId, errorMessage: string): s
     return undefined;
   }
 
+  if (node === "implement_experiments" && isImplementProviderEnvironmentFailure(normalizeFailureMessage(errorMessage))) {
+    return `Skipping auto retries for ${node}: the failure requires provider quota, model, or authentication changes rather than another identical attempt.`;
+  }
+
   if (node === "analyze_papers") {
     return `Skipping auto retries for ${node}: the failure requires environment or configuration changes rather than another identical attempt.`;
   }
@@ -1435,6 +1439,10 @@ function shouldFailWithoutAutoRollback(node: GraphNodeId, errorMessage: string):
   if (node === "analyze_papers") {
     return isAnalyzePapersResponsesApiPdfConfigFailure(normalized);
   }
+
+  if (node === "implement_experiments") {
+    return isImplementProviderEnvironmentFailure(normalized);
+  }
   return false;
 }
 
@@ -1442,6 +1450,16 @@ function isAnalyzePapersResponsesApiPdfConfigFailure(normalizedErrorMessage: str
   return (
     normalizedErrorMessage.includes("responses api pdf analysis is selected, but openai_api_key is not configured") ||
     normalizedErrorMessage.includes("openai_api_key is required when pdf analysis mode is set to responses api")
+  );
+}
+
+function isImplementProviderEnvironmentFailure(normalizedErrorMessage: string): boolean {
+  return (
+    normalizedErrorMessage.includes("codex oauth authentication required") ||
+    normalizedErrorMessage.includes("usage_limit_reached") ||
+    normalizedErrorMessage.includes("usage limit has been reached") ||
+    normalizedErrorMessage.includes("model is not supported when using codex") ||
+    normalizedErrorMessage.includes("openai_api_key is required")
   );
 }
 
