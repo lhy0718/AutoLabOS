@@ -15,6 +15,66 @@ Path placeholders:
 
 ---
 
+## Issue: LV-459
+
+- Status: source repair implemented on 2026-05-30; automated validation passed; same-flow paper-quality loop still blocked by provider quota
+- Validation target: meta-harness contexts should route review/node-strengthening recommendations to the actual node prompt that can be improved, including paper-surface defects that originate in write_paper but currently have no standalone node prompt file.
+- Environment/session context: active P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after review and harness validators began surfacing paper ACL/template/citation/render defects and node-strengthening artifacts.
+
+- Reproduction steps:
+  1. Inspect the review-generated `node_strengthening_recommendations.json` contract and the meta-harness context builder.
+  2. Observe that review can emit targets such as `write_paper`, `run_experiments`, or `implement_experiments`.
+  3. Observe that `meta-harness --node` only accepted `analyze_results` and `review`, and copied prompt context for only those nodes.
+  4. Observe that nodes such as `write_paper`, `run_experiments`, and `implement_experiments` do not have direct `node-prompts/<node>.md` files for the meta-harness to patch.
+
+- Expected behavior:
+  - The meta-harness should preserve the original problematic target node from review artifacts.
+  - If that node has no direct prompt file, the context should map it to the nearest available prompt that can prevent or route the defect.
+  - Paper-surface defects should not disappear merely because the immediate `write_paper` node lacks a standalone prompt file.
+
+- Actual behavior:
+  - The meta-harness task text mentioned node-strengthening artifacts, but the generated context did not include an explicit target-to-prompt map.
+  - The CLI rejected `--node design_experiments` and `--node generate_hypotheses`, limiting meta-harness strengthening to a narrower slice than the review artifacts can identify.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic source/test reproduction through the meta-harness context builder.
+  - Existing session: the active validation run remains paused before new review/meta-harness artifacts can be regenerated because implement_experiments is blocked by provider quota.
+  - Divergence: no TUI-only divergence observed; this is a meta-harness context projection gap.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: review artifacts correctly identify broader workflow nodes, but the meta-harness context builder projected only the directly requested analyze/review prompt slice and had no explicit fallback map from non-prompt nodes to tunable prompt files.
+
+- Code/test changes:
+  - Code: src/core/metaHarness/metaHarness.ts now writes `prompt_target_map.json` from review/node-strengthening and paper-scale diagnostic artifacts.
+  - Code: source targets such as `run_experiments` and `implement_experiments` map to `design_experiments`; `write_paper` and `figure_audit` map to `review`; collect/analyze paper-stage gaps map to `generate_hypotheses` when no direct prompt file exists.
+  - Code: meta-harness prompt context can include all existing prompt files for the supported prompt nodes.
+  - Code: src/cli/args.ts and src/cli/main.ts allow `--node generate_hypotheses`, `--node design_experiments`, `--node analyze_results`, and `--node review`.
+  - Tests: tests/metaHarness.test.ts covers `prompt_target_map.json` and fallback routing for `run_experiments` and `write_paper` targets.
+  - Tests: tests/cliArgs.test.ts covers expanded meta-harness node parsing.
+
+- Regression status:
+  - Focused regression passed: TMPDIR=/tmp npm test -- tests/metaHarness.test.ts.
+  - CLI parser regression passed: TMPDIR=/tmp npm test -- tests/cliArgs.test.ts -t "meta-harness".
+  - Harness validation service passed: TMPDIR=/tmp npm test -- tests/harnessValidationService.test.ts.
+  - Paper surface validator regression passed: TMPDIR=/tmp npm test -- tests/harnessValidators.test.ts -t "paper surface".
+  - Public-code guard passed: TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts.
+  - Repo harness passed: npm run validate:harness.
+  - Build passed: npm run build.
+  - Whitespace check passed: git diff --check.
+  - Same-flow meta-harness paper-quality iteration cannot complete until provider quota permits the active run to regenerate downstream artifacts.
+
+- Remaining risks:
+  - `write_paper`, `run_experiments`, and `implement_experiments` still lack direct meta-harness prompt files; this fix preserves and maps their defects to the closest currently tunable prompt, but deeper direct tuning would require a separate prompt-surface contract change.
+  - Once provider quota is available, the active run should regenerate review artifacts and run the meta-harness loop against the fresh `prompt_target_map.json` context.
+
+- Evidence/artifacts:
+  - <repo-root>/src/core/metaHarness/metaHarness.ts
+  - <repo-root>/tests/metaHarness.test.ts
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json
+
+---
+
 ## Issue: LV-458
 
 - Status: reproduced in validation-workspace harness on 2026-05-30; source repair implemented; automated validation passed; same-flow cleanup pending until design_experiments can rerun after provider quota is available
