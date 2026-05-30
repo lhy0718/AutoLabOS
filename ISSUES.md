@@ -15,6 +15,55 @@ Path placeholders:
 
 ---
 
+## Issue: LV-466
+
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
+- Validation target: staged implementation bootstrap should not block code generation only because an optional statistical helper module is unavailable when the generated runner can compute descriptive intervals with local math.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, immediately after the LV-465 source repair was committed and `implement_experiments` was retried.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` through the P6 continue helper after committing the LV-465 repair.
+  2. Let staged bootstrap planning return a contract that lists a statistical helper module for confidence intervals/statistical summaries.
+  3. Observe bootstrap evaluation before any runnable implementation is produced.
+
+- Expected behavior:
+  - Missing optional statistical helper modules should be treated like other replaceable metric-helper dependencies when the contract describes them as useful for confidence intervals or summaries.
+  - Implementation should continue so the generated runner can use built-in math or a dependency-light fallback for descriptive intervals.
+
+- Actual behavior:
+  - The implementation node failed before code generation with `check_scipy: required Python module is unavailable (scipy)`.
+  - No new runnable implementation was produced, so same-flow revalidation could not reach the runner-entrypoint guard added for LV-465.
+
+- Fresh vs existing session comparison:
+  - Fresh session: a neutral missing statistical-helper fixture will now cover the optional bootstrap dependency path.
+  - Existing session: the active P6 run stopped at `implement_experiments` before code generation because the active Python environment lacks that helper module.
+  - Divergence: no semantic divergence observed; this is a bootstrap dependency classification issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `isOptionalBootstrapPythonModuleCheck(...)` exempted replaceable metric helpers such as accuracy-scoring helpers and conditional tokenizer backends, but did not recognize statistical-summary helpers as replaceable when the generated runner can compute descriptive intervals without the optional package.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now treats statistical-summary helper module checks as optional when their contract text frames them around confidence intervals, variance, summaries, or related descriptive statistics.
+  - Test: `tests/implementSessionManager.test.ts` adds a neutral missing statistical-helper fixture that must not hard-block bootstrap planning.
+
+- Regression status:
+  - Focused regression passed: `TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t "optional statistical helper modules"`.
+  - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
+  - Build passed: `TMPDIR=/tmp npm run build`.
+  - Harness validation passed: `TMPDIR=/tmp npm run validate:harness`.
+  - Same-flow revalidation: pending.
+
+- Remaining risks:
+  - Truly required runtime libraries must still hard-block; this repair only downgrades statistical helper checks when the contract text makes them replaceable helper dependencies.
+  - The next retry may surface the intended LV-465 entrypoint guard or later runtime/model/dataset failures.
+
+- Evidence/artifacts:
+  - <repo-root>/src/core/agents/implementSessionManager.ts
+  - <repo-root>/tests/implementSessionManager.test.ts
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/progress.jsonl
+---
+
 ## Issue: LV-465
 
 - Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression partially passed; same-flow revalidation pending.

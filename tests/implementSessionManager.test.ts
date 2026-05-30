@@ -13215,6 +13215,44 @@ describe("ImplementSessionManager", () => {
     expect(result.missing).toEqual([]);
   });
 
+  it("does not hard-block staged bootstrap planning on optional statistical helper modules", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-bootstrap-stats-helper-"));
+    tempDirs.push(workspace);
+
+    const result = await evaluateImplementBootstrapContract({
+      workspaceRoot: workspace,
+      contract: {
+        version: 1,
+        summary: "Confidence intervals can be implemented with local deterministic math when an optional helper is absent.",
+        requires_network: false,
+        requires_warm_cache: false,
+        blocking_reason: "",
+        remediation: [],
+        requirements: [
+          {
+            id: "optional_stats_helper",
+            kind: "library",
+            source: "python",
+            required_for: ["confidence intervals if used by the generated runner"],
+            availability: "unknown",
+            summary: "Useful for statistical summaries."
+          }
+        ],
+        checks: [
+          {
+            id: "check-optional-stats-helper",
+            check_type: "python_module_available",
+            target: "autolabos_missing_scipy_helper_for_test",
+            reason: "Useful for confidence intervals and statistical summaries if used by the runner."
+          }
+        ]
+      }
+    });
+
+    expect(result.status).toBe("pass");
+    expect(result.missing).toEqual([]);
+  });
+
   it("blocks staged bootstrap planning when a declared Python module check fails", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-bootstrap-python-module-fail-"));
     tempDirs.push(workspace);

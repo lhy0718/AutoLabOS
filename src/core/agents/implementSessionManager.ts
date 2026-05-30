@@ -12992,6 +12992,12 @@ function isOptionalBootstrapPythonModuleCheck(
   ) {
     return true;
   }
+  if (
+    (target === "scipy" || target.includes("scipy")) &&
+    /\b(?:ci|confidence intervals?|intervals?|statistical|statistics|variance|standard error|summary|summaries)\b/u.test(text)
+  ) {
+    return true;
+  }
 
   return (
     /\b(optional|if used|when used|only if used|useful for|nice-to-have|non-blocking)\b/u.test(text) ||
