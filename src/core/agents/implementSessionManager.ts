@@ -11899,7 +11899,12 @@ function isProviderTerminatedStagedLlmError(error: unknown): boolean {
     return false;
   }
   const message = error.message.trim().toLowerCase();
-  return message === "terminated" || message === "codex oauth backend returned an error: terminated";
+  return (
+    message === "terminated" ||
+    message === "codex oauth stream aborted" ||
+    message === "codex oauth backend returned an error: terminated" ||
+    message === "codex oauth backend returned an error: codex oauth stream aborted"
+  );
 }
 
 export function isTransientStagedLlmProviderError(error: unknown): boolean {
@@ -11918,7 +11923,8 @@ export function isTransientStagedLlmProviderError(error: unknown): boolean {
     message.includes("connection termination") ||
     message.includes("failed before receiving an http response") ||
     message.includes("econnreset") ||
-    message.includes("socket hang up")
+    message.includes("socket hang up") ||
+    message.includes("codex oauth stream aborted")
   );
 }
 

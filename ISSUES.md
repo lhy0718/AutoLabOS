@@ -15,9 +15,56 @@ Path placeholders:
 
 ---
 
+## Issue: LV-462
+
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
+- Validation target: `implement_experiments` should keep generated experiment-runner implementation small enough, checkpointed enough, or locally materialized enough that a transient Codex OAuth stream abort does not discard the node before any runnable implementation is produced.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, while same-flow revalidating the LV-461 no-op Python runner handoff repair.
+
+- Reproduction steps:
+  1. Resume the active validation run and retry `implement_experiments` through the P6 continue helper with `AUTOLABOS_P6_COMMAND='/agent retry {next_node} {run_id}'`.
+  2. Let the node incorporate prior runner feedback that `run_experiments` exited without metrics.
+  3. Observe staged implementation attempt 2 generating a large Python runner across multiple dynamic chunks.
+
+- Expected behavior:
+  - The node should either produce a runnable implementation artifact with a guarded CLI entrypoint and metrics-writing path, or fail with a targeted validation finding that can be repaired on the next attempt.
+  - Provider stream interruption should not leave the run at a generic "no runnable implementation was produced" boundary after substantial partial materialization.
+
+- Actual behavior:
+  - Attempt 2 planned explicit `CLI entrypoint, metrics payload assembly, result artifacts, and runnable command reporting`.
+  - The partial runner grew to a large staged artifact and reached workload-builder generation.
+  - Before runnable implementation verification, the node failed with `Implementation execution failed before any runnable implementation was produced: Codex OAuth stream aborted`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet reduced to a deterministic local test.
+  - Existing session: the active validation run shows the stream-abort boundary in `implement_experiments/status.json` and `implement_experiments/progress.jsonl`.
+  - Divergence: no fresh/existing divergence established yet; this is currently a live workflow robustness gap.
+
+- Root cause hypothesis:
+  - Type: race_timing_bug
+  - Hypothesis: staged implementation generation is asking the provider to materialize too much Python runner code before a verified runnable checkpoint exists. When the stream aborts, partial section output is not sufficient for the node to continue or degrade into a smaller local runner plan.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now classifies `Codex OAuth stream aborted` as both a transient staged-LLM provider error and a provider-terminated materialization error, allowing bounded request retry and chunk-local re-subdivision instead of immediately failing the whole implement node.
+  - Test: `tests/implementSessionManager.test.ts` covers stream-aborted chunk re-subdivision and transient-provider classification.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-31.
+  - Automated regression: targeted `implementSessionManager` stream-abort and transient-provider tests passed on 2026-05-31; `npm run build`, `npm run validate:harness`, and `tests/publicCodeSanitization.test.ts` also passed.
+  - Same-flow revalidation: pending after source repair.
+
+- Remaining risks:
+  - LV-461's validator guard can prevent another no-op handoff, but LV-462 can still prevent the node from producing a regenerated runner at all.
+  - A direct retry may pass if the provider stream is lucky; that would not prove the robustness issue is fixed.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/progress.jsonl
+  - <validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_experiment.py
+
 ## Issue: LV-461
 
-- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated validator regression passed; same-flow rerun pending.
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated validator regression passed; same-flow rerun advanced to LV-462.
 - Validation target: `implement_experiments` must not hand off a generated Python study runner that compiles but has no CLI invocation path, because `run_experiments` can then execute the file, exit 0, and produce no metrics.
 - Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after `implement_experiments` generated a large condition-study runner and `run_experiments` attempted to execute it.
 
@@ -52,7 +99,7 @@ Path placeholders:
   - Focused regression passed: `TMPDIR=/tmp npm test -- tests/designImplementationValidator.test.ts -t "CLI entrypoint"`.
   - Full validator regression passed: `TMPDIR=/tmp npm test -- tests/designImplementationValidator.test.ts`.
   - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
-  - Same-flow revalidation pending: rerun `implement_experiments` from the active validation run so AutoLabOS, not a manual artifact edit, regenerates or repairs the runner before `run_experiments`.
+  - Same-flow revalidation: reran `implement_experiments` from the active validation run so AutoLabOS, not a manual artifact edit, regenerated the runner. The original no-op handoff did not reach `run_experiments` again; the run instead advanced to LV-462, a provider stream-abort boundary before a runnable implementation was produced.
 
 - Remaining risks:
   - This fix prevents another silent no-op handoff for planned Python study runners; it does not by itself guarantee the regenerated runner will complete the real experiment under provider/runtime limits.

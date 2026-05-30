@@ -10528,7 +10528,7 @@ describe("ImplementSessionManager", () => {
           ].join("\n"),
           "utf8"
         );
-        throw new Error("terminated");
+        throw new Error("Codex OAuth stream aborted");
       }
     } as unknown as CodexNativeClient;
 
@@ -14233,7 +14233,7 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(publicScriptPath, "utf8")).toContain("def main():");
   }, 15_000);
 
-  it("re-subdivides a provider-terminated code subchunk through a smaller dynamic plan before materializing the file", async () => {
+  it("re-subdivides a provider stream-aborted code subchunk through a smaller dynamic plan before materializing the file", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-resubchunk-plan-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -15656,6 +15656,7 @@ describe("ImplementSessionManager", () => {
         )
       )
     ).toBe(true);
+    expect(isTransientStagedLlmProviderError(new Error("Codex OAuth stream aborted"))).toBe(true);
     expect(isTransientStagedLlmProviderError(new Error("Codex OAuth authentication required"))).toBe(false);
   });
 
