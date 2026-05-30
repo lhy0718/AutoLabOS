@@ -746,6 +746,90 @@ describe("run_experiments execution profile behavior", () => {
     expect(feedback?.summary).toContain("run-plan construction helper");
   });
 
+  it("prioritizes entrypoint failed metrics over warning-only stderr on command failure", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-entrypoint-failed-metrics-"));
+    process.chdir(root);
+    const run = makeRun("run-entrypoint-failed-metrics");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "entrypoint_failed",
+                success: false,
+                completed_condition_count: 0,
+                required_condition_count: 12,
+                completed_run_count: 0,
+                required_run_count: 36,
+                error_type: "RuntimeError",
+                error_message: "Missing run-plan execution helper in experiment scaffold.",
+                traceback: "RuntimeError: Missing run-plan execution helper in experiment scaffold."
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "error" as const,
+            stdout: "",
+            stderr: "`torch_dtype` is deprecated! Use `dtype` instead!\nLoading weights: 100%|done|",
+            exit_code: 1,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment metrics payload reports failed status");
+    expect(result.error).toContain("Missing run-plan execution helper");
+    expect(result.error).toContain("completed_condition_count=0/12");
+    expect(result.error).not.toContain("torch_dtype");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("Missing run-plan execution helper");
+    expect(verifierReport.summary).not.toContain("torch_dtype");
+  });
+
   it("restores the previous canonical metrics when a rejected rerun writes failed metrics", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-restore-rejected-metrics-"));
     process.chdir(root);

@@ -15,6 +15,59 @@ Path placeholders:
 
 ---
 
+## Issue: LV-456
+
+- Status: reproduced in same-flow P6 validation on 2026-05-30; source repair implemented; focused automated validation passed; same-flow retry pending
+- Validation target: run_experiments failure feedback should prioritize freshly written failed metrics payloads over incidental stderr warnings or progress output when a generated runner exits unsuccessfully.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after LV-455 allowed implement_experiments to regenerate a runner and hand off to run_experiments.
+
+- Reproduction steps:
+  1. Resume the active P6 validation run at implement_experiments after LV-455 source repair.
+  2. Let implement_experiments complete and hand off to run_experiments.
+  3. Observe run_experiments execute the node-owned Python runner three times.
+  4. Observe the verifier report surface `torch_dtype` deprecation/progress stderr as the failure summary, while the rejected metrics payload contains `status=entrypoint_failed` and `error_message=Missing run-plan execution helper in experiment scaffold.`
+
+- Expected behavior:
+  - If an unsuccessful command writes a fresh failed metrics payload, run_experiments should use that payload as the canonical feedback summary.
+  - Failure-like statuses such as `entrypoint_failed` should be treated as failed metrics statuses.
+  - Incidental warnings and tqdm progress on stderr should not hide the generated runner's structural failure reason.
+
+- Actual behavior:
+  - run_experiments restored stale metrics correctly, but the recorded failure summary named only `torch_dtype` deprecation/progress stderr.
+  - The actionable runner issue was only visible in `exec_logs/rejected_metrics_*.json` as `Missing run-plan execution helper in experiment scaffold.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately reproduced; observed in the existing active P6 validation run.
+  - Existing session: reproduced immediately after the regenerated runner reached model-loading and wrote a fresh failed metrics payload.
+  - Divergence: no UI-only divergence observed; the defect is failure-summary prioritization in run_experiments.
+
+- Root cause hypothesis:
+  - Type: persisted_state_bug
+  - Hypothesis: detectFailedMetricsPayload only recognized exact statuses such as `failed` or `error`, so `entrypoint_failed` was ignored in the nonzero-exit branch. The branch then fell back to noisy stderr instead of the fresh failed metrics payload.
+
+- Code/test changes:
+  - Code: src/core/nodes/runExperiments.ts now treats failure-like metrics statuses containing failed/error/blocked/crashed/exception tokens as failed payloads.
+  - Tests: tests/runExperimentsExecutionProfile.test.ts covers `status=entrypoint_failed` with warning/progress stderr and verifies metrics feedback wins.
+
+- Regression status:
+  - Same-flow reproduction complete.
+  - Focused regression passed: TMPDIR=/tmp npm test -- tests/runExperimentsExecutionProfile.test.ts -t "entrypoint failed metrics".
+  - Public-code guard passed: TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts.
+  - Build passed: npm run build.
+  - Whitespace check passed: git diff --check.
+  - Same-flow retry pending.
+
+- Remaining risks:
+  - The next implement_experiments retry must repair the generated runner's missing run-plan execution helper through node-owned code generation or existing repair surfaces.
+  - Additional generated-runner execution issues may appear after the entrypoint bridge is fixed.
+
+- Evidence/artifacts:
+  - <repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/rejected_metrics_1780113039297.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json
+
+---
+
 ## Issue: LV-455
 
 - Status: reproduced in same-flow P6 validation on 2026-05-30; source repair implemented; focused automated validation passed; same-flow retry pending

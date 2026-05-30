@@ -1625,7 +1625,7 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
             ? `${nestedErrorType ? `${nestedErrorType}: ` : ""}${nestedErrorMessage}`
             : undefined);
 
-  if (["failed", "failure", "error", "errored"].includes(status)) {
+  if (isFailureLikeMetricsStatus(status)) {
     return appendMetricsFailureEvidence(
       `Experiment metrics payload reports failed status${failureMessage ? `: ${failureMessage}` : "."}`,
       metrics
@@ -1646,7 +1646,7 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
     .filter(([, recipe]) => {
       const recipeRecord = asRecord(recipe);
       const recipeStatus = typeof recipeRecord.status === "string" ? recipeRecord.status.trim().toLowerCase() : "";
-      return ["failed", "failure", "error", "errored"].includes(recipeStatus);
+      return isFailureLikeMetricsStatus(recipeStatus);
     })
     .map(([name, recipe]) => {
       const recipeRecord = asRecord(recipe);
@@ -1659,6 +1659,13 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
     return `Experiment metrics payload reports failed recipe(s): ${failedRecipeSummaries.join("; ")}.`;
   }
   return null;
+}
+
+function isFailureLikeMetricsStatus(status: string): boolean {
+  return (
+    ["failed", "failure", "error", "errored"].includes(status) ||
+    /(?:^|[_-])(?:failed|failure|error|errored|blocked|crashed|exception)(?:$|[_-])/iu.test(status)
+  );
 }
 
 async function loadFailedMetricsSummary(
