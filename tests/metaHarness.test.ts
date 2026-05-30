@@ -83,6 +83,7 @@ describe("runMetaHarness", () => {
       resultAnalysis: true,
       reviewDecision: true,
       paperReadiness: true,
+      nodeStrengthening: true,
       unrelated: true
     });
     const externalRunB = await createExternalRunRoot("external-b", {
@@ -145,6 +146,24 @@ describe("runMetaHarness", () => {
     expect(manifest.external_contexts[1]?.missing_optional_artifacts).toEqual(
       expect.arrayContaining(["review/decision.json", "paper/paper_readiness.json"])
     );
+    const promptTargetMap = JSON.parse(await fs.readFile(path.join(result.contextDir, "prompt_target_map.json"), "utf8")) as {
+      targets: Array<{ source_artifact: string; target_node: string; recommended_prompt_node: string }>;
+    };
+    expect(promptTargetMap.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_artifact: "external-runs/external-1/review/node_strengthening_recommendations.json",
+          target_node: "write_paper",
+          recommended_prompt_node: "review"
+        }),
+        expect.objectContaining({
+          source_artifact: "external-runs/external-1/review/node_strengthening_recommendations.json",
+          target_node: "run_experiments",
+          recommended_prompt_node: "design_experiments"
+        })
+      ])
+    );
+    await expect(fs.stat(path.join(result.contextDir, "node-prompts", "design_experiments.md"))).resolves.toBeTruthy();
   });
 
   it("blocks external meta-harness contexts when apply mode is requested", async () => {
@@ -360,6 +379,7 @@ async function createExternalRunRoot(
     resultAnalysis?: boolean;
     reviewDecision?: boolean;
     paperReadiness?: boolean;
+    nodeStrengthening?: boolean;
     unrelated?: boolean;
   }
 ): Promise<string> {
@@ -372,6 +392,18 @@ async function createExternalRunRoot(
   }
   if (options.reviewDecision) {
     await fs.writeFile(path.join(root, "review", "decision.json"), JSON.stringify({ outcome: "revise" }, null, 2), "utf8");
+  }
+  if (options.nodeStrengthening) {
+    await fs.writeFile(
+      path.join(root, "review", "node_strengthening_recommendations.json"),
+      JSON.stringify({
+        recommendations: [
+          { node: "write_paper", priority: "high", diagnostic_ids: ["finding:paper_surface"] },
+          { node: "run_experiments", priority: "high", diagnostic_ids: ["diagnostic:tiny_eval_sample"] }
+        ]
+      }, null, 2),
+      "utf8"
+    );
   }
   if (options.paperReadiness) {
     await fs.writeFile(

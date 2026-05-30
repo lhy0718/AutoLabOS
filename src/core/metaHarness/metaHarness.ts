@@ -1,5 +1,6 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { RunRecord } from "../../types.js";
 import { AutoLabOSRuntime, bootstrapAutoLabOSRuntime } from "../../runtime/createRuntime.js";
@@ -243,12 +244,17 @@ async function buildMetaHarnessContext(input: {
     }
   }
 
+  promptTargetMap.push(...await copyExternalRunContexts({
+    contextDir: input.contextDir,
+    externalRunRoots: input.externalRunRoots
+  }));
+
   for (const entry of promptTargetMap) {
     requestedPromptNodes.add(entry.recommended_prompt_node);
   }
   for (const node of META_HARNESS_PROMPT_NODES) {
-    const promptPath = path.join(input.cwd, "node-prompts", `${node}.md`);
-    if ((requestedPromptNodes.has(node) || await fileExists(promptPath)) && await fileExists(promptPath)) {
+    const promptPath = await resolveMetaHarnessPromptPath(input.cwd, node);
+    if (requestedPromptNodes.has(node) && promptPath) {
       await copyFileToContext(promptPath, path.join(input.contextDir, "node-prompts", `${node}.md`));
     }
   }
@@ -257,11 +263,6 @@ async function buildMetaHarnessContext(input: {
     `${JSON.stringify({ generated_at: new Date().toISOString(), targets: promptTargetMap }, null, 2)}\n`,
     "utf8"
   );
-
-  await copyExternalRunContexts({
-    contextDir: input.contextDir,
-    externalRunRoots: input.externalRunRoots
-  });
 }
 
 async function writeTaskFile(contextDir: string): Promise<void> {
@@ -300,9 +301,10 @@ async function assembleContextPrompt(contextDir: string): Promise<string> {
 async function copyExternalRunContexts(input: {
   contextDir: string;
   externalRunRoots: string[];
-}): Promise<void> {
+}): Promise<PromptTargetMapEntry[]> {
+  const promptTargets: PromptTargetMapEntry[] = [];
   if (input.externalRunRoots.length === 0) {
-    return;
+    return promptTargets;
   }
   const externalRoot = path.join(input.contextDir, "external-runs");
   await ensureDir(externalRoot);
@@ -352,6 +354,7 @@ async function copyExternalRunContexts(input: {
       missing_optional_artifacts: missingOptionalArtifacts
     };
     manifest.push(entry);
+    promptTargets.push(...await collectPromptTargetMapEntries(externalRunRoot, sourceId, `external-runs/${sourceId}/`));
     await fs.writeFile(path.join(sourceDir, "manifest.json"), `${JSON.stringify(entry, null, 2)}\n`, "utf8");
   }
 
@@ -370,6 +373,7 @@ async function copyExternalRunContexts(input: {
     )}\n`,
     "utf8"
   );
+  return promptTargets;
 }
 
 const EXTERNAL_CONTEXT_ARTIFACTS = [
@@ -428,7 +432,7 @@ function nodeArtifactPathsForMetaHarnessNode(node: MetaHarnessNode, runRoot: str
   return [];
 }
 
-async function collectPromptTargetMapEntries(runRoot: string, runId: string): Promise<PromptTargetMapEntry[]> {
+async function collectPromptTargetMapEntries(runRoot: string, runId: string, artifactPrefix = ""): Promise<PromptTargetMapEntry[]> {
   const entries: PromptTargetMapEntry[] = [];
   const strengtheningPath = path.join(runRoot, "review", "node_strengthening_recommendations.json");
   const strengthening = await readJsonObjectIfPresent(strengtheningPath);
@@ -444,7 +448,7 @@ async function collectPromptTargetMapEntries(runRoot: string, runId: string): Pr
     }
     entries.push({
       run_id: runId,
-      source_artifact: "review/node_strengthening_recommendations.json",
+      source_artifact: `${artifactPrefix}review/node_strengthening_recommendations.json`,
       target_node: targetNode,
       recommended_prompt_node: promptNode,
       prompt_file: `node-prompts/${promptNode}.md`,
@@ -469,7 +473,7 @@ async function collectPromptTargetMapEntries(runRoot: string, runId: string): Pr
     }
     entries.push({
       run_id: runId,
-      source_artifact: "review/paper_scale_diagnostics.json",
+      source_artifact: `${artifactPrefix}review/paper_scale_diagnostics.json`,
       target_node: targetNode,
       recommended_prompt_node: promptNode,
       prompt_file: `node-prompts/${promptNode}.md`,
@@ -480,6 +484,21 @@ async function collectPromptTargetMapEntries(runRoot: string, runId: string): Pr
     });
   }
   return entries;
+}
+
+async function resolveMetaHarnessPromptPath(cwd: string, node: MetaHarnessNode): Promise<string | undefined> {
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(moduleDir, "../../..");
+  const candidates = Array.from(new Set([
+    path.join(cwd, "node-prompts", `${node}.md`),
+    path.join(repoRoot, "node-prompts", `${node}.md`)
+  ]));
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
 }
 
 function mapStrengtheningTargetToPromptNode(targetNode: string): MetaHarnessNode | undefined {

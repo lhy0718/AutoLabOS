@@ -17,7 +17,7 @@ Path placeholders:
 
 ## Issue: LV-459
 
-- Status: source repair implemented on 2026-05-30; automated validation passed; same-flow paper-quality loop still blocked by provider quota
+- Status: source repair implemented on 2026-05-30; automated validation passed; read-only active-run meta-harness context revalidated; same-flow paper-quality loop still blocked by provider quota
 - Validation target: meta-harness contexts should route review/node-strengthening recommendations to the actual node prompt that can be improved, including paper-surface defects that originate in write_paper but currently have no standalone node prompt file.
 - Environment/session context: active P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after review and harness validators began surfacing paper ACL/template/citation/render defects and node-strengthening artifacts.
 
@@ -35,6 +35,7 @@ Path placeholders:
 - Actual behavior:
   - The meta-harness task text mentioned node-strengthening artifacts, but the generated context did not include an explicit target-to-prompt map.
   - The CLI rejected `--node design_experiments` and `--node generate_hypotheses`, limiting meta-harness strengthening to a narrower slice than the review artifacts can identify.
+  - A follow-up read-only `--external-run` context for the active validation run initially produced an empty `prompt_target_map.json`, because target-map extraction only considered selected completed runs and not external run roots.
 
 - Fresh vs existing session comparison:
   - Fresh session: deterministic source/test reproduction through the meta-harness context builder.
@@ -47,6 +48,8 @@ Path placeholders:
 
 - Code/test changes:
   - Code: src/core/metaHarness/metaHarness.ts now writes `prompt_target_map.json` from review/node-strengthening and paper-scale diagnostic artifacts.
+  - Code: read-only external-run contexts now also contribute node-strengthening and diagnostic entries to `prompt_target_map.json`.
+  - Code: meta-harness prompt files can be copied from the repo prompt directory when the execution cwd is a validation workspace without its own `node-prompts/` tree.
   - Code: source targets such as `run_experiments` and `implement_experiments` map to `design_experiments`; `write_paper` and `figure_audit` map to `review`; collect/analyze paper-stage gaps map to `generate_hypotheses` when no direct prompt file exists.
   - Code: meta-harness prompt context can include all existing prompt files for the supported prompt nodes.
   - Code: src/cli/args.ts and src/cli/main.ts allow `--node generate_hypotheses`, `--node design_experiments`, `--node analyze_results`, and `--node review`.
@@ -56,6 +59,7 @@ Path placeholders:
 - Regression status:
   - Focused regression passed: TMPDIR=/tmp npm test -- tests/metaHarness.test.ts.
   - CLI parser regression passed: TMPDIR=/tmp npm test -- tests/cliArgs.test.ts -t "meta-harness".
+  - Read-only active-run meta-harness context passed: `npm --prefix <repo-root> exec -- tsx <repo-root>/src/cli/main.ts meta-harness --external-run <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0 --no-apply`; generated context `outputs/meta-harness/2026-05-30T15-00-07Z` includes non-empty `prompt_target_map.json` and copied prompt files.
   - Harness validation service passed: TMPDIR=/tmp npm test -- tests/harnessValidationService.test.ts.
   - Paper surface validator regression passed: TMPDIR=/tmp npm test -- tests/harnessValidators.test.ts -t "paper surface".
   - Public-code guard passed: TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts.
