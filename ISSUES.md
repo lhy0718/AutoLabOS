@@ -15,6 +15,62 @@ Path placeholders:
 
 ---
 
+## Issue: LV-458
+
+- Status: reproduced in validation-workspace harness on 2026-05-30; source repair implemented; automated validation passed; same-flow cleanup pending until design_experiments can rerun after provider quota is available
+- Validation target: a newly accepted design_experiments portfolio must invalidate stale downstream execution summary artifacts from older run_experiments attempts.
+- Environment/session context: existing P6 validation run 3bc89107-909f-4315-9340-d75ce02eb0e0 in <validation-workspace>, after implement_experiments rolled back to design_experiments and design_experiments wrote a fresh `experiment_portfolio.json` while an older `run_manifest.json` remained.
+
+- Reproduction steps:
+  1. Resume or inspect the active P6 validation workspace after the latest design_experiments regeneration.
+  2. Run the harness with the validation workspace as root.
+  3. Observe `experiment_portfolio.json` report `execution_model=single_run` while stale `run_manifest.json` reports `execution_model=legacy_python_runner`.
+  4. Observe the harness fail with `experiment_execution_model_mismatch`.
+
+- Expected behavior:
+  - When design_experiments writes a new experiment portfolio, prior execution summary artifacts should no longer be treated as current evidence for the new design.
+  - AutoLabOS should preserve execution evidence logs, but clear stale summary files that can falsely claim a current run manifest for a different design.
+  - The harness should not compare a fresh design artifact against an older execution manifest after a governed backtrack.
+
+- Actual behavior:
+  - `experiment_portfolio.json` was refreshed by design_experiments.
+  - `run_manifest.json` from an earlier run_experiments execution remained in the run root.
+  - The validation-workspace harness reported `experiment_execution_model_mismatch`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately reproduced; the defect depends on accumulated artifacts in the active long-running P6 validation run.
+  - Existing session: reproduced by running the harness against the active validation workspace.
+  - Divergence: no UI-only divergence observed; the defect is artifact lifecycle consistency after a backtrack and design regeneration.
+
+- Root cause hypothesis:
+  - Type: persisted_state_bug
+  - Hypothesis: design_experiments materializes a new `experiment_portfolio.json` but does not invalidate downstream execution summary artifacts whose contract only remains valid for the previous design/manifest pair.
+
+- Code/test changes:
+  - Code: src/core/experiments/staleExecutionArtifacts.ts adds a focused cleanup helper for execution summary artifacts invalidated by a new design.
+  - Code: src/core/nodes/designExperiments.ts calls the cleanup helper after writing a fresh experiment portfolio.
+  - Tests: tests/staleExecutionArtifacts.test.ts verifies stale execution summaries are removed while `metrics.json` and `exec_logs/` evidence are preserved.
+
+- Regression status:
+  - Validation-workspace reproduction complete: harness reports `experiment_execution_model_mismatch` on the pre-repair stale artifact state.
+  - Focused regression passed: TMPDIR=/tmp npm test -- tests/staleExecutionArtifacts.test.ts.
+  - Public-code guard passed: TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts.
+  - Repo harness passed: npm run validate:harness.
+  - Build passed: npm run build.
+  - Whitespace check passed: git diff --check.
+  - Existing validation-workspace harness still fails until design_experiments reruns and node-owned cleanup is applied; the coding agent did not manually delete run artifacts.
+
+- Remaining risks:
+  - Same-flow validation must rerun design_experiments after provider quota is available to prove the cleanup in the live run.
+  - Additional stale downstream artifacts may need similar lifecycle treatment if later harness checks expose them.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/experiment_portfolio.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_manifest.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json
+
+---
+
 ## Issue: LV-457
 
 - Status: reproduced in same-flow P6 validation on 2026-05-30; source repair implemented; automated validation passed; same-flow retry blocked by provider quota reset

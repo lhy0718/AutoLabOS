@@ -17,6 +17,7 @@ import {
 } from "../analysis/researchPlanning.js";
 import { supportsRealExecutionBundle } from "../experiments/realExecutionBundle.js";
 import { buildExperimentPortfolioFromDesign } from "../experiments/experimentPortfolio.js";
+import { clearExecutionSummaryArtifactsInvalidatedByDesign } from "../experiments/staleExecutionArtifacts.js";
 import { runDesignExperimentsPanel } from "../designExperimentsPanel.js";
 import {
   buildExperimentComparisonContract,
@@ -369,6 +370,14 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         "experiment_portfolio.json",
         `${JSON.stringify(experimentPortfolio, null, 2)}\n`
       );
+      const clearedExecutionArtifacts = await clearExecutionSummaryArtifactsInvalidatedByDesign(
+        path.join(process.cwd(), ".autolabos", "runs", run.id)
+      );
+      if (clearedExecutionArtifacts.length > 0) {
+        emitLog(
+          `Cleared ${clearedExecutionArtifacts.length} stale execution summary artifact(s) invalidated by the new experiment design.`
+        );
+      }
 
       // --- Baseline summary artifact (for review gate) ---
       const baselineSummary = buildBaselineSummary({
