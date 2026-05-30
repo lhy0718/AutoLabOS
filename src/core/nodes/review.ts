@@ -5,6 +5,7 @@ import { AnalysisConditionComparison, AnalysisReport } from "../resultAnalysis.j
 import { buildReviewPacket } from "../reviewPacket.js";
 import {
   runReviewPanel,
+  type PaperSurfaceReviewIssue,
   type ReviewArtifactPresence,
   type ReviewDecision,
   type ReviewFinding
@@ -85,8 +86,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
 
       const presence = await resolveReviewArtifactPresence(runDir, report);
       const citationConsistencyArtifact = await safeReadJson(path.join(runDir, "paper", "citation_consistency.json")) as
-        | { orphan_citations?: string[] }
+        | { orphan_citations?: string[]; missing_rendered_citations?: string[] }
         | undefined;
+      const paperSurfaceIssues = await resolvePaperSurfaceReviewIssues(runDir, citationConsistencyArtifact);
       const riskSignalsArtifact = await safeReadJson(path.join(runDir, "analysis", "risk_signals.json")) as
         | RiskSignal[]
         | undefined;
@@ -101,6 +103,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         orphanCitations: Array.isArray(citationConsistencyArtifact?.orphan_citations)
           ? citationConsistencyArtifact.orphan_citations.filter((value): value is string => typeof value === "string")
           : [],
+        paperSurfaceIssues,
         riskSignals: Array.isArray(riskSignalsArtifact)
           ? riskSignalsArtifact.filter((value): value is RiskSignal => {
               if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -1190,6 +1193,107 @@ interface ClaimCeilingDetail {
   strongest_defensible_claim: string;
   blocked_stronger_claims: Array<{ claim: string; reason: string }>;
   additional_evidence_needed: string[];
+}
+
+async function resolvePaperSurfaceReviewIssues(
+  runDir: string,
+  citationConsistencyArtifact?: { missing_rendered_citations?: string[] }
+): Promise<PaperSurfaceReviewIssue[]> {
+  const issues: PaperSurfaceReviewIssue[] = [];
+  const tex = await safeRead(path.join(runDir, "paper", "main.tex"));
+  if (tex) {
+    const aclPackage = tex.match(/\\usepackage(?:\[[^\]]*\])?\{ACL20\d{2}\}/iu)?.[0] || "";
+    const usesAclTemplate = aclPackage.length > 0;
+    const bibliographyStyle = tex.match(/\\bibliographystyle\{([^}]+)\}/u)?.[1]?.trim() || "";
+    if (usesAclTemplate && bibliographyStyle !== "acl_natbib") {
+      issues.push({
+        code: "paper_acl_bibliography_style_mismatch",
+        detail:
+          `paper/main.tex preserves ${aclPackage} but uses bibliography style ` +
+          `${bibliographyStyle || "(missing)"}, so ACL references may render in the wrong order/style.`,
+        evidence_path: "paper/main.tex",
+        severity: "high"
+      });
+    }
+    if (usesAclTemplate && /\\(?:noindent\s*)?textbf\{Keywords:\}|\\keywords\{/iu.test(tex)) {
+      issues.push({
+        code: "paper_acl_template_absent_keywords",
+        detail: "paper/main.tex renders a Keywords field even though the ACL template surface does not include one.",
+        evidence_path: "paper/main.tex",
+        severity: "high"
+      });
+    }
+    const repeatedBundle = detectRepeatedCitationBundle(tex);
+    if (repeatedBundle) {
+      issues.push({
+        code: "paper_repeated_citation_bundle",
+        detail:
+          `paper/main.tex repeats citation bundle ${repeatedBundle.bundle} ` +
+          `${repeatedBundle.count} times in ${repeatedBundle.section}.`,
+        evidence_path: "paper/main.tex",
+        severity: "high"
+      });
+    }
+  }
+
+  const missingRenderedCitations = Array.isArray(citationConsistencyArtifact?.missing_rendered_citations)
+    ? citationConsistencyArtifact.missing_rendered_citations.filter((value): value is string => typeof value === "string" && value.length > 0)
+    : [];
+  if (missingRenderedCitations.length > 0) {
+    issues.push({
+      code: "paper_missing_rendered_citations",
+      detail: `paper/citation_consistency.json reports ${missingRenderedCitations.length} evidence-backed citation(s) that never appear in main.tex.`,
+      evidence_path: "paper/citation_consistency.json",
+      severity: "high"
+    });
+  }
+
+  const renderValidation = await safeReadJson(path.join(runDir, "paper", "render_validation.json")) as
+    | { status?: string; issues?: Array<{ code?: string }> }
+    | undefined;
+  if (renderValidation?.status === "fail") {
+    const issueCodes = Array.isArray(renderValidation.issues)
+      ? renderValidation.issues.map((issue) => issue.code).filter((value): value is string => typeof value === "string").slice(0, 5)
+      : [];
+    issues.push({
+      code: "paper_render_validation_failed",
+      detail: `paper/render_validation.json reports failure${issueCodes.length > 0 ? ` (${issueCodes.join(", ")})` : ""}.`,
+      evidence_path: "paper/render_validation.json",
+      severity: "high"
+    });
+  }
+
+  return issues;
+}
+
+function detectRepeatedCitationBundle(tex: string): { bundle: string; count: number; section: string } | undefined {
+  const chunks = tex.split(/(?=\\section(?:\[[^\]]*\])?\{[^}]+\})/u);
+  const effectiveChunks = chunks.length > 1 ? chunks : [tex];
+  for (const chunk of effectiveChunks) {
+    const section = chunk.match(/\\section(?:\[[^\]]*\])?\{([^}]+)\}/u)?.[1]?.trim() || "the rendered manuscript";
+    const counts = new Map<string, number>();
+    for (const match of chunk.matchAll(/\\cite[a-zA-Z*]*(?:\[[^\]]*\]){0,2}\{([^}]+)\}/gu)) {
+      const bundle = normalizeCitationBundle(match[1] || "");
+      if (!bundle) {
+        continue;
+      }
+      const next = (counts.get(bundle) ?? 0) + 1;
+      if (next > 1) {
+        return { bundle, count: next, section };
+      }
+      counts.set(bundle, next);
+    }
+  }
+  return undefined;
+}
+
+function normalizeCitationBundle(raw: string): string {
+  return raw
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b))
+    .join(",");
 }
 
 interface PreReviewSummary {

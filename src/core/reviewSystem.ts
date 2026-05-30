@@ -59,6 +59,13 @@ export interface ReviewFinding {
   confidence: number;
 }
 
+export interface PaperSurfaceReviewIssue {
+  code: string;
+  detail: string;
+  evidence_path: string;
+  severity?: ReviewSeverity;
+}
+
 export interface SpecialistReviewResult {
   reviewer_id: string;
   reviewer_label: string;
@@ -149,6 +156,7 @@ interface ReviewPanelArgs {
   report: AnalysisReport;
   presence: ReviewArtifactPresence;
   orphanCitations?: string[];
+  paperSurfaceIssues?: PaperSurfaceReviewIssue[];
   riskSignals?: RiskSignal[];
   figureAuditSummary?: FigureAuditSummary;
   llm: LLMClient;
@@ -245,9 +253,10 @@ export async function runReviewPanel(args: ReviewPanelArgs): Promise<ReviewPanel
     reviewers.push(refined.result);
   }
 
-  const findings = dedupeFindings(
-    reviewers.flatMap((reviewer) => reviewer.findings)
-  );
+  const findings = dedupeFindings([
+    ...reviewers.flatMap((reviewer) => reviewer.findings),
+    ...buildPaperSurfaceFindings(args.paperSurfaceIssues ?? [])
+  ]);
   const scorecard = buildScorecard(reviewers);
   const consistency = buildConsistencyReport(reviewers, findings);
   const bias = buildBiasReport(args.report, reviewers, findings, consistency);
@@ -287,6 +296,7 @@ async function refineReviewerWithLlm(
           spec,
           fallback,
           args.orphanCitations,
+          args.paperSurfaceIssues,
           args.riskSignals,
           args.figureAuditSummary
         ), {
@@ -346,6 +356,7 @@ function buildReviewerPrompt(
   spec: ReviewerSpec,
   fallback: SpecialistReviewResult,
   orphanCitations: string[] = [],
+  paperSurfaceIssues: PaperSurfaceReviewIssue[] = [],
   riskSignals: RiskSignal[] = [],
   figureAuditSummary?: FigureAuditSummary
 ): string {
@@ -379,6 +390,7 @@ function buildReviewerPrompt(
     limitations: report.limitations.slice(0, 4),
     warnings: report.warnings.slice(0, 4),
     orphan_citations: orphanCitations.slice(0, 12),
+    paper_surface_issues: paperSurfaceIssues.slice(0, 12),
     risk_signals: riskSignals.slice(0, 12),
     figure_audit_summary: figureAuditSummary
       ? {
@@ -970,6 +982,7 @@ function buildDecision(
       (report.overview.objective_status !== "met" || hasClaimBlocker));
   const hasMethodologyBlocker = highFindings.some((item) => item.dimension === "methodology" || item.dimension === "statistics");
   const hasIntegrityBlocker = highFindings.some((item) => item.dimension === "integrity" || item.dimension === "claim_verification");
+  const hasWritingBlocker = highFindings.some((item) => item.dimension === "writing_readiness");
   const mediumCount = findings.filter((item) => item.severity === "medium").length;
 
   let outcome: ReviewRecommendation = "advance";
@@ -995,6 +1008,8 @@ function buildDecision(
       outcome = "backtrack_to_design";
       recommendedTransition = "backtrack_to_design";
     }
+  } else if (hasWritingBlocker) {
+    outcome = "revise_in_place";
   } else if (consistency.panel_agreement === "low" && highFindings.length > 0) {
     // Low agreement with high findings: conservative backtrack
     if (report.transition_recommendation?.action === "backtrack_to_implement" || revisionPlan.items.some((item) => item.owner === "implementation")) {
@@ -1027,6 +1042,40 @@ function buildDecision(
     blocking_finding_ids: blockingIds,
     required_actions: revisionPlan.items.slice(0, 4).map((item) => item.action)
   };
+}
+
+function buildPaperSurfaceFindings(issues: PaperSurfaceReviewIssue[]): ReviewFinding[] {
+  return issues.slice(0, 12).map((issue) =>
+    createFinding(
+      "paper_surface_reviewer",
+      "Paper surface reviewer",
+      "writing_readiness",
+      issue.severity ?? "high",
+      paperSurfaceIssueTitle(issue.code),
+      issue.detail,
+      [issue.evidence_path].filter(Boolean),
+      [],
+      "Route this defect back to write_paper or the paper-surface validator before treating the manuscript as clean.",
+      0.9
+    )
+  );
+}
+
+function paperSurfaceIssueTitle(code: string): string {
+  switch (code) {
+    case "paper_acl_bibliography_style_mismatch":
+      return "ACL bibliography style mismatch";
+    case "paper_acl_template_absent_keywords":
+      return "Template-absent keywords rendered";
+    case "paper_repeated_citation_bundle":
+      return "Repeated citation bundle";
+    case "paper_render_validation_failed":
+      return "Rendered paper validation failed";
+    case "paper_missing_rendered_citations":
+      return "Evidence-backed citations not rendered";
+    default:
+      return "Paper surface defect";
+  }
 }
 
 function buildDecisionRationale(

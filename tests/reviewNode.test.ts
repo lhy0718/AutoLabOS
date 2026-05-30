@@ -443,7 +443,7 @@ describe("review node", () => {
     expect(await memory.get("review.readiness_risks")).toMatchObject({ readiness_state: "paper_ready" });
   });
 
-  it("includes analysis risk signals in the review panel prompt context", async () => {
+  it("includes analysis risk signals and paper surface issues in the review panel prompt context", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-risk-signals-"));
     process.chdir(root);
 
@@ -451,6 +451,7 @@ describe("review node", () => {
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await mkdir(path.join(runDir, "analysis"), { recursive: true });
+    await mkdir(path.join(runDir, "paper"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
     await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.91 }, null, 2), "utf8");
     await writeFile(
@@ -502,6 +503,32 @@ describe("review node", () => {
       ),
       "utf8"
     );
+    await writeFile(
+      path.join(runDir, "paper", "main.tex"),
+      [
+        "\\documentclass[11pt]{article}",
+        "\\usepackage[review]{ACL2023}",
+        "\\begin{document}",
+        "\\noindent\\textbf{Keywords:} method, regularization",
+        "\\section{Related Work}",
+        "Prior work motivates the setting. \\cite{paperA,paperB}",
+        "Prior work motivates the setting again. \\cite{paperB,paperA}",
+        "\\bibliographystyle{plain}",
+        "\\bibliography{references}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "paper", "citation_consistency.json"),
+      JSON.stringify({ orphan_citations: [], missing_rendered_citations: ["paperC"] }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "paper", "render_validation.json"),
+      JSON.stringify({ status: "fail", issues: [{ code: "template_not_preserved" }] }, null, 2),
+      "utf8"
+    );
 
     const llm = new PromptCaptureReviewLlm();
     const node = createReviewNode({
@@ -521,6 +548,12 @@ describe("review node", () => {
     expect(
       llm.prompts.some((prompt) => prompt.includes("statistically inconsistent metrics"))
     ).toBe(true);
+    expect(llm.prompts.some((prompt) => prompt.includes("\"paper_surface_issues\""))).toBe(true);
+    expect(llm.prompts.some((prompt) => prompt.includes("paper_acl_bibliography_style_mismatch"))).toBe(true);
+    expect(llm.prompts.some((prompt) => prompt.includes("paper_repeated_citation_bundle"))).toBe(true);
+    const findingsRaw = await readFile(path.join(runDir, "review", "findings.jsonl"), "utf8");
+    expect(findingsRaw).toContain("ACL bibliography style mismatch");
+    expect(findingsRaw).toContain("Repeated citation bundle");
   });
 
   it("marks missing evidence inputs as blocking", async () => {
