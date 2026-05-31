@@ -415,6 +415,20 @@ function initGitWorkspace(workspace: string, trackedFiles: string[]): void {
 }
 
 describe("ImplementSessionManager", () => {
+  it("keeps staged_llm chunk materialization bounded and retryable", () => {
+    const source = readFileSync(
+      path.join(ORIGINAL_CWD, "src", "core", "agents", "implementSessionManager.ts"),
+      "utf8"
+    );
+
+    expect(source).toContain("IMPLEMENT_STAGED_LLM_CHUNK_MAX_STREAMED_CHARS");
+    expect(source).toContain("maxStreamedChars: IMPLEMENT_STAGED_LLM_CHUNK_MAX_STREAMED_CHARS");
+    expect(source).toContain("staged_llm chunk output exceeded");
+    expect(source).toContain("staged_llm chunk completion exceeded");
+    expect(source).toContain("isImplementStagedLlmOutputSizeError(error)");
+    expect(source).toContain("exceeded the output-size cap");
+  });
+
   it("materializes generic Python JSON/path helper chunks locally", () => {
     const content = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
       title: "JSON, path, and small serialization helpers",
@@ -37834,6 +37848,100 @@ describe("ImplementSessionManager", () => {
     });
 
     await expect(manager.run(run)).rejects.toThrow(/fallback output to primary metrics/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects real-execution python runners whose fallback data can satisfy primary success metrics", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-primary-fallback-data-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Primary Fallback Data",
+      topic: "condition sweep under local execution budget",
+      constraints: ["real training evidence required"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-primary-fallback-data",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner that can default to deterministic fallback data.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "real_execution",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "import argparse",
+                  "import json",
+                  "from pathlib import Path",
+                  "",
+                  "def load_training_examples():",
+                  "    return [{'input': 'sample', 'label': 'A'}], {'source': 'deterministic_fallback', 'fallback_used': True}",
+                  "",
+                  "def main(argv=None):",
+                  "    parser = argparse.ArgumentParser()",
+                  "    parser.add_argument('--metrics-path', default='metrics.json')",
+                  "    args = parser.parse_args(argv)",
+                  "    examples, provenance = load_training_examples()",
+                  "    payload = {'success': True, 'status': 'completed', 'example_count': len(examples), 'provenance': provenance}",
+                  "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf8')",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/fallback output\/data to primary metrics/i);
     expect(calls).toBe(3);
   });
 

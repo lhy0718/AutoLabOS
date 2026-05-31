@@ -81,6 +81,7 @@ export class ImplementSessionStopError extends Error {
 
 const IMPLEMENT_DELTA_PROGRESS_MIN_CHARS = 4_000;
 const IMPLEMENT_DELTA_PROGRESS_MIN_MS = 5_000;
+const IMPLEMENT_STAGED_LLM_CHUNK_MAX_STREAMED_CHARS = 18_000;
 const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_MAX_ATTEMPTS = 12;
 const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_DELAY_MS = 5_000;
 
@@ -2597,6 +2598,7 @@ export class ImplementSessionManager {
       extras?: Partial<ImplementProgressStatus>
     ) => void;
     reasoningEffort?: string;
+    maxStreamedChars?: number;
   }): Promise<{ text: string; threadId?: string }> {
     const partialResponsePath = normalizeFsPath(path.join(input.runDir, IMPLEMENT_PARTIAL_RESPONSE_ARTIFACT));
     const heartbeatMs = getImplementLlmProgressHeartbeatMs();
@@ -2610,8 +2612,12 @@ export class ImplementSessionManager {
     let heartbeatTimer: NodeJS.Timeout | undefined;
     const progressStallTimeoutMs = getImplementLlmProgressStallTimeoutMs();
     const progressStallController = progressStallTimeoutMs > 0 ? new AbortController() : undefined;
+    const streamedSizeController = input.maxStreamedChars && input.maxStreamedChars > 0
+      ? new AbortController()
+      : undefined;
     let progressStallTimer: NodeJS.Timeout | undefined;
     let progressStalled = false;
+    let streamedSizeExceeded = false;
     const persistPartialSnapshot = async () => {
       if (!partialText.trim()) {
         return;
@@ -2663,9 +2669,12 @@ export class ImplementSessionManager {
     const timeoutId = timeoutController
       ? setTimeout(() => timeoutController.abort(), input.timeoutMs)
       : undefined;
-    const abortSignals = [input.abortSignal, timeoutController?.signal, progressStallController?.signal].filter(
-      (signal): signal is AbortSignal => Boolean(signal)
-    );
+    const abortSignals = [
+      input.abortSignal,
+      timeoutController?.signal,
+      progressStallController?.signal,
+      streamedSizeController?.signal
+    ].filter((signal): signal is AbortSignal => Boolean(signal));
     const llmAbortSignal =
       abortSignals.length === 0
         ? undefined
@@ -2737,6 +2746,23 @@ export class ImplementSessionManager {
                   partialText += `${text}\n`;
                   void maybePersistPartialSnapshot();
                   emitDeltaProgressSummary();
+                  if (
+                    streamedSizeController &&
+                    !streamedSizeController.signal.aborted &&
+                    partialText.trim().length > (input.maxStreamedChars || 0)
+                  ) {
+                    streamedSizeExceeded = true;
+                    input.emitImplementObservation(
+                      "codex",
+                      `staged_llm chunk output exceeded ${input.maxStreamedChars} chars before completion; aborting request so it can be subdivided.`,
+                      {
+                        attempt: input.attempt,
+                        threadId: input.threadId,
+                        publicDir: input.publicDir
+                      }
+                    );
+                    streamedSizeController.abort();
+                  }
                   return;
                 }
                 input.emitImplementObservation("codex", text, {
@@ -2796,6 +2822,20 @@ export class ImplementSessionManager {
         partialText = completion.text;
         await persistPartialSnapshot();
       }
+      if (input.maxStreamedChars && input.maxStreamedChars > 0 && completion.text.trim().length > input.maxStreamedChars) {
+        input.emitImplementObservation(
+          "codex",
+          `staged_llm chunk completion exceeded ${input.maxStreamedChars} chars; asking materialization to subdivide instead of accepting an oversized chunk.`,
+          {
+            attempt: input.attempt,
+            threadId: input.threadId,
+            publicDir: input.publicDir
+          }
+        );
+        throw new Error(
+          `implement_experiments staged_llm request exceeded ${input.maxStreamedChars} chars before completion`
+        );
+      }
       return {
         text: completion.text,
         threadId: completion.threadId
@@ -2829,6 +2869,20 @@ export class ImplementSessionManager {
           publicDir: input.publicDir
         });
         throw new Error(`implement_experiments staged_llm request timed out after ${input.timeoutMs}ms`);
+      }
+      if (streamedSizeController?.signal.aborted && streamedSizeExceeded && !input.abortSignal?.aborted) {
+        input.emitImplementObservation(
+          "codex",
+          `staged_llm output-size cap preserved ${partialText.trim().length} chars of partial output in ${formatArtifactPath(partialResponsePath)}.`,
+          {
+            attempt: input.attempt,
+            threadId: input.threadId,
+            publicDir: input.publicDir
+          }
+        );
+        throw new Error(
+          `implement_experiments staged_llm request exceeded ${input.maxStreamedChars} chars before completion`
+        );
       }
       throw error;
     } finally {
@@ -3426,7 +3480,8 @@ export class ImplementSessionManager {
         threadId: input.threadId,
         publicDir: input.publicDir,
         emitImplementObservation: input.emitImplementObservation,
-        reasoningEffort: input.reasoningEffort
+        reasoningEffort: input.reasoningEffort,
+        maxStreamedChars: IMPLEMENT_STAGED_LLM_CHUNK_MAX_STREAMED_CHARS
       });
       const chunkRawPath = path.join(input.runDir, IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR, `${chunkArtifactId}.txt`);
       await ensureDir(path.dirname(chunkRawPath));
@@ -3496,9 +3551,11 @@ export class ImplementSessionManager {
 
       const retryReason = isImplementStagedLlmTimeoutError(error)
         ? "timed out"
-        : isCandidateValidationStagedLlmError(error)
-          ? "failed candidate validation"
-          : "was terminated";
+        : isImplementStagedLlmOutputSizeError(error)
+          ? "exceeded the output-size cap"
+          : isCandidateValidationStagedLlmError(error)
+            ? "failed candidate validation"
+            : "was terminated";
       input.emitImplementObservation(
         "codex",
         `Chunk generation ${retryReason} for ${input.chunk.title}; asking staged_llm to re-subdivide it into smaller work units.`,
@@ -11860,6 +11917,10 @@ function isImplementStagedLlmTimeoutError(error: unknown): boolean {
   return error instanceof Error && /implement_experiments staged_llm request timed out after \d+ms/.test(error.message);
 }
 
+function isImplementStagedLlmOutputSizeError(error: unknown): boolean {
+  return error instanceof Error && /implement_experiments staged_llm request exceeded \d+ chars before completion/.test(error.message);
+}
+
 async function clearStagedLlmAttemptArtifacts(runDir: string): Promise<void> {
   const targets = [
     IMPLEMENT_PARTIAL_RESPONSE_ARTIFACT,
@@ -11892,6 +11953,7 @@ async function clearStagedLlmAttemptArtifacts(runDir: string): Promise<void> {
 function isRetryableImplementStagedLlmMaterializationError(error: unknown): boolean {
   return (
     isImplementStagedLlmTimeoutError(error) ||
+    isImplementStagedLlmOutputSizeError(error) ||
     isProviderTerminatedStagedLlmError(error) ||
     isMalformedJsonStagedLlmChunkError(error) ||
     isCandidateValidationStagedLlmError(error)
@@ -39190,6 +39252,10 @@ async function detectPythonSyntheticFallbackPrimaryEvidenceSurface(
     /selected_backend\s*=\s*["'](?:deterministic|synthetic|simulation)/u.test(source) ||
     /return\s+run_[a-z0-9_]*(?:deterministic|synthetic|simulation)[a-z0-9_]*\s*\(/iu.test(source) ||
     /return\s+simulate_[a-z0-9_]*\s*\(/iu.test(source);
+  const hasDeterministicFallbackData =
+    /deterministic[_ -]fallback/u.test(lower) ||
+    /fallback_[a-z0-9_]*(?:examples|records|samples|dataset)/u.test(lower) ||
+    /["']fallback_used["']\s*:\s*true/u.test(source);
   const canReportSuccess =
     /["']success["']\s*:\s*true/u.test(source) ||
     /["']status["']\s*:\s*["'](?:completed|success|ok)["']/u.test(source) ||
@@ -39198,12 +39264,16 @@ async function detectPythonSyntheticFallbackPrimaryEvidenceSurface(
     /diagnostic[- ]only/u.test(lower) ||
     /synthetic[^\n]{0,120}(?:success["']?\s*:\s*false|status["']?\s*:\s*["']failed)/u.test(lower);
 
-  if (!exposesSyntheticControls || !hasDeterministicFallbackBackend || !defaultsToFallbackBackend || !canReportSuccess || clearlyDiagnosticOnly) {
+  const canPromoteFallbackBackend =
+    exposesSyntheticControls && hasDeterministicFallbackBackend && defaultsToFallbackBackend && canReportSuccess;
+  const canPromoteFallbackData = hasDeterministicFallbackData && canReportSuccess;
+
+  if ((!canPromoteFallbackBackend && !canPromoteFallbackData) || clearlyDiagnosticOnly) {
     return undefined;
   }
 
   return [
-    "Real-execution Python runner can promote deterministic, simulated, or synthetic fallback output to primary metrics.",
+    "Real-execution Python runner can promote deterministic, simulated, or synthetic fallback output/data to primary metrics.",
     "Fallback/smoke metrics must be diagnostic-only and must not satisfy governed experiment evidence.",
     "Generate a real execution path, mark the bundle synthetic_validation, or emit failure metrics when required dependencies or data are unavailable."
   ].join(" ");

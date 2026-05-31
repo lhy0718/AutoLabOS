@@ -15,6 +15,58 @@ Path placeholders:
 
 ---
 
+## Issue: LV-468
+
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
+- Validation target: staged implementation materialization should keep generated code chunks bounded, subdivide oversized chunks, and reject real-execution runners whose deterministic fallback data can satisfy primary success metrics.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-467 repair was committed and `implement_experiments` was retried.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` through the P6 continue helper after the LV-467 source repair.
+  2. Let staged generation materialize the public Python experiment runner.
+  3. Inspect progress and the generated runner while generation is still in chunk 3/5.
+
+- Expected behavior:
+  - Individual staged code chunks should stay bounded; oversized provider streams should abort and force smaller subchunk generation instead of producing sprawling runner fragments.
+  - For `real_execution`, deterministic fallback examples, records, samples, or datasets must not be allowed to produce completed/success metrics as primary experiment evidence.
+
+- Actual behavior:
+  - Several chunk responses streamed roughly 20k-24k characters before completion and the runner had already grown to thousands of lines mid-generation.
+  - The partially materialized runner exposed smoke/dry-run controls and deterministic fallback instruction examples while still containing completed/success-style metric payload paths.
+  - The validation process was stopped after this source-level issue was confirmed because it had been launched before the new output-boundary repair.
+
+- Fresh vs existing session comparison:
+  - Fresh session: neutral regressions now cover bounded/retryable chunk materialization wiring and fallback-data primary-success rejection.
+  - Existing session: the active P6 retry advanced beyond LV-467's initial guard but exposed a narrower materialization-bloat and fallback-data evidence-boundary problem.
+  - Divergence: no session divergence observed; this is a staged-generation control and evidence-boundary issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunk materialization only reacted after timeout, malformed JSON, provider termination, or candidate validation failure. Large but still-streaming chunks were treated as progress, and the synthetic/fallback guard did not cover deterministic fallback data sources that could still produce success metrics.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now caps staged chunk streams with `IMPLEMENT_STAGED_LLM_CHUNK_MAX_STREAMED_CHARS`, aborts oversized chunk requests, and routes that error into the existing dynamic subdivision path.
+  - Code: `detectPythonSyntheticFallbackPrimaryEvidenceSurface(...)` now also rejects real-execution Python runners that can promote deterministic fallback data to primary success metrics.
+  - Tests: `tests/implementSessionManager.test.ts` adds neutral coverage for bounded/retryable chunk materialization wiring and fallback-data primary-success rejection.
+
+- Regression status:
+  - Focused regression passed: `TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t "bounded and retryable|fallback data"`.
+  - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
+  - Public hardcoding scan shows only generic metric vocabulary in `src/core/analysis/paperAnalyzer.ts`.
+  - Build passed: `TMPDIR=/tmp npm run build`.
+  - Harness validation passed: `TMPDIR=/tmp npm run validate:harness`.
+  - Same-flow revalidation: pending after this source repair.
+
+- Remaining risks:
+  - The next retry must confirm that oversized chunks are subdivided in the live P6 flow and that fallback data cannot reach handoff as governed evidence.
+  - Later nodes still need to enforce the paper-scale evidence ceiling during analysis, review, and manuscript writing.
+
+- Evidence/artifacts:
+  - <repo-root>/src/core/agents/implementSessionManager.ts
+  - <repo-root>/tests/implementSessionManager.test.ts
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/progress.jsonl
+  - <validation-workspace>/outputs/<run-output>/experiment/<generated-runner>.py
+
 ## Issue: LV-467
 
 - Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
