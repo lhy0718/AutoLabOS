@@ -6862,6 +6862,51 @@ export class ImplementSessionManager {
       }
     }
 
+    const entrypointParseArgsRepair =
+      await repairPythonEntrypointParseArgsSingleArgumentSurface(executionScriptPath);
+    if (entrypointParseArgsRepair.repaired) {
+      onProgress?.(
+        entrypointParseArgsRepair.message ||
+          "Repaired entrypoint CLI argv dispatch before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            entrypointParseArgsRepair.message ||
+            "Repaired entrypoint CLI argv dispatch before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const parserTupleRepair = await repairPythonTupleReturningMainArgsSurface(executionScriptPath);
     if (parserTupleRepair.repaired) {
       onProgress?.(
@@ -40299,6 +40344,41 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
   return {
     repaired: true,
     message: "Added missing generic entrypoint helper aliases in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonEntrypointParseArgsSingleArgumentSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const badDispatch =
+    "return _autolabos_entrypoint_call(func, ((tuple(argv), {}), (list(argv), {})), 'CLI argument parsing')";
+  if (!source.includes(badDispatch)) {
+    return { repaired: false };
+  }
+
+  const repairedDispatch =
+    "return _autolabos_entrypoint_call(func, (((tuple(argv),), {}), ((list(argv),), {}), ((), {'argv': list(argv)}), ((), {'args': list(argv)}), ((), {})), 'CLI argument parsing')";
+  const nextSource = source.replaceAll(badDispatch, repairedDispatch);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Repaired entrypoint CLI argv dispatch in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

@@ -192,6 +192,7 @@ import {
   repairPythonPathLikeSignatureAliasSurface,
   repairPythonTokenizerHelperAliasSurface,
   repairPythonEntrypointLookupHelperAliasSurface,
+  repairPythonEntrypointParseArgsSingleArgumentSurface,
   repairPythonMissingParseArgsSurface,
   repairPythonMissingBuildExperimentConfigSurface,
   repairPythonNamespaceParseArgsSurface,
@@ -16330,6 +16331,74 @@ describe("ImplementSessionManager", () => {
     expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
   });
 
+
+  it("repairs entrypoint CLI parsing that expands argv as positional tokens", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-argv-dispatch-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "import sys",
+        "from pathlib import Path",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    parser.add_argument('--flag', action='store_true')",
+        "    return parser",
+        "",
+        "def parse_args(argv=None):",
+        "    return build_arg_parser().parse_args(argv)",
+        "",
+        "def _autolabos_entrypoint_accepts(func, positional, keywords):",
+        "    try:",
+        "        inspect.signature(func).bind(*positional, **keywords)",
+        "        return True",
+        "    except ValueError:",
+        "        return True",
+        "    except TypeError:",
+        "        return False",
+        "",
+        "def _autolabos_entrypoint_call(func, attempts, stage_name):",
+        "    for positional, keywords in attempts:",
+        "        if _autolabos_entrypoint_accepts(func, positional, keywords):",
+        "            return func(*positional, **keywords)",
+        "    raise RuntimeError(f'Callable for {stage_name} does not accept any supported entrypoint signature: {func!r}')",
+        "",
+        "def _autolabos_entrypoint_parse_args(argv):",
+        "    func = globals().get('parse_args')",
+        "    return _autolabos_entrypoint_call(func, ((tuple(argv), {}), (list(argv), {})), 'CLI argument parsing')",
+        "",
+        "def main(argv=None):",
+        "    argv = tuple(sys.argv[1:] if argv is None else argv)",
+        "    args = _autolabos_entrypoint_parse_args(argv)",
+        "    Path(args.metrics_path).write_text(json.dumps({'flag': args.flag}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--flag"], { cwd: workspace })
+    ).toThrow(/Callable for CLI argument parsing/);
+
+    const repair = await repairPythonEntrypointParseArgsSingleArgumentSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("(((tuple(argv),), {})");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--flag"], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toEqual({ flag: true });
+  });
 
   it("repairs entrypoint lookup runners whose helper aliases are incomplete", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-helper-alias-"));
