@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import contextlib
+import io
 import os
 import pty
 import json
@@ -606,6 +608,13 @@ def wait_for_stop_boundary(
         searchable = append_bounded(searchable, chunk, MAX_SEARCH_CHARS)
         if observed_target_running:
             searchable_after_target_running = append_bounded(searchable_after_target_running, chunk, MAX_SEARCH_CHARS)
+            if chunk.strip():
+                deadline = extend_deadline_for_progress(
+                    now=time.time(),
+                    current_deadline=deadline,
+                    base_timeout=timeout,
+                    max_wall_deadline=max_wall_deadline,
+                )
         if observed_target_running and has_node_status_error_stop_text(searchable_after_target_running, node):
             record = try_load_run_record(workspace, run_id)
             if should_accept_node_status_error_text(record, node, initial_signature):
@@ -802,6 +811,65 @@ def run_selftest() -> int:
         if not (record_dir / timeout_node / "p6_helper_timeout.json").exists():
             print("FAIL: helper timeout diagnostic artifact was not written")
             return 1
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
+        streaming_run_id = "streaming-boundary"
+        streaming_node = "run_experiments"
+        record_dir = workspace / ".autolabos" / "runs" / streaming_run_id
+        node_dir = record_dir / streaming_node
+        node_dir.mkdir(parents=True)
+        (record_dir / "run_record.json").write_text(json.dumps({
+            "status": "running",
+            "currentNode": streaming_node,
+            "graph": {
+                "currentNode": streaming_node,
+                "nodeStates": {
+                    streaming_node: {"status": "running", "updatedAt": "before"},
+                }
+            },
+        }), encoding="utf-8")
+        (node_dir / "status.json").write_text(json.dumps({
+            "status": "running",
+            "stage": "codex",
+            "updatedAt": "before",
+            "progressCount": 1,
+        }), encoding="utf-8")
+        master_fd, slave_fd = os.openpty()
+
+        def write_streaming_chunk() -> None:
+            time.sleep(0.15)
+            os.write(slave_fd, b"still streaming provider output\n")
+            time.sleep(0.35)
+            os.close(slave_fd)
+
+        writer = threading.Thread(target=write_streaming_chunk)
+        writer.start()
+        started = time.time()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                wait_for_stop_boundary(
+                    master_fd,
+                    r"never-matches",
+                    0.2,
+                    "",
+                    workspace=workspace,
+                    run_id=streaming_run_id,
+                    node=streaming_node,
+                    max_wall_seconds=0.6,
+                )
+            print("FAIL: streaming helper wait unexpectedly found a boundary")
+            return 1
+        except WaitTimeout:
+            elapsed = time.time() - started
+            if elapsed < 0.28:
+                print("FAIL: streaming provider output did not extend the helper idle deadline")
+                return 1
+        finally:
+            writer.join(timeout=1.0)
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
         bounded_message = helper_timeout_message(timeout_node, 1800, 7200)
         if "7200 seconds" not in bounded_message or "base idle timeout 1800 seconds" not in bounded_message:
             print("FAIL: helper timeout message did not report the effective bounded max-wall cap")
