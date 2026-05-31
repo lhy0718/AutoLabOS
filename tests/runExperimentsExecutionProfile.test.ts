@@ -1346,7 +1346,7 @@ describe("run_experiments execution profile behavior", () => {
           const repairedSource = await readFile(scriptPath, "utf8");
           repairedBeforeExecution =
             repairedSource.includes("_autolabos_public_study_top_level_runner_alias_marker") &&
-            repairedSource.includes("run_experiment = _autolabos_public_study_top_level_runner");
+            repairedSource.includes("def run_experiment(*positional, **keyword):");
           await writeFile(
             path.join(runDir, "metrics.json"),
             JSON.stringify(

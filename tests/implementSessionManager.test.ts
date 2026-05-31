@@ -191,6 +191,7 @@ import {
   repairPythonRuntimeDependencyHelperAlias,
   repairPythonPathLikeSignatureAliasSurface,
   repairPythonTokenizerHelperAliasSurface,
+  repairPythonEntrypointLookupHelperAliasSurface,
   repairPythonMissingParseArgsSurface,
   repairPythonMissingBuildExperimentConfigSurface,
   repairPythonNamespaceParseArgsSurface,
@@ -16327,6 +16328,158 @@ describe("ImplementSessionManager", () => {
     expect(await memory.get("implement_experiments.script")).toBe(scriptPath);
     expect(await memory.get("implement_experiments.run_command")).toContain(scriptPath);
     expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
+  });
+
+
+  it("repairs entrypoint lookup runners whose helper aliases are incomplete", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-helper-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    const outputDir = path.join(workspace, "outputs");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "import os",
+        "import time",
+        "from pathlib import Path",
+        "from typing import Any, Mapping, Optional, Sequence",
+        "",
+        "LOCKED_CONDITIONS = [",
+        "    {'condition_marker': 'baseline_condition'},",
+        "    {'condition_marker': 'candidate_condition_a'},",
+        "]",
+        "SEED_SCHEDULE = [1]",
+        "BASELINE_CONDITION_MARKER = 'baseline_condition'",
+        "",
+        "def _autolabos_json_safe(value):",
+        "    return value",
+        "",
+        "def _autolabos_metric_to_jsonable(value):",
+        "    return value",
+        "",
+        "def build_locked_run_plan_snapshot():",
+        "    return {",
+        "        'conditions': LOCKED_CONDITIONS,",
+        "        'seed_schedule': SEED_SCHEDULE,",
+        "        'planned_runs': [",
+        "            {'condition_marker': condition['condition_marker'], 'seed': seed}",
+        "            for condition in LOCKED_CONDITIONS for seed in SEED_SCHEDULE",
+        "        ],",
+        "        'required_run_count': len(LOCKED_CONDITIONS) * len(SEED_SCHEDULE),",
+        "        'baseline_condition_marker': BASELINE_CONDITION_MARKER,",
+        "    }",
+        "",
+        "def build_success_metrics_payload(records, baseline_marker=None, metric_key='accuracy', metadata=None):",
+        "    return {",
+        "        'status': 'completed',",
+        "        'success': True,",
+        "        'condition_results': list(records),",
+        "        'completed_condition_count': len({row.get('condition_marker') for row in records}),",
+        "        'metadata': metadata or {},",
+        "    }",
+        "",
+        "def write_metrics_payload(path_value, payload):",
+        "    path_obj = Path(path_value)",
+        "    path_obj.parent.mkdir(parents=True, exist_ok=True)",
+        "    path_obj.write_text(json.dumps(payload, sort_keys=True) + '\\n', encoding='utf-8')",
+        "    return path_obj",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    parser.add_argument('--output-dir', default='outputs')",
+        "    return parser",
+        "",
+        "def resolve_runtime_context(args):",
+        "    Path(args.output_dir).mkdir(parents=True, exist_ok=True)",
+        "    return {'args': args, 'metrics_path': args.metrics_path, 'output_dir': args.output_dir}",
+        "",
+        "def execute_condition_seed_run(condition, seed, args=None, context=None, output_dir=None, planned_run=None):",
+        "    marker = condition['condition_marker']",
+        "    return {",
+        "        'condition_marker': marker,",
+        "        'seed': seed,",
+        "        'status': 'completed',",
+        "        'success': True,",
+        "        'average_accuracy': 0.5 if marker == 'candidate_condition_a' else 0.4,",
+        "    }",
+        "",
+        "def _entrypoint_lookup(names: Sequence[str]):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    raise RuntimeError(f'None of the required entrypoint helpers are defined: {list(names)}')",
+        "",
+        "def _entrypoint_optional_lookup(names: Sequence[str]):",
+        "    return None",
+        "",
+        "def _entrypoint_invoke(func, variants):",
+        "    last = None",
+        "    for args, kwargs in variants:",
+        "        try:",
+        "            return func(*args, **dict(kwargs))",
+        "        except TypeError as exc:",
+        "            last = exc",
+        "    raise last",
+        "",
+        "def _normalize_entrypoint_run_records(loop_result):",
+        "    if isinstance(loop_result, Mapping):",
+        "        return loop_result.get('run_records') or loop_result.get('records')",
+        "    return loop_result",
+        "",
+        "def parse_args(argv=None):",
+        "    return build_arg_parser().parse_args(argv)",
+        "",
+        "def main(argv: Optional[Sequence[str]] = None) -> int:",
+        "    started_at = time.time()",
+        "    parser = build_arg_parser()",
+        "    args = parser.parse_args(list(argv) if argv is not None else None)",
+        "    resolver = _entrypoint_lookup(('prepare_runtime_context', 'resolve_runtime_context', 'build_runtime_context', 'create_runtime_context'))",
+        "    context = _entrypoint_invoke(resolver, [((args,), {}), ((), {'args': args})])",
+        "    planner = _entrypoint_lookup(('build_ordered_run_plan', 'build_baseline_first_run_plan', 'construct_ordered_run_plan', 'make_ordered_run_plan', 'build_run_plan'))",
+        "    run_plan = _entrypoint_invoke(planner, [((context,), {}), ((context, args), {}), ((), {'context': context, 'args': args})])",
+        "    executor = _entrypoint_lookup(('execute_experiment_loop', 'execute_ordered_run_plan', 'run_ordered_experiment_loop', 'run_experiment_loop', 'run_experiment_plan'))",
+        "    loop_result = _entrypoint_invoke(executor, [((context, run_plan), {}), ((context, run_plan, args), {}), ((), {'context': context, 'run_plan': run_plan, 'args': args})])",
+        "    run_records = _normalize_entrypoint_run_records(loop_result)",
+        "    finalizer = _entrypoint_lookup(('finalize_experiment', 'finalize_and_write_metrics', 'finalize_experiment_and_write_metrics', 'complete_manifest_and_emit_metrics', 'emit_final_metrics'))",
+        "    finalizer(context, run_plan, run_records, loop_result=loop_result, started_at=started_at)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", outputDir], {
+        cwd: workspace,
+        stdio: "pipe"
+      })
+    ).toThrow(/required entrypoint helpers/);
+
+    const repair = await repairPythonEntrypointLookupHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_lookup_helper_alias_marker");
+    expect(repairedSource).toContain("def build_run_plan(context=None, args=None, **keyword):");
+    expect(repairedSource).toContain("def execute_experiment_loop(context=None, run_plan=None, args=None, **keyword):");
+    expect(repairedSource).toContain("def finalize_experiment(context=None, run_plan=None, run_records=None, loop_result=None, started_at=None, **keyword):");
+
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", outputDir], {
+      cwd: workspace,
+      stdio: "pipe"
+    });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.success).toBe(true);
+    expect(metrics.completed_run_count).toBe(2);
   });
 
   it("repairs a missing parse_args helper before handing a python runner off to run_experiments", async () => {
