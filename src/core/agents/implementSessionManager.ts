@@ -39818,6 +39818,47 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
       message: "Installed generic dataset loader shims in existing entrypoint helper aliases for " + path.basename(scriptPath) + " before handoff."
     };
   }
+  if (source.includes(marker)) {
+    let nextSource = source;
+    nextSource = nextSource.replace(
+      "    conditions = globals().get('LOCKED_CONDITIONS', globals().get('CONDITIONS', []))",
+      "    conditions = globals().get('LOCKED_CONDITIONS', globals().get('CONDITIONS', globals().get('PLANNED_CONDITIONS', [])))"
+    );
+    nextSource = nextSource.replace(
+      "    planned = _autolabos_entrypoint_bridge_get(run_plan, 'planned_runs', 'pending_cells', default=None)\n    if planned:",
+      "    planned = _autolabos_entrypoint_bridge_get(run_plan, 'planned_runs', 'pending_cells', default=None)\n    if planned is None:\n        planned = globals().get('PLANNED_CONDITION_SEED_RUNS')\n    if planned:"
+    );
+    nextSource = nextSource.replace(
+      [
+        "    if isinstance(plan, dict):",
+        "        plan.setdefault('conditions', _autolabos_entrypoint_plan_conditions(plan))",
+        "        plan.setdefault('seed_schedule', _autolabos_entrypoint_plan_seeds(plan))",
+        "        plan.setdefault('planned_runs', _autolabos_entrypoint_planned_runs(plan))",
+        "        plan.setdefault('required_condition_count', len(plan.get('conditions') or []))",
+        "        plan.setdefault('required_run_count', len(plan.get('planned_runs') or []))"
+      ].join("\n"),
+      [
+        "    if isinstance(plan, dict):",
+        "        if not plan.get('conditions'):",
+        "            plan['conditions'] = _autolabos_entrypoint_plan_conditions(None)",
+        "        if not plan.get('seed_schedule'):",
+        "            plan['seed_schedule'] = _autolabos_entrypoint_plan_seeds(None)",
+        "        if not plan.get('planned_runs'):",
+        "            plan['planned_runs'] = _autolabos_entrypoint_planned_runs(plan)",
+        "        if not plan.get('required_condition_count'):",
+        "            plan['required_condition_count'] = len(plan.get('conditions') or [])",
+        "        if not plan.get('required_run_count'):",
+        "            plan['required_run_count'] = len(plan.get('planned_runs') or [])"
+      ].join("\n")
+    );
+    if (nextSource !== source) {
+      await fs.writeFile(scriptPath, nextSource, "utf8");
+      return {
+        repaired: true,
+        message: "Updated generic entrypoint plan aliases for " + path.basename(scriptPath) + " before handoff."
+      };
+    }
+  }
   if (
     source.includes(marker) ||
     !source.includes("def _entrypoint_lookup(") ||
@@ -39908,7 +39949,7 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
     "def _autolabos_entrypoint_plan_conditions(run_plan=None):",
     "    conditions = _autolabos_entrypoint_bridge_get(run_plan, 'conditions', default=None)",
     "    if conditions is None:",
-    "        conditions = globals().get('LOCKED_CONDITIONS', globals().get('CONDITIONS', []))",
+    "        conditions = globals().get('LOCKED_CONDITIONS', globals().get('CONDITIONS', globals().get('PLANNED_CONDITIONS', [])))",
     "    return _autolabos_entrypoint_bridge_as_list(conditions)",
     "",
     "def _autolabos_entrypoint_plan_seeds(run_plan=None):",
@@ -39919,6 +39960,8 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
     "",
     "def _autolabos_entrypoint_planned_runs(run_plan=None):",
     "    planned = _autolabos_entrypoint_bridge_get(run_plan, 'planned_runs', 'pending_cells', default=None)",
+    "    if planned is None:",
+    "        planned = globals().get('PLANNED_CONDITION_SEED_RUNS')",
     "    if planned:",
     "        return _autolabos_entrypoint_bridge_as_list(planned)",
     "    conditions = _autolabos_entrypoint_plan_conditions(run_plan)",
@@ -39935,11 +39978,16 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
     "    else:",
     "        plan = {'conditions': _autolabos_entrypoint_plan_conditions(None), 'seed_schedule': _autolabos_entrypoint_plan_seeds(None)}",
     "    if isinstance(plan, dict):",
-    "        plan.setdefault('conditions', _autolabos_entrypoint_plan_conditions(plan))",
-    "        plan.setdefault('seed_schedule', _autolabos_entrypoint_plan_seeds(plan))",
-    "        plan.setdefault('planned_runs', _autolabos_entrypoint_planned_runs(plan))",
-    "        plan.setdefault('required_condition_count', len(plan.get('conditions') or []))",
-    "        plan.setdefault('required_run_count', len(plan.get('planned_runs') or []))",
+    "        if not plan.get('conditions'):",
+    "            plan['conditions'] = _autolabos_entrypoint_plan_conditions(None)",
+    "        if not plan.get('seed_schedule'):",
+    "            plan['seed_schedule'] = _autolabos_entrypoint_plan_seeds(None)",
+    "        if not plan.get('planned_runs'):",
+    "            plan['planned_runs'] = _autolabos_entrypoint_planned_runs(plan)",
+    "        if not plan.get('required_condition_count'):",
+    "            plan['required_condition_count'] = len(plan.get('conditions') or [])",
+    "        if not plan.get('required_run_count'):",
+    "            plan['required_run_count'] = len(plan.get('planned_runs') or [])",
     "        plan.setdefault('baseline_condition_marker', globals().get('BASELINE_CONDITION_MARKER'))",
     "    return plan",
     "",
