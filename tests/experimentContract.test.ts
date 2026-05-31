@@ -119,29 +119,29 @@ describe("ExperimentContract", () => {
     const run = makeMinimalRun("test-run-1");
     const contract = buildExperimentContract({
       run,
-      hypothesis: "Rank/dropout sweep has only pilot support",
-      causalMechanism: "Matched seeds expose whether condition spread exceeds noise",
-      singleChange: "3-seed full-grid pilot with explicit no-interaction ceiling",
+      hypothesis: "The controlled-condition sweep has only pilot support",
+      causalMechanism: "Matched trials expose whether condition spread exceeds noise",
+      singleChange: "Replicated condition-grid pilot with explicit claim ceiling",
       expectedMetricEffect: "Identify whether a confirmatory rerun is justified",
       abortCondition: "Abort if cells are incomplete",
       keepOrDiscardRule: "Keep only as a pilot signal",
       metrics: ["accuracy_delta_vs_baseline"],
       selectedDesign: {
         id: "plan_2",
-        title: "3-seed full-grid pilot with explicit no-interaction ceiling",
-        summary: "Pilot only; not sufficient for a paper-ready interaction claim."
+        title: "Replicated condition-grid pilot with explicit claim ceiling",
+        summary: "Pilot only; not sufficient for a paper-ready causal claim."
       },
-      evidenceCeiling: "Pilot evidence only; do not make a paper-ready interaction claim.",
+      evidenceCeiling: "Pilot evidence only; do not make a paper-ready causal claim.",
       paperCeiling: "Workshop/pilot note ceiling until confirmatory evidence exists.",
       resultsTableDirection: "higher_better"
     });
 
     expect(contract.selected_design).toEqual({
       id: "plan_2",
-      title: "3-seed full-grid pilot with explicit no-interaction ceiling",
-      summary: "Pilot only; not sufficient for a paper-ready interaction claim."
+      title: "Replicated condition-grid pilot with explicit claim ceiling",
+      summary: "Pilot only; not sufficient for a paper-ready causal claim."
     });
-    expect(contract.evidence_ceiling).toBe("Pilot evidence only; do not make a paper-ready interaction claim.");
+    expect(contract.evidence_ceiling).toBe("Pilot evidence only; do not make a paper-ready causal claim.");
     expect(contract.paper_ceiling).toBe("Workshop/pilot note ceiling until confirmatory evidence exists.");
   });
 
