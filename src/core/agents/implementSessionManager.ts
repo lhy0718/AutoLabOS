@@ -10123,6 +10123,8 @@ export class ImplementSessionManager {
       await repairPythonMissingBuildExperimentConfigSurface(executionScriptPath);
     const missingMainInvocationRepair =
       await repairPythonMissingMainInvocationSurface(executionScriptPath);
+    const missingBaselineFirstSweepWrapperRepair =
+      await repairPythonMissingBaselineFirstSweepWrapperSurface(executionScriptPath);
     const helperResolverCallableClassRepair =
       await repairPythonFindHelperCallableClassSurface(executionScriptPath);
     const roleCallableResolverClassRepair =
@@ -10332,6 +10334,7 @@ export class ImplementSessionManager {
         autolabosSupportedArgsDuplicateArgsRepair,
         missingBuildExperimentConfigRepair,
         missingMainInvocationRepair,
+        missingBaselineFirstSweepWrapperRepair,
         helperResolverCallableClassRepair,
         roleCallableResolverClassRepair,
         mainFindCallableStudyResolverRepair,
@@ -15115,6 +15118,7 @@ async function applyRecoverableBundleDeterministicRepairs(params: {
     await repairPythonRequiredContractGlobalAliasSurface(params.scriptPath),
     await repairPythonSectionedRunnerCliEntrypointSurface(params.scriptPath),
     await repairPythonMissingMainInvocationSurface(params.scriptPath),
+    await repairPythonMissingBaselineFirstSweepWrapperSurface(params.scriptPath),
     await repairPythonFinalOrchestrationHelperSurface(params.scriptPath),
     await repairPythonKeywordOnlyDefaultCallSurface(
       params.scriptPath,
@@ -40531,6 +40535,107 @@ export async function repairPythonMissingMainInvocationSurface(scriptPath?: stri
   return {
     repaired: true,
     message: `Added missing CLI main invocation guard to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonMissingBaselineFirstSweepWrapperSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    /\ndef\s+execute_baseline_first_sweep\s*\(/u.test(`\n${source}`) ||
+    !/["']execute_baseline_first_sweep["']/u.test(source) ||
+    !/\ndef\s+build_baseline_first_run_plan\s*\(/u.test(`\n${source}`) ||
+    !/\ndef\s+run_one_condition_seed_safely\s*\(/u.test(`\n${source}`)
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+parse_args\s*\(/u) || source.match(/\ndef\s+main\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const bridge = [
+    "",
+    "# _autolabos_missing_baseline_first_sweep_wrapper_marker",
+    "def _autolabos_sweep_get(obj, name, default=None):",
+    "    if hasattr(obj, 'get'):",
+    "        try:",
+    "            value = obj.get(name)",
+    "        except Exception:",
+    "            value = None",
+    "        if value is not None:",
+    "            return value",
+    "    return getattr(obj, name, default)",
+    "",
+    "def execute_baseline_first_sweep(args=None, runtime_config=None, runtime_context=None, preflight=None, datasets=None, **kwargs):",
+    "    plan = build_baseline_first_run_plan()",
+    "    rows = []",
+    "    output_dir = _autolabos_sweep_get(runtime_config, 'output_dir', _autolabos_sweep_get(args, 'output_dir', globals().get('DEFAULT_PUBLIC_OUTPUT_DIR')))",
+    "    if output_dir is not None:",
+    "        output_dir = Path(output_dir)",
+    "        output_dir.mkdir(parents=True, exist_ok=True)",
+    "    fail_fast = bool(_autolabos_sweep_get(args, 'fail_fast', False))",
+    "    for cell in plan:",
+    "        marker = _autolabos_sweep_get(cell, 'condition_marker', _autolabos_sweep_get(cell, 'marker', None))",
+    "        seed = _autolabos_sweep_get(cell, 'seed', None)",
+    "        if marker is None or seed is None:",
+    "            raise RuntimeError('Planned sweep cell is missing a condition marker or seed.')",
+    "        row = run_one_condition_seed_safely(",
+    "            str(marker),",
+    "            int(seed),",
+    "            datasets=datasets,",
+    "            args=args,",
+    "            preflight=preflight,",
+    "            output_dir=output_dir,",
+    "            runtime_config=runtime_config,",
+    "            runtime_context=runtime_context,",
+    "            **kwargs,",
+    "        )",
+    "        rows.append(row)",
+    "        if fail_fast and str(_autolabos_sweep_get(row, 'status', '')).lower() in {'failed', 'failure', 'error', 'exception'}:",
+    "            break",
+    "    failed = [row for row in rows if str(_autolabos_sweep_get(row, 'status', '')).lower() in {'failed', 'failure', 'error', 'exception'}]",
+    "    completed_run_count = len(rows) - len(failed)",
+    "    status = 'completed' if rows and not failed else 'partial' if completed_run_count else 'failed'",
+    "    return {",
+    "        'status': status,",
+    "        'success': status in {'completed', 'partial'},",
+    "        'rows': rows,",
+    "        'raw_rows': rows,",
+    "        'completed_run_count': completed_run_count,",
+    "        'failed_run_count': len(failed),",
+    "        'required_run_count': len(plan),",
+    "    }",
+    "",
+    "run_ordered_sweep = execute_baseline_first_sweep",
+    "run_resumable_sweep = execute_baseline_first_sweep",
+    "execute_sweep = execute_baseline_first_sweep",
+    "run_full_sweep = execute_baseline_first_sweep",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${bridge}${source.slice(insertionMatch.index)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added missing baseline-first sweep wrapper to ${path.basename(scriptPath)} before handoff.`
   };
 }
 

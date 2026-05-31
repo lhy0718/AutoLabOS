@@ -195,6 +195,7 @@ import {
   repairPythonEntrypointParseArgsSingleArgumentSurface,
   repairPythonMissingParseArgsSurface,
   repairPythonMissingMainInvocationSurface,
+  repairPythonMissingBaselineFirstSweepWrapperSurface,
   repairPythonMissingBuildExperimentConfigSurface,
   repairPythonNamespaceParseArgsSurface,
   repairPythonSelectedRunnerArgvDispatchSurface,
@@ -44439,6 +44440,67 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       status: "completed",
       accuracy: 1.0
+    });
+  });
+
+  it("adds a baseline-first sweep wrapper when only condition-seed execution exists", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-sweep-wrapper-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "condition_sweep_runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def build_baseline_first_run_plan():",
+        "    return [",
+        "        {'condition_marker': 'baseline_condition', 'seed': 11},",
+        "        {'condition_marker': 'candidate_condition', 'seed': 11},",
+        "    ]",
+        "",
+        "def run_one_condition_seed_safely(condition_marker, seed, **kwargs):",
+        "    return {'status': 'completed', 'condition_marker': condition_marker, 'seed': seed, 'accuracy': 1.0}",
+        "",
+        "def _call_helper(names, required=False, **kwargs):",
+        "    for name in names:",
+        "        fn = globals().get(name)",
+        "        if callable(fn):",
+        "            return fn(**kwargs)",
+        "    if required:",
+        "        raise RuntimeError(f'none of helper candidates were callable: {list(names)}')",
+        "    return None",
+        "",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    return parser.parse_args(argv)",
+        "",
+        "def main(argv=None):",
+        "    args = parse_args(argv)",
+        "    result = _call_helper(('run_resumable_sweep', 'run_ordered_sweep', 'execute_baseline_first_sweep', 'execute_sweep', 'run_full_sweep'), required=True, args=args)",
+        "    Path(args.metrics_path).write_text(json.dumps(result), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repaired = await repairPythonMissingBaselineFirstSweepWrapperSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repaired.repaired).toBe(true);
+    expect(repairedSource).toContain("def execute_baseline_first_sweep(");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      completed_run_count: 2,
+      failed_run_count: 0
     });
   });
 
