@@ -15,6 +15,58 @@ Path placeholders:
 
 ---
 
+## Issue: LV-471
+
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
+- Validation target: when the P6 continue helper times out while observing a running node, the persisted helper-timeout boundary should remain durable in both run_record.json and the node-local status.json.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after the LV-470 source repair and same-flow retry of `implement_experiments`.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` through the P6 continue helper after the LV-470 source repair.
+  2. Let staged materialization run until the helper reaches its bounded timeout while the observed node is still projected as running.
+  3. Inspect `run_record.json`, `implement_experiments/status.json`, and `implement_experiments/p6_helper_timeout.json`.
+
+- Expected behavior:
+  - The helper should leave a single durable stop boundary: run status paused, target node failed, node-local status failed with stage `p6_helper_timeout`, and a diagnostic artifact explaining the timeout.
+  - The TUI should not continue projecting the target node as actively running after the helper has recorded the timeout boundary.
+
+- Actual behavior:
+  - `run_record.json` was correctly persisted as paused with `implement_experiments.status=failed`.
+  - `implement_experiments/p6_helper_timeout.json` was written.
+  - `implement_experiments/status.json` was immediately left as `status=running`, `stage=codex`, and `message=Submitting request to Codex OAuth Responses backend.`, so the TUI still rendered `implement_experiments running`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the P6 helper self-test already covered timeout boundary persistence but not the child-process write race.
+  - Existing session: the active P6 run exposed the mismatch only after a real PTY-controlled timeout and child-process cleanup.
+  - Divergence: the defect depends on live helper/process timing rather than experiment-specific generated code.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the helper persisted the timeout boundary before terminating the PTY child process. The still-running child then wrote a final node-local progress status after the boundary write, overwriting `status.json` back to running.
+
+- Code/test changes:
+  - Code: `scripts/p6-approve-and-run-next.py` now terminates the PTY child process before persisting a helper-timeout boundary, then uses the same termination helper during final cleanup.
+  - Test: the P6 helper self-test now exercises the new process-termination helper.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-31.
+  - Helper self-test passed: `AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py`.
+  - P6 continue Vitest passed: `TMPDIR=/tmp npm test -- tests/p6ContinueScript.test.ts`.
+  - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
+  - Build passed: `TMPDIR=/tmp npm run build`.
+  - Harness validation passed: `TMPDIR=/tmp npm run validate:harness`.
+  - Same-flow revalidation: pending after this source repair.
+
+- Remaining risks:
+  - The next retry must confirm that helper timeout no longer leaves stale node-local running state if implement materialization exceeds the helper wall boundary again.
+  - The underlying implement materialization may still need a separate bounded-generation repair if it keeps recursively subdividing late CLI/context chunks.
+
+- Evidence/artifacts:
+  - <repo-root>/scripts/p6-approve-and-run-next.py
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/p6_helper_timeout.json
+
 ## Issue: LV-470
 
 - Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.

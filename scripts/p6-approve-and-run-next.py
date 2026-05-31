@@ -92,6 +92,24 @@ def send_line(fd: int, text: str) -> None:
     os.write(fd, text.encode("utf-8") + b"\n")
 
 
+def terminate_process_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=2)
+        except Exception:
+            pass
+
+
 def stop_pattern_for_node(node: str) -> str:
     escaped = re.escape(node)
     return (
@@ -792,6 +810,12 @@ def run_selftest() -> int:
         if "7200 seconds" in unbounded_message or "base idle timeout" in unbounded_message:
             print("FAIL: helper timeout message should not mention max-wall when it equals the idle timeout")
             return 1
+        sleepy_proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], preexec_fn=os.setsid)
+        terminate_process_group(sleepy_proc)
+        if sleepy_proc.poll() is None:
+            print("FAIL: helper timeout process termination left the child running")
+            return 1
+        terminate_process_group(sleepy_proc)
     with tempfile.TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir)
         usage_run_id = "usage-limit-boundary"
@@ -1194,19 +1218,13 @@ def main() -> int:
     except WaitTimeout as exc:
         output_path.write_text(exc.transcript, encoding="utf-8")
         timeout_message = helper_timeout_message(wait_node, timeout, max_wall_seconds)
+        terminate_process_group(proc)
         if persist_helper_timeout_boundary(workspace, run_id, wait_node, timeout_message):
             print(f"INFO: persisted helper-timeout boundary for {wait_node}.")
         print(f"FAIL: P6 continue timed out waiting for {exc.pattern}; output={output_path}")
         return 1
     finally:
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except Exception:
-            pass
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
+        terminate_process_group(proc)
         try:
             os.close(master_fd)
         except OSError:
