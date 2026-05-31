@@ -1268,6 +1268,146 @@ describe("run_experiments execution profile behavior", () => {
     ).toBe(true);
   });
 
+  it("repairs entrypoint argv dispatch before run_experiments execution", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-entrypoint-argv-repair-"));
+    process.chdir(root);
+    const run = makeRun("run-entrypoint-argv-repair");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "experiment.py");
+    await writeFile(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "import sys",
+        "from pathlib import Path",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    return parser",
+        "",
+        "def parse_args(argv=None):",
+        "    return build_arg_parser().parse_args(argv)",
+        "",
+        "def _autolabos_entrypoint_accepts(func, positional, keywords):",
+        "    try:",
+        "        inspect.signature(func).bind(*positional, **keywords)",
+        "        return True",
+        "    except ValueError:",
+        "        return True",
+        "    except TypeError:",
+        "        return False",
+        "",
+        "def _autolabos_entrypoint_call(func, attempts, stage_name):",
+        "    for positional, keywords in attempts:",
+        "        if _autolabos_entrypoint_accepts(func, positional, keywords):",
+        "            return func(*positional, **keywords)",
+        "    raise RuntimeError(f'Callable for {stage_name} does not accept any supported entrypoint signature: {func!r}')",
+        "",
+        "def _autolabos_entrypoint_parse_args(argv):",
+        "    func = globals().get('parse_args')",
+        "    return _autolabos_entrypoint_call(func, ((tuple(argv), {}), (list(argv), {})), 'CLI argument parsing')",
+        "",
+        "def main(argv=None):",
+        "    argv = tuple(sys.argv[1:] if argv is None else argv)",
+        "    args = _autolabos_entrypoint_parse_args(argv)",
+        "    Path(args.metrics_path).write_text(json.dumps({'status': 'completed'}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 " + JSON.stringify(scriptPath));
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    let repairedBeforeExecution = false;
+    const eventStream = new InMemoryEventStream();
+    const node = createRunExperimentsNode({
+      config: {
+        experiments: {
+          timeout_sec: 43200,
+          network_policy: "declared",
+          network_purpose: "model_download"
+        }
+      } as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          const repairedSource = await readFile(scriptPath, "utf8");
+          repairedBeforeExecution = repairedSource.includes("(((tuple(argv),), {})");
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric: {
+                  name: "accuracy_delta_vs_baseline",
+                  value: 0.02,
+                  target: 0.01,
+                  met: true
+                },
+                condition_results: [
+                  { condition_id: "baseline_condition", status: "completed", accuracy: 0.4 },
+                  { condition_id: "candidate_condition_a", status: "completed", accuracy: 0.42 }
+                ],
+                completed_condition_count: 2
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    await node.execute({ run, graph: run.graph });
+
+    expect(repairedBeforeExecution).toBe(true);
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes("Repaired entrypoint CLI argv dispatch in experiment.py before run_experiments execution.")
+      )
+    ).toBe(true);
+  });
+
   it("repairs public study top-level runner aliases before run_experiments execution", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-public-runner-alias-repair-"));
     process.chdir(root);

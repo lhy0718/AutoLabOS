@@ -69,6 +69,7 @@ import {
   repairPythonBenchmarkAccuracyComprehensionSurface,
   repairPythonEvaluationAnswerLabelAliasSurface,
   repairPythonEntrypointLookupHelperAliasSurface,
+  repairPythonEntrypointParseArgsSingleArgumentSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
   repairPythonMainMetricsRawResultsAliasSurface,
   repairPythonMainMetricsPayloadBuilderCallSurface,
@@ -3166,6 +3167,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
         "before handoff.",
         "before run_experiments execution."
       ) || `Added missing generic entrypoint helper aliases in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const entrypointParseArgsRepair =
+    await repairPythonEntrypointParseArgsSingleArgumentSurface(scriptPath);
+  if (entrypointParseArgsRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointParseArgsRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Repaired entrypoint CLI argv dispatch in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
   const publicStudyTopLevelRunnerAliasRepair =
