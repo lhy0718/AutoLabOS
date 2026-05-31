@@ -46625,6 +46625,172 @@ export async function repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPa
     };
   }
 
+  const conditionSeedPlanMarker = "_autolabos_condition_seed_plan_top_level_runner_alias_marker";
+  const hasGenericTopLevelRunner = /\ndef\s+(?:run_full_experiment|run_experiment|run_main|main)\s*\(/u.test(source);
+  if (
+    !source.includes(conditionSeedPlanMarker) &&
+    !hasGenericTopLevelRunner &&
+    source.includes("def _autolabos_pick_top_level_runner(") &&
+    source.includes("No top-level experiment runner was defined; expected one of") &&
+    source.includes("def prepare_reusable_experiment_inputs(") &&
+    source.includes("def build_baseline_first_run_plan(") &&
+    source.includes("def execute_condition_seed_run(") &&
+    source.includes("def build_success_metrics_payload(") &&
+    source.includes("def write_metrics_payload(")
+  ) {
+    const insertionPoint = source.match(/\ndef\s+_autolabos_pick_top_level_runner\s*\(/u)?.index;
+    if (insertionPoint === undefined) {
+      return { repaired: false };
+    }
+    const bridge = [
+      "",
+      "# _autolabos_condition_seed_plan_top_level_runner_alias_marker",
+      "def _autolabos_condition_seed_plan_top_level_runner(argv=None, args=None, output_dir=None, metrics_path=None, **keyword):",
+      "    import argparse as _autolabos_argparse",
+      "    import inspect as _autolabos_inspect",
+      "    from pathlib import Path as _AutolabosPath",
+      "",
+      "    def _autolabos_call(func, *positional, **kw):",
+      "        try:",
+      "            signature = _autolabos_inspect.signature(func)",
+      "            accepts_var_kw = any(p.kind == _autolabos_inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values())",
+      "            supported = kw if accepts_var_kw else {k: v for k, v in kw.items() if k in signature.parameters}",
+      "            return func(*positional, **supported)",
+      "        except (TypeError, ValueError):",
+      "            return func(*positional)",
+      "",
+      "    def _autolabos_get(obj, name, default=None):",
+      "        if isinstance(obj, dict):",
+      "            return obj.get(name, default)",
+      "        return getattr(obj, name, default)",
+      "",
+      "    def _autolabos_cell_condition(cell):",
+      "        if isinstance(cell, dict):",
+      "            return cell.get('condition', cell)",
+      "        return getattr(cell, 'condition', cell)",
+      "",
+      "    def _autolabos_cell_seed(cell):",
+      "        if isinstance(cell, dict):",
+      "            return cell.get('seed')",
+      "        return getattr(cell, 'seed', None)",
+      "",
+      "    def _autolabos_parse_args(raw_argv):",
+      "        if isinstance(raw_argv, _autolabos_argparse.Namespace):",
+      "            return raw_argv",
+      "        if args is not None:",
+      "            return args",
+      "        parser_builder = globals().get('build_argument_parser') or globals().get('build_cli_parser')",
+      "        parser = parser_builder() if callable(parser_builder) else None",
+      "        parser_fn = globals().get('parse_args') or globals().get('parse_cli_args') or globals().get('_parse_entrypoint_args')",
+      "        argv_list = list(raw_argv) if raw_argv is not None else None",
+      "        if argv_list and str(argv_list[0]).endswith('.py'):",
+      "            argv_list = argv_list[1:]",
+      "        if callable(parser_fn):",
+      "            try:",
+      "                return parser_fn(argv_list)",
+      "            except TypeError:",
+      "                return parser_fn()",
+      "        if parser is not None:",
+      "            return parser.parse_args(argv_list)",
+      "        return _autolabos_argparse.Namespace()",
+      "",
+      "    parsed_args = _autolabos_parse_args(argv)",
+      "    resolved_output_dir = output_dir or getattr(parsed_args, 'output_dir', None) or getattr(parsed_args, 'run_output_dir', None) or globals().get('OUTPUT_DIR')",
+      "    if resolved_output_dir is not None:",
+      "        resolved_output_dir = _AutolabosPath(resolved_output_dir)",
+      "        resolved_output_dir.mkdir(parents=True, exist_ok=True)",
+      "    resolved_metrics_path = metrics_path or getattr(parsed_args, 'metrics_path', None)",
+      "    if resolved_metrics_path is not None:",
+      "        resolved_metrics_path = _AutolabosPath(resolved_metrics_path)",
+      "        resolved_metrics_path.parent.mkdir(parents=True, exist_ok=True)",
+      "",
+      "    context = {",
+      "        'config': parsed_args,",
+      "        'args': parsed_args,",
+      "        'output_dir': str(resolved_output_dir) if resolved_output_dir is not None else None,",
+      "        'metrics_path': str(resolved_metrics_path) if resolved_metrics_path is not None else None,",
+      "    }",
+      "    prepared = prepare_reusable_experiment_inputs(context)",
+      "    plan = build_baseline_first_run_plan(context, prepared)",
+      "    pending_cells = list(_autolabos_get(plan, 'pending_cells', []) or [])",
+      "    records = []",
+      "    for cell in pending_cells:",
+      "        condition = _autolabos_cell_condition(cell)",
+      "        seed = _autolabos_cell_seed(cell)",
+      "        if seed is None:",
+      "            raise RuntimeError('A planned condition cell did not provide a seed.')",
+      "        record = execute_condition_seed_run(condition, int(seed), parsed_args, prepared)",
+      "        records.append(record)",
+      "",
+      "    failed_records = [record for record in records if str(_autolabos_get(record, 'status', '')).lower() in {'failed', 'failure', 'error', 'exception'}]",
+      "    success_builder = globals().get('build_success_metrics_payload')",
+      "    failure_builder = globals().get('build_failure_metrics_payload')",
+      "    required_run_count = int(_autolabos_get(plan, 'required_run_count', len(records)) or len(records))",
+      "    required_condition_count = int(_autolabos_get(plan, 'required_condition_count', 0) or 0)",
+      "    completed_run_count = len(records) - len(failed_records)",
+      "    if callable(success_builder):",
+      "        payload = _autolabos_call(",
+      "            success_builder,",
+      "            records,",
+      "            baseline_marker=_autolabos_get(plan, 'baseline_marker', None),",
+      "            metadata={'run_plan': plan.summary() if hasattr(plan, 'summary') else None},",
+      "        )",
+      "    else:",
+      "        payload = {'records': records}",
+      "    if not isinstance(payload, dict):",
+      "        payload = {'raw_result': payload}",
+      "    payload.setdefault('records', records)",
+      "    payload.setdefault('run_results', records)",
+      "    payload['completed_run_count'] = completed_run_count",
+      "    payload['required_run_count'] = required_run_count",
+      "    if required_condition_count:",
+      "        payload['required_condition_count'] = required_condition_count",
+      "    payload['experiment_mode'] = 'real_execution'",
+      "    payload['run_plan'] = plan.summary() if hasattr(plan, 'summary') else payload.get('run_plan')",
+      "    if hasattr(prepared, 'manifest'):",
+      "        payload['prepared_inputs_manifest'] = prepared.manifest()",
+      "    if failed_records or completed_run_count < required_run_count:",
+      "        if callable(failure_builder):",
+      "            failure_payload = _autolabos_call(",
+      "                failure_builder,",
+      "                RuntimeError('Condition-seed execution did not complete all required runs.'),",
+      "                records=records,",
+      "                metadata={'run_plan': payload.get('run_plan')},",
+      "            )",
+      "            if isinstance(failure_payload, dict):",
+      "                failure_payload.update({k: v for k, v in payload.items() if k not in failure_payload})",
+      "                payload = failure_payload",
+      "        payload['status'] = 'failed'",
+      "        payload['success'] = False",
+      "        payload['failure_stage'] = 'condition_seed_execution'",
+      "        payload['failed_run_count'] = len(failed_records)",
+      "    else:",
+      "        payload['status'] = 'completed'",
+      "        payload['success'] = True",
+      "    writer = globals().get('write_metrics_payload')",
+      "    if resolved_metrics_path is not None and callable(writer):",
+      "        writer(resolved_metrics_path, payload)",
+      "    return payload",
+      "",
+      "if 'run_experiment' not in globals():",
+      "    run_experiment = _autolabos_condition_seed_plan_top_level_runner",
+      "if 'run_full_experiment' not in globals():",
+      "    run_full_experiment = _autolabos_condition_seed_plan_top_level_runner",
+      "if 'run_main' not in globals():",
+      "    run_main = _autolabos_condition_seed_plan_top_level_runner",
+      ""
+    ].join("\n");
+    const nextSource = source.slice(0, insertionPoint) + bridge + source.slice(insertionPoint);
+    if (nextSource === source) {
+      return { repaired: false };
+    }
+    await fs.writeFile(scriptPath, nextSource, "utf8");
+    return {
+      repaired: true,
+      message: "Added condition-seed plan top-level runner alias in " + path.basename(scriptPath) + " before handoff."
+    };
+  }
+
   if (
     source.includes(marker) ||
     !source.includes("No experiment runner callable was found in the script globals") ||

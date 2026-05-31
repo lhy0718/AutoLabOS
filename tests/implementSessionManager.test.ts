@@ -7139,6 +7139,101 @@ describe("ImplementSessionManager", () => {
     expect(metrics.completed_run_count).toBe(2);
   });
 
+  it("adds a condition-seed plan runner alias when the entrypoint only exposes materialized plan helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-seed-plan-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "import argparse",
+        "import json",
+        "import sys",
+        "",
+        "def build_argument_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    parser.add_argument('--output-dir')",
+        "    return parser",
+        "",
+        "class PreparedInputs:",
+        "    def manifest(self):",
+        "        return {'prepared': True}",
+        "",
+        "def prepare_reusable_experiment_inputs(context):",
+        "    return PreparedInputs()",
+        "",
+        "class BaselineFirstPlan:",
+        "    pending_cells = [{'condition': {'condition_marker': 'baseline_condition'}, 'seed': 11}]",
+        "    required_run_count = 1",
+        "    required_condition_count = 1",
+        "    baseline_marker = 'baseline_condition'",
+        "    def summary(self):",
+        "        return {'baseline_marker': self.baseline_marker, 'required_run_count': self.required_run_count}",
+        "",
+        "def build_baseline_first_run_plan(context, prepared_inputs=None):",
+        "    return BaselineFirstPlan()",
+        "",
+        "def execute_condition_seed_run(condition, seed, config, prepared_data, **kwargs):",
+        "    return {'status': 'completed', 'condition_marker': condition['condition_marker'], 'seed': seed, 'average_accuracy': 0.5}",
+        "",
+        "def build_success_metrics_payload(records, baseline_marker=None, metadata=None, **kwargs):",
+        "    return {'status': 'completed', 'success': True, 'condition_results': records, 'baseline_marker': baseline_marker, 'metadata': metadata}",
+        "",
+        "def build_failure_metrics_payload(error, records=None, metadata=None, **kwargs):",
+        "    return {'status': 'failed', 'success': False, 'error': str(error), 'records': records or [], 'metadata': metadata}",
+        "",
+        "def write_metrics_payload(path_value, payload):",
+        "    Path(path_value).write_text(json.dumps(payload), encoding='utf8')",
+        "",
+        "def _autolabos_pick_top_level_runner():",
+        "    candidates = ('run_full_experiment', 'run_experiment', 'run_main')",
+        "    for name in candidates:",
+        "        fn = globals().get(name)",
+        "        if callable(fn) and fn is not _autolabos_script_entrypoint:",
+        "            return name, fn",
+        "    raise RuntimeError('No top-level experiment runner was defined; expected one of ' + ', '.join(candidates))",
+        "",
+        "def _autolabos_invoke_runner(fn, argv):",
+        "    return fn(argv)",
+        "",
+        "def _autolabos_exit_code(result):",
+        "    if isinstance(result, dict) and result.get('status') in {'completed', 'ok'}:",
+        "        return 0",
+        "    return 1",
+        "",
+        "def _autolabos_script_entrypoint(argv=None):",
+        "    runner_name, runner = _autolabos_pick_top_level_runner()",
+        "    return _autolabos_exit_code(_autolabos_invoke_runner(runner, argv))",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(_autolabos_script_entrypoint(sys.argv[1:]))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", workspace])).toThrow(
+      /No top-level experiment runner/
+    );
+    const repair = await repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_condition_seed_plan_top_level_runner_alias_marker");
+    expect(repairedSource).toContain("run_experiment = _autolabos_condition_seed_plan_top_level_runner");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", workspace]);
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.success).toBe(true);
+    expect(metrics.completed_run_count).toBe(1);
+    expect(metrics.required_run_count).toBe(1);
+    expect(metrics.condition_results[0].condition_marker).toBe("baseline_condition");
+    expect(metrics.experiment_mode).toBe("real_execution");
+  });
+
+
   it("prefers raw argv when a selected top-level runner exposes argv and args parameters", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-selected-runner-argv-dispatch-"));
     tempDirs.push(workspace);

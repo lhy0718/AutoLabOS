@@ -15,6 +15,59 @@ Path placeholders:
 
 ---
 
+## Issue: LV-470
+
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
+- Validation target: generated experiment runners that materialize reusable inputs, baseline-first plans, and condition/seed execution helpers should expose a generic top-level runner callable before `run_experiments` handoff.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after the LV-469 source repair allowed `implement_experiments` to complete and auto-handoff to `run_experiments`.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` through the P6 continue helper after the LV-469 source repair.
+  2. Let the node finish the generated Python experiment runner and auto-handoff to `run_experiments`.
+  3. Observe `run_experiments` invoking the generated runner entrypoint.
+
+- Expected behavior:
+  - The generated runner should expose a generic callable such as `run_experiment`, `run_full_experiment`, or `run_main` when it already has materialized reusable-input preparation, a baseline-first run plan, and condition/seed execution helpers.
+  - The bridge must execute the node-owned condition/seed plan and write metrics only from real records; it must not synthesize successful metrics when required runs fail or remain incomplete.
+
+- Actual behavior:
+  - The generated script contained `_autolabos_pick_top_level_runner(...)` and a `__main__` dispatcher, but no top-level callable matching the dispatcher candidate set.
+  - `run_experiments` failed immediately with: `RuntimeError: No top-level experiment runner was defined; expected one of ...`
+  - The verification report recorded `completed_run_count=0/36`, `completed_condition_count=0/12`, and `accuracy_delta_vs_baseline:null`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression now covers the helper-only runner shape with neutral condition labels.
+  - Existing session: the active P6 run advanced past LV-469 and exposed this final runner-dispatch boundary only after generation completed.
+  - Divergence: no session divergence observed; this is a generated helper projection and entrypoint discovery issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced real reusable-input, plan, and condition/seed execution helpers, but the final entrypoint candidate vocabulary expected a top-level runner facade. Existing alias repairs covered ordered-plan and public-study shapes, but not this materialized condition/seed plan shape.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` adds a condition/seed plan top-level runner alias repair that detects helper-only generated runners and inserts generic aliases without naming one-off experiment families.
+  - Code: the inserted bridge parses CLI args, prepares reusable inputs, builds the baseline-first run plan, executes pending condition/seed cells, writes metrics through the generated writer, and marks the payload failed if any required run fails or remains incomplete.
+  - Tests: `tests/implementSessionManager.test.ts` adds neutral deterministic coverage for the helper-only runner shape.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-31.
+  - Focused regression passed: `TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t "condition-seed plan runner alias"`.
+  - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
+  - Public hardcoding scan showed only allowed generic metric vocabulary plus the existing generic Ollama model catalog entry.
+  - Build passed: `TMPDIR=/tmp npm run build`.
+  - Harness validation passed: `TMPDIR=/tmp npm run validate:harness`.
+  - Same-flow revalidation: pending after this source repair.
+
+- Remaining risks:
+  - The next retry must regenerate or repair the runner from AutoLabOS source and confirm `run_experiments` advances beyond top-level runner discovery.
+  - After this fix, execution may still fail on dependency/runtime limits, model loading, task evaluation, metrics aggregation, or paper-scale evidence gates.
+
+- Evidence/artifacts:
+  - <repo-root>/src/core/agents/implementSessionManager.ts
+  - <repo-root>/tests/implementSessionManager.test.ts
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json
+  - <validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_experiment.py
 ## Issue: LV-469
 
 - Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
