@@ -16472,6 +16472,7 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("def build_run_plan(context=None, args=None, **keyword):");
     expect(repairedSource).toContain("def execute_experiment_loop(context=None, run_plan=None, args=None, **keyword):");
     expect(repairedSource).toContain("def finalize_experiment(context=None, run_plan=None, run_records=None, loop_result=None, started_at=None, **keyword):");
+    expect(repairedSource).toContain("_autolabos_entrypoint_existing_result_path");
 
     execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", outputDir], {
       cwd: workspace,

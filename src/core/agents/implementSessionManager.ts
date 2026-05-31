@@ -39828,6 +39828,12 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
       "    planned = _autolabos_entrypoint_bridge_get(run_plan, 'planned_runs', 'pending_cells', default=None)\n    if planned:",
       "    planned = _autolabos_entrypoint_bridge_get(run_plan, 'planned_runs', 'pending_cells', default=None)\n    if planned is None:\n        planned = globals().get('PLANNED_CONDITION_SEED_RUNS')\n    if planned:"
     );
+    if (!nextSource.includes("_autolabos_entrypoint_existing_result_path")) {
+      nextSource = nextSource.replace(
+        "            per_run_dir = Path(_autolabos_entrypoint_bridge_get(context, 'per_run_dir', 'output_dir', default='outputs')) / f'{marker}_seed_{seed}'\n            per_run_dir.mkdir(parents=True, exist_ok=True)",
+        "            per_run_dir = Path(_autolabos_entrypoint_bridge_get(context, 'per_run_dir', 'output_dir', default='outputs')) / f'{marker}_seed_{seed}'\n            per_run_dir.mkdir(parents=True, exist_ok=True)\n            _autolabos_entrypoint_existing_result_path = per_run_dir / 'run_result.json'\n            if _autolabos_entrypoint_existing_result_path.exists():\n                try:\n                    with _autolabos_entrypoint_existing_result_path.open('r', encoding='utf-8') as handle:\n                        _autolabos_entrypoint_existing_record = json.load(handle)\n                    if isinstance(_autolabos_entrypoint_existing_record, dict) and str(_autolabos_entrypoint_existing_record.get('status', '')).lower() == 'completed' and _autolabos_entrypoint_existing_record.get('success', True) is not False:\n                        _autolabos_entrypoint_existing_record.setdefault('condition_marker', marker)\n                        _autolabos_entrypoint_existing_record.setdefault('seed', seed)\n                        _autolabos_entrypoint_existing_record.setdefault('output_dir', str(per_run_dir))\n                        records.append(_autolabos_entrypoint_existing_record)\n                        continue\n                except Exception:\n                    pass"
+      );
+    }
     nextSource = nextSource.replace(
       [
         "    if isinstance(plan, dict):",
@@ -40177,6 +40183,19 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
     "        try:",
     "            per_run_dir = Path(_autolabos_entrypoint_bridge_get(context, 'per_run_dir', 'output_dir', default='outputs')) / f'{marker}_seed_{seed}'",
     "            per_run_dir.mkdir(parents=True, exist_ok=True)",
+    "            _autolabos_entrypoint_existing_result_path = per_run_dir / 'run_result.json'",
+    "            if _autolabos_entrypoint_existing_result_path.exists():",
+    "                try:",
+    "                    with _autolabos_entrypoint_existing_result_path.open('r', encoding='utf-8') as handle:",
+    "                        _autolabos_entrypoint_existing_record = json.load(handle)",
+    "                    if isinstance(_autolabos_entrypoint_existing_record, dict) and str(_autolabos_entrypoint_existing_record.get('status', '')).lower() == 'completed' and _autolabos_entrypoint_existing_record.get('success', True) is not False:",
+    "                        _autolabos_entrypoint_existing_record.setdefault('condition_marker', marker)",
+    "                        _autolabos_entrypoint_existing_record.setdefault('seed', seed)",
+    "                        _autolabos_entrypoint_existing_record.setdefault('output_dir', str(per_run_dir))",
+    "                        records.append(_autolabos_entrypoint_existing_record)",
+    "                        continue",
+    "                except Exception:",
+    "                    pass",
     "            trainer_bundle = _autolabos_entrypoint_bridge_call(",
     "                trainer_builder,",
     "                condition,",
