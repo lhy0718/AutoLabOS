@@ -15,9 +15,59 @@ Path placeholders:
 
 ---
 
+## Issue: LV-472
+
+- Status: reproduced from active validation-run artifacts on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
+- Validation target: top-level runner repairs inserted before handoff must expose verifier-visible Python entrypoint functions, not only assignment aliases that runtime dispatch may use.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after the LV-470 repair and the LV-471 helper-timeout revalidation.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` through the P6 continue helper after the LV-470 source repair.
+  2. Let the staged implementation produce a Python runner with metrics-path and metrics-writer surfaces plus generated lower-level plan helpers.
+  3. Observe the implement-stage verifier inspect the script before handoff.
+
+- Expected behavior:
+  - A generated runner repaired by AutoLabOS should expose an actual top-level `def run_experiment(...)`, `def run_full_experiment(...)`, `def run_main(...)`, `def orchestrate_experiment(...)`, or equivalent verifier-visible function when no `__main__` entrypoint is present.
+  - The repair should bridge to existing generated helpers only; it must not synthesize completed experiment rows or paper-scale metrics.
+
+- Actual behavior:
+  - The repair inserted assignment aliases such as `run_experiment = _autolabos_condition_seed_plan_top_level_runner`.
+  - The static handoff verifier recognizes real `def ...` functions or an `if __name__ == "__main__"` guard, so alias assignments could still be reported as "metrics-path and metrics-writer surfaces but no executable entrypoint."
+  - A subsequent same-flow retry continued into broad staged materialization and eventually hit the P6 helper timeout rather than reaching a clean handoff.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic repair tests now assert that the inserted bridge exposes actual wrapper functions, not only assignment aliases.
+  - Existing session: the active run exposed the mismatch after a real P6 retry because compile-level verification and entrypoint-surface detection disagreed about what the repair had produced.
+  - Divergence: no session divergence observed; this is a generated-runner projection and verifier-contract mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the repair optimized for runtime resolver lookup but not for the verifier entrypoint contract. Since the verifier intentionally avoids treating arbitrary assignment aliases as executable surfaces, the bridge needed wrapper `def` functions.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now makes ordered-plan, condition/seed-plan, and public-study top-level runner repairs emit wrapper `def` functions that delegate to existing generated helpers.
+  - Tests: `tests/implementSessionManager.test.ts` now asserts that the repairs expose `def run_experiment(*positional, **keyword):` and no longer rely on the condition/seed alias assignment surface.
+
+- Regression status:
+  - Focused regression passed: `TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t "runner alias|orchestrator alias"`.
+  - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
+  - Build passed: `TMPDIR=/tmp npm run build`.
+  - Same-flow revalidation: pending after this source repair.
+
+- Remaining risks:
+  - The next P6 retry still needs to prove that the repaired runner reaches handoff instead of re-entering broad staged materialization until helper timeout.
+  - If handoff succeeds, downstream failures may still appear in real dependency/model/data execution, metrics projection, review gating, or paper-scale evidence checks.
+
+- Evidence/artifacts:
+  - <repo-root>/src/core/agents/implementSessionManager.ts
+  - <repo-root>/tests/implementSessionManager.test.ts
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/progress.jsonl
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/p6_helper_timeout.json
+
 ## Issue: LV-471
 
-- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation passed for stale-running cleanup.
 - Validation target: when the P6 continue helper times out while observing a running node, the persisted helper-timeout boundary should remain durable in both run_record.json and the node-local status.json.
 - Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after the LV-470 source repair and same-flow retry of `implement_experiments`.
 
@@ -55,11 +105,10 @@ Path placeholders:
   - Public-code guard passed: `TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts`.
   - Build passed: `TMPDIR=/tmp npm run build`.
   - Harness validation passed: `TMPDIR=/tmp npm run validate:harness`.
-  - Same-flow revalidation: pending after this source repair.
+  - Same-flow revalidation passed for stale-running cleanup: the retried P6 helper timed out after 3600 seconds, then persisted `run_record.json` as paused, `implement_experiments.status` as failed, and node-local `implement_experiments/status.json` as `status=failed`, `stage=p6_helper_timeout` instead of stale `running`.
 
 - Remaining risks:
-  - The next retry must confirm that helper timeout no longer leaves stale node-local running state if implement materialization exceeds the helper wall boundary again.
-  - The underlying implement materialization may still need a separate bounded-generation repair if it keeps recursively subdividing late CLI/context chunks.
+  - The helper-timeout boundary is now durable, but the underlying implement materialization still needs separate repair when it regenerates broad staged chunks until helper timeout.
 
 - Evidence/artifacts:
   - <repo-root>/scripts/p6-approve-and-run-next.py

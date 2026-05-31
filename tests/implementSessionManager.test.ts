@@ -7028,6 +7028,7 @@ describe("ImplementSessionManager", () => {
     );
     expect(repairedSource).toContain("runtime=runtime_context,");
     expect(repairedSource).toContain("runtime_context=runtime_context,");
+    expect(repairedSource).toContain("def run_experiment(*positional, **keyword):");
     execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", workspace]);
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
     expect(metrics.status).toBe("completed");
@@ -7133,6 +7134,7 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_ordered_plan_orchestrator_alias_marker");
+    expect(repairedSource).toContain("def run_experiment(*positional, **keyword):");
     execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", workspace]);
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
     expect(metrics.status).toBe("ok");
@@ -7222,7 +7224,8 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_condition_seed_plan_top_level_runner_alias_marker");
-    expect(repairedSource).toContain("run_experiment = _autolabos_condition_seed_plan_top_level_runner");
+    expect(repairedSource).toContain("def run_experiment(*positional, **keyword):");
+    expect(repairedSource).not.toContain("run_experiment = _autolabos_condition_seed_plan_top_level_runner");
     execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", workspace]);
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
     expect(metrics.status).toBe("completed");

@@ -46606,12 +46606,14 @@ export async function repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPa
       "    merged_report.setdefault('success', merged_report.get('status') in {'ok', 'partial'})",
       "    return merged_report",
       "",
-      "if 'orchestrate_experiment' not in globals():",
-      "    orchestrate_experiment = _autolabos_ordered_plan_orchestrator",
-      "if 'run_experiment' not in globals():",
-      "    run_experiment = _autolabos_ordered_plan_orchestrator",
-      "if 'execute_experiment' not in globals():",
-      "    execute_experiment = _autolabos_ordered_plan_orchestrator",
+      "def orchestrate_experiment(*positional, **keyword):",
+      "    return _autolabos_ordered_plan_orchestrator(*positional, **keyword)",
+      "",
+      "def run_experiment(*positional, **keyword):",
+      "    return _autolabos_ordered_plan_orchestrator(*positional, **keyword)",
+      "",
+      "def execute_experiment(*positional, **keyword):",
+      "    return _autolabos_ordered_plan_orchestrator(*positional, **keyword)",
       ""
     ].join("\n");
     const nextSource = `${source.slice(0, insertionPoint)}${bridge}${source.slice(insertionPoint)}`;
@@ -46772,12 +46774,14 @@ export async function repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPa
       "        writer(resolved_metrics_path, payload)",
       "    return payload",
       "",
-      "if 'run_experiment' not in globals():",
-      "    run_experiment = _autolabos_condition_seed_plan_top_level_runner",
-      "if 'run_full_experiment' not in globals():",
-      "    run_full_experiment = _autolabos_condition_seed_plan_top_level_runner",
-      "if 'run_main' not in globals():",
-      "    run_main = _autolabos_condition_seed_plan_top_level_runner",
+      "def run_experiment(*positional, **keyword):",
+      "    return _autolabos_condition_seed_plan_top_level_runner(*positional, **keyword)",
+      "",
+      "def run_full_experiment(*positional, **keyword):",
+      "    return _autolabos_condition_seed_plan_top_level_runner(*positional, **keyword)",
+      "",
+      "def run_main(*positional, **keyword):",
+      "    return _autolabos_condition_seed_plan_top_level_runner(*positional, **keyword)",
       ""
     ].join("\n");
     const nextSource = source.slice(0, insertionPoint) + bridge + source.slice(insertionPoint);
@@ -46862,12 +46866,14 @@ export async function repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPa
     "        return _call_with_supported_kwargs(finalizer, args=args, execution_result=execution_payload)",
     "    return execution_payload",
     "",
-    "if 'run_experiment' not in globals():",
-    "    run_experiment = _autolabos_public_study_top_level_runner",
-    "if 'execute_experiment' not in globals():",
-    "    execute_experiment = _autolabos_public_study_top_level_runner",
-    "if 'run_study' not in globals():",
-    "    run_study = _autolabos_public_study_top_level_runner",
+    "def run_experiment(*positional, **keyword):",
+    "    return _autolabos_public_study_top_level_runner(*positional, **keyword)",
+    "",
+    "def execute_experiment(*positional, **keyword):",
+    "    return _autolabos_public_study_top_level_runner(*positional, **keyword)",
+    "",
+    "def run_study(*positional, **keyword):",
+    "    return _autolabos_public_study_top_level_runner(*positional, **keyword)",
     ""
   ].join("\n");
 
