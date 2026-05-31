@@ -81,7 +81,9 @@ export class ImplementSessionStopError extends Error {
 
 const IMPLEMENT_DELTA_PROGRESS_MIN_CHARS = 4_000;
 const IMPLEMENT_DELTA_PROGRESS_MIN_MS = 5_000;
-const IMPLEMENT_STAGED_LLM_CHUNK_MAX_STREAMED_CHARS = 18_000;
+const IMPLEMENT_STAGED_LLM_CHUNK_TARGET_CHARS = 8_000;
+const IMPLEMENT_STAGED_LLM_RETRY_CHUNK_TARGET_CHARS = 4_000;
+const IMPLEMENT_STAGED_LLM_CHUNK_MAX_STREAMED_CHARS = 12_000;
 const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_MAX_ATTEMPTS = 12;
 const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_DELAY_MS = 5_000;
 
@@ -3558,7 +3560,7 @@ export class ImplementSessionManager {
             : "was terminated";
       input.emitImplementObservation(
         "codex",
-        `Chunk generation ${retryReason} for ${input.chunk.title}; asking staged_llm to re-subdivide it into smaller work units.`,
+        `Chunk generation ${retryReason} for ${input.chunk.title}; subdividing it into smaller work units.`,
         {
           attempt: input.attempt,
           threadId: input.threadId,
@@ -3566,26 +3568,44 @@ export class ImplementSessionManager {
         }
       );
 
-      const retrySubdivisionPlan = await this.completeStagedLlmChunkSubdivisionPlan({
-        runDir: input.runDir,
-        taskSpec: input.taskSpec,
-        searchLocalization: input.searchLocalization,
-        branchPlan: input.branchPlan,
-        scaffold: input.scaffold,
-        decompositionPlan: input.decompositionPlan,
-        unit: input.unit,
-        materializationPlan: input.chunkSubdivisionPlan || input.materializationPlan,
-        chunk: input.chunk,
-        timeoutMs: input.timeoutMs,
-        abortSignal: input.abortSignal,
-        attempt: input.attempt,
-        threadId: input.threadId,
-        publicDir: input.publicDir,
-        emitImplementObservation: input.emitImplementObservation,
-        reasoningEffort: input.reasoningEffort,
-        forceSmallerSubdivision: true,
-        previousFailure: trimBlock(error instanceof Error ? error.message : String(error), 1200)
-      });
+      const retrySubdivisionPlan = isImplementStagedLlmOutputSizeError(error)
+        ? {
+            plan: buildLocalChunkSubdivisionPlanForChunk(input.chunk, { forceSmallerSubdivision: true }),
+            threadId: input.threadId
+          }
+        : await this.completeStagedLlmChunkSubdivisionPlan({
+            runDir: input.runDir,
+            taskSpec: input.taskSpec,
+            searchLocalization: input.searchLocalization,
+            branchPlan: input.branchPlan,
+            scaffold: input.scaffold,
+            decompositionPlan: input.decompositionPlan,
+            unit: input.unit,
+            materializationPlan: input.chunkSubdivisionPlan || input.materializationPlan,
+            chunk: input.chunk,
+            timeoutMs: input.timeoutMs,
+            abortSignal: input.abortSignal,
+            attempt: input.attempt,
+            threadId: input.threadId,
+            publicDir: input.publicDir,
+            emitImplementObservation: input.emitImplementObservation,
+            reasoningEffort: input.reasoningEffort,
+            forceSmallerSubdivision: true,
+            previousFailure: trimBlock(error instanceof Error ? error.message : String(error), 1200)
+          });
+      if (isImplementStagedLlmOutputSizeError(error)) {
+        const baseId = `${sanitizeArtifactId(input.unit.id)}__${sanitizeArtifactId(input.chunk.id)}`;
+        await writeJsonFile(path.join(input.runDir, IMPLEMENT_UNIT_PLAN_DIR, `${baseId}.json`), retrySubdivisionPlan.plan);
+        input.emitImplementObservation(
+          "codex",
+          `Using local forced subdivision for ${input.chunk.title} after the staged_llm output-size cap was reached.`,
+          {
+            attempt: input.attempt,
+            threadId: input.threadId,
+            publicDir: input.publicDir
+          }
+        );
+      }
       const retryChunks = retrySubdivisionPlan.plan.chunks;
       if (retryChunks.length < 2) {
         throw error;
@@ -4137,6 +4157,8 @@ export class ImplementSessionManager {
       `Target chunk: ${params.chunk.id} — ${params.chunk.title}`,
       "Return ONLY one JSON object with keys: chunk_id, content.",
       "Return only the requested chunk content. Do not repeat earlier chunks. Do not emit markdown fences.",
+      `Target content budget: keep this chunk at or below ${params.parentChunk ? IMPLEMENT_STAGED_LLM_RETRY_CHUNK_TARGET_CHARS : IMPLEMENT_STAGED_LLM_CHUNK_TARGET_CHARS} characters whenever possible.`,
+      "If the requested chunk is broad, implement only its named narrow responsibility; do not include adjacent dataset, model, execution, evaluation, reporting, or entrypoint concerns unless they are explicitly the requested chunk.",
       "Assume planning is already complete. Focus only on materializing the requested section for the approved file.",
       "Do not redesign the file. Treat the current file state and completed sections as the canonical skeleton you are filling.",
       "Materialize executable source now. Do not return placeholder scaffolding, section summaries, or purpose restatements.",
@@ -4322,7 +4344,8 @@ export class ImplementSessionManager {
       "Chunk schema: {\"id\": string, \"title\": string, \"purpose\": string, \"content_kind\": \"code_section\"|\"config_block\"|\"documentation_section\"|\"text_section\", \"include_imports\"?: boolean, \"include_entrypoint\"?: boolean, \"depends_on\"?: string[], \"verification_focus\"?: string[]}.",
       "Choose the smallest ordered set of subchunks that matches the experiment purpose and verification focus.",
       "Split executable source by function responsibility whenever a parent chunk combines data access, model setup, training/execution, evaluation, or metrics aggregation.",
-      "Keep each subchunk narrow enough to materialize as one coherent helper group plus any directly associated call sites.",
+      `Keep each subchunk narrow enough to materialize near ${IMPLEMENT_STAGED_LLM_CHUNK_TARGET_CHARS} characters or less as one coherent helper group plus any directly associated call sites.`,
+      "When a parent chunk combines dataset/corpus loading, tokenization, model setup, execution, raw evidence capture, aggregate metric reporting, or entrypoint behavior, split those concerns into dependency-safe micro-stages.",
       "When a parent chunk combines an execution loop with raw evidence capture or aggregate metric reporting, split it into dependency-safe micro-stages such as preflight/context resolution, ordered run-plan construction, one-condition execution, raw record persistence, aggregate metric computation, and entrypoint wiring.",
       "Prefer more small subchunks over a large catch-all loop chunk; each code_section subchunk should be materializable as a compact helper group, not a full experiment runner.",
       "Returning a single subchunk is valid only when the parent chunk is already one narrow responsibility.",
@@ -4330,7 +4353,8 @@ export class ImplementSessionManager {
         ? [
             "The previous attempt to materialize this parent chunk did not complete.",
             "Return a strictly smaller ordered subdivision with at least 2 subchunks.",
-            "For retry subdivision after a timeout or provider termination, avoid repeating the failed responsibility boundary; if the failed parent mentions execution, raw results, evidence collection, metrics, reporting, or entrypoint behavior, split those concerns into separate subchunks.",
+            `For retry subdivision, target subchunks around ${IMPLEMENT_STAGED_LLM_RETRY_CHUNK_TARGET_CHARS} characters or less; prefer 4-8 micro-stages over 2 broad parts when the parent includes multiple helpers.`,
+            "For retry subdivision after a timeout, provider termination, or output-size cap, avoid repeating the failed responsibility boundary; if the failed parent mentions dataset/corpus loading, tokenization, model setup, execution, raw results, evidence collection, metrics, reporting, or entrypoint behavior, split those concerns into separate subchunks.",
             "Use the failure below to choose dependency-safe subchunk boundaries.",
             "If the failure names undefined uppercase constants, the earliest subchunk must define those constants before any dataclass, config, or helper references them; otherwise replace them with literal values or explicit config lookups in the same subchunk.",
             ...(params.previousFailure ? ["Previous materialization failure:", params.previousFailure] : [])
@@ -12193,12 +12217,58 @@ export function buildLocalChunkSubdivisionPlanForChunk(
   }
 
   const responsibilityText = (chunk.title + " " + chunk.purpose).toLowerCase();
+  const needsDataOrModelMicroStages =
+    /\b(?:dataset|datasets|corpus|records?|examples?|instruction|instructions|tokenization|tokenizer|splits?|loader|loaders?|materialization|model setup|model loading|candidate iteration|candidate order)\b/u.test(
+      responsibilityText
+    );
   const needsExecutionMicroStages =
     /\b(?:preflight|execution|execute|training|evaluation|result|results|evidence|metric|metrics|aggregation|aggregate|reporting|entrypoint)\b/u.test(
       responsibilityText
     );
   const needsContractMicroStages =
     /\b(?:contract|constants?|markers?|seeds?|baseline|conditions?|run[-\s]?plan|model)\b/u.test(responsibilityText);
+  if (needsDataOrModelMicroStages) {
+    const stageSpecs: Array<{ suffix: string; title: string; purpose: string; includeImports?: boolean; includeEntrypoint?: boolean }> = [
+      {
+        suffix: "schema",
+        title: "Data and model schema contracts",
+        purpose: "Define only compact record schemas, candidate identifiers, and static data/model contracts needed by this parent chunk.",
+        includeImports: chunk.include_imports
+      },
+      {
+        suffix: "loaders",
+        title: "Dataset and model loader boundaries",
+        purpose: "Implement narrow loader boundary helpers without tokenization, execution, evaluation, or reporting logic."
+      },
+      {
+        suffix: "transforms",
+        title: "Tokenization and split transforms",
+        purpose: "Implement deterministic normalization, splitting, and tokenization transforms without runtime execution loops."
+      },
+      {
+        suffix: "handoff",
+        title: "Prepared bundle handoff",
+        purpose: "Wire prepared data/model bundles to downstream execution helpers and expose structured failure evidence for unavailable resources.",
+        includeEntrypoint: chunk.include_entrypoint
+      }
+    ];
+    const chunks = stageSpecs.map((stage, index): DynamicMaterializationChunk => ({
+      ...chunk,
+      id: chunk.id + "_" + stage.suffix,
+      title: chunk.title + ": " + stage.title,
+      purpose: chunk.purpose + " " + stage.purpose,
+      include_imports: index === 0 ? stage.includeImports === true : false,
+      include_entrypoint: stage.includeEntrypoint === true,
+      depends_on: index === 0 ? chunk.depends_on : [chunk.id + "_" + stageSpecs[index - 1].suffix]
+    }));
+    return {
+      strategy: "local_data_model_micro_stage_subdivision_fallback",
+      rationale:
+        "The provider did not return a forced-smaller subdivision subplan within the bounded request, so AutoLabOS splits data/model preparation into dependency-safe micro-stages.",
+      chunks
+    };
+  }
+
   if (needsExecutionMicroStages) {
     const stageSpecs: Array<{ suffix: string; title: string; purpose: string; includeImports?: boolean; includeEntrypoint?: boolean }> = [
       {
@@ -16122,7 +16192,9 @@ function appendStagedImplementMaterializationPlanOverrideToPrompt(targetPath: st
     "- Return ONLY one bare JSON object with keys: strategy, rationale, chunks.",
     "- Do NOT use markdown fences or any extra commentary.",
     "- Keep chunk scopes non-overlapping and ordered.",
-    "- For runnable Python scripts, experiment runners, or CLI entrypoints, use 3-6 focused chunks unless the file is clearly tiny; do not plan a single giant runner chunk.",
+    "- For runnable Python scripts, experiment runners, or CLI entrypoints, use focused chunks unless the file is clearly tiny; do not plan a single giant runner chunk.",
+    `- For Python code_section chunks, target at most ${IMPLEMENT_STAGED_LLM_CHUNK_TARGET_CHARS} characters of materialized content; when uncertain, split into more chunks instead of broad helper groups.`,
+    "- Separate dataset/corpus loading, tokenization, model loading, one-run execution, raw evidence persistence, metric aggregation, and entrypoint wiring into distinct chunks when any of those concerns appear.",
     "- Let the chunk count follow the requested file's purpose and verification focus while keeping each chunk small enough for bounded generation and validation."
   ].join("\n");
 }

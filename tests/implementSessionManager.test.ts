@@ -427,6 +427,9 @@ describe("ImplementSessionManager", () => {
     expect(source).toContain("staged_llm chunk completion exceeded");
     expect(source).toContain("isImplementStagedLlmOutputSizeError(error)");
     expect(source).toContain("exceeded the output-size cap");
+    expect(source).toContain("IMPLEMENT_STAGED_LLM_CHUNK_TARGET_CHARS");
+    expect(source).toContain("IMPLEMENT_STAGED_LLM_RETRY_CHUNK_TARGET_CHARS");
+    expect(source).toContain("Using local forced subdivision");
   });
 
   it("materializes generic Python JSON/path helper chunks locally", () => {
@@ -13630,6 +13633,30 @@ describe("ImplementSessionManager", () => {
       `staged_llm chunk subdivision planning did not return a parseable dynamic plan for ${publicScriptPath}:chunk_setup`
     );
     expect(llmCalls).toBe(3);
+  });
+
+  it("uses local micro-stage fallback for broad data and model preparation chunks", () => {
+    const plan = buildLocalChunkSubdivisionPlanForChunk(
+      {
+        id: "chunk_data_model",
+        title: "Dataset, tokenizer, and model preparation",
+        purpose: "Materialize dataset records, tokenize examples, resolve model candidates, and hand prepared bundles to downstream execution.",
+        content_kind: "code_section",
+        include_imports: true,
+        include_entrypoint: false
+      },
+      { forceSmallerSubdivision: true }
+    );
+
+    expect(plan.strategy).toBe("local_data_model_micro_stage_subdivision_fallback");
+    expect(plan.chunks.map((chunk) => chunk.id)).toEqual([
+      "chunk_data_model_schema",
+      "chunk_data_model_loaders",
+      "chunk_data_model_transforms",
+      "chunk_data_model_handoff"
+    ]);
+    expect(plan.chunks[0]?.include_imports).toBe(true);
+    expect(plan.chunks[3]?.depends_on).toEqual(["chunk_data_model_transforms"]);
   });
 
   it("uses neutral two-part fallback when re-subdividing an existing local micro-stage", () => {

@@ -15,6 +15,58 @@ Path placeholders:
 
 ---
 
+## Issue: LV-469
+
+- Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
+- Validation target: staged implementation materialization should not repeatedly ask the provider to plan broad oversized subchunks after output-size caps; it should force deterministic smaller local subdivisions for broad data/model/execution helper groups.
+- Environment/session context: active P6 validation run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-468 repair was committed and `implement_experiments` was retried.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` through the P6 continue helper after the LV-468 source repair.
+  2. Let staged generation materialize the public Python experiment runner.
+  3. Observe repeated output-size-cap aborts followed by provider-planned re-subdivision for broad model-loading, dataset/tokenization, and materialization helpers.
+
+- Expected behavior:
+  - Once a chunk exceeds the staged output-size cap, the retry path should avoid another broad provider planning loop and use deterministic smaller local subchunks.
+  - Broad data/model preparation chunks should be split into schema, loader, transform, and handoff micro-stages before further materialization.
+
+- Actual behavior:
+  - The new LV-468 cap correctly aborted oversized chunks, but the retry path repeatedly asked staged_llm to re-plan smaller work units.
+  - Several re-planned helper chunks still approached or exceeded the cap, causing recursive subdivision and long live-run latency before the runner was complete.
+  - The validation process was stopped after the source-level pattern was confirmed.
+
+- Fresh vs existing session comparison:
+  - Fresh session: targeted source regressions now cover chunk-size budget prompts, output-size local forced subdivision, and data/model micro-stage fallback.
+  - Existing session: the same P6 run exposed a narrower planning-loop inefficiency after the LV-468 cap started working.
+  - Divergence: no session divergence observed; this is a staged-materialization planning/control issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: output-size overflow was classified as retryable, but the retry route reused provider planning for the same broad responsibility boundary. The local subdivision fallback did not explicitly recognize dataset/tokenization/model-preparation chunks, so broad helper groups could recur.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now distinguishes target and retry chunk-size budgets, lowers the hard chunk stream cap, and adds prompt guidance to split data/model/execution/evaluation/reporting concerns.
+  - Code: output-size overflow now uses local forced subdivision instead of another provider subdivision-planning turn.
+  - Code: local subdivision fallback now micro-splits broad data/model preparation chunks into schema, loader, transform, and handoff stages.
+  - Tests: `tests/implementSessionManager.test.ts` adds neutral coverage for the new staged chunk budget wiring and data/model micro-stage fallback.
+
+- Regression status:
+  - Focused regression passed: TMPDIR=/tmp npm test -- tests/implementSessionManager.test.ts -t "bounded and retryable|data and model preparation".
+  - Public-code guard passed: TMPDIR=/tmp npm test -- tests/publicCodeSanitization.test.ts.
+  - Public hardcoding scan returned only generic metric vocabulary in src/core/analysis/paperAnalyzer.ts.
+  - Build passed: TMPDIR=/tmp npm run build.
+  - Harness passed: TMPDIR=/tmp npm run validate:harness.
+  - Same-flow revalidation: pending after this source repair.
+
+- Remaining risks:
+  - The next retry must confirm that runner generation finishes without repeated output-size replanning loops.
+  - Generated runner outputs still need post-generation checks for entrypoint presence, fallback/smoke evidence promotion, and public-code fixture hygiene.
+
+- Evidence/artifacts:
+  - <repo-root>/src/core/agents/implementSessionManager.ts
+  - <repo-root>/tests/implementSessionManager.test.ts
+  - <validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/progress.jsonl
+
 ## Issue: LV-468
 
 - Status: reproduced in active validation run on 2026-05-31; source repair implemented; automated regression passed; same-flow revalidation pending.
