@@ -283,6 +283,15 @@ import { buildHeuristicObjectiveMetricProfile } from "../src/core/objectiveMetri
 const ORIGINAL_CWD = process.cwd();
 const tempDirs: string[] = [];
 
+function promptRequestedParentChunkIs(prompt: string, chunkId: string): boolean {
+  const marker = "Requested parent chunk to subdivide:";
+  const markerIndex = prompt.indexOf(marker);
+  if (markerIndex < 0) {
+    return false;
+  }
+  return prompt.slice(markerIndex + marker.length).includes(`"id": "${chunkId}"`);
+}
+
 afterEach(() => {
   process.chdir(ORIGINAL_CWD);
   while (tempDirs.length > 0) {
@@ -13783,7 +13792,7 @@ describe("ImplementSessionManager", () => {
     ]);
   });
 
-  it("uses local fallbacks that micro-split execution chunks when subdivision planning times out", async () => {
+  it("uses local fallbacks that micro-split execution chunks when subdivision planning stalls or terminates", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-subchunk-timeout-fallback-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -13897,7 +13906,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-subdivision-timeout-materialization"
             };
           }
-          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_setup")) {
+          if (promptRequestedParentChunkIs(prompt, "chunk_setup")) {
             throw new Error("implement_experiments staged_llm request timed out after 10ms without provider progress");
           }
           const targetChunkMatch = /Target chunk: ([^\s\n]+)/.exec(prompt);
@@ -13927,8 +13936,8 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-subdivision-timeout-execution"
             };
           }
-          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_execution")) {
-            throw new Error("implement_experiments staged_llm request timed out after 10ms without provider progress");
+          if (promptRequestedParentChunkIs(prompt, "chunk_execution")) {
+            throw new Error("terminated");
           }
           if (targetChunkId?.startsWith("chunk_contract")) {
             const helperName = targetChunkId.replace(/[^A-Za-z0-9_]/g, "_");
@@ -13940,10 +13949,10 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-subdivision-timeout-contract"
             };
           }
-          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_contract")) {
+          if (promptRequestedParentChunkIs(prompt, "chunk_contract")) {
             throw new Error("implement_experiments staged_llm request timed out after 10ms without provider progress");
           }
-          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_entrypoint")) {
+          if (promptRequestedParentChunkIs(prompt, "chunk_entrypoint")) {
             return {
               text: JSON.stringify({
                 strategy: "single_entrypoint_subchunk",
@@ -14020,6 +14029,8 @@ describe("ImplementSessionManager", () => {
       "chunk_contract_validation"
     ]);
     expect(contractFallbackPlan.chunks?.[3]?.depends_on).toEqual(["chunk_contract_seeds"]);
+    const progressLog = readFileSync(path.join(runDir, "implement_experiments", "progress.jsonl"), "utf8");
+    expect(progressLog).toContain("Chunk subdivision planning was terminated for Execution and result aggregation; using a local micro-stage subdivision plan.");
     expect(llmCalls).toBeGreaterThanOrEqual(10);
   });
   it("subdivides a large runner chunk into smaller purpose-aligned subchunks before materializing code", async () => {
@@ -14580,7 +14591,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-resubchunk-plan"
             };
           }
-          if (prompt.includes('Requested parent chunk to subdivide:\n{\n  "id": "chunk_setup"')) {
+          if (promptRequestedParentChunkIs(prompt, "chunk_setup")) {
             if (prompt.includes("The previous attempt to materialize this parent chunk did not complete.")) {
               return {
                 text: JSON.stringify({
@@ -14657,7 +14668,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-resubchunk-loaders"
             };
           }
-          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_entrypoint")) {
+          if (promptRequestedParentChunkIs(prompt, "chunk_entrypoint")) {
             return {
               text: JSON.stringify({
                 strategy: "single_entrypoint_subchunk",
@@ -15466,7 +15477,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-uppercase-repair-plan"
             };
           }
-          if (prompt.includes('Requested parent chunk to subdivide:\n{\n  "id": "chunk_setup"')) {
+          if (promptRequestedParentChunkIs(prompt, "chunk_setup")) {
             return {
               text: JSON.stringify({
                 strategy: "single_setup",
@@ -15661,7 +15672,10 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-comment-only-plan"
             };
           }
-          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_setup")) {
+          if (
+            promptRequestedParentChunkIs(prompt, "chunk_setup") ||
+            (prompt.includes("The previous attempt to materialize this parent chunk did not complete.") && prompt.includes("chunk_setup"))
+          ) {
             return {
               text: JSON.stringify({
                 strategy: "single_setup_subchunk",
@@ -15677,6 +15691,24 @@ describe("ImplementSessionManager", () => {
                 ]
               }),
               threadId: "thread-comment-only-subplan"
+            };
+          }
+          if (promptRequestedParentChunkIs(prompt, "chunk_entrypoint")) {
+            return {
+              text: JSON.stringify({
+                strategy: "single_entrypoint_subchunk",
+                rationale: "The entrypoint section is already minimal.",
+                chunks: [
+                  {
+                    id: "chunk_entrypoint",
+                    title: "Entrypoint",
+                    purpose: "Implement the executable main entrypoint.",
+                    content_kind: "code_section",
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-comment-only-entrypoint-plan"
             };
           }
           if (prompt.includes("Target chunk: chunk_setup")) {

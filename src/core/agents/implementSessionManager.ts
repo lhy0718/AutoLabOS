@@ -3945,12 +3945,13 @@ export class ImplementSessionManager {
         reasoningEffort: input.reasoningEffort
       });
     } catch (error) {
-      if (!isImplementStagedLlmTimeoutError(error)) {
+      if (!isImplementStagedLlmTimeoutError(error) && !isProviderTerminatedStagedLlmError(error)) {
         throw error;
       }
+      const reason = isProviderTerminatedStagedLlmError(error) ? "was terminated" : "timed out";
       input.emitImplementObservation(
         "codex",
-        "Bootstrap contract planning timed out; using the local deterministic bootstrap contract.",
+        `Bootstrap contract planning ${reason}; using the local deterministic bootstrap contract.`,
         {
           attempt: input.attempt,
           threadId: input.threadId,
@@ -4050,11 +4051,12 @@ export class ImplementSessionManager {
         reasoningEffort: input.reasoningEffort
       });
     } catch (error) {
-      if (isImplementStagedLlmTimeoutError(error)) {
+      if (isImplementStagedLlmTimeoutError(error) || isProviderTerminatedStagedLlmError(error)) {
         const fallbackPlan = buildLocalMaterializationPlanForUnit(input.unit);
+        const reason = isProviderTerminatedStagedLlmError(error) ? "was terminated" : "timed out";
         input.emitImplementObservation(
           "codex",
-          `Materialization planning timed out for ${input.unit.title}; using a local single-chunk materialization plan.`,
+          `Materialization planning ${reason} for ${input.unit.title}; using a local single-chunk materialization plan.`,
           {
             attempt: input.attempt,
             threadId: input.threadId,
@@ -4280,10 +4282,11 @@ export class ImplementSessionManager {
         reasoningEffort: input.reasoningEffort
       });
     } catch (error) {
-      if (isImplementStagedLlmTimeoutError(error)) {
+      if (isImplementStagedLlmTimeoutError(error) || isProviderTerminatedStagedLlmError(error)) {
         const fallbackPlan = buildLocalChunkSubdivisionPlanForChunk(input.chunk, {
           forceSmallerSubdivision: input.forceSmallerSubdivision === true
         });
+        const reason = isProviderTerminatedStagedLlmError(error) ? "was terminated" : "timed out";
         const fallbackPlanShape =
           fallbackPlan.chunks.length === 1
             ? "single-chunk"
@@ -4292,7 +4295,7 @@ export class ImplementSessionManager {
               : "micro-stage";
         input.emitImplementObservation(
           "codex",
-          `Chunk subdivision planning timed out for ${input.chunk.title}; using a local ${fallbackPlanShape} subdivision plan.`,
+          `Chunk subdivision planning ${reason} for ${input.chunk.title}; using a local ${fallbackPlanShape} subdivision plan.`,
           {
             attempt: input.attempt,
             threadId: input.threadId,
