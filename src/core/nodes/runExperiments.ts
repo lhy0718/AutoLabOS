@@ -75,6 +75,7 @@ import {
   repairPythonMainMetricsPayloadBuilderCallSurface,
   repairPythonMainCallableResolverSpecificitySurface,
   repairPythonMainStudyRunnerDeviceBridgeSurface,
+  repairPythonModelLoaderAliasSurface,
   repairPythonPublicStudyTopLevelRunnerAliasSurface,
   repairPythonSelectedRunnerArgvDispatchSurface,
   repairPythonStudyOrchestratorResolverPerRunFilterSurface,
@@ -3157,6 +3158,16 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   if (mainStudyRunnerDeviceBridgeRepair.repaired) {
     repaired = true;
     messages.push(mainStudyRunnerDeviceBridgeRepair.message || `Bridged main study runner device invocation in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+  const modelLoaderAliasRepair = await repairPythonModelLoaderAliasSurface(scriptPath);
+  if (modelLoaderAliasRepair.repaired) {
+    repaired = true;
+    messages.push(
+      modelLoaderAliasRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Added model/tokenizer loader alias in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
   }
   const entrypointLookupHelperAliasRepair =
     await repairPythonEntrypointLookupHelperAliasSurface(scriptPath);

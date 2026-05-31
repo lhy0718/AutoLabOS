@@ -40585,6 +40585,62 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("repairs model bundle resolver aliases when generated setup preflight searches alternate names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-model-bundle-resolver-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "",
+        "def _call_setup_helper(stage, names, evidence, **kwargs):",
+        "    for name in names:",
+        "        fn = globals().get(name)",
+        "        if not callable(fn):",
+        "            continue",
+        "        signature = inspect.signature(fn)",
+        "        accepts_kwargs = any(p.kind == p.VAR_KEYWORD for p in signature.parameters.values())",
+        "        supported = kwargs if accepts_kwargs else {key: value for key, value in kwargs.items() if key in signature.parameters}",
+        "        return fn(**supported)",
+        "    raise RuntimeError('no usable helper for ' + stage)",
+        "",
+        "def resolve_preferred_fallback_model_bundle(dependency_preflight=None, access_policy=None):",
+        "    return {'model': 'base-model', 'tokenizer': 'tokenizer', 'dependency_preflight': dependency_preflight, 'access_policy': access_policy}",
+        "",
+        "def run_preflight_setup():",
+        "    return _call_setup_helper(",
+        "        'model_tokenizer',",
+        "        ('load_preferred_fallback_model_bundle', 'load_model_bundle_with_fallback', 'load_base_model_bundle', 'resolve_model_bundle', 'load_model_and_tokenizer'),",
+        "        {},",
+        "        model_candidates=['candidate-a'],",
+        "        requested_model='candidate-a',",
+        "    )",
+        "",
+        "def main() -> int:",
+        "    bundle = run_preflight_setup()",
+        "    return 0 if bundle.get('model') == 'base-model' and bundle.get('tokenizer') == 'tokenizer' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /no usable helper for model_tokenizer/
+    );
+
+    const repair = await repairPythonModelLoaderAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("resolve_preferred_fallback_model_bundle");
+    expect(repairedSource).toContain("def load_model_and_tokenizer(model_name=None, tokenizer_name=None, config=None");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("repairs evaluation dataset helper aliases when generated loaders use public dataset names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-eval-loader-alias-"));
     tempDirs.push(workspace);

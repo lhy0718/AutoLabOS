@@ -1268,6 +1268,132 @@ describe("run_experiments execution profile behavior", () => {
     ).toBe(true);
   });
 
+  it("repairs model bundle resolver aliases before run_experiments execution", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-model-bundle-resolver-repair-"));
+    process.chdir(root);
+    const run = makeRun("run-model-bundle-resolver-repair");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "experiment.py");
+    await writeFile(
+      scriptPath,
+      [
+        "import inspect",
+        "",
+        "def _call_setup_helper(stage, names, evidence, **kwargs):",
+        "    for name in names:",
+        "        helper = globals().get(name)",
+        "        if callable(helper):",
+        "            signature = inspect.signature(helper)",
+        "            accepted = {key: value for key, value in kwargs.items() if key in signature.parameters}",
+        "            return helper(**accepted)",
+        "    raise RuntimeError('no usable helper for ' + stage)",
+        "",
+        "def resolve_preferred_fallback_model_bundle(dependency_preflight=None, access_policy=None):",
+        "    return {'model': 'base-model', 'tokenizer': 'tokenizer'}",
+        "",
+        "def run_preflight_setup():",
+        "    return _call_setup_helper(",
+        "        'model_tokenizer',",
+        "        ('load_preferred_fallback_model_bundle', 'load_model_bundle_with_fallback', 'load_base_model_bundle', 'resolve_model_bundle', 'load_model_and_tokenizer'),",
+        "        {},",
+        "        model_candidates=['candidate-a'],",
+        "        requested_model='candidate-a',",
+        "    )",
+        "",
+        "def main():",
+        "    return 0 if run_preflight_setup().get('model') == 'base-model' else 1",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 " + JSON.stringify(scriptPath));
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    let repairedBeforeExecution = false;
+    const eventStream = new InMemoryEventStream();
+    const node = createRunExperimentsNode({
+      config: {
+        experiments: {
+          timeout_sec: 43200,
+          network_policy: "declared",
+          network_purpose: "model_download"
+        }
+      } as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          const repairedSource = await readFile(scriptPath, "utf8");
+          repairedBeforeExecution =
+            repairedSource.includes("def load_model_and_tokenizer(model_name=None") &&
+            repairedSource.includes("resolve_preferred_fallback_model_bundle");
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric: {
+                  name: "accuracy_delta_vs_baseline",
+                  value: 0.02,
+                  target: 0.01,
+                  met: true
+                },
+                condition_results: [
+                  { condition_id: "baseline_condition", status: "completed", accuracy: 0.4 },
+                  { condition_id: "candidate_condition_a", status: "completed", accuracy: 0.42 }
+                ],
+                completed_condition_count: 2
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    await node.execute({ run, graph: run.graph });
+
+    expect(repairedBeforeExecution).toBe(true);
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes("Added model/tokenizer loader alias to experiment.py before run_experiments execution.")
+      )
+    ).toBe(true);
+  });
+
   it("repairs entrypoint argv dispatch before run_experiments execution", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-entrypoint-argv-repair-"));
     process.chdir(root);
