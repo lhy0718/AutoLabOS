@@ -194,6 +194,7 @@ import {
   repairPythonEntrypointLookupHelperAliasSurface,
   repairPythonEntrypointParseArgsSingleArgumentSurface,
   repairPythonMissingParseArgsSurface,
+  repairPythonMissingMainInvocationSurface,
   repairPythonMissingBuildExperimentConfigSurface,
   repairPythonNamespaceParseArgsSurface,
   repairPythonSelectedRunnerArgvDispatchSurface,
@@ -44396,6 +44397,48 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       status: "completed",
       train_loss: null
+    });
+  });
+
+  it("adds a missing CLI main invocation guard to generated metrics runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-main-guard-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "condition_sweep_runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    return parser.parse_args(argv)",
+        "",
+        "def write_metrics(path, payload):",
+        "    Path(path).write_text(json.dumps(payload), encoding='utf-8')",
+        "",
+        "def main(argv=None):",
+        "    args = parse_args(argv)",
+        "    write_metrics(args.metrics_path, {'status': 'completed', 'accuracy': 1.0})",
+        "    return 0",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repaired = await repairPythonMissingMainInvocationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repaired.repaired).toBe(true);
+    expect(repairedSource).toContain("if __name__ == '__main__':");
+    expect(repairedSource).toContain("raise SystemExit(main())");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      accuracy: 1.0
     });
   });
 

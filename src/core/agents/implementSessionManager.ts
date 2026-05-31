@@ -10121,6 +10121,8 @@ export class ImplementSessionManager {
       await repairPythonAutolabosSupportedArgsDuplicateArgsSurface(executionScriptPath);
     const missingBuildExperimentConfigRepair =
       await repairPythonMissingBuildExperimentConfigSurface(executionScriptPath);
+    const missingMainInvocationRepair =
+      await repairPythonMissingMainInvocationSurface(executionScriptPath);
     const helperResolverCallableClassRepair =
       await repairPythonFindHelperCallableClassSurface(executionScriptPath);
     const roleCallableResolverClassRepair =
@@ -10329,6 +10331,7 @@ export class ImplementSessionManager {
       autolabosCliParserBuilderAliasRepair,
         autolabosSupportedArgsDuplicateArgsRepair,
         missingBuildExperimentConfigRepair,
+        missingMainInvocationRepair,
         helperResolverCallableClassRepair,
         roleCallableResolverClassRepair,
         mainFindCallableStudyResolverRepair,
@@ -15111,6 +15114,7 @@ async function applyRecoverableBundleDeterministicRepairs(params: {
     await repairPythonCompletedMetricsReplayEntrypointSurface(params.scriptPath),
     await repairPythonRequiredContractGlobalAliasSurface(params.scriptPath),
     await repairPythonSectionedRunnerCliEntrypointSurface(params.scriptPath),
+    await repairPythonMissingMainInvocationSurface(params.scriptPath),
     await repairPythonFinalOrchestrationHelperSurface(params.scriptPath),
     await repairPythonKeywordOnlyDefaultCallSurface(
       params.scriptPath,
@@ -40473,6 +40477,60 @@ export async function repairPythonMissingParseArgsSurface(scriptPath?: string): 
   return {
     repaired: true,
     message: `Added a parse_args() compatibility shim to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonMissingMainInvocationSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !/\ndef\s+main\s*\(/u.test(`\n${source}`) ||
+    /\n\s*if\s+__name__\s*==\s*["']__main__["']\s*:/u.test(`\n${source}`) ||
+    /\n\s*(?:raise\s+SystemExit|sys\.exit)\s*\(\s*main\s*\(/u.test(`\n${source}`)
+  ) {
+    return { repaired: false };
+  }
+
+  const hasMetricsPathSurface =
+    /\bmetrics_path\b/u.test(source) ||
+    /--metrics-path/u.test(source) ||
+    /\bmetrics[_-](?:out|output|file|path)\b/iu.test(source);
+  const hasMetricsWriterSurface =
+    /\n\s*def\s+[A-Za-z0-9_]*(?:write|persist|save)[A-Za-z0-9_]*metrics[A-Za-z0-9_]*\s*\(/iu.test(`\n${source}`) ||
+    /\bjson\.dump\s*\(/u.test(source) ||
+    /\.write_text\s*\(/u.test(source);
+  if (!hasMetricsPathSurface && !hasMetricsWriterSurface) {
+    return { repaired: false };
+  }
+
+  const guard = [
+    "",
+    "",
+    "if __name__ == '__main__':",
+    "    raise SystemExit(main())",
+    ""
+  ].join("\n");
+  const nextSource = `${source.trimEnd()}${guard}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added missing CLI main invocation guard to ${path.basename(scriptPath)} before handoff.`
   };
 }
 
