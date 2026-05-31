@@ -2054,6 +2054,37 @@ function isCompletedConditionStatus(status: string): boolean {
   return ["completed", "complete", "success", "succeeded", "ok", "passed"].includes(status);
 }
 
+function isFailedConditionStatus(status: string): boolean {
+  return ["failed", "failure", "error", "errored", "exception"].includes(status);
+}
+
+function collectExecutionStatusRows(metrics: Record<string, unknown>): Array<Record<string, unknown>> {
+  const study = asRecord(metrics.study);
+  const studySummary = asRecord(metrics.study_summary);
+  return [
+    ...collectConditionRows(metrics.rows),
+    ...collectConditionRows(metrics.run_results),
+    ...collectConditionRows(metrics.per_run_results),
+    ...collectConditionRows(metrics.raw_results),
+    ...collectConditionRows(metrics.seed_results),
+    ...collectConditionRows(metrics.per_seed_rows),
+    ...collectConditionRows(metrics.per_seed_results),
+    ...collectConditionRows(metrics.condition_seed_rows),
+    ...collectConditionRows(study.rows),
+    ...collectConditionRows(study.run_results),
+    ...collectConditionRows(study.per_run_results),
+    ...collectConditionRows(study.raw_results),
+    ...collectConditionRows(study.seed_results),
+    ...collectConditionRows(study.per_seed_rows),
+    ...collectConditionRows(studySummary.rows),
+    ...collectConditionRows(studySummary.run_results),
+    ...collectConditionRows(studySummary.per_run_results),
+    ...collectConditionRows(studySummary.raw_results),
+    ...collectConditionRows(studySummary.seed_results),
+    ...collectConditionRows(studySummary.per_seed_rows)
+  ].filter((row) => normalizeConditionResultStatus(row) !== "unknown");
+}
+
 function conditionResultReason(row: Record<string, unknown>): string | undefined {
   const errorRecord = asRecord(row.error);
   const reason =
@@ -4924,6 +4955,11 @@ function validateRunMetricsContract(input: {
     asNumber(studySummary.completed_run_count),
     asNumber(study.completed_run_count)
   ].find((value): value is number => typeof value === "number");
+  const failedRunCount = [
+    asNumber(input.metrics.failed_run_count),
+    asNumber(studySummary.failed_run_count),
+    asNumber(study.failed_run_count)
+  ].find((value): value is number => typeof value === "number");
   if (requiredRunCount !== undefined && requiredRunCount > 0) {
     if (completedRunCount === undefined && explicitRequiredRunCount !== undefined) {
       issues.push(`Experiment metrics omitted completed_run_count for required ${requiredRunCount} run(s).`);
@@ -4933,6 +4969,35 @@ function validateRunMetricsContract(input: {
       } else if (completedRunCount < requiredRunCount) {
         issues.push(`Experiment run coverage incomplete: completed_run_count=${completedRunCount}/${requiredRunCount}.`);
       }
+    }
+  }
+
+  const executionStatusRows = collectExecutionStatusRows(input.metrics);
+  if (executionStatusRows.length > 0) {
+    const completedEvidenceRows = executionStatusRows.filter((row) =>
+      isCompletedConditionStatus(normalizeConditionResultStatus(row))
+    );
+    const failedEvidenceRows = executionStatusRows.filter((row) =>
+      isFailedConditionStatus(normalizeConditionResultStatus(row))
+    );
+    if (failedEvidenceRows.length > 0 && failedRunCount === 0) {
+      issues.push(
+        `Experiment row evidence contradicts failed_run_count=0: ${failedEvidenceRows.length}/${executionStatusRows.length} execution row(s) report failed status.`
+      );
+    }
+    if (failedEvidenceRows.length === executionStatusRows.length && completedRunCount !== undefined && completedRunCount > 0) {
+      issues.push(
+        `Experiment row evidence contradicts completed_run_count=${completedRunCount}: 0 successful execution row(s), ${failedEvidenceRows.length} failed execution row(s).`
+      );
+    } else if (
+      requiredRunCount !== undefined &&
+      requiredRunCount > 0 &&
+      completedEvidenceRows.length === 0 &&
+      failedEvidenceRows.length > 0
+    ) {
+      issues.push(
+        `No execution rows completed successfully (${completedEvidenceRows.length}/${executionStatusRows.length} status-bearing row(s)).`
+      );
     }
   }
   const requiredConditionCount = [

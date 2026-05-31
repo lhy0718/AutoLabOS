@@ -602,6 +602,101 @@ describe("run_experiments execution profile behavior", () => {
     });
   });
 
+  it("rejects aggregate completion counts when execution rows all failed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-contradictory-row-counts-"));
+    process.chdir(root);
+    const run = makeRun("run-contradictory-row-counts");
+    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                primary_metric_key: "accuracy_delta_vs_baseline",
+                accuracy_delta_vs_baseline: 0.02,
+                completed_run_count: 2,
+                required_run_count: 2,
+                failed_run_count: 0,
+                rows: [
+                  {
+                    condition_marker: "baseline_condition",
+                    seed: 1,
+                    status: "failed",
+                    accuracy: null,
+                    error_message: "No execution helper is available"
+                  },
+                  {
+                    condition_marker: "candidate_condition_a",
+                    seed: 1,
+                    status: "failed",
+                    accuracy: null,
+                    error_message: "No execution helper is available"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner wrote contradictory aggregate metrics",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment row evidence contradicts failed_run_count=0");
+    expect(result.error).toContain("Experiment row evidence contradicts completed_run_count=2");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("execution row(s) report failed status");
+  });
+
   it("uses failed metrics payload as feedback when the command exits unsuccessfully", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-failed-command-metrics-"));
     process.chdir(root);
