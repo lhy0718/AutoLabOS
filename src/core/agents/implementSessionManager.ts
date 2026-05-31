@@ -10125,6 +10125,8 @@ export class ImplementSessionManager {
       await repairPythonMissingMainInvocationSurface(executionScriptPath);
     const missingBaselineFirstSweepWrapperRepair =
       await repairPythonMissingBaselineFirstSweepWrapperSurface(executionScriptPath);
+    const missingConditionSpecClassRepair =
+      await repairPythonMissingConditionSpecClassSurface(executionScriptPath);
     const helperResolverCallableClassRepair =
       await repairPythonFindHelperCallableClassSurface(executionScriptPath);
     const roleCallableResolverClassRepair =
@@ -10335,6 +10337,7 @@ export class ImplementSessionManager {
         missingBuildExperimentConfigRepair,
         missingMainInvocationRepair,
         missingBaselineFirstSweepWrapperRepair,
+        missingConditionSpecClassRepair,
         helperResolverCallableClassRepair,
         roleCallableResolverClassRepair,
         mainFindCallableStudyResolverRepair,
@@ -15119,6 +15122,7 @@ async function applyRecoverableBundleDeterministicRepairs(params: {
     await repairPythonSectionedRunnerCliEntrypointSurface(params.scriptPath),
     await repairPythonMissingMainInvocationSurface(params.scriptPath),
     await repairPythonMissingBaselineFirstSweepWrapperSurface(params.scriptPath),
+    await repairPythonMissingConditionSpecClassSurface(params.scriptPath),
     await repairPythonFinalOrchestrationHelperSurface(params.scriptPath),
     await repairPythonKeywordOnlyDefaultCallSurface(
       params.scriptPath,
@@ -40636,6 +40640,61 @@ export async function repairPythonMissingBaselineFirstSweepWrapperSurface(script
   return {
     repaired: true,
     message: `Added missing baseline-first sweep wrapper to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonMissingConditionSpecClassSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    /\nclass\s+ConditionSpec\b/u.test(`\n${source}`) ||
+    !/\bConditionSpec\s*\(/u.test(source) ||
+    !/\bConditionSpecTuple\b/u.test(source)
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\n(?:[A-Z][A-Z0-9_]*_SPECS|GOVERNED_CONDITION_SPECS)\s*[:=]/u) || source.match(/\ndef\s+governed_condition_specs\s*\(/u);
+  const insertionIndex = insertionMatch?.index ?? source.match(/\ndef\s+/u)?.index;
+  if (insertionIndex === undefined) {
+    return { repaired: false };
+  }
+
+  const bridge = [
+    "",
+    "class ConditionSpec:",
+    "    def __init__(self, marker, rank=None, dropout=None, **kwargs):",
+    "        self.marker = marker",
+    "        self.condition_marker = marker",
+    "        self.rank = rank if rank is not None else kwargs.get('rank')",
+    "        self.dropout = dropout if dropout is not None else kwargs.get('dropout', 0.0)",
+    "",
+    "    def to_dict(self):",
+    "        return {'marker': self.marker, 'condition_marker': self.condition_marker, 'rank': self.rank, 'dropout': self.dropout}",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionIndex)}${bridge}${source.slice(insertionIndex)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added missing ConditionSpec compatibility class to ${path.basename(scriptPath)} before handoff.`
   };
 }
 

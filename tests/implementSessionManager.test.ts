@@ -196,6 +196,7 @@ import {
   repairPythonMissingParseArgsSurface,
   repairPythonMissingMainInvocationSurface,
   repairPythonMissingBaselineFirstSweepWrapperSurface,
+  repairPythonMissingConditionSpecClassSurface,
   repairPythonMissingBuildExperimentConfigSurface,
   repairPythonNamespaceParseArgsSurface,
   repairPythonSelectedRunnerArgvDispatchSurface,
@@ -44502,6 +44503,32 @@ describe("ImplementSessionManager", () => {
       completed_run_count: 2,
       failed_run_count: 0
     });
+  });
+
+  it("adds a ConditionSpec compatibility class when only tuple alias exists", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-spec-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "condition_sweep_runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import TypeAlias",
+        "ConditionSpecTuple: TypeAlias = tuple[str, int, float]",
+        "GOVERNED_CONDITION_SPECS: tuple[ConditionSpecTuple, ...] = (('baseline_condition', 1, 0.0),)",
+        "",
+        "def governed_condition_specs():",
+        "    return [ConditionSpec(marker=marker, rank=rank, dropout=dropout) for marker, rank, dropout in GOVERNED_CONDITION_SPECS]",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repaired = await repairPythonMissingConditionSpecClassSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repaired.repaired).toBe(true);
+    expect(repairedSource).toContain("class ConditionSpec:");
+    execFileSync("python3", ["-c", `import runpy; ns = runpy.run_path(${JSON.stringify(scriptPath)}); specs = ns['governed_condition_specs'](); assert specs[0].marker == 'baseline_condition'; assert specs[0].rank == 1`], { cwd: workspace });
   });
 
   it("repairs Python metrics json.dumps serialization for PathLike values", async () => {
