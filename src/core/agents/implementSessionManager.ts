@@ -5230,6 +5230,39 @@ export class ImplementSessionManager {
       return report;
     }
 
+    const pythonMissingRequiredHelper =
+      await detectPythonMissingRequiredWorkflowHelperSurface(executionScriptPath);
+    if (pythonMissingRequiredHelper) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonMissingRequiredHelper,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonMissingRequiredHelper)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
     const pythonSyntheticPrimaryEvidence = await detectPythonSyntheticFallbackPrimaryEvidenceSurface(
       executionScriptPath,
       attempt.experimentMode
@@ -39379,6 +39412,49 @@ async function detectPythonMissingConcreteConditionWorkerSurface(
     `The execution resolver at ${path.basename(scriptPath)}:${resolverLine} reports that no condition-level execution callable was found while searching ${callableResolverNames.join(", ")}.`,
     "Generate or preserve a real condition-level train/evaluate callable before handoff; py_compile alone is not sufficient for runnable experiment evidence."
   ].join(" ");
+}
+
+async function detectPythonMissingRequiredWorkflowHelperSurface(
+  scriptPath?: string
+): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  if (!source.includes("_invoke_first_helper(")) {
+    return undefined;
+  }
+
+  for (const match of source.matchAll(/_invoke_first_helper\s*\(\s*(?:\(|\[)([\s\S]*?)(?:\)|\])\s*,/gu)) {
+    const candidates = [...match[1].matchAll(/["']([A-Za-z_]\w*)["']/gu)].map((candidate) => candidate[1]);
+    if (candidates.length === 0) {
+      continue;
+    }
+    const callWindow = source.slice(match.index, Math.min(source.length, match.index + 900));
+    if (/\brequired\s*=\s*False\b/u.test(callWindow)) {
+      continue;
+    }
+    const definedCandidates = candidates.filter((name) => pythonSourceDefinesOrImportsName(source, name));
+    if (definedCandidates.length > 0) {
+      continue;
+    }
+
+    const resolverLine = source.slice(0, match.index).split(/\r?\n/u).length;
+    return [
+      "Generated Python runner requires workflow helper candidates that are never defined or imported.",
+      `The helper resolver at ${path.basename(scriptPath)}:${resolverLine} searches ${candidates.join(", ")} but none of those callable(s) exist in the generated runner.`,
+      "Generate concrete data/model/evaluation helpers or call existing local loading, training, and evaluation functions directly before handoff; py_compile alone is not runnable experiment evidence."
+    ].join(" ");
+  }
+
+  return undefined;
 }
 
 async function detectPythonSyntheticFallbackPrimaryEvidenceSurface(
