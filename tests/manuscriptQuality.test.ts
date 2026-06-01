@@ -171,7 +171,7 @@ describe("manuscriptQuality style lint", () => {
         ? {
             ...section,
             paragraphs: [
-              "The planned protocol targeted the selected backbone as the base model, allowed the configured fallback backbone only as a fallback, and capped the source dataset at 10,000 Alpaca Clean examples."
+              "The planned protocol targeted the selected backbone as the base model, allowed the configured fallback backbone only as a fallback, and capped the source dataset at a fixed example budget."
             ]
           }
         : section

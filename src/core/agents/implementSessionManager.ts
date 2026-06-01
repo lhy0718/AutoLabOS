@@ -39481,6 +39481,7 @@ async function detectPythonMissingRequiredWorkflowHelperSurface(
   }
   const helperResolverCalls = [
     ...source.matchAll(/_invoke_first_helper\s*\(\s*(?:\(|\[)([\s\S]*?)(?:\)|\])\s*,/gu),
+    ...source.matchAll(/(?:_autolabos_try_call|_try_required|_call_required_helper|_call_first_required_helper)\s*\(\s*(?:\(|\[)([\s\S]*?)(?:\)|\])\s*,/gu),
     ...source.matchAll(/_lookup_entrypoint_callable\s*\(\s*[^,]+,\s*(?:\(|\[)([\s\S]*?)(?:\)|\])\s*,?\s*\)/gu)
   ];
   if (helperResolverCalls.length === 0) {
