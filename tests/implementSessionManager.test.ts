@@ -38358,6 +38358,100 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
+  it("rejects python runners whose required local validation helper is absent", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-validation-helper-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Missing Validation Helper",
+      topic: "condition sweep under local execution budget",
+      constraints: ["real execution evidence required"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-missing-validation-helper",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner that calls a missing local validation helper.",
+            run_command: "python3 " + JSON.stringify(scriptPath) + " --metrics-path " + JSON.stringify(metricsPath),
+            test_command: "python3 -m py_compile " + JSON.stringify(scriptPath),
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "import argparse",
+                  "import json",
+                  "from pathlib import Path",
+                  "",
+                  "def build_run_plan():",
+                  "    validate_runtime_contract()",
+                  "    return [{\"condition\": \"baseline_condition\"}]",
+                  "",
+                  "def main(argv=None):",
+                  "    parser = argparse.ArgumentParser()",
+                  "    parser.add_argument(\"--metrics-path\", default=\"metrics.json\")",
+                  "    args = parser.parse_args(argv)",
+                  "    rows = build_run_plan()",
+                  "    Path(args.metrics_path).write_text(json.dumps({\"status\": \"completed\", \"rows\": rows}), encoding=\"utf8\")",
+                  "    return 0",
+                  "",
+                  "if __name__ == \"__main__\":",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/local validation helper/i);
+    expect(calls).toBe(3);
+  });
+
   it("rejects real-execution python runners whose fallback backend can emit primary success metrics", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-primary-fallback-metrics-"));
     tempDirs.push(workspace);

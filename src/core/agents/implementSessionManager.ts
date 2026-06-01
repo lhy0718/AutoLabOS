@@ -39428,6 +39428,24 @@ async function detectPythonMissingRequiredWorkflowHelperSurface(
     return undefined;
   }
 
+  for (const match of source.matchAll(/(^|[^.\w])([A-Za-z_]\w*)\s*\(/gmu)) {
+    const helperName = match[2];
+    const looksLikeRequiredLocalValidationHelper =
+      /^(?:validate|assert|check|ensure)_[A-Za-z0-9_]*(?:contract|schema|coverage|preflight)[A-Za-z0-9_]*$/u.test(helperName);
+    if (!looksLikeRequiredLocalValidationHelper) {
+      continue;
+    }
+    if (pythonSourceDefinesOrImportsName(source, helperName)) {
+      continue;
+    }
+
+    const helperLine = source.slice(0, match.index).split(/\r?\n/u).length;
+    return [
+      "Generated Python runner calls a required local validation helper that is never defined or imported.",
+      "The helper call " + helperName + "() at " + path.basename(scriptPath) + ":" + helperLine + " has no local definition or import, so py_compile can pass while run_experiments fails with NameError.",
+      "Define the validation helper, import it explicitly, or inline the contract check before handoff; py_compile alone is not runnable experiment evidence."
+    ].join(" ");
+  }
   const helperResolverCalls = [
     ...source.matchAll(/_invoke_first_helper\s*\(\s*(?:\(|\[)([\s\S]*?)(?:\)|\])\s*,/gu),
     ...source.matchAll(/_lookup_entrypoint_callable\s*\(\s*[^,]+,\s*(?:\(|\[)([\s\S]*?)(?:\)|\])\s*,?\s*\)/gu)
