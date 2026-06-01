@@ -38245,6 +38245,119 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
+
+  it("rejects python entrypoint resolvers whose required callable candidates are absent", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-entrypoint-helper-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Missing Entrypoint Helper",
+      topic: "condition sweep under local execution budget",
+      constraints: ["real execution evidence required"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-missing-entrypoint-helper",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose entrypoint resolver cannot find a required callable.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "import argparse",
+                  "import json",
+                  "from pathlib import Path",
+                  "",
+                  "def _lookup_entrypoint_callable(label, names):",
+                  "    for name in names:",
+                  "        candidate = globals().get(name)",
+                  "        if callable(candidate):",
+                  "            return candidate",
+                  "    raise RuntimeError('missing ' + label + ' helper; tried: ' + ', '.join(names))",
+                  "",
+                  "def resolve_runtime_context(args=None):",
+                  "    return {'args': args}",
+                  "",
+                  "def build_run_plan(context):",
+                  "    return [{'condition': 'baseline'}]",
+                  "",
+                  "def finalize_metrics(rows, **kwargs):",
+                  "    return {'status': 'completed', 'rows': rows}",
+                  "",
+                  "def main(argv=None):",
+                  "    parser = argparse.ArgumentParser()",
+                  "    parser.add_argument('--metrics-path', default='metrics.json')",
+                  "    args = parser.parse_args(argv)",
+                  "    context_fn = _lookup_entrypoint_callable('resolve_runtime_context', ('resolve_runtime_context', 'prepare_runtime_context'))",
+                  "    context = context_fn(args)",
+                  "    plan_fn = _lookup_entrypoint_callable('build_run_plan', ('build_run_plan', 'construct_run_plan'))",
+                  "    plan = plan_fn(context)",
+                  "    execute_fn = _lookup_entrypoint_callable('execute_run_plan', ('execute_run_plan', 'execute_planned_runs', 'run_plan'))",
+                  "    rows = execute_fn(context, plan)",
+                  "    payload = finalize_metrics(rows)",
+                  "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf8')",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/workflow helper candidates/i);
+    expect(calls).toBe(3);
+  });
+
   it("rejects real-execution python runners whose fallback backend can emit primary success metrics", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-primary-fallback-metrics-"));
     tempDirs.push(workspace);

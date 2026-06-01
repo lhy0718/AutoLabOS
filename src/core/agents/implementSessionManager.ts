@@ -39428,11 +39428,15 @@ async function detectPythonMissingRequiredWorkflowHelperSurface(
     return undefined;
   }
 
-  if (!source.includes("_invoke_first_helper(")) {
+  const helperResolverCalls = [
+    ...source.matchAll(/_invoke_first_helper\s*\(\s*(?:\(|\[)([\s\S]*?)(?:\)|\])\s*,/gu),
+    ...source.matchAll(/_lookup_entrypoint_callable\s*\(\s*[^,]+,\s*(?:\(|\[)([\s\S]*?)(?:\)|\])\s*,?\s*\)/gu)
+  ];
+  if (helperResolverCalls.length === 0) {
     return undefined;
   }
 
-  for (const match of source.matchAll(/_invoke_first_helper\s*\(\s*(?:\(|\[)([\s\S]*?)(?:\)|\])\s*,/gu)) {
+  for (const match of helperResolverCalls) {
     const candidates = [...match[1].matchAll(/["']([A-Za-z_]\w*)["']/gu)].map((candidate) => candidate[1]);
     if (candidates.length === 0) {
       continue;
