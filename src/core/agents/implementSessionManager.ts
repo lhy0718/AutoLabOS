@@ -5263,6 +5263,39 @@ export class ImplementSessionManager {
       return report;
     }
 
+    const pythonUnavailableExecutionContract =
+      await detectPythonUnavailableExecutionContractSurface(executionScriptPath);
+    if (pythonUnavailableExecutionContract) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonUnavailableExecutionContract,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonUnavailableExecutionContract)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
     const pythonSyntheticPrimaryEvidence = await detectPythonSyntheticFallbackPrimaryEvidenceSurface(
       executionScriptPath,
       attempt.experimentMode
@@ -39473,6 +39506,79 @@ async function detectPythonMissingRequiredWorkflowHelperSurface(
       "Generated Python runner requires workflow helper candidates that are never defined or imported.",
       `The helper resolver at ${path.basename(scriptPath)}:${resolverLine} searches ${candidates.join(", ")} but none of those callable(s) exist in the generated runner.`,
       "Generate concrete data/model/evaluation helpers or call existing local loading, training, and evaluation functions directly before handoff; py_compile alone is not runnable experiment evidence."
+    ].join(" ");
+  }
+
+  return undefined;
+}
+
+function pythonSourceHasConcreteContractProvider(source: string, name: string): boolean {
+  const escaped = escapeRegex(name);
+  const assignmentPattern = new RegExp(
+    `\\n\\s*${escaped}\\s*(?::[^=\\n]+)?=\\s*([^\\n#]+)`,
+    "u"
+  );
+  const assignment = assignmentPattern.exec(`\n${source}`);
+  if (assignment) {
+    const rhs = assignment[1]?.trim() ?? "";
+    if (/^(?:None|null|False|\[\s*\]|\(\s*\)|\{\s*\})(?:\b|$)/u.test(rhs)) {
+      return false;
+    }
+    return true;
+  }
+
+  return pythonSourceDefinesOrImportsName(source, name);
+}
+
+async function detectPythonUnavailableExecutionContractSurface(
+  scriptPath?: string
+): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const unavailableContractPattern =
+    /raise\s+RuntimeError\s*\(\s*(?:f|rf|fr)?["'][^"'\n]*(?:condition|run|execution|experiment|schedule|plan|contract|grid|list)[^"'\n]*(?:unavailable|not available|missing|cannot start|cannot run|refus(?:e|ing)\s+to\s+start)[^"'\n]*["']/giu;
+  for (const match of source.matchAll(unavailableContractPattern)) {
+    const functionStart = source.lastIndexOf("\ndef ", match.index);
+    const windowStart = functionStart >= 0 ? functionStart : Math.max(0, match.index - 1600);
+    const nextFunction = source.indexOf("\ndef ", match.index + 1);
+    const windowEnd = nextFunction >= 0 ? nextFunction : Math.min(source.length, match.index + 2400);
+    const surface = source.slice(windowStart, windowEnd);
+    if (!/\bglobals\(\)\.(?:get|__getitem__)\b/u.test(surface) && !/\bfor\s+\w+\s+in\s+\(/u.test(surface)) {
+      continue;
+    }
+
+    const literalNames = [...surface.matchAll(/["']([A-Za-z_][A-Za-z0-9_]*)["']/gu)]
+      .map((literal) => literal[1])
+      .filter((name) =>
+        /(?:CONDITION|CONDITIONS|SCHEDULE|PLAN|GRID|CONTRACT|SEED|SEEDS|RUNS?|RECORDS?|EXAMPLES?)$/u.test(name) ||
+        /^(?:build|load|prepare|construct|resolve)_[A-Za-z0-9_]*(?:condition|conditions|schedule|plan|grid|contract|runs?|records?|examples?)[A-Za-z0-9_]*$/u.test(name)
+      );
+    const candidates = [...new Set(literalNames)];
+    if (candidates.length === 0) {
+      continue;
+    }
+
+    const concreteProviders = candidates.filter((name) =>
+      pythonSourceHasConcreteContractProvider(source, name)
+    );
+    if (concreteProviders.length > 0) {
+      continue;
+    }
+
+    const line = source.slice(0, match.index).split(/\r?\n/u).length;
+    return [
+      "Generated Python runner leaves a required execution contract unavailable.",
+      `The contract guard at ${path.basename(scriptPath)}:${line} can raise before any experiment run because it searches ${candidates.join(", ")} but none of those contract providers are materially defined or imported.`,
+      "Materialize the locked condition/run plan, schedule, or contract builder before handoff; py_compile alone is not runnable experiment evidence."
     ].join(" ");
   }
 

@@ -38452,6 +38452,99 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
+  it("rejects python runners whose required execution contract remains unavailable", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-unavailable-contract-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Unavailable Execution Contract",
+      topic: "condition sweep under local execution budget",
+      constraints: ["real execution evidence required"],
+      objectiveMetric: "score_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def _runtime_conditions_and_seeds():",
+        "    conditions = None",
+        "    for name in (\"REQUIRED_CONDITIONS\", \"CONDITION_GRID\"):",
+        "        value = globals().get(name)",
+        "        if isinstance(value, list):",
+        "            conditions = list(value)",
+        "            break",
+        "    if not conditions:",
+        "        raise RuntimeError(\"Locked condition list is unavailable; cannot start experiment.\")",
+        "    return conditions, [1]",
+        "",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument(\"--metrics-path\", default=\"metrics.json\")",
+        "    args = parser.parse_args(argv)",
+        "    conditions, seeds = _runtime_conditions_and_seeds()",
+        "    Path(args.metrics_path).write_text(json.dumps({\"status\": \"completed\", \"conditions\": conditions, \"seeds\": seeds}), encoding=\"utf8\")",
+        "    return 0",
+        "",
+        "if __name__ == \"__main__\":",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("fail");
+    expect(report.failure_type).toBe("implementation");
+    expect(report.summary).toContain("required execution contract unavailable");
+    expect(report.summary).toContain("REQUIRED_CONDITIONS");
+  });
+
   it("rejects real-execution python runners whose fallback backend can emit primary success metrics", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-primary-fallback-metrics-"));
     tempDirs.push(workspace);
