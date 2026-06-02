@@ -934,6 +934,9 @@ export class ImplementSessionManager {
         if (commandRepairRecovery || deterministicRepairRecovery) {
           await runContext.put("implement_experiments.runner_feedback", null);
           await runContext.put("run_experiments.feedback_for_implementer", null);
+          if (promptTaskSpec.context.implementation_contract_feedback && !promptTaskSpec.context.runner_feedback) {
+            await runContext.put("implement_experiments.design_implementation_validation", null);
+          }
         }
         result = recoveredBeforeTurn;
       } else {
@@ -10187,6 +10190,8 @@ export class ImplementSessionManager {
       await repairPythonAutolabosSupportedArgsDuplicateArgsSurface(executionScriptPath);
     const missingBuildExperimentConfigRepair =
       await repairPythonMissingBuildExperimentConfigSurface(executionScriptPath);
+    const missingExecutableEntrypointRepair =
+      await repairPythonMissingExecutableEntrypointSurface(executionScriptPath);
     const missingMainInvocationRepair =
       await repairPythonMissingMainInvocationSurface(executionScriptPath);
     const missingBaselineFirstSweepWrapperRepair =
@@ -10401,6 +10406,7 @@ export class ImplementSessionManager {
       autolabosCliParserBuilderAliasRepair,
         autolabosSupportedArgsDuplicateArgsRepair,
         missingBuildExperimentConfigRepair,
+        missingExecutableEntrypointRepair,
         missingMainInvocationRepair,
         missingBaselineFirstSweepWrapperRepair,
         missingConditionSpecClassRepair,
@@ -15186,6 +15192,7 @@ async function applyRecoverableBundleDeterministicRepairs(params: {
     await repairPythonCompletedMetricsReplayEntrypointSurface(params.scriptPath),
     await repairPythonRequiredContractGlobalAliasSurface(params.scriptPath),
     await repairPythonSectionedRunnerCliEntrypointSurface(params.scriptPath),
+    await repairPythonMissingExecutableEntrypointSurface(params.scriptPath),
     await repairPythonMissingMainInvocationSurface(params.scriptPath),
     await repairPythonMissingBaselineFirstSweepWrapperSurface(params.scriptPath),
     await repairPythonMissingConditionSpecClassSurface(params.scriptPath),
@@ -15904,7 +15911,8 @@ function isRecoverableBundleDeterministicRepairFeedback(
     /Unable to resolve required callable from candidates/u.test(summary) ||
     /AUTOLABOS SECTION skeleton markers|Unfilled or unstripped section marker|Final experiment scripts must contain executable code/iu.test(summary) ||
     /Unable to locate (?:a |the )study (?:runner|execution) function/u.test(summary) ||
-    /Unable to locate the experiment sweep runner callable/u.test(summary)
+    /Unable to locate the experiment sweep runner callable/u.test(summary) ||
+    /has no executable entrypoint|no executable entrypoint/iu.test(summary)
   );
 }
 
@@ -15923,7 +15931,8 @@ function hasRecoverableBundleDeterministicRepairMarker(source: string): boolean 
     "_autolabos_unexpected_keyword_parameter_marker",
     "_autolabos_flexible_invocation_planned_run_alias_marker",
     "_autolabos_lookup_callable_skip_classes_marker",
-    "_autolabos_skip_callable_classes_marker"
+    "_autolabos_skip_callable_classes_marker",
+    "_autolabos_missing_executable_entrypoint_marker"
   ].some((marker) => source.includes(marker));
 }
 
@@ -22322,7 +22331,7 @@ export async function repairPythonConditionTrainEvalHelperBridgeSurface(
     "                if isinstance(runtime, Mapping):",
     "                    with contextlib.suppress(Exception):",
     "                        max_eval_examples = max(",
-    "                            int(runtime.get(\"arc_eval_examples\") or 0),",
+    "                            int(runtime.get(\"benchmark_task_a_eval_examples\") or 0),",
     "                            int(runtime.get(\"task_b_eval_examples\") or 0),",
     "                        ) or None",
     "                train_result = dict(evaluate_condition_result(",
@@ -23563,7 +23572,9 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
     source.includes("No evaluation dataset loader is available in the materialized script") ||
     source.includes("No benchmark task pair benchmark loaders were defined in earlier sections") ||
     source.includes("No benchmark loading helper found for Benchmark Task A and Benchmark Task B") ||
+    source.includes("No Benchmark Task A/Benchmark Task B evaluation dataset helper is available") ||
     source.includes("no benchmark task pair evaluation dataset helper is available") ||
+    source.includes("no Benchmark Task A/Benchmark Task B evaluation dataset helper is available") ||
     (source.includes("Missing required dataset helper(s)") && source.includes("evaluation dataset loader"));
   const searchedCombinedNames = [
     "load_evaluation_datasets",
@@ -27225,15 +27236,23 @@ export async function repairPythonBenchmarkEvaluatorAliasSurface(
     "        or _autolabos_value_from_config_or_args(config, args, \"data_cache_dir\")",
     "    )",
     "    _autolabos_task_a_limit = (",
-    "        keyword.get(\"task_a_eval_examples\")",
+    "        keyword.get(\"benchmark_task_a_eval_examples\")",
+    "        or keyword.get(\"benchmark_task_a_eval_samples\")",
+    "        or keyword.get(\"task_a_eval_examples\")",
     "        or keyword.get(\"task_a_eval_samples\")",
+    "        or _autolabos_value_from_config_or_args(config, args, \"benchmark_task_a_eval_examples\")",
+    "        or _autolabos_value_from_config_or_args(config, args, \"benchmark_task_a_eval_samples\")",
     "        or _autolabos_value_from_config_or_args(config, args, \"task_a_eval_examples\")",
     "        or _autolabos_value_from_config_or_args(config, args, \"task_a_eval_samples\")",
     "        or _autolabos_value_from_config_or_args(config, args, \"eval_examples_per_benchmark\")",
     "    )",
     "    _autolabos_task_b_limit = (",
-    "        keyword.get(\"task_b_eval_examples\")",
+    "        keyword.get(\"benchmark_task_b_eval_examples\")",
+    "        or keyword.get(\"benchmark_task_b_eval_samples\")",
+    "        or keyword.get(\"task_b_eval_examples\")",
     "        or keyword.get(\"task_b_eval_samples\")",
+    "        or _autolabos_value_from_config_or_args(config, args, \"benchmark_task_b_eval_examples\")",
+    "        or _autolabos_value_from_config_or_args(config, args, \"benchmark_task_b_eval_samples\")",
     "        or _autolabos_value_from_config_or_args(config, args, \"task_b_eval_examples\")",
     "        or _autolabos_value_from_config_or_args(config, args, \"task_b_eval_samples\")",
     "        or _autolabos_value_from_config_or_args(config, args, \"eval_examples_per_benchmark\")",
@@ -27251,7 +27270,9 @@ export async function repairPythonBenchmarkEvaluatorAliasSurface(
     "        (\"data_cache_dir\", _autolabos_data_cache),",
     "        (\"cache_dir\", _autolabos_data_cache),",
     "        (\"task_a_eval_examples\", _autolabos_task_a_limit),",
+    "        (\"benchmark_task_a_eval_examples\", _autolabos_task_a_limit),",
     "        (\"task_b_eval_examples\", _autolabos_task_b_limit),",
+    "        (\"benchmark_task_b_eval_examples\", _autolabos_task_b_limit),",
     "        (\"eval_examples_per_benchmark\", _autolabos_generic_limit),",
     "        (\"eval_batch_size\", keyword.get(\"eval_batch_size\", _autolabos_value_from_config_or_args(config, args, \"eval_batch_size\"))),",
     "    ):",
@@ -38358,7 +38379,7 @@ export async function repairPythonConditionEvaluationMetricsAssemblyBridgeSurfac
     "        \"max_eval_examples_per_benchmark\",",
     "        \"max_eval_examples\",",
     "        \"eval_subset_size\",",
-    "        \"arc_eval_examples\",",
+    "        \"benchmark_task_a_eval_examples\",",
     "        \"task_b_eval_examples\",",
     "    ):",
     "        value = getattr(args, key, None)",
@@ -40052,14 +40073,14 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
       "                return last_result",
       "            return _autolabos_entrypoint_dataset_result('unknown_instruction_dataset', None, 'train', 'instruction_tuning', max_examples, seed, shuffle=True)",
       "        globals()['load_instruction_tuning_corpus'] = load_instruction_tuning_corpus",
-      "    task_one = _autolabos_entrypoint_dataset_constant('TASK_', 'ARC_', 'CHALLENGE')",
+      "    task_one = _autolabos_entrypoint_dataset_constant('BENCHMARK_TASK_A', '_ID')",
       "    if task_one:",
       "        task_one_loader_name = 'load_' + str(task_one) + '_eval_corpus'",
       "        if not callable(globals().get(task_one_loader_name)):",
       "            def _autolabos_entrypoint_load_task_one_eval_corpus(max_examples=None, seed=42, **keyword):",
       "                return _autolabos_entrypoint_dataset_result(",
-      "                    _autolabos_entrypoint_dataset_constant('ARC_', 'DATASET_ID'),",
-      "                    _autolabos_entrypoint_dataset_constant('ARC_', 'DATASET_CONFIG'),",
+      "                    _autolabos_entrypoint_dataset_constant('BENCHMARK_TASK_A', '_DATASET_ID'),",
+      "                    _autolabos_entrypoint_dataset_constant('BENCHMARK_TASK_A', '_DATASET_CONFIG'),",
       "                    'validation',",
       "                    'evaluation',",
       "                    max_examples,",
@@ -40067,13 +40088,13 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
       "                    shuffle=False,",
       "                )",
       "            globals()[task_one_loader_name] = _autolabos_entrypoint_load_task_one_eval_corpus",
-      "    task_two = _autolabos_entrypoint_dataset_constant('TASK_', 'HELLA', 'SWAG')",
+      "    task_two = _autolabos_entrypoint_dataset_constant('BENCHMARK_TASK_B', '_ID')",
       "    if task_two:",
       "        task_two_loader_name = 'load_' + str(task_two) + '_eval_corpus'",
       "        if not callable(globals().get(task_two_loader_name)):",
       "            def _autolabos_entrypoint_load_task_two_eval_corpus(max_examples=None, seed=42, **keyword):",
       "                return _autolabos_entrypoint_dataset_result(",
-      "                    _autolabos_entrypoint_dataset_constant('HELLA', 'SWAG_DATASET_ID'),",
+      "                    _autolabos_entrypoint_dataset_constant('BENCHMARK_TASK_B', '_DATASET_ID'),",
       "                    None,",
       "                    'validation',",
       "                    'evaluation',",
@@ -40367,14 +40388,14 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
     "                return last_result",
     "            return _autolabos_entrypoint_dataset_result('unknown_instruction_dataset', None, 'train', 'instruction_tuning', max_examples, seed, shuffle=True)",
     "        globals()['load_instruction_tuning_corpus'] = load_instruction_tuning_corpus",
-    "    task_one = _autolabos_entrypoint_dataset_constant('TASK_', 'ARC_', 'CHALLENGE')",
+    "    task_one = _autolabos_entrypoint_dataset_constant('BENCHMARK_TASK_A', '_ID')",
     "    if task_one:",
     "        task_one_loader_name = 'load_' + str(task_one) + '_eval_corpus'",
     "        if not callable(globals().get(task_one_loader_name)):",
     "            def _autolabos_entrypoint_load_task_one_eval_corpus(max_examples=None, seed=42, **keyword):",
     "                return _autolabos_entrypoint_dataset_result(",
-    "                    _autolabos_entrypoint_dataset_constant('ARC_', 'DATASET_ID'),",
-    "                    _autolabos_entrypoint_dataset_constant('ARC_', 'DATASET_CONFIG'),",
+    "                    _autolabos_entrypoint_dataset_constant('BENCHMARK_TASK_A', '_DATASET_ID'),",
+    "                    _autolabos_entrypoint_dataset_constant('BENCHMARK_TASK_A', '_DATASET_CONFIG'),",
     "                    'validation',",
     "                    'evaluation',",
     "                    max_examples,",
@@ -40382,13 +40403,13 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
     "                    shuffle=False,",
     "                )",
     "            globals()[task_one_loader_name] = _autolabos_entrypoint_load_task_one_eval_corpus",
-    "    task_two = _autolabos_entrypoint_dataset_constant('TASK_', 'HELLA', 'SWAG')",
+    "    task_two = _autolabos_entrypoint_dataset_constant('BENCHMARK_TASK_B', '_ID')",
     "    if task_two:",
     "        task_two_loader_name = 'load_' + str(task_two) + '_eval_corpus'",
     "        if not callable(globals().get(task_two_loader_name)):",
     "            def _autolabos_entrypoint_load_task_two_eval_corpus(max_examples=None, seed=42, **keyword):",
     "                return _autolabos_entrypoint_dataset_result(",
-    "                    _autolabos_entrypoint_dataset_constant('HELLA', 'SWAG_DATASET_ID'),",
+    "                    _autolabos_entrypoint_dataset_constant('BENCHMARK_TASK_B', '_DATASET_ID'),",
     "                    None,",
     "                    'validation',",
     "                    'evaluation',",
@@ -40690,6 +40711,179 @@ export async function repairPythonMissingParseArgsSurface(scriptPath?: string): 
   return {
     repaired: true,
     message: `Added a parse_args() compatibility shim to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonMissingExecutableEntrypointSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_missing_executable_entrypoint_marker") ||
+    /\n\s*if\s+__name__\s*==\s*["']__main__["']\s*:/u.test(`\n${source}`) ||
+    /\n\s*def\s+main\s*\(/u.test(`\n${source}`)
+  ) {
+    return { repaired: false };
+  }
+
+  const hasMetricsPathSurface =
+    /\bmetrics_path\b/u.test(source) ||
+    /--metrics-path/u.test(source) ||
+    /\bmetrics[_-](?:out|output|file|path)\b/iu.test(source);
+  const hasMetricsWriterSurface =
+    /\n\s*def\s+[A-Za-z0-9_]*(?:write|persist|save)[A-Za-z0-9_]*metrics[A-Za-z0-9_]*\s*\(/iu.test(`\n${source}`) ||
+    /\bjson\.dump\s*\(/u.test(source) ||
+    /\.write_text\s*\(/u.test(source);
+  if (!hasMetricsPathSurface || !hasMetricsWriterSurface) {
+    return { repaired: false };
+  }
+
+  const definedFunctionNames = [...source.matchAll(/^\s*def\s+([A-Za-z_]\w*)\s*\(/gmu)]
+    .map((match) => match[1])
+    .filter((name) => Boolean(name));
+  const preferredEntrypointNames = [
+    "run_experiment",
+    "execute_experiment",
+    "orchestrate_experiment",
+    "run_study",
+    "execute_study",
+    "orchestrate_study",
+    "run_condition_study",
+    "execute_condition_study",
+    "run_condition_sweep",
+    "execute_condition_sweep",
+    "run_condition_grid_study",
+    "execute_experiment_loop",
+    "run_experiment_suite",
+    "run_workflow",
+    "execute_workflow"
+  ];
+  const candidateNames = dedupeStrings([
+    ...preferredEntrypointNames.filter((name) => definedFunctionNames.includes(name)),
+    ...definedFunctionNames.filter((name) =>
+      /^(?:run|execute|orchestrate)_[A-Za-z0-9_]*(?:experiment|study|sweep|condition|workflow|suite|grid|loop|trial|plan)[A-Za-z0-9_]*$/iu.test(name)
+    )
+  ]);
+  if (candidateNames.length === 0) {
+    return { repaired: false };
+  }
+
+  const shim = [
+    "",
+    "",
+    "_autolabos_missing_executable_entrypoint_marker = True",
+    "",
+    "def _autolabos_entrypoint_jsonable(value):",
+    "    from pathlib import Path as _AutoLabOSPath",
+    "    if value is None or isinstance(value, (str, int, float, bool)):",
+    "        return value",
+    "    if isinstance(value, _AutoLabOSPath):",
+    "        return str(value)",
+    "    if isinstance(value, dict):",
+    "        return {str(key): _autolabos_entrypoint_jsonable(item) for key, item in value.items()}",
+    "    if isinstance(value, (list, tuple, set)):",
+    "        return [_autolabos_entrypoint_jsonable(item) for item in value]",
+    "    return str(value)",
+    "",
+    "def _autolabos_entrypoint_write_payload(metrics_path, payload):",
+    "    import json as _AutoLabOSJson",
+    "    from pathlib import Path as _AutoLabOSPath",
+    "    destination = _AutoLabOSPath(metrics_path)",
+    "    destination.parent.mkdir(parents=True, exist_ok=True)",
+    "    writer = globals().get('write_metrics_payload') or globals().get('write_metrics') or globals().get('save_metrics') or globals().get('persist_metrics')",
+    "    if callable(writer):",
+    "        for call_args in ((destination, payload), (str(destination), payload), (payload, destination), (payload, str(destination))):",
+    "            try:",
+    "                writer(*call_args)",
+    "                if destination.exists():",
+    "                    return destination",
+    "            except TypeError:",
+    "                continue",
+    "    with destination.open('w', encoding='utf-8') as handle:",
+    "        _AutoLabOSJson.dump(_autolabos_entrypoint_jsonable(payload), handle, indent=2, sort_keys=True, allow_nan=False)",
+    "        handle.write('\\n')",
+    "    return destination",
+    "",
+    "def _autolabos_entrypoint_call(candidate, args):",
+    "    import inspect as _AutoLabOSInspect",
+    "    from pathlib import Path as _AutoLabOSPath",
+    "    metrics_path = getattr(args, 'metrics_path', None)",
+    "    output_dir = getattr(args, 'output_dir', None)",
+    "    run_dir = getattr(args, 'run_dir', None)",
+    "    available = {",
+    "        'args': args,",
+    "        'argv': None,",
+    "        'metrics_path': metrics_path,",
+    "        'output_dir': output_dir,",
+    "        'public_dir': output_dir,",
+    "        'run_dir': run_dir,",
+    "        'workspace': _AutoLabOSPath.cwd(),",
+    "        'workspace_root': _AutoLabOSPath.cwd(),",
+    "    }",
+    "    signature = _AutoLabOSInspect.signature(candidate)",
+    "    kwargs = {}",
+    "    for name, parameter in signature.parameters.items():",
+    "        if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):",
+    "            continue",
+    "        if name in available:",
+    "            kwargs[name] = available[name]",
+    "        elif parameter.default is parameter.empty:",
+    "            raise TypeError(f'Cannot call {candidate.__name__} without required argument {name!r}')",
+    "    return candidate(**kwargs)",
+    "",
+    "def main(argv=None):",
+    "    import argparse as _AutoLabOSArgparse",
+    "    from pathlib import Path as _AutoLabOSPath",
+    "    parser = _AutoLabOSArgparse.ArgumentParser()",
+    "    parser.add_argument('--metrics-path', default='metrics.json')",
+    "    parser.add_argument('--output-dir', default=None)",
+    "    parser.add_argument('--run-dir', default=None)",
+    "    args, _unknown = parser.parse_known_args(argv)",
+    "    candidate_names = " + JSON.stringify(candidateNames),
+    "    try:",
+    "        for candidate_name in candidate_names:",
+    "            candidate = globals().get(candidate_name)",
+    "            if not callable(candidate):",
+    "                continue",
+    "            result = _autolabos_entrypoint_call(candidate, args)",
+    "            destination = _AutoLabOSPath(args.metrics_path)",
+    "            if destination.exists():",
+    "                return 0",
+    "            payload = result if isinstance(result, dict) else {'status': 'completed', 'success': True, 'result': result}",
+    "            payload.setdefault('status', 'completed')",
+    "            payload.setdefault('success', True)",
+    "            _autolabos_entrypoint_write_payload(destination, payload)",
+    "            return 0 if payload.get('success', True) is not False and str(payload.get('status', '')).lower() not in {'failed', 'failure', 'error'} else 1",
+    "        raise RuntimeError('No callable experiment entrypoint was found after CLI bridge installation.')",
+    "    except Exception as exc:",
+    "        payload = {'status': 'failed', 'success': False, 'failure_stage': 'entrypoint_execution', 'error': repr(exc)}",
+    "        _autolabos_entrypoint_write_payload(args.metrics_path, payload)",
+    "        return 1",
+    "",
+    "if __name__ == '__main__':",
+    "    raise SystemExit(main())",
+    ""
+  ].join("\n");
+  const nextSource = `${source.trimEnd()}${shim}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added a generic CLI entrypoint bridge to ${path.basename(scriptPath)} before handoff.`
   };
 }
 

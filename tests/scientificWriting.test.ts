@@ -1786,7 +1786,7 @@ describe("scientificWriting", () => {
     const rowLabels = result.manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ") || "";
     expect(rowLabels).toMatch(/baseline condition/i);
     expect(rowLabels).toMatch(/candidate condition [a-z]/i);
-    expect(rowLabels).not.toMatch(/ARC 0\.5/i);
+    expect(rowLabels).not.toMatch(/Benchmark Task A 0\.5/i);
     expect(rowLabels).not.toMatch(/Benchmark Task B 0\.3333/i);
     expect((rowLabels.match(/baseline/g) || [])).toHaveLength(1);
     expect(result.manuscript.tables?.[0]?.rows.map((row) => row.value)).toContain(0.416666);
@@ -2099,7 +2099,7 @@ describe("scientificWriting", () => {
 
     expect(result.manuscript.tables?.[0]?.caption).toMatch(/Condition-level mean accuracy/i);
     const rowLabels = result.manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ") || "";
-    expect(rowLabels).not.toMatch(/ARC 0\.5/i);
+    expect(rowLabels).not.toMatch(/Benchmark Task A 0\.5/i);
     expect(rowLabels).not.toMatch(/Benchmark Task B 0\.3333/i);
     expect((rowLabels.match(/baseline/g) || [])).toHaveLength(1);
     const discussion = result.manuscript.sections.find((section) => section.heading === "Discussion");

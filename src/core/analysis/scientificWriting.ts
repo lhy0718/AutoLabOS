@@ -709,9 +709,9 @@ export function methodCompletenessValidator(context: ExperimentArtifactContext):
   if (isLmBenchmark) {
     pushFieldStatus(present, missing, context.method.model_names.length > 0, "model/backbone");
     const hasBenchmarkTaskNames =
-      context.method.dataset_names.some((item) => /arc|benchmark_task_b|benchmark|task|alpaca/iu.test(item))
-      || context.results.dataset_summaries.some((item) => /arc|benchmark_task_b|benchmark|task|alpaca/iu.test(`${item.dataset} ${item.label} ${item.summary}`))
-      || context.results.aggregate_summary.some((item) => /arc|benchmark_task_b|benchmark|task|alpaca/iu.test(item));
+      context.method.dataset_names.some((item) => /benchmark_task_a|benchmark_task_b|benchmark|task|instruction/iu.test(item))
+      || context.results.dataset_summaries.some((item) => /benchmark_task_a|benchmark_task_b|benchmark|task|instruction/iu.test(`${item.dataset} ${item.label} ${item.summary}`))
+      || context.results.aggregate_summary.some((item) => /benchmark_task_a|benchmark_task_b|benchmark|task|instruction/iu.test(item));
     pushFieldStatus(
       present,
       missing,
@@ -3852,16 +3852,16 @@ function inferExplicitTaskAccuracyScopeNearNumber(
     {
       scope: "Benchmark Task A",
       patterns: [
-        new RegExp(String.raw`\bARC[-_\s]?Challenge\s+accuracy\b[^.!?]{0,80}\b(?:remained|stayed|was|is|=|unchanged)\s+(?:at\s+)?${numberPattern}`, "giu"),
-        new RegExp(String.raw`\b${numberPattern}[^.!?]{0,80}\bARC[-_\s]?Challenge\s+accuracy\b`, "giu")
+        new RegExp(String.raw`\bBenchmark\s+Task\s+A\s+accuracy\b[^.!?]{0,80}\b(?:remained|stayed|was|is|=|unchanged)\s+(?:at\s+)?${numberPattern}`, "giu"),
+        new RegExp(String.raw`\b${numberPattern}[^.!?]{0,80}\bBenchmark\s+Task\s+A\s+accuracy\b`, "giu")
       ]
     },
     {
       scope: "Benchmark Task B",
       patterns: [
-        new RegExp(String.raw`\bHella\s*Swag\s+accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|increased|rose|rises|changed|was|is|=|from)\b[^.!?]{0,80}\b(?:from\s+)?${numberPattern}(?:\s+(?:to|up to)\s+${numberPattern})?`, "giu"),
-        new RegExp(String.raw`\bHella\s*Swag\b[^.!?]{0,80}\b(?:improve[sd]?|increased|rose|rises|changed)\b[^.!?]{0,80}\bfrom\s+${numberPattern}\s+(?:to|up to)\s+${numberPattern}`, "giu"),
-        new RegExp(String.raw`\b${numberPattern}[^.!?]{0,80}\bHella\s*Swag\s+accuracy\b`, "giu")
+        new RegExp(String.raw`\bBenchmark\s+Task\s+B\s+accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|increased|rose|rises|changed|was|is|=|from)\b[^.!?]{0,80}\b(?:from\s+)?${numberPattern}(?:\s+(?:to|up to)\s+${numberPattern})?`, "giu"),
+        new RegExp(String.raw`\bBenchmark\s+Task\s+B\b[^.!?]{0,80}\b(?:improve[sd]?|increased|rose|rises|changed)\b[^.!?]{0,80}\bfrom\s+${numberPattern}\s+(?:to|up to)\s+${numberPattern}`, "giu"),
+        new RegExp(String.raw`\b${numberPattern}[^.!?]{0,80}\bBenchmark\s+Task\s+B\s+accuracy\b`, "giu")
       ]
     }
   ];
@@ -6247,7 +6247,7 @@ function isRawMetricDumpParagraph(paragraph: string): boolean {
   if (
     /\brank\s+\d+\s+dropout\b/iu.test(cleaned)
     && /\baccuracy[_ ]delta[_ ]vs[_ ]baseline\b/iu.test(cleaned)
-    && /\barc[_ ]challenge[_ ]accuracy\b|\bbenchmark_task_b[_ ]accuracy\b/iu.test(cleaned)
+    && /\bbenchmark_task_a[_ ]accuracy\b|\bbenchmark_task_b[_ ]accuracy\b/iu.test(cleaned)
   ) {
     return true;
   }
@@ -7067,7 +7067,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     .replace(/\brecorded seed coverage\b/giu, "future multi-seed replication")
     .replace(/\baccuracy\\?_delta\\?_vs\\?_baseline\b/giu, "baseline-relative accuracy gain")
     .replace(/\baverage\\?_accuracy\b/giu, "average accuracy")
-    .replace(/\barc\\?_challenge\\?_accuracy\b/giu, "Benchmark Task A accuracy")
+    .replace(/\bbenchmark_task_a\\?_accuracy\b/giu, "Benchmark Task A accuracy")
     .replace(/\bbenchmark_task_b\\?_accuracy\b/giu, "Benchmark Task B accuracy")
     .replace(
       /\bThe fixed search space includes\s*(?:adapter|adapter) target modules were [^.]+\.,\s*Fixed training settings included [^.]+\.,\s*and The inspected seed-level record reports [^.]+ for the inspected seed-level record\./giu,
@@ -8539,7 +8539,7 @@ function collectBenchmarkTaskResultSummaries(
 ): DatasetResultSummary[] {
   const metricTable = resultAnalysis?.metric_table || [];
   const taskMetrics = metricTable.filter((item) =>
-    /(^|\.)(arc[_-]?challenge|benchmark_task_b|mmlu|gsm8k|truthfulqa|winogrande|boolq|benchmark|task).*accuracy$/iu.test(item.key)
+    /(^|\.)(benchmark_task_a|benchmark_task_b|mmlu|gsm8k|truthfulqa|winogrande|boolq|benchmark|task).*accuracy$/iu.test(item.key)
   );
   const summaries = taskMetrics
     .filter((item) => !/raw_result\./iu.test(item.key))
@@ -8886,7 +8886,7 @@ function collectDatasetSourceHints(parsedPlan: Record<string, unknown>, latestRe
       "openml",
       "public benchmark",
       "benchmark suite",
-      "alpaca",
+      "instruction dataset",
       "benchmark task a",
       "benchmark_task_b"
     ]),

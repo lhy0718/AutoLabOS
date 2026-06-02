@@ -483,7 +483,7 @@ function repairReaderVisibleMetricNames(text: string): string {
   return cleanString(text)
     .replace(/\baccuracy\\?_delta\\?_vs\\?_baseline\b/giu, "baseline-relative accuracy gain")
     .replace(/\baverage\\?_accuracy\b/giu, "average accuracy")
-    .replace(/\barc\\?_challenge\\?_accuracy\b/giu, "Benchmark Task A accuracy")
+    .replace(/\bbenchmark_task_a\\?_accuracy\b/giu, "Benchmark Task A accuracy")
     .replace(/\bbenchmark_task_b\\?_accuracy\b/giu, "Benchmark Task B accuracy");
 }
 
@@ -851,7 +851,7 @@ function isTaskLevelLeadingConditionFigure(figure: PaperManuscriptFigure): boole
   const labels = figure.bars.map((bar) => cleanString(bar.label)).join(" ");
   return (
     /\btask-level (?:and average )?accuracy(?: split)?\b/iu.test(caption)
-    || /\bBaseline ARC[- ]Challenge\b.*\bLeading Benchmark Task B\b/iu.test(labels)
+    || /\bBaseline Benchmark Task A\b.*\bLeading Benchmark Task B\b/iu.test(labels)
   );
 }
 
@@ -1734,7 +1734,7 @@ function removeRedundantTaskDeltaFigures(
     const caption = cleanString(figure.caption);
     return !(
       figure.bars.length <= 2 &&
-      /arc|benchmark_task_b|task/i.test(`${labels} ${caption}`) &&
+      /benchmark_task_a|benchmark_task_b|task/i.test(`${labels} ${caption}`) &&
       /delta|gain|improvement|accuracy/i.test(`${labels} ${caption}`)
     );
   });
@@ -3115,7 +3115,7 @@ function renderConditionResultTable(table: PaperManuscriptTable): string[] {
   lines.push("\\scriptsize");
   lines.push("\\begin{tabularx}{\\textwidth}{>{\\raggedright\\arraybackslash}X r r r r r r}");
   lines.push("\\toprule");
-  lines.push("Condition & Rank & Dropout & Avg. acc. & $\\Delta$ avg. & ARC-C & Benchmark Task B \\\\");
+  lines.push("Condition & Rank & Dropout & Avg. acc. & $\\Delta$ avg. & Benchmark Task A & Benchmark Task B \\\\");
   lines.push("\\midrule");
   for (const row of table.rows) {
     const parsed = parseConditionVisualRow(row);
@@ -3126,7 +3126,7 @@ function renderConditionResultTable(table: PaperManuscriptTable): string[] {
         parsed.dropout,
         formatOptionalTexNumber(parsed.averageAccuracy),
         formatSignedTexNumber(parsed.delta),
-        formatOptionalTexNumber(parsed.arc),
+        formatOptionalTexNumber(parsed.benchmarkTaskA),
         formatOptionalTexNumber(parsed.benchmark_task_b)
       ].join(" & ") + " \\\\"
     );
@@ -3145,7 +3145,7 @@ function parseConditionVisualRow(row: PaperManuscriptVisualRow): {
   dropout: string;
   averageAccuracy: number;
   delta: number;
-  arc: number;
+  benchmarkTaskA: number;
   benchmark_task_b: number;
 } {
   const rank = typeof row.adapter_rank === "number"
@@ -3163,7 +3163,7 @@ function parseConditionVisualRow(row: PaperManuscriptVisualRow): {
     dropout: Number.isFinite(dropout) ? formatShortNumber(dropout) : "--",
     averageAccuracy: row.average_accuracy ?? row.value,
     delta: row.accuracy_delta_vs_baseline ?? 0,
-    arc: row.benchmark_task_a_accuracy ?? Number.NaN,
+    benchmarkTaskA: row.benchmark_task_a_accuracy ?? Number.NaN,
     benchmark_task_b: row.benchmark_task_b_accuracy ?? Number.NaN
   };
 }
@@ -3284,7 +3284,7 @@ function validateSubmissionChunk(
     });
   }
   const rawMetricPattern =
-    /\b(?:accuracy\\?_delta\\?_vs\\?_baseline|average\\?_accuracy|arc\\?_challenge\\?_accuracy|benchmark_task_b\\?_accuracy)\b/iu;
+    /\b(?:accuracy\\?_delta\\?_vs\\?_baseline|average\\?_accuracy|benchmark_task_a\\?_accuracy|benchmark_task_b\\?_accuracy)\b/iu;
   if (rawMetricPattern.test(text)) {
     issues.push({
       kind: "raw_artifact_text",

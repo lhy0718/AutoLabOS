@@ -194,6 +194,7 @@ import {
   repairPythonEntrypointLookupHelperAliasSurface,
   repairPythonEntrypointParseArgsSingleArgumentSurface,
   repairPythonMissingParseArgsSurface,
+  repairPythonMissingExecutableEntrypointSurface,
   repairPythonMissingMainInvocationSurface,
   repairPythonMissingBaselineFirstSweepWrapperSurface,
   repairPythonMissingConditionSpecClassSurface,
@@ -5794,7 +5795,7 @@ describe("ImplementSessionManager", () => {
         "",
         "class FakeContext:",
         "    def as_dict(self):",
-        "        return {'output_dir': 'out', 'arc_eval_examples': 2, 'benchmark_task_b_eval_examples': 2}",
+        "        return {'output_dir': 'out', 'benchmark_task_a_eval_examples': 2, 'benchmark_task_b_eval_examples': 2}",
         "",
         "def _condition_marker(spec: Any, *, default: Optional[str] = None) -> str:",
         "    if isinstance(spec, Mapping):",
@@ -9771,6 +9772,110 @@ describe("ImplementSessionManager", () => {
       status: "completed",
       runner: "run_baseline_first_condition_sweep",
       study_name: "locked-study"
+    });
+  });
+
+  it("repairs local verification no-entrypoint feedback on the existing public bundle before Codex", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-local-entrypoint-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Local Entrypoint Repair",
+      topic: "repair missing executable bridge",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.implement_experiments.status = "failed";
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_local_entrypoint\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_condition_grid_study.py");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def write_metrics_payload(metrics_path, payload):",
+        "    path = Path(metrics_path)",
+        "    path.parent.mkdir(parents=True, exist_ok=True)",
+        "    path.write_text(json.dumps(payload), encoding='utf-8')",
+        "",
+        "def run_condition_grid_study(metrics_path=None, output_dir=None):",
+        "    return {'status': 'completed', 'success': True, 'metric_value': 0.8, 'output_dir': output_dir}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        `python ${toWorkspaceRelative(workspace, scriptPath)} --metrics-path ${toWorkspaceRelative(workspace, metricsPath)} --output-dir ${toWorkspaceRelative(workspace, publicDir)}`,
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const feedbackText = "Python experiment runner exposes metrics-path and metrics-writer surfaces but has no executable entrypoint.";
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.script", scriptPath);
+    await memory.put("implement_experiments.run_command", `python ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`);
+    await memory.put("implement_experiments.verify_report", {
+      status: "fail",
+      command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+      cwd: publicDir,
+      exit_code: 0,
+      failure_type: "implementation",
+      next_action: "retry_patch",
+      stderr_excerpt: feedbackText,
+      summary: `Implementation verification failed: ${feedbackText}`
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        throw new Error("Codex should not be used for local entrypoint repair");
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", publicDir], { cwd: publicDir });
+
+    expect(callCount).toBe(0);
+    expect(result.rawResponse).toContain("Recovered implement result from a materialized public experiment bundle");
+    expect(repairedSource).toContain("_autolabos_missing_executable_entrypoint_marker");
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      success: true,
+      metric_value: 0.8,
+      output_dir: publicDir
     });
   });
 
@@ -18010,7 +18115,7 @@ describe("ImplementSessionManager", () => {
         "    return func(**{key: value for key, value in kwargs.items() if key in parameters})",
         "",
         "def load_all_benchmark_samples(args=None, seed=None):",
-        "    return {'benchmark_task_a': [{'id': 'arc-1'}], 'benchmark_task_b': [{'id': 'hella-1'}]}",
+        "    return {'benchmark_task_a': [{'id': 'task-a-1'}], 'benchmark_task_b': [{'id': 'task-b-1'}]}",
         "",
         "def run_conditions_baseline_first(args, device, benchmark_samples, run_output_dir):",
         "    return [{'condition_marker': 'locked_adapter_baseline', 'sample_count': len(benchmark_samples['benchmark_task_a']), 'output_dir': str(run_output_dir), 'device': str(device)}]",
@@ -18111,7 +18216,7 @@ describe("ImplementSessionManager", () => {
         "    return ['unmodified_base', 'decomposed_adapter']",
         "",
         "def load_benchmark_subsets(max_examples_per_task, seed=42):",
-        "    return {'benchmark_task_a': [{'id': f'arc-{seed}', 'limit': max_examples_per_task}]}, {'source': 'benchmark-loader'}",
+        "    return {'benchmark_task_a': [{'id': f'task-a-{seed}', 'limit': max_examples_per_task}]}, {'source': 'benchmark-loader'}",
         "",
         "def load_instruction_records(args):",
         "    return [{'instruction': 'bounded train example'}], {'source': 'instruction-loader'}",
@@ -20829,7 +20934,7 @@ describe("ImplementSessionManager", () => {
         "DEFAULT_BASE_MODEL = 'the configured fallback backbone'",
         "TASK_NAMES = ('benchmark_task_a', 'benchmark_task_b')",
         "TASK_DATASET_CONFIGS = {",
-        "    'benchmark_task_a': {'dataset_name': 'ai2_arc', 'dataset_config': 'Benchmark Task A', 'train_split': 'train', 'validation_split': 'validation'},",
+        "    'benchmark_task_a': {'dataset_name': 'benchmark_task_a_dataset', 'dataset_config': 'Benchmark Task A', 'train_split': 'train', 'validation_split': 'validation'},",
         "    'benchmark_task_b': {'dataset_name': 'benchmark_task_b', 'dataset_config': None, 'train_split': 'train', 'validation_split': 'validation'},",
         "}",
         "class DatasetDict(dict):",
@@ -20851,7 +20956,7 @@ describe("ImplementSessionManager", () => {
         "        'base_model_name': base_model_name,",
         "        'device': str(device),",
         "        'task_names': sorted(task_datasets.keys()),",
-        "        'arc_train_split': task_datasets['benchmark_task_a']['train'][0]['split'],",
+        "        'benchmark_task_a_train_split': task_datasets['benchmark_task_a']['train'][0]['split'],",
         "        'benchmark_task_b_validation_split': task_datasets['benchmark_task_b']['validation'][0]['split'],",
         "    }]",
         "def _extract_raw_condition_records(output):",
@@ -20932,7 +21037,7 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       condition_results: [
         {
-          arc_train_split: "train",
+          benchmark_task_a_train_split: "train",
           base_model_name: "the selected backbone",
           benchmark_task_b_validation_split: "validation",
           task_names: ["benchmark_task_a", "benchmark_task_b"]
@@ -23807,10 +23912,10 @@ describe("ImplementSessionManager", () => {
         "",
         "def _candidate_metric_summary(result):",
         "    result_map = dict(result) if isinstance(result, Mapping) else {}",
-        "    arc_accuracy = _safe_float(",
+        "    benchmark_task_a_value = _safe_float(",
         "        _nested_lookup(",
         "            result_map,",
-        "            ((\"benchmark_task_a_accuracy\",), (\"arc_accuracy\",), (\"metrics\", \"benchmark_task_a_accuracy\")),",
+        "            ((\"benchmark_task_a_accuracy\",), (\"metrics\", \"benchmark_task_a_accuracy\")),",
         "            0.0,",
         "        )",
         "    )",
@@ -23825,13 +23930,13 @@ describe("ImplementSessionManager", () => {
         "        _nested_lookup(",
         "            result_map,",
         "            ((\"mean_zero_shot_accuracy\",), (\"primary_metric\",), (\"metrics\", \"mean_zero_shot_accuracy\")),",
-        "            (arc_accuracy + benchmark_task_b_accuracy) / 2.0,",
+        "            (benchmark_task_a_value + benchmark_task_b_accuracy) / 2.0,",
         "        )",
         "    )",
         "    return {",
         "        'candidate_id': result_map.get('candidate_id', 'unknown'),",
         "        'is_baseline': result_map.get('is_baseline', True),",
-        "        'benchmark_task_a_accuracy': arc_accuracy,",
+        "        'benchmark_task_a_accuracy': benchmark_task_a_value,",
         "        'benchmark_task_b_accuracy': benchmark_task_b_accuracy,",
         "        'mean_zero_shot_accuracy': mean_accuracy,",
         "    }",
@@ -26815,7 +26920,7 @@ describe("ImplementSessionManager", () => {
         "def run_all_conditions_baseline_first(args, *, output_dir=None, eval_datasets=None):",
         "    assert args.seed == 42",
         "    assert output_dir == 'out'",
-        "    assert eval_datasets == {'arc': []}",
+        "    assert eval_datasets == {'benchmark_task_a': []}",
         "    return [{'condition_id': 'baseline_unmodified'}, {'condition_id': 'vanilla_adapter'}]",
         "",
         "def _run_conditions_from_cli(args):",
@@ -26829,7 +26934,7 @@ describe("ImplementSessionManager", () => {
         "    for name in runner_names:",
         "        candidate = globals().get(name)",
         "        if callable(candidate):",
-        "            return candidate(args=args, output_dir='out', eval_datasets={'arc': []})",
+        "            return candidate(args=args, output_dir='out', eval_datasets={'benchmark_task_a': []})",
         "    raise RuntimeError(f\"No baseline-first condition runner found; tried {', '.join(runner_names)}\")",
         "",
         "def main():",
@@ -27729,13 +27834,13 @@ describe("ImplementSessionManager", () => {
         "import inspect",
         "import json",
         "",
-        "def load_instruction_dataset(dataset_name='tatsu-lab/alpaca', split='train', subset_size=3, seed=42):",
+        "def load_instruction_dataset(dataset_name='instruction_dataset', split='train', subset_size=3, seed=42):",
         "    return [{'text': f'train-{seed}-{index}'} for index in range(int(subset_size or 3))], {'dataset': dataset_name, 'split': split}",
         "",
         "def load_benchmark_records(eval_limit=2, seed=42):",
         "    return {",
-        "        'benchmark_task_a': [{'id': f'arc-{seed}', 'answer': 'A'} for _ in range(int(eval_limit or 2))],",
-        "        'benchmark_task_b': [{'id': f'hs-{seed}', 'answer': 'B'} for _ in range(int(eval_limit or 2))],",
+        "        'benchmark_task_a': [{'id': f'task-a-{seed}', 'answer': 'A'} for _ in range(int(eval_limit or 2))],",
+        "        'benchmark_task_b': [{'id': f'task-b-{seed}', 'answer': 'B'} for _ in range(int(eval_limit or 2))],",
         "    }, {'seed': seed, 'eval_limit': eval_limit}",
         "",
         "def select_device(prefer_cuda=True):",
@@ -27811,7 +27916,7 @@ describe("ImplementSessionManager", () => {
         "    parser.add_argument('--metrics-path', required=True)",
         "    parser.add_argument('--output-dir', default='out')",
         "    parser.add_argument('--model-name', default='the selected backbone')",
-        "    parser.add_argument('--instruction-dataset', default='tatsu-lab/alpaca')",
+        "    parser.add_argument('--instruction-dataset', default='instruction_dataset')",
         "    parser.add_argument('--max-train-examples', type=int, default=3)",
         "    parser.add_argument('--max-eval-examples', type=int, default=2)",
         "    parser.add_argument('--seed', type=int, default=7)",
@@ -31857,7 +31962,7 @@ describe("ImplementSessionManager", () => {
         "    correct_label = 'A'",
         "    correct_text = 'alpha'",
         "    task_name = 'benchmark_task_a'",
-        "    example_id = 'arc_1'",
+        "    example_id = 'task_a_1'",
         "",
         "def prepare_benchmark_task_data(args):",
         "    return {'benchmark_task_a': SimpleNamespace(examples=[Example()])}",
@@ -34705,14 +34810,14 @@ describe("ImplementSessionManager", () => {
         "    candidate_id: str",
         "    display_name: str",
         "    adapter_method: str = 'adapter'",
-        "    train_dataset_name: str = 'alpaca'",
+        "    train_dataset_name: str = 'instruction_dataset'",
         "    train_subset_size: int = 32",
         "    train_seed: int = 42",
         "    adapter_target_modules: Tuple[str, ...] = ('module_a', 'module_c')",
         "    enabled: bool = True",
         "",
         "LOCKED_BASE_MODEL_NAME = 'tiny'",
-        "LOCKED_INSTRUCTION_DATASET_NAME = 'alpaca'",
+        "LOCKED_INSTRUCTION_DATASET_NAME = 'instruction_dataset'",
         "LOCKED_INSTRUCTION_DATASET_CONFIG = None",
         "LOCKED_INSTRUCTION_DATASET_SPLIT = 'train'",
         "LOCKED_INSTRUCTION_SUBSET_SIZE = 32",
@@ -34726,7 +34831,7 @@ describe("ImplementSessionManager", () => {
         "LOCKED_WEIGHT_DECAY = 0.0",
         "",
         "LOCKED_RECIPE_METADATA: List[Dict[str, Any]] = [",
-        "    {'recipe_id': 'base_unmodified', 'display_name': 'Base', 'adapter_method': 'none', 'dataset_name': 'alpaca', 'subset_size': 16, 'subset_seed': 7, 'target_modules': []},",
+        "    {'recipe_id': 'base_unmodified', 'display_name': 'Base', 'adapter_method': 'none', 'dataset_name': 'instruction_dataset', 'subset_size': 16, 'subset_seed': 7, 'target_modules': []},",
         "]",
         "",
         "def _coerce_recipe_metadata_to_config(metadata: Mapping[str, Any]) -> Any:",
@@ -34781,7 +34886,7 @@ describe("ImplementSessionManager", () => {
         "    recipe = LOCKED_BASELINE_FIRST_RECIPES[0]",
         "    assert recipe.candidate_id == 'base_unmodified'",
         "    assert recipe.adapter_method == 'none'",
-        "    assert recipe.train_dataset_name == 'alpaca'",
+        "    assert recipe.train_dataset_name == 'instruction_dataset'",
         "    assert recipe.train_subset_size == 16",
         ""
       ].join("\n"),
@@ -35375,15 +35480,15 @@ describe("ImplementSessionManager", () => {
         "def load_benchmark_examples(per_benchmark_limit=None, seed=42):",
         "    return (",
         "        {",
-        "            'benchmark_task_a': [{'id': 'arc-1', 'choices': ['A', 'B'], 'answer_index': 0}],",
-        "            'benchmark_task_b': [{'id': 'hs-1', 'choices': ['A', 'B'], 'answer_index': 1}],",
+        "            'benchmark_task_a': [{'id': 'task-a-1', 'choices': ['A', 'B'], 'answer_index': 0}],",
+        "            'benchmark_task_b': [{'id': 'task-b-1', 'choices': ['A', 'B'], 'answer_index': 1}],",
         "        },",
         "        {'status': 'ok', 'seed': seed, 'limit': per_benchmark_limit},",
         "    )",
         "",
         "def run_ordered_condition_evaluation(args, train_samples, eval_sets, device):",
         "    assert train_samples[0]['instruction'] == 'classify'",
-        "    assert eval_sets['benchmark_task_a'][0]['id'] == 'arc-1'",
+        "    assert eval_sets['benchmark_task_a'][0]['id'] == 'task-a-1'",
         "    assert device == 'cpu'",
         "    return {",
         "        'condition_order': ['unmodified_base', 'locked_adapter_baseline', 'decomposed_adapter'],",
@@ -35653,7 +35758,7 @@ describe("ImplementSessionManager", () => {
         "    CALL_TRACE.append(f'load:{train_subset_size}:{eval_samples_per_task}:{seed}')",
         "    return (",
         "        [{'text': 'train-example'}],",
-        "        {'benchmark_task_a': [{'prompt': 'arc'}], 'benchmark_task_b': [{'prompt': 'hella'}]},",
+        "        {'benchmark_task_a': [{'prompt': 'task_a'}], 'benchmark_task_b': [{'prompt': 'task_b'}]},",
         "        {'train_subset_size': train_subset_size, 'eval_samples_per_task': eval_samples_per_task, 'seed': seed},",
         "    )",
         "",
@@ -39613,7 +39718,7 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
-  it("rejects python runners whose ARC and Benchmark Task B bundle resolver misses generated benchmark subset loaders", async () => {
+  it("rejects python runners whose Benchmark Task A and Benchmark Task B bundle resolver misses generated benchmark subset loaders", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-benchmark-bundle-loader-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -39644,7 +39749,7 @@ describe("ImplementSessionManager", () => {
         return {
           threadId: "thread-missing-benchmark-bundle-loader",
           finalText: JSON.stringify({
-            summary: "Implemented a runner whose ARC/Benchmark Task B bundle resolver cannot find generated subset loaders.",
+            summary: "Implemented a runner whose Benchmark Task A/Benchmark Task B bundle resolver cannot find generated subset loaders.",
             run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
             working_dir: publicDir,
@@ -39666,10 +39771,10 @@ describe("ImplementSessionManager", () => {
                 content: [
                   "from __future__ import annotations",
                   "",
-                  "def load_benchmark_subsets(arc_limit=None, benchmark_task_b_limit=None, seed=0):",
+                  "def load_benchmark_subsets(benchmark_task_a_limit=None, benchmark_task_b_limit=None, seed=0):",
                   "    return {'benchmark_task_a': [], 'benchmark_task_b': []}, {}",
                   "",
-                  "def load_normalized_evaluation_sets(arc_limit=1, benchmark_task_b_limit=1, seed=0):",
+                  "def load_normalized_evaluation_sets(benchmark_task_a_limit=1, benchmark_task_b_limit=1, seed=0):",
                   "    return {'benchmark_task_a': [], 'benchmark_task_b': []}",
                   "",
                   "def _load_benchmark_bundle(args=None):",
@@ -39684,11 +39789,11 @@ describe("ImplementSessionManager", () => {
                   "        helper = globals().get(helper_name)",
                   "        if callable(helper):",
                   "            return helper()",
-                  "    arc_helper = globals().get('load_benchmark_task_a') or globals().get('load_benchmark_task_a_examples') or globals().get('prepare_benchmark_task_a')",
-                  "    hs_helper = globals().get('load_benchmark_task_b') or globals().get('load_benchmark_task_b_examples') or globals().get('prepare_benchmark_task_b')",
-                  "    if arc_helper is None or hs_helper is None:",
+                  "    task_a_helper = globals().get('load_benchmark_task_a') or globals().get('load_benchmark_task_a_examples') or globals().get('prepare_benchmark_task_a')",
+                  "    task_b_helper = globals().get('load_benchmark_task_b') or globals().get('load_benchmark_task_b_examples') or globals().get('prepare_benchmark_task_b')",
+                  "    if task_a_helper is None or task_b_helper is None:",
                   "        raise RuntimeError('No benchmark loading helper found for Benchmark Task A and Benchmark Task B.')",
-                  "    return {'benchmark_task_a': list(arc_helper()), 'benchmark_task_b': list(hs_helper())}",
+                  "    return {'benchmark_task_a': list(task_a_helper()), 'benchmark_task_b': list(task_b_helper())}",
                   "",
                   "def run_baseline_first_experiment(argv=None):",
                   "    return _load_benchmark_bundle(None)",
@@ -39719,8 +39824,8 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
-  it("rejects python runners whose run-level ARC and Benchmark Task B resolver misses generated example loaders despite a suite loader", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-arc-benchmark_task_b-loader-"));
+  it("rejects python runners whose run-level Benchmark Task A and Benchmark Task B resolver misses generated example loaders despite a suite loader", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-benchmark-task-loaders-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -39728,7 +39833,7 @@ describe("ImplementSessionManager", () => {
 
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
-      title: "Reject Missing ARC Benchmark Task B Loader Dispatch",
+      title: "Reject Missing Benchmark Task Loader Dispatch",
       topic: "adapter instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
@@ -39748,9 +39853,9 @@ describe("ImplementSessionManager", () => {
       runTurnStream: async () => {
         calls += 1;
         return {
-          threadId: "thread-missing-arc-benchmark_task_b-loader",
+          threadId: "thread-missing-benchmark-task-loader",
           finalText: JSON.stringify({
-            summary: "Implemented a runner whose run-level ARC/Benchmark Task B resolver misses generated example loaders.",
+            summary: "Implemented a runner whose run-level Benchmark Task A/Benchmark Task B resolver misses generated example loaders.",
             run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
             working_dir: publicDir,
@@ -39799,10 +39904,10 @@ describe("ImplementSessionManager", () => {
                   "        loaded = suite_loader()",
                   "        if 'benchmark_task_a' in loaded or 'benchmark_task_b' in loaded:",
                   "            return loaded",
-                  "    arc_loader = _first_callable(",
+                  "    benchmark_task_a_loader = _first_callable(",
                   "        'load_benchmark_task_a_subset',",
                   "        'load_benchmark_task_a',",
-                  "        'load_arc_dataset',",
+                  "        'load_benchmark_task_a_dataset',",
                   "        'prepare_benchmark_task_a_examples',",
                   "    )",
                   "    benchmark_task_b_loader = _first_callable(",
@@ -39811,9 +39916,9 @@ describe("ImplementSessionManager", () => {
                   "        'load_benchmark_task_b_dataset',",
                   "        'prepare_benchmark_task_b_examples',",
                   "    )",
-                  "    if arc_loader is None or benchmark_task_b_loader is None:",
+                  "    if benchmark_task_a_loader is None or benchmark_task_b_loader is None:",
                   "        raise RuntimeError('No Benchmark Task A/Benchmark Task B benchmark loaders were defined in earlier sections.')",
-                  "    return {'benchmark_task_a': arc_loader(), 'benchmark_task_b': benchmark_task_b_loader()}",
+                  "    return {'benchmark_task_a': benchmark_task_a_loader(), 'benchmark_task_b': benchmark_task_b_loader()}",
                   "",
                   "def run_baseline_first_experiment(argv=None):",
                   "    return _load_benchmarks_for_run(None)",
@@ -40473,7 +40578,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Mapping, Sequence, Tuple",
         "",
         "class RuntimeConfig:",
-        "    instruction_dataset = 'tatsu-lab/alpaca'",
+        "    instruction_dataset = 'instruction_dataset'",
         "    seed = 42",
         "    max_train_examples = 8",
         "",
@@ -40998,7 +41103,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Any",
         "",
         "class RunConfig:",
-        "    instruction_dataset_name = 'tatsu-lab/alpaca'",
+        "    instruction_dataset_name = 'instruction_dataset'",
         "    instruction_dataset_config = None",
         "    train_subset_size = 3",
         "    seed = 42",
@@ -41038,7 +41143,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main() -> int:",
         "    payload = _load_instruction_subset_for_run(RunConfig())",
-        "    return 0 if payload['dataset_name'] == 'tatsu-lab/alpaca' and payload['max_examples'] == 3 and payload['seed'] == 42 else 1",
+        "    return 0 if payload['dataset_name'] == 'instruction_dataset' and payload['max_examples'] == 3 and payload['seed'] == 42 else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -41207,7 +41312,7 @@ describe("ImplementSessionManager", () => {
         "    return func(**{name: value for name, value in kwargs.items() if name in parameters})",
         "",
         "def load_bounded_public_evaluation_datasets(args=None, seed=42, max_examples=2):",
-        "    return {'benchmark_task_a': ['arc-row'], 'benchmark_task_b': ['benchmark_task_b-row']}, {'seed': seed, 'max_examples': max_examples}",
+        "    return {'benchmark_task_a': ['task-a-row'], 'benchmark_task_b': ['task-b-row']}, {'seed': seed, 'max_examples': max_examples}",
         "",
         "def _entrypoint_load_datasets(args, output_dir):",
         "    seed = int(getattr(args, 'seed', 42))",
@@ -41220,15 +41325,15 @@ describe("ImplementSessionManager", () => {
         "                datasets_obj = datasets_obj[0]",
         "            if isinstance(datasets_obj, Mapping):",
         "                return dict(datasets_obj)",
-        "    arc_loader = _entrypoint_callable('load_benchmark_task_a_examples', 'load_benchmark_task_a_dataset', 'load_benchmark_task_a')",
+        "    benchmark_task_a_loader = _entrypoint_callable('load_benchmark_task_a_examples', 'load_benchmark_task_a_dataset', 'load_benchmark_task_a')",
         "    benchmark_task_b_loader = _entrypoint_callable('load_benchmark_task_b_examples', 'load_benchmark_task_b_dataset', 'load_benchmark_task_b')",
-        "    if arc_loader is None or benchmark_task_b_loader is None:",
+        "    if benchmark_task_a_loader is None or benchmark_task_b_loader is None:",
         "        raise RuntimeError('No evaluation dataset loader is available in the materialized script')",
-        "    return {'benchmark_task_a': _entrypoint_call(arc_loader, seed=seed, max_examples=eval_samples), 'benchmark_task_b': _entrypoint_call(benchmark_task_b_loader, seed=seed, max_examples=eval_samples)}",
+        "    return {'benchmark_task_a': _entrypoint_call(benchmark_task_a_loader, seed=seed, max_examples=eval_samples), 'benchmark_task_b': _entrypoint_call(benchmark_task_b_loader, seed=seed, max_examples=eval_samples)}",
         "",
         "def main() -> int:",
         "    datasets = _entrypoint_load_datasets(argparse.Namespace(seed=7, eval_samples=3), '.')",
-        "    return 0 if datasets == {'benchmark_task_a': ['arc-row'], 'benchmark_task_b': ['benchmark_task_b-row']} else 1",
+        "    return 0 if datasets == {'benchmark_task_a': ['task-a-row'], 'benchmark_task_b': ['task-b-row']} else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -41319,7 +41424,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def load_benchmark_eval_datasets(max_eval_examples=64, seed=42):",
         "    return {",
-        "        'benchmark_task_a': [f'arc-{seed}-{max_eval_examples}'],",
+        "        'benchmark_task_a': [f'task-a-{seed}-{max_eval_examples}'],",
         "        'benchmark_task_b': [f'benchmark_task_b-{seed}-{max_eval_examples}'],",
         "    }, {'source': 'benchmark-eval-datasets'}",
         "",
@@ -41356,7 +41461,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main() -> int:",
         "    eval_payload = _load_eval_datasets_for_conditions(argparse.Namespace(seed=7, max_eval_examples=3))",
-        "    expected = {'benchmark_task_a': ['arc-7-3'], 'benchmark_task_b': ['benchmark_task_b-7-3']}",
+        "    expected = {'benchmark_task_a': ['task-a-7-3'], 'benchmark_task_b': ['benchmark_task_b-7-3']}",
         "    return 0 if eval_payload == expected else 1",
         "",
         "if __name__ == '__main__':",
@@ -41416,7 +41521,7 @@ describe("ImplementSessionManager", () => {
         "    return [{'text': f'train-{seed}-{subset_size}'}]",
         "",
         "def load_evaluation_examples(args=None, seed=42, eval_size=None):",
-        "    return {'benchmark_task_a': [f'arc-{seed}-{eval_size}'], 'benchmark_task_b': [f'benchmark_task_b-{seed}-{eval_size}']}",
+        "    return {'benchmark_task_a': [f'task-a-{seed}-{eval_size}'], 'benchmark_task_b': [f'task-b-{seed}-{eval_size}']}",
         "",
         "def _load_experiment_datasets(args):",
         "    loader = _resolve_callable(",
@@ -41466,9 +41571,9 @@ describe("ImplementSessionManager", () => {
         "    datasets = _load_experiment_datasets(argparse.Namespace(seed=7, max_train_examples=11, max_eval_examples=3))",
         "    expected = {",
         "        'train_examples': [{'text': 'train-7-11'}],",
-        "        'eval_sets': {'benchmark_task_a': ['arc-7-3'], 'benchmark_task_b': ['benchmark_task_b-7-3']},",
-        "        'benchmark_task_a': ['arc-7-3'],",
-        "        'benchmark_task_b': ['benchmark_task_b-7-3'],",
+        "        'eval_sets': {'benchmark_task_a': ['task-a-7-3'], 'benchmark_task_b': ['task-b-7-3']},",
+        "        'benchmark_task_a': ['task-a-7-3'],",
+        "        'benchmark_task_b': ['task-b-7-3'],",
         "    }",
         "    return 0 if datasets == expected else 1",
         "",
@@ -41493,7 +41598,7 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("repairs evaluation dataset helper aliases when generated loaders use raw ARC and Benchmark Task B names", async () => {
+  it("repairs evaluation dataset helper aliases when generated loaders use raw Benchmark Task A and Benchmark Task B names", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-eval-raw-loader-alias-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
@@ -41515,7 +41620,7 @@ describe("ImplementSessionManager", () => {
         "    return func(**{name: value for name, value in kwargs.items() if name in parameters})",
         "",
         "def load_benchmark_task_a_raw_dataset(seed=42, max_examples=2):",
-        "    return ['arc-row'], {'seed': seed, 'max_examples': max_examples}",
+        "    return ['task-a-row'], {'seed': seed, 'max_examples': max_examples}",
         "",
         "def load_benchmark_task_b_raw_dataset(seed=42, max_examples=2):",
         "    return ['benchmark_task_b-row'], {'seed': seed, 'max_examples': max_examples}",
@@ -41527,18 +41632,18 @@ describe("ImplementSessionManager", () => {
         "        loader = _entrypoint_callable(loader_name)",
         "        if callable(loader):",
         "            return _entrypoint_call(loader, args=args, output_dir=output_dir, seed=seed, max_examples=eval_samples)",
-        "    arc_loader = _entrypoint_callable('load_benchmark_task_a_examples', 'load_benchmark_task_a_dataset', 'load_benchmark_task_a')",
+        "    benchmark_task_a_loader = _entrypoint_callable('load_benchmark_task_a_examples', 'load_benchmark_task_a_dataset', 'load_benchmark_task_a')",
         "    benchmark_task_b_loader = _entrypoint_callable('load_benchmark_task_b_examples', 'load_benchmark_task_b_dataset', 'load_benchmark_task_b')",
-        "    if arc_loader is None or benchmark_task_b_loader is None:",
+        "    if benchmark_task_a_loader is None or benchmark_task_b_loader is None:",
         "        raise RuntimeError('No evaluation dataset loader is available in the materialized script')",
         "    return {",
-        "        'benchmark_task_a': _entrypoint_call(arc_loader, seed=seed, max_examples=eval_samples),",
+        "        'benchmark_task_a': _entrypoint_call(benchmark_task_a_loader, seed=seed, max_examples=eval_samples),",
         "        'benchmark_task_b': _entrypoint_call(benchmark_task_b_loader, seed=seed, max_examples=eval_samples),",
         "    }",
         "",
         "def main() -> int:",
         "    datasets = _entrypoint_load_datasets(argparse.Namespace(seed=7, eval_samples=3), '.')",
-        "    return 0 if datasets == {'benchmark_task_a': ['arc-row'], 'benchmark_task_b': ['benchmark_task_b-row']} else 1",
+        "    return 0 if datasets == {'benchmark_task_a': ['task-a-row'], 'benchmark_task_b': ['benchmark_task_b-row']} else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -41574,7 +41679,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Callable",
         "",
         "SEED = 42",
-        "DEFAULT_ARC_EVAL_SAMPLES = 3",
+        "DEFAULT_BENCHMARK_TASK_A_EVAL_SAMPLES = 3",
         "DEFAULT_TASK_B_EVAL_SAMPLES = 4",
         "",
         "def _arg_value(args: argparse.Namespace, name: str, default: Any = None) -> Any:",
@@ -41604,13 +41709,13 @@ describe("ImplementSessionManager", () => {
         "",
         "def _load_study_datasets(args: argparse.Namespace):",
         "    seed = int(_arg_value(args, 'seed', SEED))",
-        "    arc_samples = int(_arg_value(args, 'arc_eval_samples', DEFAULT_ARC_EVAL_SAMPLES))",
+        "    benchmark_task_a_samples = int(_arg_value(args, 'benchmark_task_a_eval_samples', DEFAULT_BENCHMARK_TASK_A_EVAL_SAMPLES))",
         "    benchmark_task_b_samples = int(_arg_value(args, 'benchmark_task_b_eval_samples', DEFAULT_TASK_B_EVAL_SAMPLES))",
-        "    arc_payload = _invoke_with_supported_kwargs(",
+        "    benchmark_task_a_payload = _invoke_with_supported_kwargs(",
         "        load_benchmark_task_a_examples,",
         "        split='validation',",
-        "        sample_size=arc_samples,",
-        "        max_samples=arc_samples,",
+        "        sample_size=benchmark_task_a_samples,",
+        "        max_samples=benchmark_task_a_samples,",
         "        seed=seed,",
         "    )",
         "    benchmark_task_b_payload = _invoke_with_supported_kwargs(",
@@ -41620,10 +41725,10 @@ describe("ImplementSessionManager", () => {
         "        max_samples=benchmark_task_b_samples,",
         "        seed=seed,",
         "    )",
-        "    return {'benchmark_task_a': arc_payload, 'benchmark_task_b': benchmark_task_b_payload}",
+        "    return {'benchmark_task_a': benchmark_task_a_payload, 'benchmark_task_b': benchmark_task_b_payload}",
         "",
         "def main() -> int:",
-        "    datasets = _load_study_datasets(argparse.Namespace(seed=7, arc_eval_samples=2, benchmark_task_b_eval_samples=5))",
+        "    datasets = _load_study_datasets(argparse.Namespace(seed=7, benchmark_task_a_eval_samples=2, benchmark_task_b_eval_samples=5))",
         "    if len(datasets['benchmark_task_a']['examples']) != 2:",
         "        return 1",
         "    if len(datasets['benchmark_task_b']['examples']) != 5:",
@@ -41667,7 +41772,7 @@ describe("ImplementSessionManager", () => {
         "    def __init__(self):",
         "        self.seed = 7",
         "        self.data_cache_dir = 'cache-dir'",
-        "        self.arc_eval_samples = 2",
+        "        self.benchmark_task_a_eval_samples = 2",
         "        self.benchmark_task_b_eval_samples = 3",
         "        self.eval_batch_size = 1",
         "",
@@ -41724,7 +41829,7 @@ describe("ImplementSessionManager", () => {
         "        config=config,",
         "        device=_device_from_device_info(device_info),",
         "        device_info=device_info,",
-        "        arc_eval_samples=config.arc_eval_samples,",
+        "        benchmark_task_a_eval_samples=config.benchmark_task_a_eval_samples,",
         "        benchmark_task_b_eval_samples=config.benchmark_task_b_eval_samples,",
         "        eval_batch_size=config.eval_batch_size,",
         "        seed=config.seed,",
@@ -41860,16 +41965,16 @@ describe("ImplementSessionManager", () => {
         "    return [Example(f'train-{seed}-{index}') for index in range(max_samples)], {'rows': max_samples}",
         "",
         "def load_evaluation_examples_bundle(*, max_samples, seed, cache_dir):",
-        "    return {'benchmark_task_a': ['arc'] * max_samples, 'benchmark_task_b': ['hs'] * max_samples}, {'rows': max_samples}",
+        "    return {'benchmark_task_a': ['task_a'] * max_samples, 'benchmark_task_b': ['task_b'] * max_samples}, {'rows': max_samples}",
         "",
-        "def train_and_evaluate_condition(condition, model_id, train_data, arc_data, benchmark_task_b_data, output_dir, args=None):",
+        "def train_and_evaluate_condition(condition, model_id, train_data, benchmark_task_a_data, benchmark_task_b_data, output_dir, args=None):",
         "    return {",
         "        'status': 'completed',",
         "        'success': True,",
         "        'condition_id': condition['condition_id'],",
         "        'model_id': model_id,",
         "        'train_count': len(train_data),",
-        "        'arc_count': len(arc_data),",
+        "        'benchmark_task_a_count': len(benchmark_task_a_data),",
         "        'benchmark_task_b_count': len(benchmark_task_b_data),",
         "    }",
         "",
@@ -44949,6 +45054,44 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       status: "completed",
       accuracy: 1.0
+    });
+  });
+
+  it("adds a generic CLI bridge when a metrics runner has a callable but no executable entrypoint", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-executable-bridge-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "condition_sweep_runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def write_metrics_payload(metrics_path, payload):",
+        "    path = Path(metrics_path)",
+        "    path.parent.mkdir(parents=True, exist_ok=True)",
+        "    path.write_text(json.dumps(payload), encoding='utf-8')",
+        "",
+        "def run_condition_grid_study(metrics_path=None, output_dir=None):",
+        "    return {'status': 'completed', 'success': True, 'metric_value': 0.75, 'output_dir': output_dir}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repaired = await repairPythonMissingExecutableEntrypointSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repaired.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_missing_executable_entrypoint_marker");
+    expect(repairedSource).toContain("def main(argv=None):");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", workspace], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      success: true,
+      metric_value: 0.75,
+      output_dir: workspace
     });
   });
 

@@ -258,7 +258,7 @@ describe("paper submission sanitization", () => {
     });
 
     expect(tex).toContain("\\begin{table*}[t]");
-    expect(tex).toContain("Condition & Rank & Dropout & Avg. acc. & $\\Delta$ avg. & ARC-C & Benchmark Task B");
+    expect(tex).toContain("Condition & Rank & Dropout & Avg. acc. & $\\Delta$ avg. & Benchmark Task A & Benchmark Task B");
     expect(tex).toContain("Locked baseline & 8 & 0 & 0.3333 & 0 & 0.5 & 0.1667");
     expect(tex).toContain("candidate condition b & 32 & 0.05 & 0.4167 & +0.0833 & 0.5 & 0.3333");
     expect(tex).not.toContain("Metric & Value");
@@ -792,9 +792,9 @@ describe("paper submission sanitization", () => {
             timeout_sec: 1800
           },
           data: {
-            train: { dataset: { path: "yahma/alpaca-cleaned", split: "train" } },
+            train: { dataset: { path: "instruction_dataset", split: "train" } },
             eval: {
-              benchmark_task_a: { dataset: { path: "allenai/ai2_arc", name: "Benchmark Task A", split: "validation" } },
+              benchmark_task_a: { dataset: { path: "benchmark_task_a_dataset", name: "Benchmark Task A", split: "validation" } },
               benchmark_task_b: { dataset: { path: "benchmark_task_b", split: "validation" } }
             }
           }
@@ -941,7 +941,7 @@ describe("paper submission sanitization", () => {
       hypotheses: [],
       corpus: [
         {
-          paper_id: "paper_arc",
+          paper_id: "paper_benchmark_task_a",
           title: "Benchmark source",
           abstract: "Benchmark source.",
           authors: ["Alice Doe"],
@@ -953,7 +953,7 @@ describe("paper submission sanitization", () => {
     } as any);
     for (const section of draft.sections) {
       if (section.heading === "Method") {
-        section.citation_paper_ids = ["paper_arc"];
+        section.citation_paper_ids = ["paper_benchmark_task_a"];
       }
     }
 
@@ -1004,7 +1004,7 @@ describe("paper submission sanitization", () => {
     const tex = renderSubmissionPaperTex({
       manuscript,
       traceability: buildPaperTraceability({ draft, manuscript }),
-      citationKeysByPaperId: new Map([["paper_arc", "doe_2025_benchmark"]])
+      citationKeysByPaperId: new Map([["paper_benchmark_task_a", "doe_2025_benchmark"]])
     });
     expect(tex).toContain("\\cite{doe_2025_benchmark}");
   });
@@ -1021,7 +1021,7 @@ describe("paper submission sanitization", () => {
             "The study was designed as a 4 x 2 factorial sweep over condition parameters under a fixed local compute budget. Rank took values {4, 8, 16, 32}, dropout took values {0.0, 0.05}, and baseline condition was locked in advance as the baseline condition.",
             "The study was designed as a fixed-budget 4 x 2 factorial sweep over condition parameters, with baseline condition designated in advance as the locked baseline.",
             "The planned backbone preference was the selected backbone, with the configured fallback backbone reserved as a fallback if the preferred model failed preflight. The retained run summary used for manuscript preparation does not preserve a model identifier that allows the final executed backbone to be verified.",
-            "The realized record preserves the data and evaluation settings: training data from the yahma/alpaca-cleaned train split, 48 training examples, evaluation on Benchmark Task A and Benchmark Task B validation slices, and seed 17.",
+            "The realized record preserves the data and evaluation settings: training data from the instruction dataset train split, 48 training examples, evaluation on Benchmark Task A and Benchmark Task B validation slices, and seed 17.",
             "The primary endpoint was average accuracy across Benchmark Task A and Benchmark Task B. Secondary reporting included per-task accuracy, train loss, wall-clock runtime, peak VRAM, and complete accounting of requested conditions.",
             "The primary endpoint was average accuracy across Benchmark Task A and Benchmark Task B. Secondary reporting covered per-task accuracy, train loss, wall-clock runtime, peak VRAM, completed-condition count, failed-run visibility, and correctness of claim downgrades."
           ]
@@ -1575,9 +1575,9 @@ describe("paper submission sanitization", () => {
               max_eval_samples_per_task: 6
             },
             data: {
-              train: { dataset: { path: "yahma/alpaca-cleaned" } },
+              train: { dataset: { path: "instruction_dataset" } },
               eval: {
-                benchmark_task_a: { dataset: { path: "allenai/ai2_arc", name: "Benchmark Task A", split: "validation" } },
+                benchmark_task_a: { dataset: { path: "benchmark_task_a_dataset", name: "Benchmark Task A", split: "validation" } },
                 benchmark_task_b: { dataset: { path: "benchmark_task_b", split: "validation" } }
               }
             }
@@ -1631,7 +1631,7 @@ describe("paper submission sanitization", () => {
           heading: "Method",
           paragraphs: [
             "The run specification named the selected backbone as the preferred base model and the configured fallback backbone as fallback, but the manuscript-ready reported summary does not expose the executed model identifier, so the present paper reports the intended configuration without claiming model-level verification.",
-            "The execution summary used for manuscript preparation reports training data from the yahma/alpaca-cleaned train split, 48 training examples, evaluation on the allenai/ai2_arc Benchmark Task A validation split and the Benchmark Task B validation split, 6 examples per evaluation task, and execution seed 17. The configured backbone choices were the selected backbone and the configured fallback backbone, but the summary materials used here do not identify unambiguously which of those two backbones produced the reported results. Fixed training settings were learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, 4 optimizer steps, maximum sequence length 256, and 1800 s timeout. Uncertainty summaries were reported as condition-level 95% intervals over n=12 prediction records; they are treated as screening intervals rather than significance tests.",
+            "The execution summary used for manuscript preparation reports training data from the instruction dataset train split, 48 training examples, evaluation on the Benchmark Task A validation split and the Benchmark Task B validation split, 6 examples per evaluation task, and execution seed 17. The configured backbone choices were the selected backbone and the configured fallback backbone, but the summary materials used here do not identify unambiguously which of those two backbones produced the reported results. Fixed training settings were learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, 4 optimizer steps, maximum sequence length 256, and 1800 s timeout. Uncertainty summaries were reported as condition-level 95% intervals over n=12 prediction records; they are treated as screening intervals rather than significance tests.",
             "The compact artifact bundle provides only partial training detail. It reports command provenance, runtime, memory, completed-condition counts, and condition-level confidence intervals, but it does not surface optimizer settings, scheduler, batch size, target modules, epoch count, or stopping rule in manuscript-readable form. Rather than reconstructing missing configuration by inference, we treat the study as a transparent but incomplete preflight protocol."
           ]
         },

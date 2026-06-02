@@ -5011,7 +5011,7 @@ function inferRunArtifactRefsForClaim(
   const hasLatestResults = Boolean(bundle.latestResults);
   const hasExperimentPlan = Boolean(bundle.experimentPlan?.rawText || bundle.experimentPlan?.selectedTitle);
   const resultLike =
-    /result|accuracy|metric|delta|baseline|comparator|confidence|interval|ci\b|uncertainty|seed|task|arc|benchmark_task_b|condition|rank|dropout|runtime|memory|vram|completed|failed|objective|improvement|inconclusive|promising|feasibility|preflight|continuation|generalization|study scope|supplemental artifact|compute-side|compute budget/iu.test(text);
+    /result|accuracy|metric|delta|baseline|comparator|confidence|interval|ci\b|uncertainty|seed|task|benchmark_task_a|benchmark_task_b|condition|rank|dropout|runtime|memory|vram|completed|failed|objective|improvement|inconclusive|promising|feasibility|preflight|continuation|generalization|study scope|supplemental artifact|compute-side|compute budget/iu.test(text);
   const methodLike =
     /method|protocol|design|dataset|model|backbone|model|dataset|seed|condition|rank|dropout|baseline|harness|preprocess|token|budget|reproducib|run identifier|command line/iu.test(text);
   const runStateLike =
@@ -5029,7 +5029,7 @@ function inferRunArtifactRefsForClaim(
   if (runStateLike || (hasResultAnalysis && /completed|failed|25 train|five cells|five seeds|seed/i.test(text))) {
     refs.push("run_record.json");
   }
-  if (hasResultAnalysis && /metric|accuracy|delta|baseline|runtime|memory|vram|loss|condition|task|arc|benchmark_task_b|completed|failed/iu.test(text)) {
+  if (hasResultAnalysis && /metric|accuracy|delta|baseline|runtime|memory|vram|loss|condition|task|benchmark_task_a|benchmark_task_b|completed|failed/iu.test(text)) {
     refs.push("metrics.json");
   }
 
