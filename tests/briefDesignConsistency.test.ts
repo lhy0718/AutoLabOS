@@ -206,7 +206,7 @@ describe("detectConfoundingHints", () => {
 
   it("detects list-form confounding", () => {
     const contract = makeContract({
-      single_change: "1. Add dropout layer\n2. Increase learning rate\n3. Switch to AdamW"
+      single_change: "1. Add parameter_y layer\n2. Increase learning rate\n3. Switch to AdamW"
     });
     const hints = detectConfoundingHints(contract);
     expect(hints.some((h) => h.includes("list of multiple changes"))).toBe(true);
@@ -215,7 +215,7 @@ describe("detectConfoundingHints", () => {
   it("does not flag already-confounded contracts", () => {
     const contract = makeContract({
       confounded: true,
-      single_change: "Add dropout and increase learning rate"
+      single_change: "Add parameter_y and increase learning rate"
     });
     const hints = detectConfoundingHints(contract);
     expect(hints).toHaveLength(0);

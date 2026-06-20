@@ -1397,6 +1397,14 @@ async function validatePaperSurfaceContract(input: {
       filePath: input.mainTexPath,
       runId: input.runId
     });
+  } else if (usesAclTemplate && !(await fileExists(path.join(input.runDir, "paper", "acl_natbib.bst")))) {
+    input.issues.push({
+      code: "paper_acl_bibliography_style_file_missing",
+      message:
+        "paper/main.tex uses the ACL bibliography style acl_natbib, but paper/acl_natbib.bst is missing, so BibTeX cannot reliably render references.",
+      filePath: input.mainTexPath,
+      runId: input.runId
+    });
   } else if (!usesAclTemplate && bibliographyStyle === "plain" && /\\cite[a-zA-Z*]*(?:\[[^\]]*\]){0,2}\{[^}]+\}/u.test(tex)) {
     input.issues.push({
       code: "paper_plain_bibliography_style",

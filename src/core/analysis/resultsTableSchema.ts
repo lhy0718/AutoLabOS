@@ -113,7 +113,7 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
 }
 
-function inferMetricDirection(
+export function inferMetricDirection(
   metric: string,
   fallback: ResultsTableDirection
 ): ResultsTableDirection {

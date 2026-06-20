@@ -216,7 +216,6 @@ function isExcludedReferenceCondition(
     asString(row.kind),
     asString(row.adapter_type),
     asString(row.recipe_type),
-    asString(asRecord(row.adapter).peft_type),
     asString(asRecord(row.adapter).adapter_type),
     asString(asRecord(row.adapter).method)
   ]

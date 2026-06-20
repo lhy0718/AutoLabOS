@@ -4,6 +4,7 @@ import { choosePaperTitle, sanitizePaperNarrativeText, type PaperDraft, type Pap
 import {
   AUTHORED_MAIN_FIGURE_SOURCE_REF_ID,
   AUTHORED_MAIN_TABLE_SOURCE_REF_ID,
+  stabilizePaperManuscriptForSubmission,
   type PaperManuscript
 } from "../src/core/analysis/paperManuscript.js";
 import {
@@ -479,7 +480,7 @@ function makeTerseDraft(): PaperDraft {
 describe("scientificWriting", () => {
   it("removes paper-writing payload and unsupported repeated-seed phrasing from reader-facing prose", () => {
     const cleaned = sanitizePaperNarrativeText(
-      "Because the executed model identifier is not exposed in the writing payload, the paper-writing payload exposes only one explicit condition-to-baseline comparison and a set of per-condition confidence intervals, not the full numeric table for every cell. The present payload cannot establish robustness. The payload also contains an internal inconsistency. The repeated-seed design is therefore used as a screening instrument. The main report marks the objective as met, with accuracy_delta_vs_baseline=0.083332 against the >= 0.01 target, and verifier feedback status is pass. candidate condition b vs baseline condition improves accuracy delta vs baseline by 0.0833. The surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution, so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model. The surviving compact record specifies the manipulated condition parameters and reported outcome metrics, but optimizer choice, learning rate, batch size, update count, prompt formatting, evaluation-harness specifics, and exact placement of dropout within adapter modules are not available. We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe. For a small language-model preflight, the strongest defensible use of the result is triage: it nominates a configuration worth retesting under larger data or broader tasks, but it does not establish a general adapter rule. Consistent with prior compute-constrained adapter work and with the present run's generalizability limits in nearby resource-constrained studies, the conclusion remains narrow. Seed coverage is part of the evidence contract. The repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run. The manuscript does not collapse this structure into a single best seed, and it keeps the baseline row visible so that later readers can audit the comparison unit. Hidden failures would invalidate this ceiling, but the run accounting used here reports scheduled and executed trials explicitly. That reading is consistent with prior method-family work such as quantized adapter and neighboring low-budget adaptation studies. quantized adapter-scale efficiency work and broader benchmark papers such as MAPLE both suggest caution."
+      "Because the executed model identifier is not exposed in the writing payload, the paper-writing payload exposes only one explicit condition-to-baseline comparison and a set of per-condition confidence intervals, not the full numeric table for every cell. The present payload cannot establish robustness. The payload also contains an internal inconsistency. The repeated-seed design is therefore used as a screening instrument. The main report marks the objective as met, with accuracy_delta_vs_baseline=0.083332 against the >= 0.01 target, and verifier feedback status is pass. candidate condition b vs baseline condition improves accuracy delta vs baseline by 0.0833. The surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution, so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model. The surviving compact record specifies the manipulated condition parameters and reported outcome metrics, but optimizer choice, learning rate, batch size, update count, prompt formatting, evaluation-harness specifics, and exact placement of parameter_y within adapter modules are not available. We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe. For a small language-model preflight, the strongest defensible use of the result is triage: it nominates a configuration worth retesting under larger data or broader tasks, but it does not establish a general adapter rule. Consistent with prior compute-constrained adapter work and with the present run's generalizability limits in nearby resource-constrained studies, the conclusion remains narrow. Seed coverage is part of the evidence contract. The repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run. The manuscript does not collapse this structure into a single best seed, and it keeps the baseline row visible so that later readers can audit the comparison unit. Hidden failures would invalidate this ceiling, but the run accounting used here reports scheduled and executed trials explicitly. That reading is consistent with prior method-family work such as quantized adapter and neighboring low-budget adaptation studies. quantized adapter-scale efficiency work and broader benchmark papers such as MAPLE both suggest caution."
     );
 
     expect(cleaned).not.toMatch(/\b(?:writing payload|paper-writing payload|present payload|The payload|repeated-seed design|verifier feedback status|unambiguously identify|evidence contract|audit|Hidden failures)\b/i);
@@ -489,7 +490,7 @@ describe("scientificWriting", () => {
     expect(cleaned).toContain("screening check was positive");
     expect(cleaned).toContain("the selected backbone as the selected backbone");
     expect(cleaned).toContain("learning rate");
-    expect(cleaned).toContain("multi-seed replication as future work");
+    expect(cleaned).toContain("stronger stability claims as future work");
     expect(cleaned).toContain("present run's generalizability limits");
   });
 
@@ -732,8 +733,12 @@ describe("scientificWriting", () => {
                   text:
                     index === 0 && section.heading === "Results"
                       ? "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01. candidate condition b vs baseline condition: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0.1667)."
+                      : index === 2 && section.heading === "Results"
+                        ? "The archived comparison exceeded the configured screening threshold by point estimate; condition-level values provide the main numeric support, but this is not a stable success claim."
                       : index === 1 && section.heading === "Method"
                         ? "The first P6 run uses a cached target so the validation focuses on real training, result-table integrity, review gating, and paper-readiness audit rather than on new model access."
+                      : index === 2 && section.heading === "Method"
+                        ? "The evaluation spans Training: fixed subset capped at exactly 10,000 examples. Models or conditions include Primary trained baseline: condition x with the same train budget and current_best_baseline."
                       : `Restoration note ${index + 1} for ${section.heading}: ${budgetParagraph}`,
                   evidence_ids: section.evidence_ids,
                   citation_paper_ids: section.citation_paper_ids
@@ -778,15 +783,201 @@ describe("scientificWriting", () => {
     expect(restoredWords).toBeGreaterThanOrEqual(pageBudget.minimum_main_words);
     expect(restored.added_sections).toEqual(expect.arrayContaining(["Method", "Results"]));
     const restoredText = JSON.stringify(restored.manuscript);
-    expect(restoredText).toContain("The prespecified baseline-relative accuracy target was met");
+    expect(restoredText).toContain("The archived comparison exceeded the configured screening threshold");
+    expect(restoredText).toContain("not a stable success claim");
+    expect(restoredText.match(/configured screening threshold/gi)?.length).toBe(1);
+    expect(restoredText).not.toContain("The prespecified baseline-relative accuracy target was met");
     expect(restoredText).toContain("observed leading condition");
     expect(restoredText).not.toContain("accuracy_delta_vs_baseline");
     expect(restoredText).not.toContain("average_accuracy");
     expect(restoredText).not.toContain("benchmark_task_a_accuracy");
     expect(restoredText).not.toContain("benchmark_task_b_accuracy");
     expect(restoredText).not.toContain("P6");
+    expect(restoredText).not.toContain("Evaluation spans Training:");
+    expect(restoredText).not.toContain("Models or conditions include Primary trained baseline");
+    expect(restoredText).not.toContain("current_best_baseline");
     expect(restoredText).not.toMatch(/review gating|paper-readiness audit|result-table integrity/i);
     expect(restoredText).not.toMatch(/bounded claim ceiling|claim downgrade correctness/i);
+  });
+  it("does not restore prompt or cache residue while enforcing the final page floor", () => {
+    const cachedRecoveryResidue = [
+      ["Recovered", "cached", "full", "text"].join(" "),
+      "describing a compact P",
+      "EFT recipe."
+    ].join(" " );
+    const promptTopicResidue = [
+      "Study how",
+      "LoRA rank and dropout interact during",
+      "parameter-efficient instruction tuning under a fixed local compute budget."
+    ].join(" " );
+    const readinessResidue = ["paper-readiness", "inspect"].join(" " );
+    const awkwardMetricResidue = ["Parameter-computationally", "practical within the reported setup"].join(" " );
+    const datasetLead = ["Dataset-level", "reporting shows"].join(" " );
+    const budgetCaveatResidue = ["The 36-run workload may exceed", "the desired first preflight local budget."].join(" " );
+
+    const draft: PaperDraft = {
+      title: "Residue restoration test",
+      abstract: "Short.",
+      keywords: [],
+      sections: [
+        {
+          heading: "Introduction",
+          paragraphs: [
+            {
+              text: `This study addresses ${promptTopicResidue} The local preflight run uses a cached target so the validation focuses on real training, result-table consistency, review checks, and ${readinessResidue}. ${cachedRecoveryResidue}`,
+              evidence_ids: [],
+              citation_paper_ids: []
+            },
+            { text: `${awkwardMetricResidue} tuning is attractive under local budgets.`, evidence_ids: [], citation_paper_ids: [] },
+            { text: "This framing matters because the experiment is a bounded screening study whose evidence remains tied to the executed run record.", evidence_ids: [], citation_paper_ids: [] }
+          ],
+          evidence_ids: [],
+          citation_paper_ids: []
+        },
+        {
+          heading: "Results",
+          paragraphs: [
+            { text: `${datasetLead} a symmetric leading point estimate across the two evaluation tasks.`, evidence_ids: [], citation_paper_ids: [] },
+            { text: `${datasetLead} a symmetric best-condition point estimate across the two evaluation tasks.`, evidence_ids: [], citation_paper_ids: [] },
+            { text: "The exposed condition-level intervals remain wide, so the point estimate remains a screening signal.", evidence_ids: [], citation_paper_ids: [] }
+          ],
+          evidence_ids: [],
+          citation_paper_ids: []
+        },
+        {
+          heading: "Limitations",
+          paragraphs: [
+            { text: "The first limitation is scope. The study is a local small-model screen, not a broad benchmark.", evidence_ids: [], citation_paper_ids: [] },
+            { text: budgetCaveatResidue, evidence_ids: [], citation_paper_ids: [] }
+          ],
+          evidence_ids: [],
+          citation_paper_ids: []
+        }
+      ],
+      claims: []
+    };
+    const pageBudget = pageBudgetManager({
+      draft,
+      profile: {
+        ...PAPER_PROFILE,
+        target_main_pages: 2,
+        minimum_main_pages: 2,
+        main_page_limit: 2,
+        estimated_words_per_page: 260
+      }
+    });
+    const restored = enforceManuscriptPageBudgetFloor({
+      manuscript: {
+        title: "Compressed",
+        abstract: "Short.",
+        keywords: [],
+        sections: [
+          { heading: "Introduction", paragraphs: ["This is a short introduction."] },
+          { heading: "Results", paragraphs: [`${datasetLead} a symmetric leading point estimate across the two evaluation tasks.`] },
+          { heading: "Limitations", paragraphs: ["The first limitation is scope. The study is a local small-model screen, not a broad benchmark."] }
+        ]
+      },
+      draft,
+      pageBudget: { ...pageBudget, minimum_main_words: 360, maximum_main_words: 520 }
+    });
+
+    const text = JSON.stringify(restored.manuscript);
+    expect(restored.applied).toBe(true);
+    expect(text).not.toContain(cachedRecoveryResidue);
+    expect(text).not.toContain(promptTopicResidue);
+    expect(text).not.toContain(readinessResidue);
+    expect(text).not.toContain(awkwardMetricResidue);
+    expect(text).not.toContain(budgetCaveatResidue);
+    const resultText = restored.manuscript.sections.find((section) => section.heading === "Results")?.paragraphs.join("\n") || "";
+    expect((resultText.match(new RegExp(datasetLead, "g")) || []).length).toBe(1);
+    expect(resultText).not.toContain("best-condition point estimate");
+  });
+
+  it("does not restore draft-facing citation instructions through page-floor repair", () => {
+    const draftFacingMethodSentence = "The reporting material available for this draft does not include the full numerical hyperparameter table; those values should be presented in the reproducibility supplement before the study is treated as externally replicable.";
+    const draftFacingLimitationsSentence = "Several related-work notes available to this draft are conservative summaries rather than fully validated extraction records, so they should not be used as quantitative baselines.";
+    const finalCitationInstruction = "In addition, the final manuscript should cite stable sources for the base model, dataset, benchmark, and evaluation harness.";
+    const draft: PaperDraft = {
+      title: "Draft-facing residue floor test",
+      abstract: "Short.",
+      keywords: [],
+      sections: [
+        {
+          heading: "Method",
+          paragraphs: [
+            {
+              text: `The shared protocol fixes the configured condition grid, seed handling, and evaluation tasks. ${draftFacingMethodSentence}`,
+              evidence_ids: [],
+              citation_paper_ids: []
+            },
+            {
+              text: "The method still records enough information to identify the baseline, completed condition cells, data cap, and scoring convention.",
+              evidence_ids: [],
+              citation_paper_ids: []
+            }
+          ],
+          evidence_ids: [],
+          citation_paper_ids: []
+        },
+        {
+          heading: "Results",
+          paragraphs: [
+            {
+              text: "The results table keeps the baseline and leading condition visible while treating the observed gain as a screening signal.",
+              evidence_ids: [],
+              citation_paper_ids: []
+            }
+          ],
+          evidence_ids: [],
+          citation_paper_ids: []
+        },
+        {
+          heading: "Limitations",
+          paragraphs: [
+            {
+              text: `${draftFacingLimitationsSentence} ${finalCitationInstruction} Until the full reproducibility supplement is included, claims should remain bounded to the reported local workflow.`,
+              evidence_ids: [],
+              citation_paper_ids: []
+            }
+          ],
+          evidence_ids: [],
+          citation_paper_ids: []
+        }
+      ],
+      claims: []
+    };
+    const pageBudget = pageBudgetManager({
+      draft,
+      profile: {
+        ...PAPER_PROFILE,
+        target_main_pages: 2,
+        minimum_main_pages: 2,
+        main_page_limit: 2,
+        estimated_words_per_page: 300
+      }
+    });
+
+    const restored = enforceManuscriptPageBudgetFloor({
+      manuscript: {
+        title: "Compressed",
+        abstract: "Short.",
+        keywords: [],
+        sections: [
+          { heading: "Method", paragraphs: ["The method starts from a short protocol summary."] },
+          { heading: "Results", paragraphs: ["The result is a bounded screening comparison."] },
+          { heading: "Limitations", paragraphs: ["The main limitation is scope."] }
+        ]
+      },
+      draft,
+      pageBudget: { ...pageBudget, minimum_main_words: 360, maximum_main_words: 640 }
+    });
+    const stabilized = stabilizePaperManuscriptForSubmission(restored.manuscript);
+    const text = JSON.stringify(stabilized);
+
+    expect(restored.applied).toBe(true);
+    expect(text).toContain("The shared protocol fixes the configured condition grid");
+    expect(text).not.toMatch(/this draft|available to this draft|final manuscript should cite|stable sources/iu);
+    expect(text).not.toMatch(/those values should be presented|reproducibility supplement/iu);
   });
 
   it("refreshes page-budget validation from the repaired manuscript before strict gating", () => {
@@ -986,7 +1177,7 @@ describe("scientificWriting", () => {
         source_type: "analyzed_paper",
         comparison_role: "background",
         method_family: "alternative parameterization",
-        problem_focus: "Parameter-efficient adapter variants.",
+        problem_focus: "Parameter-efficient condition variants.",
         setting_focus: "LLM adaptation.",
         contribution_focus: "Alternative adapter parameterization.",
         limitation_or_caveat: "Not the same locked-baseline audit.",
@@ -1206,6 +1397,182 @@ describe("scientificWriting", () => {
     expect(resultsRichnessValidator(context).missing).not.toContain("dispersion estimates");
   });
 
+  it("uses result-analysis evaluation totals as sample evidence without treating accounting rows as accuracy facts", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "adapter condition-parameter fixed-budget pilot";
+    bundle.topic = "condition parameters interaction for a small language-model benchmark";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.experimentPlan = {
+      selectedTitle: "Seeded condition comparison against a locked baseline",
+      selectedSummary: "Compare two candidate families on Benchmark Task A and Benchmark Task B.",
+      rawText: [
+        "selected_design:",
+        '  datasets: ["training subset", "Benchmark Task A", "Benchmark Task B"]',
+        '  implementation_notes: ["Use a tokenized instruction-tuning pipeline with a fixed evaluation harness."]',
+        '  evaluation_steps: ["Run three seeded evaluations for each condition family."]'
+      ].join("\n")
+    } as any;
+    bundle.latestResults = {
+      condition_summaries: [
+        { label: "baseline_family", average_accuracy_mean: 0.46, accuracy_delta_vs_baseline_mean: 0 }
+      ]
+    } as any;
+    bundle.resultAnalysis = {
+      metrics: {
+        accuracy_delta_vs_baseline: 0.02,
+        best_condition: {
+          average_accuracy: 0.48,
+          correct_count: 96,
+          total_count: 200,
+          evaluation: {
+            task_a: { accuracy: 0.5, correct_count: 50, total_count: 100, confidence_interval: { sample_size: 100 } },
+            task_b: { accuracy: 0.46, correct_count: 46, total_count: 100, confidence_interval: { sample_size: 100 } }
+          },
+          confidence_interval: { sample_size: 200, correct_count: 96, total_count: 200 }
+        },
+        condition_results: [
+          {
+            label: "baseline_family",
+            average_accuracy: 0.46,
+            accuracy_delta_vs_baseline: 0,
+            evaluation: {
+              task_a: { accuracy: 0.5, correct_count: 50, total_count: 100 },
+              task_b: { accuracy: 0.42, correct_count: 42, total_count: 100 }
+            }
+          },
+          {
+            label: "candidate_family_a",
+            average_accuracy: 0.48,
+            accuracy_delta_vs_baseline: 0.02,
+            evaluation: {
+              task_a: { accuracy: 0.5, correct_count: 50, total_count: 100 },
+              task_b: { accuracy: 0.46, correct_count: 46, total_count: 100 }
+            }
+          }
+        ]
+      },
+      metric_table: [
+        { key: "accuracy_delta_vs_baseline", value: 0.02 },
+        { key: "average_accuracy", value: 0.48 }
+      ],
+      primary_findings: ["The candidate family improves modestly over the locked baseline."],
+      figure_specs: [
+        {
+          id: "condition_delta",
+          title: "Condition-level accuracy deltas",
+          path: "figures/condition_delta.svg",
+          metric_keys: ["accuracy_delta_vs_baseline"],
+          summary: "Condition deltas for a seeded comparison."
+        }
+      ],
+      statistical_summary: {
+        total_trials: 6,
+        executed_trials: 6,
+        confidence_intervals: [
+          { metric_key: "accuracy_delta_vs_baseline", label: "Accuracy delta", lower: -0.01, upper: 0.05, level: 0.95 }
+        ],
+        notes: []
+      }
+    } as any;
+
+    const context = experimentArtifactLoader({ bundle });
+    expect(context.method.sample_size_notes.join(" ")).toContain("sample size=200");
+    expect(methodCompletenessValidator(context).missing).not.toContain("#samples");
+    expect(methodCompletenessValidator(context).missing).not.toContain("benchmark task names");
+    expect(context.results.condition_summaries[0]?.benchmark_task_a_accuracy).toBe(0.5);
+    expect(context.results.condition_summaries[0]?.benchmark_task_b_accuracy).toBe(0.42);
+
+    const scientific = applyScientificWritingPolicy({ draft: makeTerseDraft(), bundle, profile: PAPER_PROFILE });
+    const manuscript = materializeScientificManuscript({
+      candidate: {
+        title: "Compact Condition Pilot",
+        abstract: "The candidate family improved average accuracy from 0.46 to 0.48.",
+        keywords: ["condition comparison"],
+        sections: [
+          { heading: "Introduction", paragraphs: ["We test a compact condition comparison."] },
+          { heading: "Method", paragraphs: ["The evaluation uses Benchmark Task A and Benchmark Task B."] },
+          { heading: "Results", paragraphs: ["Average accuracy rose from 0.46 to 0.48, a baseline-relative gain of 0.02."] },
+          { heading: "Conclusion", paragraphs: ["The gain is a follow-up candidate rather than a broad rule."] }
+        ],
+        tables: [
+          {
+            caption: "Accuracy signal and evaluation coverage.",
+            rows: [
+              { label: "Screening threshold", value: 0.01 },
+              { label: "Best-condition accuracy", value: 0.48 },
+              { label: "Best-condition correct predictions", value: 96 },
+              { label: "Best-condition total predictions", value: 200 }
+            ]
+          }
+        ],
+        figures: [
+          {
+            caption: "Mixed outcome and coverage summary.",
+            bars: [
+              { label: "Accuracy delta vs baseline", value: 0.02 },
+              { label: "Best condition accuracy", value: 0.48 },
+              { label: "Best condition sample size", value: 200 }
+            ]
+          }
+        ]
+      },
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const messages = manuscript.consistency_lint.issues.map((issue) => issue.message).join("\n");
+    expect(messages).not.toMatch(/correct predictions|total predictions|sample size/i);
+    expect(manuscript.consistency_lint.issues.some((issue) => issue.kind === "numeric_inconsistency" && issue.severity === "error")).toBe(false);
+  });
+
+  it("keeps the locked comparison marker separate from the registered baseline in artifact context", () => {
+    const bundle = makeRichBundle();
+    bundle.latestResults = {} as any;
+    bundle.resultAnalysis = {
+      metrics: {
+        baseline_condition_marker: "comparison_row_marker",
+        condition_results: [
+          {
+            condition_marker: "comparison_row_marker",
+            condition_parameter_x: 2,
+            condition_parameter_y: 0,
+            average_accuracy: 0.45,
+            accuracy_delta_vs_baseline: 0
+          },
+          {
+            condition_marker: "registered_row_marker",
+            condition_parameter_x: 4,
+            condition_parameter_y: 0,
+            average_accuracy: 0.45,
+            accuracy_delta_vs_baseline: 0
+          },
+          {
+            condition_marker: "candidate_row_marker",
+            condition_parameter_x: 6,
+            condition_parameter_y: 0.1,
+            average_accuracy: 0.47,
+            accuracy_delta_vs_baseline: 0.02
+          }
+        ],
+        plan_context: {
+          selected_design: {
+            baselines: ["Primary trained baseline: factor x=4/factor y=0.0 with matched training budget."]
+          }
+        }
+      }
+    } as any;
+
+    const context = experimentArtifactLoader({ bundle });
+    const comparison = context.results.condition_summaries.find((row) => row.condition === "comparison_row_marker");
+    const registered = context.results.condition_summaries.find((row) => row.condition === "registered_row_marker");
+
+    expect(comparison).toMatchObject({ is_baseline: false, is_comparator: true });
+    expect(registered).toMatchObject({ is_baseline: true, is_registered_baseline: true });
+  });
+
   it("sanitizes reader-facing manuscript prose and promotes executed method details from run artifacts", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "adapter condition-parameter repeated-seed benchmark";
@@ -1261,14 +1628,14 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "Repeated-Seed adapter Dropout Benchmark",
+      title: "Repeated-Seed adapter ParameterY Benchmark",
       abstract: "The study-level average-accuracy improvement was 0.04479166666666667, and the strongest exposed comparison was candidate condition b, with mean delta 0.0667.",
       keywords: ["adapter", "instruction tuning"],
       sections: [
         {
           heading: "Introduction",
           paragraphs: [
-            "quantized adapter [doi:10.48550/arxiv.2305.14314] motivates memory-aware adaptation, and adapter variants [15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a] motivate careful comparison.",
+            "quantized adapter [doi:10.48550/arxiv.2305.14314] motivates memory-aware adaptation, and condition variants [15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a] motivate careful comparison.",
             "The emphasis on benchmark accuracy rather than judge-based preference scoring is also compatible with prior warnings that chatbot evaluation can be noisy and order sensitive.",
             "The first P6 run uses a cached, locally runnable small LLM target so the validation focuses on real training, result-table integrity, review gating, and paper-readiness audit rather than on new model access. Objective metric met: accuracy_delta_vs_baseline=0.04479166666666667 >= 0.01."
           ]
@@ -1287,7 +1654,7 @@ describe("scientificWriting", () => {
             "The protocol compares high-rank adapter conditions under fixed data order.",
             "Training used an training dataset subset capped at 10,000 examples.",
             "The implementation notes indicate that optimizer settings and adapter target modules were held constant, although the compact study summary does not surface their exact numeric values in the manuscript-facing record.",
-            "To isolate rank and dropout as much as the budget allowed, the protocol held the optimizer, learning-rate schedule, adapter target modules, effective batch size, token budget, and capped training set constant across cells."
+            "To isolate rank and parameter_y as much as the budget allowed, the protocol held the optimizer, learning-rate schedule, adapter target modules, effective batch size, token budget, and capped training set constant across cells."
           ]
         },
         {
@@ -1310,7 +1677,7 @@ describe("scientificWriting", () => {
           heading: "Conclusion",
           paragraphs: [
             "Within the released summary of this fixed-budget local benchmark, the study supports a cautious preflight conclusion.",
-            "The main outcome is therefore twofold: a limited but encouraging empirical signal for high-rank moderate-dropout tuning in this setting, and a practical benchmark template for later larger-scale experiments."
+            "The main outcome is therefore twofold: a limited but encouraging empirical signal for high-rank moderate-parameter_y tuning in this setting, and a practical benchmark template for later larger-scale experiments."
           ]
         }
       ]
@@ -1379,7 +1746,7 @@ describe("scientificWriting", () => {
         '    - "Benchmark Task B"',
         "  implementation_notes:",
         '    - "Preferred base model: the selected backbone."',
-        '    - "adapter conditions: rank in {4, 8, 16, 32} x dropout in {0.0, 0.05}."'
+        '    - "adapter conditions: rank in {4, 8, 16, 32} x parameter_y in {0.0, 0.05}."'
       ].join("\n")
     };
     bundle.latestResults = {};
@@ -1412,7 +1779,7 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "Benchmarking Rank-Dropout Tradeoffs in Parameter-Efficient Instruction Tuning Under a Fixed Local Budget",
+      title: "Benchmarking Rank-ParameterY Tradeoffs in Parameter-Efficient Instruction Tuning Under a Fixed Local Budget",
       abstract: "This paper reports a fixed-budget pilot benchmark of how condition parameters interacted during a realized local instruction-tuning run.",
       keywords: ["adapter", "instruction tuning"],
       sections: [
@@ -1461,7 +1828,7 @@ describe("scientificWriting", () => {
     expect(allText).not.toMatch(/does not disclose the instantiated checkpoint/i);
     expect(allText).not.toMatch(/does not identify the instantiated checkpoint/i);
     expect(allText).not.toMatch(/does not reveal the resolved base-model identifier/i);
-    expect(allText).not.toMatch(/Benchmarking Rank-Dropout Tradeoffs/i);
+    expect(allText).not.toMatch(/Benchmarking Rank-ParameterY Tradeoffs/i);
   });
 
   it("prefers the deterministic condition-level table and preserves condition figures for paper render audit", () => {
@@ -1474,8 +1841,8 @@ describe("scientificWriting", () => {
       condition_summaries: [
         {
           condition_marker: "baseline_condition",
-          adapter_rank: 8,
-          adapter_dropout: 0,
+          condition_parameter_x: 8,
+          condition_parameter_y: 0,
           completed_seed_count: 5,
           average_accuracy_mean: 0.4417,
           accuracy_delta_vs_baseline_mean: 0,
@@ -1483,8 +1850,8 @@ describe("scientificWriting", () => {
         },
         {
           condition_marker: "candidate_condition_d",
-          adapter_rank: 16,
-          adapter_dropout: 0,
+          condition_parameter_x: 16,
+          condition_parameter_y: 0,
           completed_seed_count: 5,
           average_accuracy_mean: 0.4667,
           average_accuracy_ci95: 0.0586,
@@ -1493,8 +1860,8 @@ describe("scientificWriting", () => {
         },
         {
           condition_marker: "candidate_condition_d5",
-          adapter_rank: 16,
-          adapter_dropout: 0.05,
+          condition_parameter_x: 16,
+          condition_parameter_y: 0.05,
           completed_seed_count: 5,
           average_accuracy_mean: 0.4583,
           average_accuracy_ci95: 0.0542,
@@ -1503,8 +1870,8 @@ describe("scientificWriting", () => {
         },
         {
           condition_marker: "candidate_condition_f",
-          adapter_rank: 32,
-          adapter_dropout: 0,
+          condition_parameter_x: 32,
+          condition_parameter_y: 0,
           completed_seed_count: 5,
           average_accuracy_mean: 0.5125,
           accuracy_delta_vs_baseline_mean: 0.0708,
@@ -1512,8 +1879,8 @@ describe("scientificWriting", () => {
         },
         {
           condition_marker: "candidate_condition_f5",
-          adapter_rank: 32,
-          adapter_dropout: 0.05,
+          condition_parameter_x: 32,
+          condition_parameter_y: 0.05,
           completed_seed_count: 5,
           average_accuracy_mean: 0.5083,
           accuracy_delta_vs_baseline_mean: 0.0667,
@@ -1528,7 +1895,7 @@ describe("scientificWriting", () => {
       profile: PAPER_PROFILE
     });
     const candidate: PaperManuscript = {
-      title: "Repeated-Seed adapter Dropout Benchmark",
+      title: "Repeated-Seed adapter ParameterY Benchmark",
       abstract: "A conservative repeated-seed benchmark.",
       keywords: ["adapter", "instruction tuning"],
       sections: scientific.draft.sections.map((section) => ({
@@ -1560,7 +1927,7 @@ describe("scientificWriting", () => {
             ...section,
             paragraphs: [
               "Mean average accuracy rises from 0.4417 for the locked baseline at baseline condition to 0.4667 for One reported condition-level 95% interval, 0.4583 for One reported condition-level 95% interval5, 0.5125 for candidate condition e, and 0.5083 for candidate condition b.",
-              "The absolute mean-accuracy intervals were similarly close for One reported condition-level 95% interval: [0.4081, 0.5253] without dropout and [0.4125, 0.5209] with condition parameter value.",
+              "The absolute mean-accuracy intervals were similarly close for One reported condition-level 95% interval: [0.4081, 0.5253] without parameter_y and [0.4125, 0.5209] with condition parameter value.",
               "The protocol tracked runtime, training loss, and peak memory, and the full 25-run workload completed under the workstation budget with planned parallelism.",
               ...section.paragraphs
             ]
@@ -1569,7 +1936,7 @@ describe("scientificWriting", () => {
           ? {
               ...section,
               paragraphs: [
-                "Adapter-variant studies instead modify the adapter mechanism itself, so their gains speak more directly to alternative method-family parameterizations than to whether standard adapter at candidate conditions benefits from modest dropout in a local preflight.",
+                "Adapter-variant studies instead modify the adapter mechanism itself, so their gains speak more directly to alternative method-family parameterizations than to whether standard adapter at candidate conditions benefits from modest parameter_y in a local preflight.",
                 "quantized adapter shows memory-efficient adaptation (quantized adapter, arXiv:2305.14314), while MAPLE compares broader method-family settings (MAPLE, arXiv:2403.14608).",
                 ...section.paragraphs
               ]
@@ -1669,7 +2036,7 @@ describe("scientificWriting", () => {
         {
           marker: "baseline_condition",
           rank: 8,
-          dropout: 0,
+          parameter_y: 0,
           status: "ok",
           train_loss: 1.46211,
           benchmark_task_a_accuracy: 0.5,
@@ -1682,7 +2049,7 @@ describe("scientificWriting", () => {
         {
           marker: "candidate_condition_a",
           rank: 4,
-          dropout: 0,
+          parameter_y: 0,
           status: "ok",
           benchmark_task_a_accuracy: 0.5,
           benchmark_task_b_accuracy: 0.166667,
@@ -1692,7 +2059,7 @@ describe("scientificWriting", () => {
         {
           marker: "candidate_condition_a5",
           rank: 4,
-          dropout: 0.05,
+          parameter_y: 0.05,
           status: "ok",
           benchmark_task_a_accuracy: 0.5,
           benchmark_task_b_accuracy: 0.166667,
@@ -1702,7 +2069,7 @@ describe("scientificWriting", () => {
         {
           marker: "baseline_condition5",
           rank: 8,
-          dropout: 0.05,
+          parameter_y: 0.05,
           status: "ok",
           benchmark_task_a_accuracy: 0.5,
           benchmark_task_b_accuracy: 0.166667,
@@ -1712,7 +2079,7 @@ describe("scientificWriting", () => {
         {
           marker: "candidate_condition_d",
           rank: 16,
-          dropout: 0,
+          parameter_y: 0,
           status: "ok",
           benchmark_task_a_accuracy: 0.5,
           benchmark_task_b_accuracy: 0.166667,
@@ -1722,7 +2089,7 @@ describe("scientificWriting", () => {
         {
           marker: "candidate_condition_d5",
           rank: 16,
-          dropout: 0.05,
+          parameter_y: 0.05,
           status: "ok",
           benchmark_task_a_accuracy: 0.5,
           benchmark_task_b_accuracy: 0.166667,
@@ -1732,7 +2099,7 @@ describe("scientificWriting", () => {
         {
           marker: "candidate_condition_f",
           rank: 32,
-          dropout: 0,
+          parameter_y: 0,
           status: "ok",
           benchmark_task_a_accuracy: 0.5,
           benchmark_task_b_accuracy: 0.166667,
@@ -1742,7 +2109,7 @@ describe("scientificWriting", () => {
         {
           marker: "candidate_condition_f5",
           rank: 32,
-          dropout: 0.05,
+          parameter_y: 0.05,
           status: "ok",
           benchmark_task_a_accuracy: 0.5,
           benchmark_task_b_accuracy: 0.333333,
@@ -1784,15 +2151,15 @@ describe("scientificWriting", () => {
     expect(result.manuscript.tables?.[0]?.caption).toMatch(/Condition-level mean accuracy/i);
     expect(result.manuscript.tables?.[0]?.rows).toHaveLength(8);
     const rowLabels = result.manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ") || "";
-    expect(rowLabels).toMatch(/baseline condition/i);
+    expect(rowLabels).toMatch(/locked comparison row/i);
     expect(rowLabels).toMatch(/candidate condition [a-z]/i);
     expect(rowLabels).not.toMatch(/Benchmark Task A 0\.5/i);
     expect(rowLabels).not.toMatch(/Benchmark Task B 0\.3333/i);
-    expect((rowLabels.match(/baseline/g) || [])).toHaveLength(1);
+    expect((rowLabels.match(/comparison row/g) || [])).toHaveLength(1);
     expect(result.manuscript.tables?.[0]?.rows.map((row) => row.value)).toContain(0.416666);
     expect(result.manuscript.figures?.[0]?.caption).toMatch(/Condition-level average accuracy/i);
     const figureLabels = result.manuscript.figures?.[0]?.bars.map((row) => row.label).join(" ") || "";
-    expect(figureLabels).toMatch(/baseline condition/i);
+    expect(figureLabels).toMatch(/locked comparison row/i);
     expect(figureLabels).toMatch(/candidate condition [a-z]/i);
     expect(result.manuscript.figures?.[0]?.bars).toHaveLength(8);
     expect(result.manuscript.figures?.[0]?.bars.map((row) => row.value)).toContain(0.416666);
@@ -1815,7 +2182,7 @@ describe("scientificWriting", () => {
         {
           marker: "baseline_condition",
           rank: 8,
-          dropout: 0,
+          parameter_y: 0,
           status: "ok",
           average_accuracy: 0.333334,
           accuracy_delta_vs_baseline: 0
@@ -1823,7 +2190,7 @@ describe("scientificWriting", () => {
         {
           marker: "candidate_condition_f5",
           rank: 32,
-          dropout: 0.05,
+          parameter_y: 0.05,
           status: "ok",
           average_accuracy: 0.416666,
           accuracy_delta_vs_baseline: 0.083332
@@ -1887,7 +2254,7 @@ describe("scientificWriting", () => {
         {
           marker: "baseline_condition",
           rank: 8,
-          dropout: 0,
+          parameter_y: 0,
           status: "ok",
           average_accuracy: 0.333334,
           train_loss: 1.462,
@@ -1898,7 +2265,7 @@ describe("scientificWriting", () => {
         {
           marker: "candidate_condition_f5",
           rank: 32,
-          dropout: 0.05,
+          parameter_y: 0.05,
           status: "ok",
           average_accuracy: 0.416666,
           train_loss: 1.524,
@@ -2030,7 +2397,7 @@ describe("scientificWriting", () => {
           {
             marker: "baseline_condition",
             rank: 8,
-            dropout: 0,
+            parameter_y: 0,
             benchmark_task_a_accuracy: 0.5,
             benchmark_task_b_accuracy: 0.166667,
             average_accuracy: 0.333334,
@@ -2039,7 +2406,7 @@ describe("scientificWriting", () => {
           {
             marker: "candidate_condition_f5",
             rank: 32,
-            dropout: 0.05,
+            parameter_y: 0.05,
             benchmark_task_a_accuracy: 0.5,
             benchmark_task_b_accuracy: 0.333333,
             average_accuracy: 0.416666,
@@ -2101,7 +2468,7 @@ describe("scientificWriting", () => {
     const rowLabels = result.manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ") || "";
     expect(rowLabels).not.toMatch(/Benchmark Task A 0\.5/i);
     expect(rowLabels).not.toMatch(/Benchmark Task B 0\.3333/i);
-    expect((rowLabels.match(/baseline/g) || [])).toHaveLength(1);
+    expect((rowLabels.match(/comparison row/g) || [])).toHaveLength(1);
     const discussion = result.manuscript.sections.find((section) => section.heading === "Discussion");
     const discussionText = discussion?.paragraphs.join(" ") || "";
     expect(discussionText).not.toMatch(/The current evidence is most actionable as a cautious benchmark note/i);
@@ -2264,7 +2631,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "adapter Design Audit",
       abstract:
-        "The protocol crossed ranks 4, 8, 16, and 32 with dropout values 0.0 and 0.05; the full 4 x 2 sweep completed in 45.7 s.",
+        "The protocol crossed ranks 4, 8, 16, and 32 with parameter_y values 0.0 and 0.05; the full 4 x 2 sweep completed in 45.7 s.",
       keywords: ["adapter"],
       sections: [
         {
@@ -2311,7 +2678,7 @@ describe("scientificWriting", () => {
             (fact) =>
               fact.metric_key === "runtime_seconds"
               && [4, 8, 16, 32, 42, 17].includes(fact.value)
-              && /rank|dropout|seed/i.test(fact.raw_text)
+              && /rank|parameter_y|seed/i.test(fact.raw_text)
           )
       )
     ).toHaveLength(0);
@@ -2323,7 +2690,7 @@ describe("scientificWriting", () => {
             (fact) =>
               fact.metric_key === "accuracy"
               && [0, 0.05, 4, 8, 16, 32].includes(fact.value)
-              && /rank|dropout|grid|sweep/i.test(fact.raw_text)
+              && /rank|parameter_y|grid|sweep/i.test(fact.raw_text)
           )
       )
     ).toHaveLength(0);
@@ -2937,16 +3304,16 @@ describe("scientificWriting", () => {
       condition_summaries: [
         {
           condition_marker: "baseline_condition",
-          adapter_rank: 8,
-          adapter_dropout: 0,
+          condition_parameter_x: 8,
+          condition_parameter_y: 0,
           completed_seed_count: 1,
           average_accuracy_mean: 0.333334,
           accuracy_delta_vs_baseline_mean: 0
         },
         {
           condition_marker: "candidate_condition_f5",
-          adapter_rank: 32,
-          adapter_dropout: 0.05,
+          condition_parameter_x: 32,
+          condition_parameter_y: 0.05,
           completed_seed_count: 1,
           average_accuracy_mean: 0.416666,
           accuracy_delta_vs_baseline_mean: 0.083332
@@ -2972,7 +3339,7 @@ describe("scientificWriting", () => {
       keywords: ["adapter"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
-        { heading: "Method", paragraphs: ["The locked baseline condition served as the comparison anchor."] },
+        { heading: "Method", paragraphs: ["The locked baseline condition served as the comparison anchor. The compact setup table has 1 rows."] },
         {
           heading: "Results",
           paragraphs: [
@@ -3015,6 +3382,78 @@ describe("scientificWriting", () => {
     ).toHaveLength(0);
   });
 
+  it("does not treat reference value in a paired reference-comparator accuracy sentence as a current accuracy contradiction", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "condition-parameter preflight";
+    bundle.topic = "condition parameters interaction for a compact benchmark";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = {
+      condition_summaries: [
+        {
+          condition_marker: "reference_condition",
+          label: "reference condition",
+          is_baseline: true,
+          average_accuracy_mean: 0.458333
+        },
+        {
+          condition_marker: "comparator_condition",
+          label: "comparator condition",
+          average_accuracy_mean: 0.479167,
+          accuracy_delta_vs_baseline_mean: 0.020833
+        }
+      ]
+    } as any;
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "average_accuracy", value: 0.479167 },
+        { key: "accuracy_delta_vs_baseline", value: 0.020833 }
+      ]
+    } as any;
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Reference Comparator Preflight",
+      abstract: "A compact comparison reports a bounded result.",
+      keywords: [],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
+        { heading: "Method", paragraphs: ["The reference condition served as the comparison anchor."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The available analysis reports a positive exported primary contrast. The reported leading-row average accuracy is 0.458333 and the reported leading-row average accuracy is 0.479167."
+          ]
+        },
+        { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
+        { heading: "Conclusion", paragraphs: ["The result remains a local preflight signal."] }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    expect(
+      result.consistency_lint.issues.filter(
+        (issue) => issue.kind === "numeric_inconsistency" && issue.severity === "error"
+      )
+    ).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.filter((issue) => /Results cites 0\.4583/iu.test(issue.message))
+    ).toHaveLength(0);
+    expect(JSON.stringify(result.manuscript)).toContain("reported reference average accuracy is 0.458333");
+    expect(JSON.stringify(result.manuscript)).toContain("reported comparator average accuracy is 0.479167");
+  });
+
   it("keeps anaphoric best-condition accuracy separate from a following baseline comparison", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "adapter condition-parameter preflight";
@@ -3025,16 +3464,16 @@ describe("scientificWriting", () => {
       condition_summaries: [
         {
           condition_marker: "baseline_condition",
-          adapter_rank: 8,
-          adapter_dropout: 0,
+          condition_parameter_x: 8,
+          condition_parameter_y: 0,
           completed_seed_count: 1,
           average_accuracy_mean: 0.333334,
           accuracy_delta_vs_baseline_mean: 0
         },
         {
           condition_marker: "candidate_condition_f5",
-          adapter_rank: 32,
-          adapter_dropout: 0.05,
+          condition_parameter_x: 32,
+          condition_parameter_y: 0.05,
           completed_seed_count: 1,
           average_accuracy_mean: 0.416666,
           accuracy_delta_vs_baseline_mean: 0.083332
@@ -3098,16 +3537,16 @@ describe("scientificWriting", () => {
       condition_summaries: [
         {
           condition_marker: "baseline_condition",
-          adapter_rank: 8,
-          adapter_dropout: 0,
+          condition_parameter_x: 8,
+          condition_parameter_y: 0,
           completed_seed_count: 1,
           average_accuracy_mean: 0.333334,
           accuracy_delta_vs_baseline_mean: 0
         },
         {
           condition_marker: "candidate_condition_f5",
-          adapter_rank: 32,
-          adapter_dropout: 0.05,
+          condition_parameter_x: 32,
+          condition_parameter_y: 0.05,
           completed_seed_count: 1,
           average_accuracy_mean: 0.416666,
           accuracy_delta_vs_baseline_mean: 0.083332
@@ -3160,6 +3599,476 @@ describe("scientificWriting", () => {
     expect(blockingErrors).toHaveLength(0);
   });
 
+  it("does not treat baseline, comparator, and delta accuracy values as one contradiction", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "condition-parameter preflight";
+    bundle.topic = "condition-parameter interaction under a fixed local budget";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = {
+      baseline_marker: "baseline_condition",
+      condition_summaries: [
+        {
+          condition_marker: "baseline_condition",
+          label: "baseline condition",
+          is_baseline: true,
+          completed_seed_count: 3,
+          average_accuracy_mean: 0.458333,
+          accuracy_delta_vs_baseline_mean: 0
+        },
+        {
+          condition_marker: "candidate_condition_a",
+          label: "candidate condition a",
+          is_baseline: false,
+          completed_seed_count: 3,
+          average_accuracy_mean: 0.479167,
+          accuracy_delta_vs_baseline_mean: 0.020833
+        }
+      ]
+    } as any;
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "average_accuracy", value: 0.479167 },
+        { key: "accuracy_delta_vs_baseline", value: 0.020833 }
+      ]
+    } as any;
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Condition-Parameter Preflight",
+      abstract:
+        "The baseline-relative accuracy gain is 0.020833, and average accuracy increases from 0.458333 to 0.479167 for candidate condition a versus baseline condition. The reported metric summary gives a baseline-relative average-accuracy gain of 0.020833, increasing from 0.458333 to 0.479167.",
+      keywords: ["condition sweep"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
+        { heading: "Method", paragraphs: ["The locked baseline condition served as the comparison anchor."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The results table reports baseline average accuracy 0.458333 and candidate condition a average accuracy 0.479167, with baseline-relative accuracy gain 0.020833.",
+            "The compact comparison is labelled as condition family a versus condition family b, with average accuracy 0.479167 versus 0.458333 (delta 0.020833).",
+            "For the displayed contrast, average accuracy is reported as 0.479167 versus 0.458333, with baseline-relative accuracy gain reported as 0.020833 versus 0.",
+            "For that contrast, the table reports baseline-relative accuracy gain of 0.020833 versus 0, average accuracy of 0.479167 versus 0.458333, accuracy of 0.479167 versus 0.458333, and mean zero shot accuracy of 0.479167 versus 0.458333.",
+            "The available summary reports that the objective metric crossed the numerical accuracy threshold: mean accuracy increased by 0.020833, from 0.458333 to 0.479167.",
+            "In particular, one summarized comparison reports task accuracy as 0.479167 for both comparator and leading condition, implying no task-specific gain in that view.",
+            "For that comparison, the reported mean accuracy values are 0.479167 and 0.458333, respectively, with a +0.020833 difference.",
+            "The exposed denominators are 144 examples per task, for 288 evaluated items in the combined summary, with 138 correct predictions reported across the combined candidate count.",
+            "A separate named condition contrast identifies condition family c with parameter_y 0.0 as a promising zero-setting candidate relative to the locked condition family a parameter_y 0.0 delta-reference.",
+            "The aggregate task accuracy for candidate condition a is 0.479167."
+          ]
+        },
+        { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate. It is not sufficient to justify claims about generalization to a 7B-class model or larger-memory regimes."] },
+        { heading: "Conclusion", paragraphs: ["The result remains a local preflight signal."] }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const blockingErrors = result.consistency_lint.issues.filter(
+      (issue) => issue.kind === "numeric_inconsistency" && issue.severity === "error"
+    );
+    expect(blockingErrors).toHaveLength(0);
+    expect(JSON.stringify(result.consistency_lint.issues)).not.toMatch(/0\.020833.*0\.479167|0\.479167.*0\.020833/);
+    expect(JSON.stringify(result.consistency_lint.issues)).not.toMatch(/accuracy_delta[^\n]+0\.479167|accuracy_delta[^\n]+0\.458333/);
+    expect(JSON.stringify(result.consistency_lint.issues)).not.toMatch(/peak_memory_mb[^\n]+(?:288|138)|(?:288|138)[^\n]+peak_memory_mb/);
+    expect(JSON.stringify(result.consistency_lint.issues)).not.toMatch(/cites 0, but the comparable structured results support 0\.0208/);
+    expect(JSON.stringify(result.consistency_lint.issues)).not.toMatch(/1 rows|7B-class|larger-memory/);
+  });
+
+  it("does not treat a paired accuracy comparison plus a representative summary score as contradiction", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "condition-parameter preflight";
+    bundle.topic = "condition-parameter interaction under a fixed local budget";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = {
+      baseline_marker: "baseline_condition",
+      condition_summaries: [
+        {
+          condition_marker: "baseline_condition",
+          label: "baseline condition",
+          is_baseline: true,
+          completed_seed_count: 3,
+          average_accuracy_mean: 0.458333,
+          accuracy_delta_vs_baseline_mean: 0
+        },
+        {
+          condition_marker: "candidate_condition_a",
+          label: "candidate condition a",
+          is_baseline: false,
+          completed_seed_count: 3,
+          average_accuracy_mean: 0.479167,
+          accuracy_delta_vs_baseline_mean: 0.020833
+        }
+      ]
+    } as any;
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "average_accuracy", value: 0.479167 },
+        { key: "accuracy_delta_vs_baseline", value: 0.020833 }
+      ]
+    } as any;
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Condition-Parameter Preflight",
+      abstract:
+        "The compact preflight reports a baseline-relative accuracy gain of 0.020833 under a narrow local budget.",
+      keywords: ["condition sweep"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition comparison."] },
+        { heading: "Method", paragraphs: ["The baseline condition served as the comparison field for a candidate condition."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The corresponding average-accuracy values were 0.479167 for the leading reported comparator and 0.458333 for the baseline field, yielding an absolute gain of approximately 2.08 percentage points.",
+            "In that row, average accuracy is 0.4792 for condition b and 0.4583 for condition a, a difference of about +2.08 percentage points.",
+            "In that contrast, average accuracy is reported as 0.4792 versus 0.4583, with a difference of approximately +0.0208.",
+            "The available summaries indicate broad confidence-interval information and do not provide a clean interval specifically for the +0.020833 baseline-relative delta."
+          ]
+        },
+        { heading: "Discussion", paragraphs: ["The comparison should remain a follow-up candidate rather than a broad tuning rule."] },
+        {
+          heading: "Conclusion",
+          paragraphs: [
+            "The aggregate objective calculation reported a baseline-relative average-accuracy gain of 0.020833, exceeding the +0.01 screening threshold.",
+            "The aggregate objective calculation reports a +0.020833 accuracy delta over the baseline field, exceeding the +0.01 threshold, and the best-condition summary reports 0.479167 average accuracy across benchmark_task_a and benchmark_task_b."
+          ]
+        }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const aggregateAccuracyErrors = result.consistency_lint.issues.filter(
+      (issue) =>
+        issue.kind === "numeric_inconsistency"
+        && issue.severity === "error"
+        && /aggregate accuracy values/i.test(issue.message)
+    );
+    expect(aggregateAccuracyErrors).toHaveLength(0);
+    expect(JSON.stringify(result.consistency_lint.issues)).not.toMatch(/cites 0\.4583[^\n]+support 0\.4792/i);
+  });
+
+  it("does not compare related-work model-scale numbers against current-run memory", () => {
+    const bundle = makeRichBundle();
+    bundle.latestResults = {
+      condition_summaries: [
+        {
+          condition_marker: "baseline_condition",
+          label: "baseline condition",
+          is_baseline: true,
+          average_accuracy_mean: 0.458333,
+          accuracy_delta_vs_baseline_mean: 0,
+          peak_memory_mb_mean: 4278.951936
+        },
+        {
+          condition_marker: "candidate_condition_a",
+          label: "candidate condition a",
+          average_accuracy_mean: 0.479167,
+          accuracy_delta_vs_baseline_mean: 0.020833,
+          peak_memory_mb_mean: 4278.951936
+        }
+      ]
+    } as any;
+    const scientific = applyScientificWritingPolicy({ draft: makeTerseDraft(), bundle, profile: PAPER_PROFILE });
+    const candidate: PaperManuscript = {
+      title: "Condition-Parameter Preflight",
+      abstract: "The candidate improves average accuracy from 0.458333 to 0.479167.",
+      keywords: [],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition comparison."] },
+        {
+          heading: "Related Work",
+          paragraphs: [
+            "Prior work notes that fine-tuning an external 175B model can reduce trainable parameters and GPU memory, but that model-scale number is not a current-run peak-memory measurement."
+          ]
+        },
+        { heading: "Method", paragraphs: ["The run uses a locked baseline and one candidate family."] },
+        {
+          heading: "Results",
+          paragraphs: ["Average accuracy is reported as 0.479167 versus 0.458333, with a gain of 0.020833."]
+        },
+        { heading: "Discussion", paragraphs: ["The result is a local screening signal."] },
+        { heading: "Limitations", paragraphs: ["Memory efficiency is not claimed from related-work model-scale numbers."] },
+        { heading: "Conclusion", paragraphs: ["The candidate remains a follow-up option."] }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    expect(result.consistency_lint.issues.map((issue) => issue.message).join("\n")).not.toMatch(
+      /175.*peak memory|conflicting aggregate peak memory mb/i
+    );
+  });
+
+  it("does not treat repeated from-to average accuracy statements as a contradiction", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "condition-parameter preflight";
+    bundle.topic = "condition-parameter interaction under a fixed local budget";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = {
+      baseline_marker: "baseline_condition",
+      condition_summaries: [
+        {
+          condition_marker: "baseline_condition",
+          label: "baseline condition",
+          is_baseline: true,
+          completed_seed_count: 3,
+          average_accuracy_mean: 0.458333,
+          accuracy_delta_vs_baseline_mean: 0
+        },
+        {
+          condition_marker: "candidate_condition_a",
+          label: "candidate condition a",
+          is_baseline: false,
+          completed_seed_count: 3,
+          average_accuracy_mean: 0.479167,
+          accuracy_delta_vs_baseline_mean: 0.020833
+        }
+      ]
+    } as any;
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "average_accuracy", value: 0.479167 },
+        { key: "accuracy_delta_vs_baseline", value: 0.020833 }
+      ]
+    } as any;
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Condition-Parameter Preflight",
+      abstract: "A conservative condition-parameter preflight.",
+      keywords: ["condition sweep"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
+        { heading: "Method", paragraphs: ["The locked baseline condition served as the comparison anchor."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "On the primary accuracy metric, the summarized comparison reports an increase in average Benchmark Task A/Benchmark Task B accuracy from 0.458333 to 0.479167."
+          ]
+        },
+        { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
+        {
+          heading: "Conclusion",
+          paragraphs: [
+            "The summarized results report an average Benchmark Task A/Benchmark Task B accuracy increase from 0.458333 to 0.479167, corresponding to a +0.020833 screening point estimate."
+          ]
+        }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    expect(
+      result.consistency_lint.issues.some(
+        (issue) => issue.kind === "numeric_inconsistency" && issue.severity === "error"
+      )
+    ).toBe(false);
+  });
+
+  it("does not compare recorded comparison accuracy against the leading condition accuracy", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "condition-parameter preflight";
+    bundle.topic = "condition-parameter interaction under a fixed local budget";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = {
+      baseline_marker: "baseline_condition",
+      condition_summaries: [
+        {
+          condition_marker: "baseline_condition",
+          label: "baseline condition",
+          is_baseline: true,
+          completed_seed_count: 3,
+          average_accuracy_mean: 0.458333,
+          accuracy_delta_vs_baseline_mean: 0
+        },
+        {
+          condition_marker: "candidate_condition_a",
+          label: "candidate condition a",
+          is_baseline: false,
+          completed_seed_count: 3,
+          average_accuracy_mean: 0.479167,
+          accuracy_delta_vs_baseline_mean: 0.020833
+        }
+      ]
+    } as any;
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "average_accuracy", value: 0.479167 },
+        { key: "accuracy_delta_vs_baseline", value: 0.020833 }
+      ]
+    } as any;
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Condition-Parameter Preflight",
+      abstract:
+        "The available record reports a leading displayed condition with average accuracy 0.479167 compared with a recorded comparison value of 0.458333, a difference of 0.020833. The same summary reports 0.479167 average accuracy for the leading recorded result and 0.458333 for the recorded comparison, with a 0.020833 gain.",
+      keywords: ["condition sweep"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
+        { heading: "Method", paragraphs: ["The archived comparison row served as the comparison anchor."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "Results cite 0.479167 for the leading recorded result and 0.458333 for the recorded comparison row.",
+            "The available record lists a recorded comparison average accuracy of 0.458333 and a leading displayed condition average accuracy of 0.479167.",
+            "Both rows display average accuracy 0.458333 in the available table, so the point-estimate contrast is numerically aligned in this display.",
+            "The baseline-relative accuracy gain remains 0.020833."
+          ]
+        },
+        { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
+        { heading: "Conclusion", paragraphs: ["The result remains a local preflight signal."] }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const blockingErrors = result.consistency_lint.issues.filter(
+      (issue) => issue.kind === "numeric_inconsistency" && issue.severity === "error"
+    );
+    expect(blockingErrors).toHaveLength(0);
+    expect(JSON.stringify(blockingErrors)).not.toMatch(/0\.458333[^\n]+0\.479167|0\.479167[^\n]+0\.458333/);
+  });
+
+  it("sanitizes over-specific singular leading-condition figure captions", () => {
+    const bundle = makeRichBundle();
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Condition-Parameter Preflight",
+      abstract: "The study reports a bounded condition-parameter comparison.",
+      keywords: ["condition sweep"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
+        { heading: "Method", paragraphs: ["The locked comparison row served as the comparison anchor."] },
+        { heading: "Results", paragraphs: ["The reported comparison remains a bounded screening result."] },
+        { heading: "Discussion", paragraphs: ["The comparison supports tied follow-up candidates."] },
+        { heading: "Conclusion", paragraphs: ["The result identifies candidates for follow-up."] }
+      ],
+      figures: [
+        {
+          caption: "Task-level score differences for the leading condition (parameter x=32, parameter y=0) relative to the registered baseline; Table 1 identifies the archived reference condition separately when applicable.",
+          bars: [
+            { label: "Benchmark Task A task difference", value: 0.02 },
+            { label: "Benchmark Task B task difference", value: 0.02 }
+          ]
+        }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    expect(result.manuscript.figures?.[0]?.caption).toContain("a tied leading condition");
+    expect(result.manuscript.figures?.[0]?.caption).not.toMatch(/the leading condition \(/i);
+    expect(result.manuscript.figures?.[0]?.caption).not.toMatch(/registered baseline \(/i);
+    expect(result.manuscript.figures?.[0]?.caption).not.toMatch(/locked comparison details/i);
+  });
+
+  it("prefers explicit seed schedules over protocol repeat-like counts", () => {
+    const bundle = makeRichBundle();
+    bundle.latestResults = {
+      protocol: {
+        repeats: 10
+      }
+    } as any;
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Condition-Parameter Preflight",
+      abstract: "The study reports a bounded repeated-seed evaluation.",
+      keywords: ["condition sweep"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
+        { heading: "Method", paragraphs: ["The protocol used 3 seeds for the reported comparison."] },
+        { heading: "Results", paragraphs: ["The reported comparison remains a bounded screening result."] },
+        { heading: "Discussion", paragraphs: ["The evidence does not support broad tuning rules."] },
+        { heading: "Conclusion", paragraphs: ["The result identifies a candidate for follow-up."] }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const repeatCountErrors = result.consistency_lint.issues.filter(
+      (issue) =>
+        issue.kind === "count_inconsistency"
+        && issue.severity === "error"
+        && /3 repeats|3 seeds|10 repeats/iu.test(issue.message + JSON.stringify(issue.normalized_facts || []))
+    );
+    expect(repeatCountErrors.map((issue) => issue.message)).toEqual([]);
+  });
+
   it("does not treat baseline and leading bars in the main figure as contradictory aggregate accuracy", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "adapter condition-parameter preflight";
@@ -3171,8 +4080,8 @@ describe("scientificWriting", () => {
         {
           condition_marker: "baseline_condition",
           label: "baseline condition",
-          adapter_rank: 8,
-          adapter_dropout: 0,
+          condition_parameter_x: 8,
+          condition_parameter_y: 0,
           is_baseline: true,
           completed_seed_count: 1,
           average_accuracy_mean: 0.3333,
@@ -3183,8 +4092,8 @@ describe("scientificWriting", () => {
         {
           condition_marker: "candidate_condition_f5",
           label: "candidate condition b",
-          adapter_rank: 32,
-          adapter_dropout: 0.05,
+          condition_parameter_x: 32,
+          condition_parameter_y: 0.05,
           completed_seed_count: 1,
           average_accuracy_mean: 0.4167,
           accuracy_delta_vs_baseline_mean: 0.0833,
@@ -3216,7 +4125,7 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "The locked baseline, baseline condition with zero dropout, achieved mean accuracy 0.333334.",
+            "The locked baseline, baseline condition with zero parameter_y, achieved mean accuracy 0.333334.",
             "The best observed setting was candidate condition b, which achieved mean accuracy 0.416666 across Benchmark Task A and Benchmark Task B.",
             "The average difference remains a local screening signal rather than a settled prescription."
           ]
@@ -3269,8 +4178,8 @@ describe("scientificWriting", () => {
         {
           condition_marker: "baseline_condition",
           label: "baseline condition",
-          adapter_rank: 8,
-          adapter_dropout: 0,
+          condition_parameter_x: 8,
+          condition_parameter_y: 0,
           is_baseline: true,
           completed_seed_count: 1,
           average_accuracy_mean: 0.333334,
@@ -3279,8 +4188,8 @@ describe("scientificWriting", () => {
         {
           condition_marker: "candidate_condition_f5",
           label: "candidate condition b",
-          adapter_rank: 32,
-          adapter_dropout: 0.05,
+          condition_parameter_x: 32,
+          condition_parameter_y: 0.05,
           completed_seed_count: 1,
           average_accuracy_mean: 0.416666,
           accuracy_delta_vs_baseline_mean: 0.083332
@@ -3351,8 +4260,8 @@ describe("scientificWriting", () => {
         {
           condition_marker: "baseline_condition",
           label: "baseline condition",
-          adapter_rank: 8,
-          adapter_dropout: 0,
+          condition_parameter_x: 8,
+          condition_parameter_y: 0,
           is_baseline: true,
           completed_seed_count: 1,
           average_accuracy_mean: 0.3333,
@@ -3366,8 +4275,8 @@ describe("scientificWriting", () => {
         {
           condition_marker: "candidate_condition_f5",
           label: "candidate condition b",
-          adapter_rank: 32,
-          adapter_dropout: 0.05,
+          condition_parameter_x: 32,
+          condition_parameter_y: 0.05,
           is_baseline: false,
           completed_seed_count: 1,
           average_accuracy_mean: 0.4167,
@@ -3388,7 +4297,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "Condition-Parameter Preflight",
       abstract:
-        "The intended sweep crossed ranks {4, 8, 16, 32} and dropout {0.0, 0.05}, with average accuracy as the endpoint. The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. In the main recorded sweep, the best reported condition, candidate condition b, achieved 0.4167 average accuracy compared with 0.3333 for the baseline, a gain of 0.0833. The best reported comparison, candidate condition b versus the baseline, achieved average accuracy 0.416666 versus 0.333334, a gain of 0.083332 that exceeds the prespecified 0.01 improvement target. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation. Condition-level 95% intervals overlap substantially, and each interval is based on only 12 predictions.",
+        "The intended sweep crossed ranks {4, 8, 16, 32} and parameter_y {0.0, 0.05}, with average accuracy as the endpoint. The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. In the main recorded sweep, the best reported condition, candidate condition b, achieved 0.4167 average accuracy compared with 0.3333 for the baseline, a gain of 0.0833. The best reported comparison, candidate condition b versus the baseline, achieved average accuracy 0.416666 versus 0.333334, a gain of 0.083332 that exceeds the prespecified 0.01 improvement target. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation. Condition-level 95% intervals overlap substantially, and each interval is based on only 12 predictions.",
       keywords: ["adapter"],
       sections: [
         {
@@ -3503,8 +4412,8 @@ describe("scientificWriting", () => {
         {
           condition_marker: "baseline_condition",
           label: "baseline condition",
-          adapter_rank: 8,
-          adapter_dropout: 0,
+          condition_parameter_x: 8,
+          condition_parameter_y: 0,
           is_baseline: true,
           completed_seed_count: 1,
           average_accuracy_mean: 0.3333,
@@ -3513,8 +4422,8 @@ describe("scientificWriting", () => {
         {
           condition_marker: "candidate_condition_f5",
           label: "candidate condition b",
-          adapter_rank: 32,
-          adapter_dropout: 0.05,
+          condition_parameter_x: 32,
+          condition_parameter_y: 0.05,
           completed_seed_count: 1,
           average_accuracy_mean: 0.4167,
           accuracy_delta_vs_baseline_mean: 0.0833
@@ -3599,6 +4508,93 @@ describe("scientificWriting", () => {
     ).toHaveLength(0);
   });
 
+  it("does not treat condition parameter values near accuracy prose as metric facts", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "adapter condition-parameter preflight";
+    bundle.topic = "condition parameters interaction for a small benchmark";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = {
+      baseline_marker: "baseline_condition",
+      condition_summaries: [
+        {
+          condition_marker: "baseline_condition",
+          label: "condition a",
+          condition_parameter_x: 4,
+          condition_parameter_y: 0,
+          is_baseline: true,
+          completed_seed_count: 1,
+          average_accuracy_mean: 0.458333,
+          accuracy_delta_vs_baseline_mean: 0
+        },
+        {
+          condition_marker: "candidate_condition_b",
+          label: "condition b",
+          condition_parameter_x: 32,
+          condition_parameter_y: 0,
+          completed_seed_count: 1,
+          average_accuracy_mean: 0.479167,
+          accuracy_delta_vs_baseline_mean: 0.020833
+        }
+      ]
+    } as any;
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "average_accuracy", value: 0.479167 },
+        { key: "accuracy_delta_vs_baseline", value: 0.020833 }
+      ]
+    } as any;
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Condition-Parameter Preflight",
+      abstract:
+        "The most detailed available contrast favored candidate condition b over baseline condition a, with average accuracy 0.479167 versus 0.458333.",
+      keywords: ["adapter"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget condition-parameter preflight."] },
+        { heading: "Method", paragraphs: ["The comparison keeps condition parameters fixed except for the reported grid cells."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "In that contrast, average accuracy was 0.479167 for condition b and 0.458333 for condition a."
+          ]
+        },
+        { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
+        {
+          heading: "Conclusion",
+          paragraphs: [
+            "The reported primary point estimate was positive: average accuracy improved by 0.020833 relative to the reported reference value."
+          ]
+        }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const aggregateAccuracyIssues = result.consistency_lint.issues.filter((issue) =>
+        issue.kind === "numeric_inconsistency"
+        && /conflicting aggregate accuracy values/iu.test(issue.message)
+      );
+    expect(aggregateAccuracyIssues, JSON.stringify(aggregateAccuracyIssues, null, 2)).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.filter((issue) =>
+        issue.kind === "numeric_unverifiable"
+        && /accuracy_delta/iu.test(issue.message)
+      )
+    ).toHaveLength(0);
+  });
+
   it("can re-apply evidence-grounded paper-scale strengthening after manuscript repair", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "adapter condition-parameter repeated-seed benchmark";
@@ -3609,16 +4605,16 @@ describe("scientificWriting", () => {
       condition_summaries: [
         {
           condition_marker: "baseline_condition",
-          adapter_rank: 8,
-          adapter_dropout: 0,
+          condition_parameter_x: 8,
+          condition_parameter_y: 0,
           completed_seed_count: 5,
           average_accuracy_mean: 0.4417,
           accuracy_delta_vs_baseline_mean: 0
         },
         {
           condition_marker: "candidate_condition_f5",
-          adapter_rank: 32,
-          adapter_dropout: 0.05,
+          condition_parameter_x: 32,
+          condition_parameter_y: 0.05,
           completed_seed_count: 5,
           average_accuracy_mean: 0.5084,
           accuracy_delta_vs_baseline_mean: 0.0667
@@ -3653,7 +4649,7 @@ describe("scientificWriting", () => {
     } as any;
     const context = experimentArtifactLoader({ bundle });
     const repaired: PaperManuscript = {
-      title: "Repeated-Seed adapter Dropout Benchmark",
+      title: "Repeated-Seed adapter ParameterY Benchmark",
       abstract: "The study-level delta relative to baseline was +0.0448.",
       keywords: ["adapter"],
       sections: [
@@ -3688,6 +4684,7 @@ describe("scientificWriting", () => {
           paragraphs: [
             "The preserved manuscript bundle identifies the executed study only as a small-backbone local preflight and does not cleanly disambiguate whether the as-run model was the planned the selected backbone backbone or the the configured fallback backbone fallback.",
             "The preferred backbone was the selected backbone [selected backbone], with the configured fallback backbone [fallback backbone] reserved as a fallback. Supervised instruction tuning used an training dataset subset capped at 10,000 examples [training dataset]. Evaluation used Benchmark Task A and Benchmark Task B [Benchmark Task A; Benchmark Task B].",
+            "The reported study uses Unmodified-system comparator: base model without adaptation evaluated repeatedly under the same evaluator to confirm result schema and evaluator stability. as the trained backbone. Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, and 6 optimizer steps.",
             "The fixed search space includes adapter target modules were module_a, module_b, module_c, module_d, module_e, module_f, and module_g., Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, weight decay 0, max gradient norm 1, and 6 optimizer steps., and The inspected seed-level record reports 32 training examples and 5068 train dataset tokens for the inspected seed-level record."
           ]
         },
@@ -3717,9 +4714,16 @@ describe("scientificWriting", () => {
         {
           heading: "Conclusion",
           paragraphs: [
-            "This repeated-seed preflight provides conservative evidence that higher-rank adapter with moderate dropout can be competitive under a strict local instruction-tuning budget.",
+            "This repeated-seed preflight provides conservative evidence that higher-rank adapter with moderate parameter_y can be competitive under a strict local instruction-tuning budget.",
             "Brief execution-coverage and supplementary-metric summaries are routed to the appendix, while the main paper carries the central interpretation.",
             "The audit trail matters for this interpretation because the paper-ready claim depends on alignment between executed runs, result tables, captions, and the claim-evidence map. If a later run changes the baseline, hides failed executions, or moves numeric support out of the main table, the same text should be downgraded rather than reused as a stronger manuscript."
+          ]
+        },
+        {
+          heading: "Appendix",
+          paragraphs: [
+            "This appendix records the inspect-relevant expansion point for the completed grid.",
+            "For inspect purposes, the main table encodes planned and analytic reference roles separately."
           ]
         }
       ]
@@ -3736,6 +4740,9 @@ describe("scientificWriting", () => {
     expect(text).toContain("main text carries the central interpretation");
     expect(text).toContain("condition-level values in Table 1 provide the main numeric support");
     expect(text).toContain("The inspected seed-level record reports 32 training examples");
+    expect(text).toContain("Fixed training settings included learning rate 0.0002");
+    expect(text).toContain("protocol-relevant expansion point");
+    expect(text).toContain("For clarity, the main table encodes planned and analytic reference roles separately");
     expect(text).toContain("If a later run changes the baseline");
     expect(text).toContain("learning-rate schedule beyond the reported scalar rate");
     expect(text).toContain("adapter target-module placement");
@@ -3745,9 +4752,10 @@ describe("scientificWriting", () => {
     const legacyBackboneCitationLabel = String.fromCharCode(81, 119, 101, 110);
     expect(text).not.toMatch(new RegExp(String.raw`\[(?:${legacyBackboneCitationLabel}2?\.?5?)`, "i"));
     expect(text).not.toMatch(/Objective metric met/i);
+    expect(text).not.toMatch(/Unmodified-system comparator|as the trained backbone\. Fixed training settings/i);
     expect(text).not.toMatch(/including optimizer, learning rate, batch structure/i);
     expect(text).not.toMatch(/learning-rate schedule, batch structure/i);
-    expect(text).not.toMatch(/P6 run|review gating|paper-readiness audit|raw result study summary|routed to the appendix/i);
+    expect(text).not.toMatch(/P6 run|review gating|paper-readiness audit|raw result study summary|routed to the appendix|inspect-relevant|For inspect purposes/i);
   });
 
   it("rejects planning titles and drops internal appendix material during materialization", () => {
@@ -3892,7 +4900,7 @@ describe("scientificWriting", () => {
     expect(allText).toContain("planned and realized execution records should be read conservatively");
     expect(allText).toContain("95% interval for the macro-F1 delta spans");
     expect(allText).toContain("local preflight");
-    expect(allText).toContain("Figure 1 isolates the task-level contribution");
+    expect(allText).toContain("Table 1 is the numeric anchor for the reported condition means");
     expect(allText).toContain("Supplementary setup details");
     expect((manuscript.appendix_sections || []).filter((section) => section.heading === "Supplementary Experimental Details")).toHaveLength(1);
     expect((allText.match(/run-metadata task labels Benchmark Task A and Benchmark Task B/g) || [])).toHaveLength(1);

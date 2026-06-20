@@ -195,12 +195,24 @@ function extractEvalSampleSummary(report: AnalysisReport): {
 function extractSeedSummary(report: AnalysisReport): { seeds: string[]; distinctSeeds: number; seedEvidencePresent: boolean } {
   const seeds = new Set<string>();
   let seedEvidencePresent = false;
+  let reportedSeedCount = 0;
   const metrics = asRecord(report.metrics);
   seedEvidencePresent = addSeed(seeds, asRecord(metrics.run_config).seed) || seedEvidencePresent;
-  for (const condition of asArray(metrics.conditions)) {
+  for (const condition of [
+    ...asArray(metrics.conditions),
+    ...asArray(metrics.condition_results),
+    ...asArray(metrics.raw_condition_results)
+  ]) {
     const record = asRecord(condition);
     seedEvidencePresent = addSeed(seeds, record.seed) || seedEvidencePresent;
     seedEvidencePresent = addSeed(seeds, record.random_seed) || seedEvidencePresent;
+    seedEvidencePresent = addSeeds(seeds, asArray(record.seeds)) || seedEvidencePresent;
+    seedEvidencePresent = addSeeds(seeds, asArray(record.planned_seeds)) || seedEvidencePresent;
+    const seedCount = asNumber(record.seed_count);
+    if (seedCount !== undefined && seedCount > 0) {
+      seedEvidencePresent = true;
+      reportedSeedCount = Math.max(reportedSeedCount, seedCount);
+    }
   }
   for (const group of report.experiment_portfolio?.trial_groups ?? []) {
     for (const note of group.notes ?? []) {
@@ -212,7 +224,12 @@ function extractSeedSummary(report: AnalysisReport): { seeds: string[]; distinct
       }
     }
   }
-  return { seeds: Array.from(seeds), distinctSeeds: seeds.size, seedEvidencePresent };
+  const distinctSeeds = Math.max(seeds.size, reportedSeedCount);
+  const seedLabels = Array.from(seeds);
+  if (seedLabels.length === 0 && reportedSeedCount > 0) {
+    seedLabels.push(`reported_seed_count=${reportedSeedCount}`);
+  }
+  return { seeds: seedLabels, distinctSeeds, seedEvidencePresent };
 }
 
 function detectOneItemGain(report: AnalysisReport): string | undefined {
@@ -291,16 +308,16 @@ function detectWeakInteractionClaim(report: AnalysisReport): string | undefined 
   const metrics = asRecord(report.metrics);
   const conditions = asArray(metrics.conditions).map(asRecord);
   const ranks = new Set<string>();
-  const dropouts = new Set<string>();
+  const parameter_ys = new Set<string>();
   let positiveDeltaCount = 0;
   for (const condition of conditions) {
     const rank = asNumber(condition.rank);
-    const dropout = asNumber(condition.dropout);
+    const parameter_y = asNumber(condition.parameter_y);
     if (rank !== undefined) {
       ranks.add(String(rank));
     }
-    if (dropout !== undefined) {
-      dropouts.add(String(dropout));
+    if (parameter_y !== undefined) {
+      parameter_ys.add(String(parameter_y));
     }
     const delta = asNumber(condition.accuracy_delta_vs_baseline);
     if (delta !== undefined && delta > 0) {
@@ -312,10 +329,10 @@ function detectWeakInteractionClaim(report: AnalysisReport): string | undefined 
     ...(report.primary_findings ?? []),
     ...(report.paper_claims ?? []).map((claim) => claim.claim)
   ].join(" ");
-  if (ranks.size < 2 || dropouts.size < 2 || positiveDeltaCount !== 1 || !/\binteraction|rank|dropout\b/iu.test(text)) {
+  if (ranks.size < 2 || parameter_ys.size < 2 || positiveDeltaCount !== 1 || !/\binteraction|rank|parameter_y\b/iu.test(text)) {
     return undefined;
   }
-  return `Grid has ${ranks.size} rank value(s), ${dropouts.size} dropout value(s), and only ${positiveDeltaCount} positive-delta condition(s).`;
+  return `Grid has ${ranks.size} rank value(s), ${parameter_ys.size} parameter_y value(s), and only ${positiveDeltaCount} positive-delta condition(s).`;
 }
 
 function detectCanonicalReferenceGap(topic: string, report: AnalysisReport, bibliographyText?: string): string | undefined {
@@ -370,6 +387,14 @@ function addSeed(target: Set<string>, value: unknown): boolean {
     return true;
   }
   return false;
+}
+
+function addSeeds(target: Set<string>, values: unknown[]): boolean {
+  let added = false;
+  for (const value of values) {
+    added = addSeed(target, value) || added;
+  }
+  return added;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

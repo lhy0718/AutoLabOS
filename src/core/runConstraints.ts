@@ -508,7 +508,7 @@ function buildDeterministicPhraseBundleQueries(value: string | undefined): strin
   const modelFamily = phrases.find((phrase) => /\bmistral(?:\s+7b)?\b/iu.test(phrase)) || undefined;
   const adapterAxes = Array.from(
     new Set(
-      phrases.filter((phrase) => /^(adapter rank|adapter dropout)$/iu.test(phrase))
+      phrases.filter((phrase) => /^(adapter rank|adapter parameter_y)$/iu.test(phrase))
     )
   );
   const anchor = phrases.find((phrase) => /language models?$/iu.test(phrase)) || phrases[0];
@@ -599,8 +599,8 @@ function collectDeterministicResearchPhrases(value: string | undefined): string[
   if (/\badapter\b/u.test(text) && /\brank\b/u.test(text)) {
     pushPhrase("adapter rank");
   }
-  if (/\badapter\b/u.test(text) && /\bdropout\b/u.test(text)) {
-    pushPhrase("adapter dropout");
+  if (/\badapter\b/u.test(text) && /\bparameter_y\b/u.test(text)) {
+    pushPhrase("adapter parameter_y");
   }
 
   if (/\btest[-\s]?time\b/u.test(text) && /\breason/u.test(text)) {

@@ -95,6 +95,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       const figureAuditSummary = await safeReadJson(path.join(runDir, "figure_audit", "figure_audit_summary.json")) as
         | FigureAuditSummary
         | undefined;
+      const priorScientificValidationSignal = await resolveScientificValidationReviewSignal(
+        runDir,
+        run.graph.nodeStates.write_paper?.lastError
+      );
       const panel = await runReviewPanel({
         run,
         node: "review",
@@ -122,9 +126,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         eventStream: deps.eventStream,
         abortSignal
       });
-      const effectivePanel = applyFigureAuditDecisionGate(panel, figureAuditSummary);
-      const packet = buildReviewPacket(report, presence, effectivePanel);
-      const completionDecision = checkReviewDecision(packet);
+      let effectivePanel = applyFigureAuditDecisionGate(panel, figureAuditSummary);
+      let packet = buildReviewPacket(report, presence, effectivePanel);
+      let completionDecision = checkReviewDecision(packet);
       const briefEvidenceAssessment =
         (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined;
       const bibliographyText = [
@@ -155,20 +159,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         blocking_count: (minimumGate.paper_scale_diagnostics ?? []).filter((diagnostic) => diagnostic.severity === "blocking").length,
         warning_count: (minimumGate.paper_scale_diagnostics ?? []).filter((diagnostic) => diagnostic.severity === "warning").length
       };
-      const nodeStrengtheningRecommendations = buildNodeStrengtheningRecommendations(
-        minimumGate.paper_scale_diagnostics ?? [],
-        effectivePanel.findings,
-        effectivePanel.decision
-      );
       const paperScaleDiagnosticsPath = await writeRunArtifact(
         run,
         "review/paper_scale_diagnostics.json",
         `${JSON.stringify(paperScaleDiagnostics, null, 2)}\n`
-      );
-      const nodeStrengtheningPath = await writeRunArtifact(
-        run,
-        "review/node_strengthening_recommendations.json",
-        `${JSON.stringify(nodeStrengtheningRecommendations, null, 2)}\n`
       );
 
       // Build structured pre-draft critique artifact
@@ -218,7 +212,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       });
 
       // Use critique + minimum gate + LLM evaluation to build transition recommendation
-      const transitionRecommendation = buildReviewTransitionRecommendation(
+      let transitionRecommendation = buildReviewTransitionRecommendation(
         effectivePanel,
         packet,
         preDraftCritique,
@@ -227,6 +221,24 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         run.graph.researchCycle,
         briefEvidenceAssessment
       );
+      transitionRecommendation = buildScientificValidationTransitionRecommendation(
+        priorScientificValidationSignal,
+        packet.suggested_actions
+      ) ?? transitionRecommendation;
+      effectivePanel = applyHardGateTransitionDecision(
+        effectivePanel,
+        transitionRecommendation,
+        minimumGate,
+        preDraftCritique,
+        llmEvalResult.evaluation
+      );
+      effectivePanel = applyScientificValidationDecisionGate(
+        effectivePanel,
+        priorScientificValidationSignal,
+        transitionRecommendation
+      );
+      packet = buildReviewPacket(report, presence, effectivePanel);
+      completionDecision = checkReviewDecision(packet);
       const markdown = renderReviewChecklist(run, packet, effectivePanel);
       const readinessRisks = buildReviewReadinessRiskArtifact({
         critique: preDraftCritique,
@@ -248,6 +260,17 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         run,
         "review/revision_plan.json",
         `${JSON.stringify(effectivePanel.revision_plan, null, 2)}\n`
+      );
+      const nodeStrengtheningRecommendations = buildNodeStrengtheningRecommendations(
+        minimumGate.paper_scale_diagnostics ?? [],
+        effectivePanel.findings,
+        effectivePanel.decision,
+        priorScientificValidationSignal
+      );
+      const nodeStrengtheningPath = await writeRunArtifact(
+        run,
+        "review/node_strengthening_recommendations.json",
+        `${JSON.stringify(nodeStrengtheningRecommendations, null, 2)}\n`
       );
       const decisionArtifact = {
         ...effectivePanel.decision,
@@ -614,10 +637,17 @@ interface NodeStrengtheningRecommendation {
   recheck_condition: string;
 }
 
+interface ScientificValidationReviewSignal {
+  missingEvidenceCategories: string[];
+  blockedByEvidenceInsufficiency: boolean;
+  aggregateAccuracyConflict: boolean;
+}
+
 export function buildNodeStrengtheningRecommendations(
   diagnostics: PaperScaleDiagnostic[],
   findings: ReviewFinding[] = [],
-  decision?: ReviewDecision
+  decision?: ReviewDecision,
+  scientificValidationSignal?: ScientificValidationReviewSignal
 ): {
   generated_at: string;
   recommendations: NodeStrengtheningRecommendation[];
@@ -654,6 +684,30 @@ export function buildNodeStrengtheningRecommendations(
       source_node: "review",
       recommended_action: finding.fix_hint || "Repair the reviewed weakness before attempting paper drafting.",
       recheck_condition: recheckConditionForReviewFinding(finding)
+    });
+  }
+
+  if (scientificValidationSignal?.missingEvidenceCategories.length) {
+    signals.push({
+      id: `scientific_validation:missing_${scientificValidationSignal.missingEvidenceCategories.join("_").replace(/\W+/g, "_")}`,
+      severity: "blocking",
+      summary: `Prior paper scientific validation is missing upstream evidence: ${scientificValidationSignal.missingEvidenceCategories.join(", ")}.`,
+      target_node: "run_experiments",
+      source_node: "scientific_validation",
+      recommended_action: "Persist the missing measurement categories during experiment execution or explicitly downgrade the paper target before drafting.",
+      recheck_condition: "paper/scientific_validation.json no longer reports missing evidence categories."
+    });
+  }
+
+  if (scientificValidationSignal?.aggregateAccuracyConflict) {
+    signals.push({
+      id: "scientific_validation:aggregate_accuracy_conflict",
+      severity: "blocking",
+      summary: "Prior paper scientific validation reported conflicting aggregate accuracy values across manuscript sections.",
+      target_node: "write_paper",
+      source_node: "scientific_validation",
+      recommended_action: "Align all manuscript aggregate accuracy claims to the executed analysis artifacts before PDF build.",
+      recheck_condition: "paper/gate_decision.json and paper/scientific_validation.json report no aggregate accuracy conflicts."
     });
   }
 
@@ -849,13 +903,10 @@ function buildReviewTransitionRecommendation(
      llmEval.recommended_action === "backtrack_to_hypotheses") &&
     llmEval.paper_worthiness === "not_ready"
   ) {
-    const targetNode = llmEval.recommended_action === "backtrack_to_hypotheses"
-      ? "generate_hypotheses" as const
-      : llmEval.recommended_action === "backtrack_to_design"
-        ? "design_experiments" as const
-        : "implement_experiments" as const;
+    const normalizedAction = normalizeReviewBacktrackAction(llmEval.recommended_action);
+    const targetNode = reviewBacktrackTargetNode(normalizedAction);
     return createReviewTransition({
-      action: llmEval.recommended_action as TransitionRecommendation["action"],
+      action: normalizedAction,
       targetNode,
       reason: `LLM paper-quality evaluator recommends ${llmEval.recommended_action} (score: ${llmEval.overall_score_1_to_10}/10, worthiness: ${llmEval.paper_worthiness}).`,
       confidence: Math.min(confidence, 0.7),
@@ -1072,6 +1123,193 @@ async function safeReadJson(filePath: string): Promise<unknown | undefined> {
   } catch {
     return undefined;
   }
+}
+
+async function resolveScientificValidationReviewSignal(
+  runDir: string,
+  previousWritePaperError?: string
+): Promise<ScientificValidationReviewSignal | undefined> {
+  const artifact = await safeReadJson(path.join(runDir, "paper", "scientific_validation.json"));
+  const record = isRecord(artifact) ? artifact : undefined;
+  const diagnostics = isRecord(record?.evidence_diagnostics) ? record.evidence_diagnostics : undefined;
+  const missingEvidenceCategories = Array.from(new Set([
+    ...asStringArray(record?.missing_evidence_categories),
+    ...asStringArray(diagnostics?.missing_evidence_categories)
+  ]));
+  const previousError = previousWritePaperError || "";
+  const blockedByEvidenceInsufficiency =
+    diagnostics?.blocked_by_evidence_insufficiency === true ||
+    (missingEvidenceCategories.length > 0 && /evidence insufficiency/iu.test(previousError));
+  const aggregateAccuracyConflict = /conflicting aggregate accuracy values/iu.test(previousError);
+
+  if (!blockedByEvidenceInsufficiency && missingEvidenceCategories.length === 0 && !aggregateAccuracyConflict) {
+    return undefined;
+  }
+
+  return {
+    missingEvidenceCategories,
+    blockedByEvidenceInsufficiency,
+    aggregateAccuracyConflict
+  };
+}
+
+function buildScientificValidationTransitionRecommendation(
+  signal: ScientificValidationReviewSignal | undefined,
+  suggestedActions: string[]
+): TransitionRecommendation | undefined {
+  if (!signal || (!signal.blockedByEvidenceInsufficiency && signal.missingEvidenceCategories.length === 0)) {
+    return undefined;
+  }
+  const missing = signal.missingEvidenceCategories.join(", ") || "upstream evidence";
+  return createReviewTransition({
+    action: "backtrack_to_implement",
+    targetNode: "implement_experiments",
+    reason: `Prior write_paper scientific validation blocked drafting because upstream evidence is missing: ${missing}. Review must not advance to write_paper until the execution artifacts provide the missing evidence or the manuscript target is downgraded.`,
+    confidence: 0.92,
+    autoExecutable: true,
+    evidence: [
+      `Missing evidence: ${missing}`,
+      "Source artifact: paper/scientific_validation.json",
+      ...(signal.aggregateAccuracyConflict ? ["Prior write_paper also reported aggregate accuracy conflicts."] : [])
+    ],
+    suggestedCommands: ["/agent jump implement_experiments --force", ...suggestedActions]
+  });
+}
+
+function applyScientificValidationDecisionGate(
+  panel: Awaited<ReturnType<typeof runReviewPanel>>,
+  signal: ScientificValidationReviewSignal | undefined,
+  transition: TransitionRecommendation | undefined
+): Awaited<ReturnType<typeof runReviewPanel>> {
+  if (!signal || transition?.action !== "backtrack_to_implement") {
+    return panel;
+  }
+  const missing = signal.missingEvidenceCategories.join(", ") || "upstream evidence";
+  const requiredActions = Array.from(new Set([
+    `Persist missing upstream evidence before paper drafting: ${missing}.`,
+    ...(signal.aggregateAccuracyConflict ? ["Align aggregate accuracy values across Abstract, Results, Conclusion, tables, and figures."] : []),
+    ...panel.decision.required_actions
+  ])).slice(0, 6);
+  const blockingIds = Array.from(new Set([
+    ...panel.decision.blocking_finding_ids,
+    "scientific_validation:blocked_by_evidence_insufficiency",
+    ...(signal.aggregateAccuracyConflict ? ["scientific_validation:aggregate_accuracy_conflict"] : [])
+  ])).slice(0, 20);
+
+  return {
+    ...panel,
+    decision: {
+      ...panel.decision,
+      outcome: "backtrack_to_implement",
+      recommended_transition: "backtrack_to_implement",
+      confidence: Math.max(panel.decision.confidence, transition.confidence),
+      summary: "Backtrack required by prior write_paper scientific validation; paper drafting must not advance while upstream evidence is missing.",
+      rationale: `${transition.reason} Previous panel decision: ${panel.decision.summary}`,
+      blocking_finding_ids: blockingIds,
+      required_actions: requiredActions
+    }
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+function applyHardGateTransitionDecision(
+  panel: Awaited<ReturnType<typeof runReviewPanel>>,
+  transition: TransitionRecommendation | undefined,
+  minimumGate: ReturnType<typeof evaluateMinimumGate>,
+  critique: PaperCritique,
+  llmEval?: { recommended_action: string; paper_worthiness: string; overall_score_1_to_10: number }
+): Awaited<ReturnType<typeof runReviewPanel>> {
+  const hardGateBlocked =
+    !minimumGate.passed &&
+    (minimumGate.ceiling_type === "blocked_for_paper_scale" || minimumGate.ceiling_type === "system_validation_note");
+  const critiqueBlocked =
+    critique.manuscript_type === "blocked_for_paper_scale" ||
+    critique.manuscript_type === "system_validation_note";
+  const llmBlocked = llmEval?.paper_worthiness === "not_ready" && llmEval.recommended_action !== "advance";
+  const transitionBacktracks =
+    transition?.action === "backtrack_to_implement" ||
+    transition?.action === "backtrack_to_design" ||
+    transition?.action === "backtrack_to_hypotheses";
+
+  if (!transitionBacktracks || (!hardGateBlocked && !critiqueBlocked && !llmBlocked)) {
+    return panel;
+  }
+
+  const recommendedTransition: ReviewDecision["recommended_transition"] =
+    transition.action === "backtrack_to_implement" ||
+    transition.action === "backtrack_to_design" ||
+    transition.action === "backtrack_to_hypotheses"
+      ? transition.action
+      : undefined;
+  if (!recommendedTransition) {
+    return panel;
+  }
+  const gateActions = (minimumGate.paper_scale_diagnostics ?? [])
+    .filter((diagnostic) => diagnostic.severity === "blocking")
+    .map((diagnostic) => diagnostic.recommended_action);
+  const critiqueActions = critique.blocking_issues.map((issue) => issue.recommended_fix);
+  const requiredActions = Array.from(new Set([
+    ...gateActions,
+    ...critiqueActions,
+    ...panel.decision.required_actions
+  ].filter(Boolean))).slice(0, 6);
+  const blockingIds = Array.from(new Set([
+    ...panel.decision.blocking_finding_ids,
+    ...panel.findings.filter((finding) => finding.severity === "high").map((finding) => finding.id),
+    ...(minimumGate.paper_scale_diagnostics ?? [])
+      .filter((diagnostic) => diagnostic.severity === "blocking")
+      .map((diagnostic) => `paper_scale:${diagnostic.id}`),
+    ...critique.blocking_issues.map((issue) => issue.issue_id)
+  ])).slice(0, 20);
+  const blockerLabel = hardGateBlocked
+    ? `minimum evidence gate (${minimumGate.ceiling_type})`
+    : critiqueBlocked
+      ? `pre-draft critique (${critique.manuscript_type})`
+      : `paper-quality evaluator (${llmEval?.paper_worthiness ?? "not_ready"})`;
+
+  return {
+    ...panel,
+    decision: {
+      ...panel.decision,
+      outcome: recommendedTransition,
+      recommended_transition: recommendedTransition,
+      confidence: Math.max(panel.decision.confidence, transition.confidence),
+      summary: `Backtrack required by ${blockerLabel}; paper drafting must not advance until the blocking evidence gap is repaired or explicitly downgraded.`,
+      rationale: `${transition.reason} Previous panel decision: ${panel.decision.summary}`,
+      blocking_finding_ids: blockingIds,
+      required_actions: requiredActions
+    }
+  };
+}
+
+function normalizeReviewBacktrackAction(action: string): Extract<TransitionRecommendation["action"], "backtrack_to_implement" | "backtrack_to_design" | "backtrack_to_hypotheses"> {
+  if (action === "backtrack_to_hypotheses") {
+    return "backtrack_to_hypotheses";
+  }
+  if (action === "backtrack_to_design") {
+    return "backtrack_to_design";
+  }
+  return "backtrack_to_implement";
+}
+
+function reviewBacktrackTargetNode(action: ReturnType<typeof normalizeReviewBacktrackAction>): TransitionRecommendation["targetNode"] {
+  if (action === "backtrack_to_hypotheses") {
+    return "generate_hypotheses";
+  }
+  if (action === "backtrack_to_design") {
+    return "design_experiments";
+  }
+  return "implement_experiments";
 }
 
 function applyFigureAuditDecisionGate(

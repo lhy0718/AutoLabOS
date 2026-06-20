@@ -1,12 +1,13 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, utimes, writeFile } from "node:fs/promises";
 
 import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createRunExperimentsNode } from "../src/core/nodes/runExperiments.js";
+import { FailureMemory, buildErrorFingerprint } from "../src/core/experiments/failureMemory.js";
 import { buildPublicSectionDir } from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { EXPERIMENT_GOVERNANCE_CONTRACT_KEY } from "../src/core/experimentGovernance.js";
@@ -46,6 +47,173 @@ function makeRun(runId: string): RunRecord {
 }
 
 describe("run_experiments execution profile behavior", () => {
+  it("blocks same-node execution when failure memory marks run_experiments do-not-retry", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-profile-"));
+    process.chdir(root);
+    const run = makeRun("run-do-not-retry-start");
+    run.graph.retryCounters.run_experiments = 1;
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const errorMessage =
+      "Experiment metrics contract failed: Condition summary accuracy is inconsistent with correct/total counts.";
+    await FailureMemory.forRun(run.id).append({
+      run_id: run.id,
+      node_id: "run_experiments",
+      attempt: 1,
+      failure_class: "structural",
+      error_fingerprint: buildErrorFingerprint(errorMessage),
+      error_message: errorMessage,
+      do_not_retry: true,
+      do_not_retry_reason: "Structural execution failure."
+    });
+
+    const aci = {
+      runCommand: vi.fn(),
+      runTests: vi.fn()
+    };
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: aci as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("do-not-retry");
+    expect(aci.runCommand).not.toHaveBeenCalled();
+    expect(aci.runTests).not.toHaveBeenCalled();
+  });
+
+  it("allows run_experiments after a newer upstream implementation repair", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-profile-"));
+    process.chdir(root);
+    const run = makeRun("run-upstream-repair-after-failure-memory");
+    run.graph.retryCounters.run_experiments = 2;
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.updatedAt = "2026-04-07T00:10:00.000Z";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "failure_memory.jsonl"),
+      JSON.stringify({
+        failure_id: "failure-before-upstream-repair",
+        run_id: run.id,
+        node_id: "run_experiments",
+        attempt: 1,
+        timestamp: "2026-04-07T00:00:00.000Z",
+        failure_class: "structural",
+        error_fingerprint: "structural execution failure",
+        error_message: "Experiment metrics contract failed.",
+        do_not_retry: true,
+        do_not_retry_reason: "Structural execution failure."
+      }) + "\n",
+      "utf8"
+    );
+
+    const aci = {
+      runCommand: vi.fn(),
+      runTests: vi.fn()
+    };
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "plan_only",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: aci as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: "plan_only_mode"
+    });
+    expect(aci.runCommand).not.toHaveBeenCalled();
+    expect(aci.runTests).not.toHaveBeenCalled();
+  });
+
+  it("allows run_experiments after a newer harness repair", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-harness-repair-after-failure-memory-"));
+    process.chdir(root);
+    const run = makeRun("run-harness-repair-after-failure-memory");
+    run.graph.retryCounters.run_experiments = 2;
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.updatedAt = "1970-01-01T00:00:00.000Z";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "failure_memory.jsonl"),
+      JSON.stringify({
+        failure_id: "failure-before-harness-repair",
+        run_id: run.id,
+        node_id: "run_experiments",
+        attempt: 1,
+        timestamp: "1970-01-01T00:00:00.000Z",
+        failure_class: "structural",
+        error_fingerprint: "structural execution failure",
+        error_message: "Experiment metrics contract failed.",
+        do_not_retry: true,
+        do_not_retry_reason: "Structural execution failure."
+      }) + "\n",
+      "utf8"
+    );
+
+    const aci = {
+      runCommand: vi.fn(),
+      runTests: vi.fn()
+    };
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "plan_only",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: aci as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: "plan_only_mode"
+    });
+    expect(aci.runCommand).not.toHaveBeenCalled();
+    expect(aci.runTests).not.toHaveBeenCalled();
+  });
+
   it("skips code execution in plan_only mode and records a skipped verifier report", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-profile-"));
     process.chdir(root);
@@ -259,6 +427,169 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.status).toBe("success");
     expect(aci.runCommand).toHaveBeenCalledTimes(1);
     expect(aci.runTests).not.toHaveBeenCalled();
+  });
+
+  it("blocks long-running generated runners that lack progress or partial metrics artifacts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-long-run-observability-"));
+    process.chdir(root);
+    const run = makeRun("run-long-run-observability");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const publicDir = path.join(root, "outputs", "public-runner");
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+
+    const scriptPath = path.join(publicDir, "run_condition_sweep.py");
+    await writeFile(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "import json",
+        "",
+        "REQUIRED_RUN_COUNT = 12",
+        "train_steps_per_run = 48",
+        "",
+        "def load_model():",
+        "    return AutoModel.from_pretrained(\"local-or-remote-model\")",
+        "",
+        "def run_condition():",
+        "    optimizer.step()",
+        "",
+        "def main():",
+        "    Path(\"metrics.json\").write_text(json.dumps({\"status\": \"completed\"}), encoding=\"utf-8\")",
+        "",
+        "if __name__ == \"__main__\":",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const metricsPath = path.join(runDir, "metrics.json");
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put(
+      "implement_experiments.run_command",
+      `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`
+    );
+    await runContext.put("implement_experiments.cwd", publicDir);
+    await runContext.put("implement_experiments.public_dir", publicDir);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const aci = {
+      runCommand: vi.fn(),
+      runTests: vi.fn()
+    };
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: aci as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(String(result.error)).toContain("no observable progress, heartbeat, or partial-metrics surface");
+    expect(aci.runCommand).not.toHaveBeenCalled();
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "preflight_test"
+    });
+    expect(verifierReport.summary).toContain("required_run_count=12");
+    expect(verifierReport.suggested_next_action).toContain("progress");
+  });
+
+  it("does not promote objective metrics from stale public bundle outputs", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-stale-public-metric-"));
+    process.chdir(root);
+    const run = makeRun("run-stale-public-metric");
+    run.objectiveMetric = "accuracy >= 0.9";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const publicDir = path.join(root, "outputs", "public-runner");
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+
+    const staleMetricsPath = path.join(publicDir, "metrics.json");
+    await writeFile(
+      staleMetricsPath,
+      JSON.stringify({ status: "completed", accuracy: 0.99, primary_metric_key: "accuracy" }, null, 2),
+      "utf8"
+    );
+    const staleDate = new Date(Date.now() - 60_000);
+    await utimes(staleMetricsPath, staleDate, staleDate);
+
+    const metricsPath = path.join(runDir, "metrics.json");
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.public_dir", publicDir);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+    const eventStream = new InMemoryEventStream();
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            metricsPath,
+            JSON.stringify({ status: "completed", completed_run_count: 1, required_run_count: 1 }, null, 2),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    const metrics = JSON.parse(await readFile(metricsPath, "utf8")) as { accuracy?: number };
+    expect(metrics.accuracy).toBeUndefined();
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes("Promoted objective metric accuracy=0.99")
+      )
+    ).toBe(false);
   });
 
   it("fails verification when a successful command writes incomplete comparator metrics", async () => {
@@ -515,6 +846,113 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.error).toContain("requires 4");
   });
 
+  it("fails verification when successful metrics expand the planned condition and seed contract", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-expanded-condition-contract-"));
+    process.chdir(root);
+    const run = makeRun("run-expanded-condition-contract");
+    run.objectiveMetric = "accuracy >= 0.9";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+    await runContext.put(
+      "run_brief.raw",
+      [
+        "# Research Brief",
+        "## Constraints",
+        "- Seed: 7 for the primary condition sweep.",
+        "- Condition grid: width in `{1, 2}` x regularization in `{0.0, 0.5}`.",
+        "## Minimum Acceptable Evidence",
+        "- All 4 planned conditions must execute with parseable metrics.",
+        "## Minimum Experiment Plan",
+        "- Four planned conditions from the declared grid.",
+        "## Allowed Budgeted Passes",
+        "- Repeat runs for the baseline and strongest condition when runtime allows."
+      ].join("\n")
+    );
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                accuracy: 0.95,
+                primary_metric: {
+                  name: "accuracy",
+                  value: 0.95,
+                  target: 0.9,
+                  met: true
+                },
+                completed_condition_count: 5,
+                condition_summaries: [
+                  { condition_marker: "baseline_condition", width: 1, regularization: 0, planned_seed_count: 2, status: "completed" },
+                  { condition_marker: "candidate_condition_a", width: 1, regularization: 0.5, planned_seed_count: 2, status: "completed" },
+                  { condition_marker: "candidate_condition_b", width: 2, regularization: 0, planned_seed_count: 2, status: "completed" },
+                  { condition_marker: "candidate_condition_c", width: 2, regularization: 0.5, planned_seed_count: 2, status: "completed" },
+                  { condition_marker: "candidate_condition_d", width: 2, regularization: 1, planned_seed_count: 2, status: "completed" }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed with expanded contract",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Planned condition contract expanded");
+    expect(result.error).toContain("observed 5 successful condition(s)");
+    expect(result.error).toContain("regularization=1 is outside declared values {0,0.5}");
+    expect(result.error).toContain("Primary seed contract expanded");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("Planned condition contract expanded");
+    expect(verifierReport.summary).toContain("Primary seed contract expanded");
+  });
+
   it("fails verification when a successful command writes top-level failed metrics", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-failed-metrics-"));
     process.chdir(root);
@@ -697,6 +1135,429 @@ describe("run_experiments execution profile behavior", () => {
     expect(verifierReport.summary).toContain("execution row(s) report failed status");
   });
 
+  it("summarizes completed train-only rows when objective metrics are missing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-train-only-metrics-"));
+    process.chdir(root);
+    const run = makeRun("run-train-only-metrics");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(runDir, { recursive: true });
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 2,
+                required_condition_count: 2,
+                condition_results: [
+                  { condition_marker: "baseline_condition", status: "completed", train_loss: 1.2, wall_time_sec: 3 },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "unknown",
+                    result: { status: "completed", train_loss: 1.1, wall_time_sec: 4 }
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("primary_metric_value=quality_delta:null");
+    expect(result.error).toContain("condition_result_statuses=completed:2");
+    expect(result.error).toContain("completed_condition_metric_keys=none");
+    expect(result.error).toContain("completed_condition_missing_evaluation_metrics=2/2");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { suggested_next_action?: string };
+    expect(verifierReport.suggested_next_action).toContain("Repair metrics aggregation");
+    expect(verifierReport.suggested_next_action).toContain("condition-level accuracy");
+    expect(verifierReport.suggested_next_action).toContain("model/tokenizer");
+  });
+
+  it("rejects completed condition summaries whose counts contradict metric values", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-inconsistent-summary-metrics-"));
+    process.chdir(root);
+    const run = makeRun("run-inconsistent-summary-metrics");
+    run.objectiveMetric = "quality_delta >= 0.01";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(runDir, { recursive: true });
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric_key: "quality_delta",
+                primary_metric_value: 0.02,
+                quality_delta: 0.02,
+                completed_run_count: 4,
+                required_run_count: 4,
+                completed_condition_count: 2,
+                required_condition_count: 2,
+                raw_condition_results: [
+                  { condition_marker: "baseline_condition", status: "completed", seed: 1, accuracy: 0.5 },
+                  { condition_marker: "baseline_condition", status: "completed", seed: 2, accuracy: 0.5 },
+                  { condition_marker: "candidate_condition_a", status: "completed", seed: 1, accuracy: 0.52 },
+                  { condition_marker: "candidate_condition_a", status: "completed", seed: 2, accuracy: 0.52 }
+                ],
+                condition_summaries: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "completed",
+                    average_accuracy: 0.5,
+                    correct_count: 0,
+                    total_count: 1,
+                    seeds: [],
+                    seed_count: 0,
+                    confidence_interval: { sample_size: 1 },
+                    evaluation: {
+                      overall: {
+                        accuracy: 0.5,
+                        correct_count: 0,
+                        total_count: 1,
+                        confidence_interval: { sample_size: 1 }
+                      }
+                    }
+                  },
+                  {
+                    condition_marker: "candidate_condition_a",
+                    status: "completed",
+                    average_accuracy: 0.52,
+                    correct_count: 0,
+                    total_count: 1,
+                    seeds: [],
+                    seed_count: 0,
+                    confidence_interval: { sample_size: 1 },
+                    evaluation: {
+                      overall: {
+                        accuracy: 0.52,
+                        correct_count: 0,
+                        total_count: 1,
+                        confidence_interval: { sample_size: 1 }
+                      }
+                    },
+                    quality_delta: 0.02
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Condition summary accuracy is inconsistent with correct/total counts");
+    expect(result.error).toContain("condition summaries report seed_count=0");
+    expect(result.error).toContain("confidence intervals with sample_size below the expected per-condition seed count");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("Condition summary accuracy is inconsistent");
+  });
+
+  it("projects seed-task metric rows into repeated-condition summaries with seed counts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-seed-task-summary-metrics-"));
+    process.chdir(root);
+    const run = makeRun("run-seed-task-summary-metrics");
+    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(runDir, { recursive: true });
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+    await runContext.put(
+      "run_brief.raw",
+      [
+        "# Research Brief",
+        "## Constraints",
+        "- Seed: 7 for the primary condition sweep.",
+        "## Minimum Experiment Plan",
+        "- Two planned conditions with two governed runs per condition."
+      ].join("\n")
+    );
+
+    const rows = [
+      ["baseline_condition", 1, "benchmark_task_a", 5, 10],
+      ["baseline_condition", 1, "benchmark_task_b", 4, 10],
+      ["baseline_condition", 2, "benchmark_task_a", 6, 10],
+      ["baseline_condition", 2, "benchmark_task_b", 5, 10],
+      ["candidate_condition_a", 1, "benchmark_task_a", 7, 10],
+      ["candidate_condition_a", 1, "benchmark_task_b", 6, 10],
+      ["candidate_condition_a", 2, "benchmark_task_a", 8, 10],
+      ["candidate_condition_a", 2, "benchmark_task_b", 7, 10]
+    ].map(([condition_marker, seed, task, correct_count, evaluated_count]) => ({
+      condition_marker,
+      seed,
+      task,
+      status: "completed",
+      accuracy: Number(correct_count) / Number(evaluated_count),
+      raw_evidence: {
+        task_metrics: {
+          [String(task)]: {
+            correct_count,
+            evaluated_count,
+            accuracy: Number(correct_count) / Number(evaluated_count)
+          }
+        }
+      }
+    }));
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric_key: "accuracy_delta_vs_baseline",
+                completed_run_count: 4,
+                required_run_count: 4,
+                completed_condition_count: 2,
+                required_condition_count: 2,
+                baseline_condition_marker: "baseline_condition",
+                condition_results: [
+                  { condition_marker: "baseline_condition", status: "completed", accuracy: 0, seed_count: 0 },
+                  { condition_marker: "candidate_condition_a", status: "completed", accuracy: 0, seed_count: 0 }
+                ],
+                raw_condition_results: rows
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
+      primary_metric_value: number;
+      condition_summaries: Array<Record<string, any>>;
+    };
+    const candidate = metrics.condition_summaries.find((row) => row.condition_marker === "candidate_condition_a");
+    expect(candidate).toMatchObject({
+      seed_count: 2,
+      correct_count: 28,
+      total_count: 40,
+      average_accuracy: 0.7
+    });
+    expect(candidate?.confidence_interval.sample_size).toBe(40);
+    expect(metrics.primary_metric_value).toBeCloseTo(0.2, 6);
+  });
+
+  it("projects wrapped task-summary rows with numeric correct counts and nested baseline flags", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-wrapped-task-summary-metrics-"));
+    process.chdir(root);
+    const run = makeRun("run-wrapped-task-summary-metrics");
+    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(runDir, { recursive: true });
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+    await runContext.put(
+      "run_brief.raw",
+      [
+        "# Research Brief",
+        "## Constraints",
+        "- Seed schedule: 1 and 2.",
+        "## Minimum Experiment Plan",
+        "- One control condition and one candidate condition with two benchmark tasks."
+      ].join("\n")
+    );
+
+    const rows = [
+      ["z_control_condition", true, 1, "benchmark_task_a", 5, 10],
+      ["z_control_condition", true, 1, "benchmark_task_b", 4, 10],
+      ["z_control_condition", true, 2, "benchmark_task_a", 5, 10],
+      ["z_control_condition", true, 2, "benchmark_task_b", 4, 10],
+      ["a_candidate_condition", false, 1, "benchmark_task_a", 8, 10],
+      ["a_candidate_condition", false, 1, "benchmark_task_b", 7, 10],
+      ["a_candidate_condition", false, 2, "benchmark_task_a", 8, 10],
+      ["a_candidate_condition", false, 2, "benchmark_task_b", 7, 10]
+    ].map(([condition_marker, is_baseline, seed, task, correct, evaluated_count]) => ({
+      condition_marker,
+      seed,
+      seed_id: seed,
+      task,
+      status: "completed",
+      accuracy: Number(correct) / Number(evaluated_count),
+      correct,
+      raw_evidence: {
+        condition_marker,
+        seed,
+        seed_id: seed,
+        task,
+        total: null,
+        raw_evidence: {
+          is_baseline,
+          task_metrics: {
+            [String(task)]: {
+              correct,
+              evaluated_count,
+              accuracy: Number(correct) / Number(evaluated_count)
+            }
+          }
+        }
+      }
+    }));
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric_key: "accuracy_delta_vs_baseline",
+                baseline_condition_marker: "a_candidate_condition",
+                condition_results: [
+                  { condition_marker: "z_control_condition", status: "completed", accuracy: 0, seed_count: 0 },
+                  { condition_marker: "a_candidate_condition", status: "completed", accuracy: 0, seed_count: 0 }
+                ],
+                raw_condition_results: rows
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
+      baseline_condition_marker: string;
+      primary_metric_value: number;
+      condition_summaries: Array<Record<string, any>>;
+    };
+    const control = metrics.condition_summaries.find((row) => row.condition_marker === "z_control_condition");
+    const candidate = metrics.condition_summaries.find((row) => row.condition_marker === "a_candidate_condition");
+    expect(metrics.baseline_condition_marker).toBe("z_control_condition");
+    expect(control).toMatchObject({ correct_count: 18, total_count: 40, average_accuracy: 0.45, seed_count: 2 });
+    expect(candidate).toMatchObject({ correct_count: 30, total_count: 40, average_accuracy: 0.75, seed_count: 2 });
+    expect(candidate?.accuracy_delta_vs_baseline).toBeCloseTo(0.3, 6);
+    expect(metrics.primary_metric_value).toBeCloseTo(0.3, 6);
+  });
+
   it("uses failed metrics payload as feedback when the command exits unsuccessfully", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-failed-command-metrics-"));
     process.chdir(root);
@@ -841,6 +1702,1672 @@ describe("run_experiments execution profile behavior", () => {
     expect(feedback?.summary).toContain("run-plan construction helper");
   });
 
+  it("suggests repairing evaluation normalization when no objective metric is produced", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-no-objective-metric-"));
+    process.chdir(root);
+    const run = makeRun("run-no-objective-metric");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "evaluation produced no objective metric",
+                    raw_evidence: {
+                      task_metrics: { task_a: { accuracy: null, evaluated: 0, requested: 12 } }
+                    }
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "evaluation produced no objective metric",
+                    raw_evidence: {
+                      task_metrics: { task_a: { accuracy: null, evaluated: 0, requested: 12 } }
+                    }
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("evaluation produced no objective metric:2");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair evaluation data normalization");
+    expect(verifierReport.suggested_next_action).toContain("answer_index");
+    expect(verifierReport.suggested_next_action).toContain("correct_index");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("evaluated counts nonzero");
+  });
+
+  it("suggests repairing evaluation handoff when train-complete conditions are skipped before scoring", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-eval-handoff-skip-"));
+    process.chdir(root);
+    const run = makeRun("run-eval-handoff-skip");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "evaluation produced no objective metric",
+                    raw_evidence: {
+                      status: "completed_training",
+                      evaluation_status: "skipped_not_completed",
+                      task_metrics: {}
+                    }
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "evaluation produced no objective metric",
+                    raw_evidence: {
+                      status: "completed_training",
+                      evaluation_status: "skipped_not_completed",
+                      task_metrics: {}
+                    }
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("condition_evaluation_statuses=skipped_not_completed:2");
+    expect(result.error).toContain("condition_training_statuses=completed_training:2");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair condition evaluation handoff");
+    expect(verifierReport.suggested_next_action).toContain("completed_training");
+    expect(verifierReport.suggested_next_action).toContain("skipped_not_completed");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("evaluators must run after training");
+  });
+
+  it("suggests repairing evaluation handoff when train-complete rows are final evidence", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-train-only-final-"));
+    process.chdir(root);
+    const run = makeRun("run-train-only-final");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "completed_training",
+                    task_metrics: {}
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "completed_training",
+                    task_metrics: {}
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("condition_result_statuses=completed_training:2");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair condition evaluation handoff");
+    expect(verifierReport.suggested_next_action).toContain("train-only completion");
+    expect(verifierReport.suggested_next_action).toContain("model/tokenizer");
+    expect(verifierReport.suggested_next_action).not.toContain("Repair evaluation data normalization");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("task_metrics must be populated");
+  });
+
+  it("suggests repairing artifact reload when evaluation loads from the process cwd", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-artifact-reload-"));
+    process.chdir(root);
+    const run = makeRun("run-artifact-reload");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "evaluation produced no objective metric",
+                    raw_evidence: {
+                      status: "evaluation_failed_runtime_load",
+                      diagnostics: { error: "ValueError(\"Can't find 'runtime_artifact.json' at '.'\")" },
+                      task_metrics: {}
+                    }
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "evaluation produced no objective metric",
+                    raw_evidence: {
+                      status: "evaluation_failed_runtime_load",
+                      diagnostics: { error: "ValueError(\"Can't find 'runtime_artifact.json' at '.'\")" },
+                      task_metrics: {}
+                    }
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("condition_training_statuses=evaluation_failed_runtime_load:2");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair evaluation artifact reload");
+    expect(verifierReport.suggested_next_action).toContain("process cwd");
+    expect(verifierReport.suggested_next_action).toContain("explicit path");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("artifact-path diagnostics");
+  });
+
+  it("suggests repairing evaluation invocation bridge when evaluator state is omitted", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-eval-invocation-"));
+    process.chdir(root);
+    const run = makeRun("run-eval-invocation");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "evaluation call failed: TypeError(\"Cannot call evaluate_condition without required argument 'state'\")",
+                    raw_evidence: {
+                      error: "TypeError(\"Cannot call evaluate_condition without required argument 'state'\")"
+                    }
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "evaluation call failed: TypeError(\"Cannot call evaluate_condition without required argument 'state'\")",
+                    raw_evidence: {
+                      error: "TypeError(\"Cannot call evaluate_condition without required argument 'state'\")"
+                    }
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("evaluation call failed");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair the evaluation invocation bridge");
+    expect(verifierReport.suggested_next_action).toContain("state");
+    expect(verifierReport.suggested_next_action).toContain("condition_result");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("signature diagnostics");
+  });
+
+  it("suggests repairing invocation bridge when loaders or condition runners miss required bundles", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-missing-task-bundle-"));
+    process.chdir(root);
+    const run = makeRun("run-missing-task-bundle");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 3,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "TypeError(\"Cannot call run_single_condition without required argument 'task_bundle'\")"
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "TypeError(\"Cannot call execute_condition without required argument 'task_data'\")"
+                  },
+                  {
+                    condition_marker: "candidate_condition_b",
+                    status: "failed",
+                    reason: "RuntimeError('Experiment data bundle could not be materialized: load_training_examples: TypeError(\"Cannot call load_training_examples without required argument \'runtime\'\")')"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("required argument 'task_bundle'");
+    expect(result.error).toContain("required argument 'task_data'");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair the experiment invocation bridge");
+    expect(verifierReport.suggested_next_action).toContain("task_bundle");
+    expect(verifierReport.suggested_next_action).toContain("task_data");
+    expect(verifierReport.suggested_next_action).toContain("dataset_bundle");
+    expect(verifierReport.suggested_next_action).toContain("runtime");
+    expect(verifierReport.suggested_next_action).toContain("run_context");
+    expect(verifierReport.suggested_next_action).toContain("data loader");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("eval_examples_by_task");
+    expect(feedback?.suggested_next_action).toContain("runtime_context");
+  });
+
+  it("suggests repairing invocation bridge when evaluators miss eval sets", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-missing-eval-sets-"));
+    process.chdir(root);
+    const run = makeRun("run-missing-eval-sets");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "evaluation call failed: TypeError(\"Cannot call evaluate_condition_outputs without required argument 'eval_sets'\")"
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "evaluation call failed: TypeError(\"Cannot call evaluate_condition_outputs without required argument 'eval_sets'\")"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("required argument 'eval_sets'");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair the experiment invocation bridge");
+    expect(verifierReport.suggested_next_action).toContain("eval_sets");
+    expect(verifierReport.suggested_next_action).toContain("eval_examples_by_task");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("benchmark_examples");
+  });
+
+  it("suggests repairing invocation bridge when evaluators miss runtime context", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-missing-runtime-context-"));
+    process.chdir(root);
+    const run = makeRun("run-missing-runtime-context");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "evaluation call failed: TypeError(\"Cannot call evaluate_condition without required argument 'run'\")"
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "evaluation call failed: TypeError(\"Cannot call evaluate_condition without required argument 'run'\")"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("required argument 'run'");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair the experiment invocation bridge");
+    expect(verifierReport.suggested_next_action).toContain("run");
+    expect(verifierReport.suggested_next_action).toContain("runtime_context");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("condition_result");
+  });
+
+  it("suggests repairing invocation bridge when evaluators miss artifact paths", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-missing-eval-paths-"));
+    process.chdir(root);
+    const run = makeRun("run-missing-eval-paths");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "evaluation call failed: TypeError(\"Cannot call evaluate_completed_condition without required argument 'paths'\")"
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "evaluation call failed: TypeError(\"Cannot call evaluate_completed_condition without required argument 'paths'\")"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("required argument 'paths'");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair the experiment invocation bridge");
+    expect(verifierReport.suggested_next_action).toContain("paths");
+    expect(verifierReport.suggested_next_action).toContain("artifact_paths");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("output_paths");
+  });
+
+  it("suggests repairing runtime config defaults when Namespace attributes are missing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-missing-runtime-default-"));
+    process.chdir(root);
+    const run = makeRun("run-missing-runtime-default");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "{'stage': 'condition_model_execution', 'error_type': 'AttributeError', 'message': \"'Namespace' object has no attribute 'allow_model_download'\"}"
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "{'stage': 'condition_model_execution', 'error_type': 'AttributeError', 'message': \"'Namespace' object has no attribute 'allow_model_download'\"}"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Namespace");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair runtime config defaults");
+    expect(verifierReport.suggested_next_action).toContain("allow_model_download");
+    expect(verifierReport.suggested_next_action).toContain("local_files_only");
+    expect(verifierReport.suggested_next_action).toContain("artifact_dir");
+    expect(verifierReport.suggested_next_action).toContain("condition_output_dir");
+    expect(verifierReport.suggested_next_action).toContain("paths");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("cache_dir");
+    expect(feedback?.suggested_next_action).toContain("run_artifact_dir");
+    expect(feedback?.suggested_next_action).toContain("runtime_paths");
+  });
+
+  it("suggests repairing runtime path aliases when Namespace artifact directories are missing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-missing-runtime-path-alias-"));
+    process.chdir(root);
+    const run = makeRun("run-missing-runtime-path-alias");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "AttributeError(\"'Namespace' object has no attribute 'artifact_dir'\")"
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "AttributeError(\"'Namespace' object has no attribute 'condition_output_dir'\")"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("artifact_dir");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair runtime config defaults");
+    expect(verifierReport.suggested_next_action).toContain("artifact_dir");
+    expect(verifierReport.suggested_next_action).toContain("condition_output_dir");
+    expect(verifierReport.suggested_next_action).toContain("run_artifact_dir");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("path aliases");
+  });
+
+  it("suggests repairing runtime config helper capabilities when config methods are missing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-missing-runtime-helper-"));
+    process.chdir(root);
+    const run = makeRun("run-missing-runtime-helper");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "'RunnerConfig' object has no attribute 'ensure_dirs'"
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "'RunnerConfig' object has no attribute 'ensure_dirs'"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("RunnerConfig");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair runtime config defaults");
+    expect(verifierReport.suggested_next_action).toContain("helper capabilities");
+    expect(verifierReport.suggested_next_action).toContain("ensure_dirs");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("ensure_dirs");
+  });
+
+  it("suggests repairing runtime budget defaults when budget attributes are missing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-missing-budget-default-"));
+    process.chdir(root);
+    const run = makeRun("run-missing-budget-default");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "AttributeError(\"'_AutoLabOSEntrypointBudget' object has no attribute 'seed'\")"
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "AttributeError(\"'_AutoLabOSEntrypointBudget' object has no attribute 'seed'\")"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("_AutoLabOSEntrypointBudget");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair runtime config defaults");
+    expect(verifierReport.suggested_next_action).toContain("seed");
+    expect(verifierReport.suggested_next_action).toContain("max_train_examples");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("max_eval_examples_per_task");
+  });
+
+  it("suggests repairing data materialization when training examples are unavailable", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-missing-train-examples-"));
+    process.chdir(root);
+    const run = makeRun("run-missing-train-examples");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "no training examples were provided for real condition execution"
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "no training examples were provided for real condition execution"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("no training examples were provided");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair data materialization");
+    expect(verifierReport.suggested_next_action).toContain("train_records");
+    expect(verifierReport.suggested_next_action).toContain("data_access");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("evaluation examples");
+  });
+
+  it("suggests repairing training text normalization when loaded records normalize to zero usable texts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-zero-usable-train-texts-"));
+    process.chdir(root);
+    const run = makeRun("run-zero-usable-train-texts");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "data_access produced zero usable instruction/training texts",
+                    raw_evidence: {
+                      status: "failed",
+                      training_status: "failed",
+                      evaluation_status: "skipped_not_completed"
+                    }
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "data_access_failure: zero usable training texts after normalization",
+                    raw_evidence: {
+                      status: "failed",
+                      training_status: "failed",
+                      evaluation_status: "skipped_not_completed"
+                    }
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("zero usable instruction/training texts");
+    expect(result.error).toContain("zero usable training texts after normalization");
+    expect(result.error).toContain("condition_evaluation_statuses=skipped_not_completed:2");
+    expect(result.error).toContain("condition_training_statuses=failed:2");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair data materialization");
+    expect(verifierReport.suggested_next_action).toContain("train_records");
+    expect(verifierReport.suggested_next_action).toContain("messages");
+    expect(verifierReport.suggested_next_action).not.toContain("Repair condition evaluation handoff");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("empty train set");
+  });
+
+  it("suggests repairing condition normalization when tuple condition records reach execution", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-condition-normalization-"));
+    process.chdir(root);
+    const run = makeRun("run-condition-normalization");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  { condition_marker: "condition", status: "failed", reason: "AttributeError(\"'tuple' object has no attribute 'rank'\")" },
+                  { condition_marker: "condition", status: "failed", reason: "AttributeError(\"'tuple' object has no attribute 'rank'\")" }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("tuple");
+    expect(result.error).toContain("rank");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair condition normalization");
+    expect(verifierReport.suggested_next_action).toContain("tuple");
+    expect(verifierReport.suggested_next_action).toContain("stable condition identifiers");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("mapping");
+  });
+
+  it("suggests repairing record shape normalization when mapping records are numerically indexed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-record-shape-indexing-"));
+    process.chdir(root);
+    const run = makeRun("run-record-shape-indexing");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  { condition_marker: "baseline_condition", status: "failed", failure_reason: "KeyError(0)" },
+                  { condition_marker: "candidate_condition", status: "failed", failure_reason: "KeyError(0)" }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("KeyError(0)");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair record shape normalization");
+    expect(verifierReport.suggested_next_action).toContain("mapping");
+    expect(verifierReport.suggested_next_action).toContain("[0]");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("schema diagnostics");
+  });
+
+  it("suggests repairing evaluation record normalization when scalar records break label access", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-eval-scalar-record-normalization-"));
+    process.chdir(root);
+    const run = makeRun("run-eval-scalar-record-normalization");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                error:
+                  "RuntimeError('Experiment data bundle could not be materialized: load_task_bundle: DataAccessError({\"message\":\"real dataset access/normalization failed\",\"missing_eval_tasks\":[\"task_alpha\"],\"diagnostics\":{\"tasks\":{\"task_alpha\":{\"error\":\"argument of type \\'int\\' is not iterable\"},\"task_beta\":{\"train_usable\":96,\"eval_usable\":64}},\"schema_failures\":[\"argument of type \\'int\\' is not iterable\"]}})')"
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("argument of type \\'int\\' is not iterable");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("Repair evaluation record normalization");
+    expect(verifierReport.suggested_next_action).toContain("field in record");
+    expect(verifierReport.suggested_next_action).not.toContain("Repair data materialization");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.suggested_next_action).toContain("scalar evaluation records");
+  });
+
+  it("suggests preserving evaluator runtime handles when completed conditions cannot be scored", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-missing-eval-handles-"));
+    process.chdir(root);
+    const run = makeRun("run-missing-eval-handles");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    reason: "completed condition did not expose model/tokenizer for real evaluation"
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "failed",
+                    reason: "completed condition did not expose model/tokenizer for real evaluation"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "status=failed", exit_code: 1, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("completed_condition_count=0/2");
+    expect(result.error).toContain("completed condition did not expose model/tokenizer for real evaluation:2");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(verifierReport.suggested_next_action).toContain("preserve evaluator-required runtime handles");
+    expect(verifierReport.suggested_next_action).toContain("reload the saved condition artifact");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback).toMatchObject({ status: "fail", stage: "metrics" });
+    expect(feedback?.suggested_next_action).toContain("preserve evaluator-required runtime handles");
+  });
+
+  it("surfaces model download cache dependency failures when no metrics are written", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-command-dependency-failure-"));
+    process.chdir(root);
+    const run = makeRun("run-command-dependency-failure");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const runCommand = vi.fn(async () => ({
+      status: "error" as const,
+      stdout: "Generating benchmark_task_a split...",
+      stderr: [
+        "Loading tokenizer with from_pretrained",
+        "xet retry failed: failed to lookup address information: Temporary failure in name resolution",
+        "artifact model cache contains an incomplete blob"
+      ].join("\n"),
+      exit_code: 1,
+      duration_ms: 10
+    }));
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand,
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(runCommand).toHaveBeenCalledTimes(2);
+    expect(result.error).toContain("exit_code=1");
+    expect(result.error).toContain("metrics_written=false");
+    expect(result.error).toContain("model_download_or_cache_failure=true");
+    expect(result.error).toContain("Temporary failure in name resolution");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as {
+      status: string;
+      stage: string;
+      summary: string;
+      suggested_next_action?: string;
+      metrics_path?: string;
+      exit_code?: number;
+    };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "command",
+      exit_code: 1
+    });
+    expect(verifierReport.summary).toContain("metrics_written=false");
+    expect(verifierReport.summary).toContain("model_download_or_cache_failure=true");
+    expect(verifierReport.metrics_path).toContain("metrics.json");
+    expect(verifierReport.suggested_next_action).toContain("standard Hugging Face cache");
+    expect(verifierReport.suggested_next_action).toContain("avoid artifact-local model cache redownloads");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string; suggested_next_action?: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback).toMatchObject({
+      status: "fail",
+      stage: "command"
+    });
+    expect(feedback?.summary).toContain("metrics_written=false");
+    expect(feedback?.summary).toContain("model_download_or_cache_failure=true");
+  });
   it("prioritizes entrypoint failed metrics over warning-only stderr on command failure", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-entrypoint-failed-metrics-"));
     process.chdir(root);
@@ -876,7 +3403,28 @@ describe("run_experiments execution profile behavior", () => {
                 required_run_count: 36,
                 error_type: "RuntimeError",
                 error_message: "Missing run-plan execution helper in experiment scaffold.",
-                traceback: "RuntimeError: Missing run-plan execution helper in experiment scaffold."
+                traceback: "RuntimeError: Missing run-plan execution helper in experiment scaffold.",
+                condition_results: [
+                  {
+                    completed: false,
+                    condition: { marker: "baseline_condition" },
+                    train_result: { status: "failed", failure_reason: "No training examples were provided" }
+                  },
+                  {
+                    completed: false,
+                    status: "failed",
+                    condition: { marker: "candidate_condition" },
+                    failure: { message: "No training examples were provided" }
+                  }
+                ],
+                raw_condition_results: [
+                  {
+                    status: "failed",
+                    condition_marker: "candidate_condition_b",
+                    failure_stage: "evaluation",
+                    failure_reason: "no objective evaluation callable was available"
+                  }
+                ]
               },
               null,
               2
@@ -912,6 +3460,11 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.error).toContain("Experiment metrics payload reports failed status");
     expect(result.error).toContain("Missing run-plan execution helper");
     expect(result.error).toContain("completed_condition_count=0/12");
+    expect(result.error).toContain("condition_result_statuses=failed:3");
+    expect(result.error).toContain("condition_result_reasons=No training examples were provided:2");
+    expect(result.error).toContain("no objective evaluation callable was available:1");
+    expect(result.error).toContain("condition_result_samples=baseline_condition,status=failed,reason=No training examples were provided");
+    expect(result.error).not.toContain("unlabeled_condition,status=failed");
     expect(result.error).not.toContain("torch_dtype");
 
     const verifierReport = JSON.parse(
@@ -922,10 +3475,300 @@ describe("run_experiments execution profile behavior", () => {
       stage: "metrics"
     });
     expect(verifierReport.summary).toContain("Missing run-plan execution helper");
+    expect(verifierReport.summary).toContain("no objective evaluation callable was available:1");
+    expect(verifierReport.summary).toContain("condition_result_samples=baseline_condition,status=failed,reason=No training examples were provided");
+    expect(verifierReport.summary).not.toContain("unlabeled_condition,status=failed");
     expect(verifierReport.summary).not.toContain("torch_dtype");
   });
 
-  it("restores the previous canonical metrics when a rejected rerun writes failed metrics", async () => {
+  it("includes data access preview diagnostics when failed metrics hide empty training data", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-data-access-preview-"));
+    process.chdir(root);
+    const run = makeRun("run-data-access-preview");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const publicDir = path.join(root, "public_experiment");
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.public_dir", publicDir);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(publicDir, "data_access_preview.json"),
+            JSON.stringify(
+              {
+                train_count: 0,
+                eval_counts: { benchmark_task_a: 2 },
+                diagnostics: {
+                  schema_errors: ["No usable instruction/training texts normalized from loaded records."],
+                  tasks: {
+                    benchmark_task_a: {
+                      normalized_train_count: 0,
+                      normalized_eval_count: 2
+                    }
+                  }
+                },
+                sample_train: null
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: false,
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                raw_condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    error_type: "IndexError",
+                    failure_reason: "list index out of range"
+                  },
+                  {
+                    condition_marker: "candidate_condition_a",
+                    status: "failed",
+                    error_type: "IndexError",
+                    failure_reason: "list index out of range"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "Loading weights: 100%|done|",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment metrics payload reports failed status");
+    expect(result.error).toContain("completed_condition_count=0/2");
+    expect(result.error).toContain("condition_result_reasons=list index out of range:2");
+    expect(result.error).toContain("data_access_preview.json");
+    expect(result.error).toContain("train_count=0");
+    expect(result.error).toContain("zero usable instruction/training texts");
+    expect(result.error).toContain("schema_errors=No usable instruction/training texts normalized from loaded records.");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("data_access_preview.json");
+    expect(verifierReport.suggested_next_action).toContain("Repair data materialization before retrying");
+  });
+
+  it("blocks canonical skeleton-only Python runners before executing stale metrics", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-skeleton-preflight-"));
+    process.chdir(root);
+    const run = makeRun("run-skeleton-preflight");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    const scriptPath = path.join(root, "generated_runner.py");
+    await writeFile(
+      scriptPath,
+      [
+        "# AUTOLABOS CANONICAL SKELETON",
+        "# BEGIN AUTOLABOS SECTION runner_contract :: Runner imports and execution contract",
+        "import argparse",
+        "from dataclasses import dataclass",
+        "",
+        "@dataclass",
+        "class RuntimeConfig:",
+        "    output_dir: str",
+        "",
+        "def parse_args(argv=None):",
+        "    return argparse.Namespace(output_dir='outputs')",
+        "# END AUTOLABOS SECTION runner_contract",
+        "",
+        "# BEGIN AUTOLABOS SECTION runner_entrypoint :: CLI entrypoint and final handoff",
+        "# END AUTOLABOS SECTION runner_entrypoint",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          completed_condition_count: 2,
+          required_condition_count: 2,
+          quality_delta: 0.2
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 " + JSON.stringify(scriptPath));
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      aci: {
+        runCommand: async () => {
+          throw new Error("skeleton preflight should block before command execution");
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("canonical skeleton");
+    expect(result.error).toContain("stale metrics");
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "preflight_test" });
+    expect(verifierReport.summary).toContain("canonical skeleton");
+    expect(verifierReport.suggested_next_action).toContain("runnable implementation");
+  });
+
+  it("blocks partial canonical skeleton runners with empty evaluation metrics or entrypoint sections", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-partial-skeleton-preflight-"));
+    process.chdir(root);
+    const run = makeRun("run-partial-skeleton-preflight");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    const scriptPath = path.join(root, "generated_runner.py");
+    await writeFile(
+      scriptPath,
+      [
+        "# AUTOLABOS CANONICAL SKELETON",
+        "import sys",
+        "# BEGIN AUTOLABOS SECTION runner_contract :: Runner imports and execution contract",
+        "def build_plan():",
+        "    return ['baseline_condition', 'candidate_condition_a']",
+        "# END AUTOLABOS SECTION runner_contract",
+        "",
+        "# BEGIN AUTOLABOS SECTION runner_evaluation :: Task evaluation and raw evidence capture",
+        "# END AUTOLABOS SECTION runner_evaluation",
+        "",
+        "# BEGIN AUTOLABOS SECTION runner_metrics :: Metric aggregation and failure-safe payload",
+        "# END AUTOLABOS SECTION runner_metrics",
+        "",
+        "# BEGIN AUTOLABOS SECTION runner_entrypoint :: CLI entrypoint and final handoff",
+        "def main():",
+        "    return 0",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        "# END AUTOLABOS SECTION runner_entrypoint",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          completed_condition_count: 2,
+          required_condition_count: 2,
+          quality_delta: 0.2
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 " + JSON.stringify(scriptPath));
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      aci: {
+        runCommand: async () => {
+          throw new Error("partial skeleton preflight should block before command execution");
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("canonical skeleton");
+    expect(result.error).toContain("stale metrics");
+  });
+
+  it("preserves rejected metrics when a rejected rerun writes failed metrics", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-restore-rejected-metrics-"));
     process.chdir(root);
     const run = makeRun("run-restore-rejected-metrics");
@@ -989,10 +3832,14 @@ describe("run_experiments execution profile behavior", () => {
 
     expect(result.status).toBe("failure");
     expect(result.error).toContain("No locked conditions are available");
-    const restoredMetrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8"));
-    expect(restoredMetrics).toMatchObject(previousMetrics);
-    const restoredPath = await runContext.get<string>("run_experiments.restored_previous_metrics_after_failure");
-    expect(restoredPath).toContain("preexisting_metrics_");
+    const rejectedMetrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8"));
+    expect(rejectedMetrics).toMatchObject({
+      status: "failed",
+      completed_condition_count: 0,
+      required_condition_count: 2,
+      error: "No locked conditions are available to select from."
+    });
+    await expect(runContext.get("run_experiments.restored_previous_metrics_after_failure")).resolves.toBeUndefined();
   });
 
   it("rejects zero-exit runtime tracebacks instead of recovering stale public metrics", async () => {
@@ -1146,12 +3993,23 @@ describe("run_experiments execution profile behavior", () => {
     process.chdir(root);
     const run = makeRun("run-clear-stale-failure-artifact");
     const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const publicDir = path.join(root, "public");
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(root, "study_failure.json"), JSON.stringify({ error: "old stale failure" }), "utf8");
+    const nestedFailurePath = path.join(root, "condition_artifacts", "condition_a", "seed_1", "failure.json");
+    await mkdir(path.dirname(nestedFailurePath), { recursive: true });
+    await writeFile(nestedFailurePath, JSON.stringify({ error: "old nested stale failure" }), "utf8");
+    const rawEvidencePath = path.join(root, "artifacts", "raw_evaluation_evidence.jsonl");
+    await mkdir(path.dirname(rawEvidencePath), { recursive: true });
+    await writeFile(rawEvidencePath, JSON.stringify({ status: "condition_evaluation_summary", schema_diagnostics: ["old stale diagnostic"] }) + "\n", "utf8");
+    const publicRawEvidencePath = path.join(publicDir, "artifacts", "raw_evaluation_evidence.jsonl");
+    await mkdir(path.dirname(publicRawEvidencePath), { recursive: true });
+    await writeFile(publicRawEvidencePath, JSON.stringify({ status: "condition_evaluation_summary", schema_diagnostics: ["old public stale diagnostic"] }) + "\n", "utf8");
 
     const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
     await runContext.put("implement_experiments.run_command", "python3 experiment.py");
     await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.public_dir", publicDir);
     await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
 
     const node = createRunExperimentsNode({
@@ -1206,9 +4064,97 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.error).toContain("selected_model=null");
     expect(result.error).toContain("missing_row_for_required_condition_seed");
     expect(result.error).not.toContain("old stale failure");
+    expect(result.error).not.toContain("old nested stale failure");
+    await expect(readFile(nestedFailurePath, "utf8")).rejects.toThrow();
     const backups = await runContext.get<string[]>("run_experiments.previous_failure_artifact_backups");
-    expect(backups).toHaveLength(1);
-    expect(backups?.[0]).toContain("preexisting_study_failure");
+    expect(backups).toHaveLength(2);
+    expect(backups?.some((backup) => backup.includes("preexisting_study_failure"))).toBe(true);
+    expect(backups?.some((backup) => backup.includes("preexisting_nested_failure"))).toBe(true);
+    await expect(readFile(rawEvidencePath, "utf8")).rejects.toThrow();
+    await expect(readFile(publicRawEvidencePath, "utf8")).rejects.toThrow();
+    const evidenceBackups = await runContext.get<string[]>("run_experiments.previous_evidence_artifact_backups");
+    expect(evidenceBackups).toHaveLength(2);
+    expect(evidenceBackups?.every((backup) => backup.includes("preexisting_artifacts_raw_evaluation_evidence"))).toBe(true);
+    const backedUpEvidence = await Promise.all(evidenceBackups!.map((backup) => readFile(backup, "utf8")));
+    expect(backedUpEvidence.join("\n")).toContain("old stale diagnostic");
+    expect(backedUpEvidence.join("\n")).toContain("old public stale diagnostic");
+  });
+
+  it("recovers completed public bundle metrics over failed run metrics", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-recover-public-completed-metrics-"));
+    process.chdir(root);
+    const run = makeRun("run-recover-public-completed-metrics");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const publicDir = path.join(root, "public");
+    const metricsPath = path.join(runDir, "metrics.json");
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.public_dir", publicDir);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await mkdir(path.dirname(metricsPath), { recursive: true });
+          await writeFile(
+            metricsPath,
+            JSON.stringify(
+              {
+                status: "failed",
+                primary_metric_key: "accuracy",
+                accuracy: 0.4,
+                error: "stale failed run metrics"
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          await writeFile(
+            path.join(publicDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                primary_metric_key: "accuracy",
+                accuracy: 0.95,
+                completed_condition_count: 2,
+                required_condition_count: 2
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "ok" as const, stdout: "completed", stderr: "", exit_code: 0, duration_ms: 5 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const recoveredMetrics = JSON.parse(await readFile(metricsPath, "utf8")) as { status?: string; accuracy?: number };
+    expect(recoveredMetrics.status).toBe("completed");
+    expect(recoveredMetrics.accuracy).toBe(0.95);
+    await expect(runContext.get("run_experiments.recovered_public_metrics_path")).resolves.toBe(path.join(publicDir, "metrics.json"));
   });
 
   it("repairs runtime-resolved metrics payload builders before run_experiments execution", async () => {
@@ -1489,6 +4435,89 @@ describe("run_experiments execution profile behavior", () => {
     ).toBe(true);
   });
 
+  it("forwards timeout flags through shell wrappers that pass through argv", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-shell-timeout-"));
+    process.chdir(root);
+    const run = makeRun("run-shell-wrapper-timeout");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "run_condition_sweep_experiment.py");
+    const wrapperPath = path.join(root, "run_command.sh");
+    await writeFile(
+      scriptPath,
+      [
+        "import argparse",
+        "from pathlib import Path",
+        "",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    parser.add_argument('--timeout-sec', dest='timeout_sec', type=int, default=0)",
+        "    return parser.parse_args(argv)",
+        "",
+        "if __name__ == '__main__':",
+        "    args = parse_args()",
+        "    Path(args.metrics_path).write_text('{\"status\":\"completed\",\"success\":true}', encoding='utf8')",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      wrapperPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"",
+        "RUNNER=\"${SCRIPT_DIR}/run_condition_sweep_experiment.py\"",
+        "exec \"${PYTHON_BIN:-python3}\" \"$RUNNER\" \"$@\"",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", `bash ${JSON.stringify(wrapperPath)}`);
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: { experiments: { timeout_sec: 43200 } } as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async (command: string) => {
+          expect(command).toContain("--timeout-sec 43200");
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify({
+              status: "completed",
+              success: true,
+              primary_metric: { name: "accuracy_delta_vs_baseline", value: 0.02, target: 0.01, met: true },
+              condition_results: [{ condition_id: "baseline_condition", status: "completed", accuracy: 0.4 }],
+              completed_condition_count: 1
+            }),
+            "utf8"
+          );
+          return { status: "ok" as const, stdout: "done", stderr: "", exit_code: 0, duration_ms: 1 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    await node.execute({ run, graph: run.graph });
+  });
   it("repairs entrypoint argv dispatch before run_experiments execution", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-entrypoint-argv-repair-"));
     process.chdir(root);
@@ -1787,7 +4816,7 @@ describe("run_experiments execution profile behavior", () => {
     await mkdir(path.join(runDir, "memory"), { recursive: true });
 
     const scriptPath = path.join(root, "experiment.py");
-    const markerExpression = '"rank_" + "8" + "_dropout_" + "0_05"';
+    const markerExpression = '"candidate_condition_a"';
     await writeFile(
       scriptPath,
       [
@@ -1811,7 +4840,7 @@ describe("run_experiments execution profile behavior", () => {
         "    return default if value is None else float(value)",
         "",
         "def _parse_condition_marker(marker: str):",
-        "    return {'rank': 8, 'dropout': 0.05, 'condition_marker': marker}",
+        "    return {'rank': 8, 'parameter_y': 0.05, 'condition_marker': marker}",
         "",
         `PLANNED_CONDITIONS = [{'condition_marker': ${markerExpression}}]`,
         "SEED_SCHEDULE = [42]",
@@ -1831,13 +4860,13 @@ describe("run_experiments execution profile behavior", () => {
         "        for condition in condition_rows:",
         "            if not isinstance(condition, Mapping):",
         "                continue",
-        "            rank = _safe_int(condition.get(\"rank\", condition.get(\"adapter_rank\", condition.get(\"r\"))), default=None)",
-        "            dropout = _safe_float(condition.get(\"dropout\", condition.get(\"adapter_dropout\")), default=None)",
+        "            rank = _safe_int(condition.get(\"rank\", condition.get(\"condition_parameter_x\", condition.get(\"r\"))), default=None)",
+        "            parameter_y = _safe_float(condition.get(\"parameter_y\", condition.get(\"condition_parameter_y\")), default=None)",
         "            marker = condition.get(\"condition_marker\") or condition.get(\"marker\")",
-        "            if marker is None and rank is not None and dropout is not None:",
+        "            if marker is None and rank is not None and parameter_y is not None:",
         "                marker = 'candidate'",
         "            for seed in seeds:",
-        "                schedule.append({'condition_marker': str(marker), 'rank': rank, 'dropout': dropout, 'seed': int(seed)})",
+        "                schedule.append({'condition_marker': str(marker), 'rank': rank, 'parameter_y': parameter_y, 'seed': int(seed)})",
         "    return schedule",
         "",
         "def _signature_compatible_kwargs(fn: Any, kwargs: Mapping[str, Any]) -> Optional[dict[str, Any]]:",
@@ -2087,6 +5116,105 @@ describe("run_experiments execution profile behavior", () => {
     expect(observedCommand).not.toContain("--timeout-sec 9876");
   });
 
+  it("appends per-condition timeout when accepted by the Python runner", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-condition-timeout-"));
+    process.chdir(root);
+    const run = makeRun("run-condition-timeout");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "experiment.py");
+    await writeFile(
+      scriptPath,
+      [
+        "import argparse",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    parser.add_argument('--timeout-sec', type=int, default=0)",
+        "    parser.add_argument('--condition-timeout-sec', type=int, default=0)",
+        "    return parser.parse_args(argv)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 " + JSON.stringify(scriptPath));
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
+
+    let observedCommand = "";
+    const node = createRunExperimentsNode({
+      config: {
+        experiments: {
+          timeout_sec: 1234,
+          network_policy: "blocked"
+        }
+      } as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async (command: string) => {
+          observedCommand = command;
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric: {
+                  name: "accuracy_delta_vs_baseline",
+                  value: 0.02,
+                  target: 0.01,
+                  met: true
+                },
+                condition_results: [
+                  { condition_id: "baseline_condition", status: "completed", accuracy: 0.4 },
+                  { condition_id: "candidate_condition_a", status: "completed", accuracy: 0.42 }
+                ],
+                completed_condition_count: 2
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    await node.execute({ run, graph: run.graph });
+
+    expect(observedCommand).toContain("--timeout-sec 1234");
+    expect(observedCommand).toContain("--condition-timeout-sec 1234");
+  });
+
   it("does not append timeout flags only mentioned outside argparse", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-timeout-flag-source-mention-"));
     process.chdir(root);
@@ -2105,6 +5233,110 @@ describe("run_experiments execution profile behavior", () => {
         "    parser.add_argument('--output-dir', default='.')",
         "    parser.add_argument('--metrics-path', default='metrics.json')",
         "    return parser.parse_args(argv)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", `python3 ${JSON.stringify(scriptPath)}`);
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    let observedCommand = "";
+    const node = createRunExperimentsNode({
+      config: {
+        experiments: {
+          timeout_sec: 14400,
+          network_policy: "blocked"
+        }
+      } as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async (command: string) => {
+          observedCommand = command;
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric: {
+                  name: "accuracy_delta_vs_baseline",
+                  value: 0.02,
+                  target: 0.01,
+                  met: true
+                },
+                condition_results: [
+                  { condition_id: "baseline_condition", status: "completed", accuracy: 0.4 },
+                  { condition_id: "candidate_condition_a", status: "completed", accuracy: 0.42 }
+                ],
+                completed_condition_count: 2
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    await node.execute({ run, graph: run.graph });
+
+    expect(observedCommand).not.toContain("--timeout-sec 14400");
+    expect(observedCommand).not.toContain("--budget-timeout-sec 14400");
+  });
+
+  it("does not append timeout flags accepted only by a fallback parser", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-timeout-fallback-parser-"));
+    process.chdir(root);
+    const run = makeRun("run-timeout-fallback-parser");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "experiment.py");
+    await writeFile(
+      scriptPath,
+      [
+        "import argparse",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--output-dir', default='.')",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    return parser",
+        "def _fallback_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--timeout-sec', type=int, default=None)",
+        "    return parser",
+        "def main(argv=None):",
+        "    return build_arg_parser().parse_args(argv)",
         ""
       ].join("\n"),
       "utf8"
@@ -2377,6 +5609,9 @@ describe("run_experiments execution profile behavior", () => {
                   ],
                   seed_schedule: [11, 12]
                 },
+                per_seed_rows: ["baseline_condition", "candidate_condition_a", "candidate_condition_b"].flatMap((marker) =>
+                  [11, 12].map((seed) => ({ condition_marker: marker, seed, status: "completed" }))
+                ),
                 aggregate: {
                   baseline_marker: "baseline_condition",
                   completed_run_count: 6,
@@ -2887,6 +6122,9 @@ describe("run_experiments execution profile behavior", () => {
                 completed_condition_count: 8,
                 required_condition_count: 8,
                 accuracy_delta_vs_baseline: 0,
+                per_seed_rows: Array.from({ length: 8 }, (_unused, index) => `condition_${index + 1}`).flatMap((marker) =>
+                  [101, 202, 303].map((seed) => ({ condition_marker: marker, seed, status: "completed" }))
+                ),
                 condition_summaries: [
                   {
                     condition_marker: "baseline_condition",
@@ -2970,9 +6208,9 @@ describe("run_experiments execution profile behavior", () => {
         "@dataclass(frozen=True)",
         "class ConditionSpec:",
         "    marker: str",
-        "    adapter_rank: int",
+        "    condition_parameter_x: int",
         "    adapter_alpha: int",
-        "    adapter_dropout: float",
+        "    condition_parameter_y: float",
         "",
         "def _make_config_instance(type_name, **kwargs):",
         "    cls = globals().get(type_name)",
@@ -2997,7 +6235,7 @@ describe("run_experiments execution profile behavior", () => {
         "    condition_id='baseline',",
         "    " + "ra" + "nk=8,",
         "    adapter_alpha=16,",
-        "    adapter_dropout=0.0,",
+        "    condition_parameter_y=0.0,",
         ")",
         ""
       ].join("\n"),
@@ -3129,7 +6367,7 @@ describe("run_experiments execution profile behavior", () => {
                       "OSError: Can't load the configuration of 'EleutherAI/pythia-410m'. If you were trying to load it from Hugging Face, make sure the model is available or cached locally."
                   },
                   {
-                    condition_id: "vanilla_adapter",
+                    condition_id: "reference_candidate",
                     status: "failed",
                     evidence: {
                       error_message:
@@ -3222,7 +6460,7 @@ describe("run_experiments execution profile behavior", () => {
                       mean_zero_shot_accuracy: 0.4
                     }
                   },
-                  adapter_r4: {
+                  condition_parameter_x4: {
                     status: "failed",
                     error: "TrainingArguments.__init__() got an unexpected keyword argument 'overwrite_output_dir'"
                   }
@@ -3260,7 +6498,7 @@ describe("run_experiments execution profile behavior", () => {
 
     expect(result.status).toBe("failure");
     expect(result.error).toContain("Experiment metrics payload reports failed recipe(s)");
-    expect(result.error).toContain("adapter_r4");
+    expect(result.error).toContain("condition_parameter_x4");
 
     const verifierReport = JSON.parse(
       await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
@@ -3594,5 +6832,78 @@ describe("run_experiments execution profile behavior", () => {
       stage: "metrics"
     });
     expect(verifierReport.summary).toContain("completed_run_count=4/22");
+  });
+
+  it("fails repeated-run verification when completed counters lack condition-seed evidence", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-seed-evidence-"));
+    process.chdir(root);
+    const run = makeRun("run-seed-evidence");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "success",
+                success: true,
+                accuracy_delta_vs_baseline: 0.12,
+                primary_metric_key: "accuracy_delta_vs_baseline",
+                primary_metric_value: 0.12,
+                completed_run_count: 6,
+                required_run_count: 6,
+                completed_condition_count: 2,
+                required_condition_count: 2,
+                condition_results: [
+                  { condition_marker: "baseline_condition", status: "completed", seed_count: 0, seeds: [] },
+                  { condition_marker: "candidate_condition_a", status: "completed", seed_count: 0, seeds: [] }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "ok" as const, stdout: "runner exited zero", stderr: "", exit_code: 0, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Repeated-run evidence incomplete");
+    expect(result.error).toContain("observed_condition_seed_count=0/6");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("observed_condition_seed_count=0/6");
   });
 });

@@ -64,6 +64,7 @@ import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.
 import { buildBaselineComparisonSurface } from "../baselineComparisonSurface.js";
 import {
   hasAnyIncompleteResultsTableRow,
+  inferMetricDirection,
   type ResultsTableDirection,
   type ResultsTableSchema,
   validateResultsTableSchema
@@ -2518,7 +2519,7 @@ function buildStructuredResultsTable(
           baseline: metric.baseline_value,
           comparator: metric.primary_value,
           delta: Number((metric.primary_value - metric.baseline_value).toFixed(4)),
-          direction
+          direction: inferMetricDirection(metric.key, direction)
         });
       }
     }
@@ -2586,7 +2587,7 @@ function deriveMetricTableComparisonRows(
       baseline: baselineAverage,
       comparator: bestAverage,
       delta: Number((bestAverage - baselineAverage).toFixed(6)),
-      direction
+      direction: inferMetricDirection(matchedMetric || "average_accuracy", direction)
     });
   }
 
@@ -2608,7 +2609,7 @@ function deriveMetricTableComparisonRows(
       baseline,
       comparator,
       delta: Number((comparator - baseline).toFixed(6)),
-      direction
+      direction: inferMetricDirection(metricName, direction)
     });
   }
 

@@ -9,6 +9,12 @@ import { LLMClient, LLMCompleteOptions, MockLLMClient } from "../src/core/llm/cl
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createWritePaperNode, validateCompiledPdfPageBudget } from "../src/core/nodes/writePaper.js";
 import {
+  DERIVED_MAIN_FIGURE_SOURCE_REF_ID,
+  DERIVED_MAIN_TABLE_SOURCE_REF_ID,
+  stabilizePaperManuscriptForSubmission,
+  type PaperManuscript
+} from "../src/core/analysis/paperManuscript.js";
+import {
   buildPublicAnalysisDir,
   buildPublicPaperDir,
   buildPublicRunManifestPath,
@@ -568,6 +574,7 @@ function buildPolishedManuscriptResponse(overrides?: Partial<any>): string {
         heading: "Method",
         paragraphs: [
           "We compare a thread-backed drafting workflow with a stateless baseline on the AgentBench-mini benchmark dataset.",
+          "When the supporting result-analysis artifact uses a tabular baseline, logistic regression is treated as the named baseline for those numeric comparisons and is reported separately from the drafting-workflow comparator.",
           "Both conditions use the same staged paper-writing pipeline within the same evaluation setup, and revision stability is the primary metric.",
           "Preprocessing details remain limited in the current artifacts and should be read conservatively. Model selection and reporting metrics remain partially specified in the current artifacts.",
           "Cross-validation and repetition details remain partially specified in the current artifacts."
@@ -2293,6 +2300,451 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 describe("writePaper PDF build", () => {
+  it("replaces noisy authored result visuals with condition-summary evidence during stabilization", () => {
+    const conditionResults = Array.from({ length: 12 }, (_entry, index) => ({
+      label: index === 0 ? "baseline_family" : `candidate_family_${index}`,
+      condition_parameter_x: index % 4,
+      condition_parameter_y: Math.floor(index / 4),
+      average_accuracy: 0.46 + index * 0.001,
+      accuracy_delta_vs_baseline: index === 0 ? 0 : index * 0.001,
+      evaluation: {
+        task_a: { accuracy: 0.5 },
+        task_b: { accuracy: 0.42 + index * 0.001 }
+      }
+    }));
+
+    const manuscript: PaperManuscript = {
+      title: "Compact Condition Study",
+      abstract: "A compact comparison reports a small baseline-relative gain.",
+      keywords: ["condition comparison"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We compare a locked baseline with candidate conditions."] },
+        { heading: "Method", paragraphs: ["The method uses a fixed comparison grid."] },
+        { heading: "Results", paragraphs: ["Table 1 anchors the comparison."] },
+        { heading: "Conclusion", paragraphs: ["The leading condition is a follow-up candidate."] }
+      ],
+      tables: [
+        {
+          caption: "Screening threshold, accuracy signal, and evaluation coverage.",
+          rows: [
+            { label: "Screening threshold", value: 0.01 },
+            { label: "Best-condition accuracy", value: 0.48 },
+            { label: "Best-condition correct predictions", value: 138 },
+            { label: "Best-condition total predictions", value: 288 }
+          ]
+        }
+      ],
+      figures: [
+        {
+          caption: "Mixed outcome and coverage summary.",
+          bars: [
+            { label: "Accuracy delta vs baseline", value: 0.02 },
+            { label: "Best condition accuracy", value: 0.48 },
+            { label: "Best condition sample size", value: 288 }
+          ]
+        }
+      ]
+    };
+
+    const stabilized = stabilizePaperManuscriptForSubmission(manuscript, {
+      resultAnalysis: {
+        metrics: {
+          condition_results: conditionResults
+        }
+      } as any
+    });
+
+    expect(stabilized.tables).toHaveLength(1);
+    expect(stabilized.tables?.[0]?.caption).toMatch(/Condition-level mean accuracy/);
+    expect(stabilized.tables?.[0]?.rows.length).toBeLessThanOrEqual(8);
+    expect(stabilized.tables?.[0]?.rows.map((row) => row.label)).toContain("Archived reference condition (factor x=0, factor y=0)");
+    expect(stabilized.tables?.[0]?.rows.some((row) => row.condition_parameter_x === 1 && row.condition_parameter_y === 0)).toBe(true);
+    expect(stabilized.tables?.[0]?.rows.some((row) => /correct|total|threshold|sample/i.test(row.label))).toBe(false);
+    expect(stabilized.figures?.length).toBeGreaterThanOrEqual(1);
+    expect(stabilized.figures?.[0]?.caption).toMatch(/Task-level score differences/);
+    expect(stabilized.figures?.[0]?.bars).toHaveLength(2);
+    expect(stabilized.figures?.[0]?.bars.some((row) => Math.abs(row.value) > 1)).toBe(false);
+  });
+
+  it("recovers structured condition metadata from compact labels and drops repair-note appendix sections", () => {
+    const manuscript: PaperManuscript = {
+      title: "Compact Condition Study",
+      abstract: "A compact comparison reports a small baseline-relative gain.",
+      keywords: ["condition comparison"],
+      sections: [
+        { heading: "Method", paragraphs: ["The method uses a fixed comparison grid."] },
+        { heading: "Results", paragraphs: ["Table 1 anchors the comparison."] }
+      ],
+      tables: [],
+      figures: [],
+      appendix_sections: [
+        {
+          heading: "Recommended Additions for a Complete Reproducibility Appendix",
+          paragraphs: [
+            "The available evidence package does not include a complete per-condition table containing all low-level fields."
+          ]
+        },
+        {
+          heading: "Recommended Follow-up Reporting",
+          paragraphs: [
+            "The most important unresolved item is the mapping between the registered baseline and the reported objective delta."
+          ]
+        },
+        {
+          heading: "Supplementary Protocol",
+          paragraphs: ["The executed comparison exposes the measured condition summaries for reader inspection."]
+        }
+      ]
+    };
+
+    const stabilized = stabilizePaperManuscriptForSubmission(manuscript, {
+      resultAnalysis: {
+        metrics: {
+          condition_results: [
+            { label: "8 parameter 0 0", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.44 } } },
+            { label: "4 parameter 0 05", average_accuracy: 0.455, accuracy_delta_vs_baseline: 0.005, evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.45 } } },
+            { label: "16 parameter 0 05", average_accuracy: 0.47, accuracy_delta_vs_baseline: 0.02, evaluation: { task_a: { accuracy: 0.47 }, task_b: { accuracy: 0.47 } } },
+            { label: "32 parameter 0 1", average_accuracy: 0.48, accuracy_delta_vs_baseline: 0.03, evaluation: { task_a: { accuracy: 0.47 }, task_b: { accuracy: 0.49 } } }
+          ]
+        }
+      } as any
+    });
+
+    const rows = stabilized.tables?.[0]?.rows || [];
+    expect(rows.find((row) => row.label.includes("factor x=4"))).toMatchObject({
+      condition_parameter_x: 4,
+      condition_parameter_y: 0.05
+    });
+    expect(rows.find((row) => row.label.includes("factor x=32"))).toMatchObject({
+      condition_parameter_x: 32,
+      condition_parameter_y: 0.1
+    });
+    expect(rows.map((row) => row.label).join(" ")).not.toContain("4 parameter 0 05");
+    expect(stabilized.figures?.[0]?.bars.map((bar) => bar.label)).toEqual([
+      "Benchmark Task A task difference",
+      "Benchmark Task B task difference"
+    ]);
+    expect(stabilized.appendix_sections?.map((section) => section.heading)).toEqual(["Supplementary Protocol"]);
+  });
+
+  it("dedupes repeated related-work axis paragraphs during manuscript stabilization", () => {
+    const stabilized = stabilizePaperManuscriptForSubmission({
+      title: "Adapter Condition Study",
+      abstract: "A compact condition-parameter comparison reports a bounded screening signal.",
+      keywords: ["adapter tuning"],
+      sections: [
+        {
+          heading: "Related Work",
+          paragraphs: [
+            "A first axis in parameter-efficient fine-tuning research is the adaptation mechanism and the allocation of trainable capacity. Mechanism-oriented studies vary how adapter updates are parameterized.",
+            "A second axis is evaluation context. Evaluation-centered benchmarks vary tasks and instruction-tuning regimes.",
+            "A third axis is resource awareness. Local or budget-constrained fine-tuning work motivates reporting accuracy together with runtime and memory behavior.",
+            "A third axis is resource awareness. Work on local or budget-constrained fine-tuning motivates the need to report not only accuracy but also compute and memory behavior."
+          ]
+        },
+        {
+          heading: "Method",
+          paragraphs: ["The method studies an adapter condition-parameter grid with rank and dropout factors. Evaluation reports Benchmark Task A and Benchmark Task B."]
+        }
+      ],
+      tables: [],
+      figures: []
+    });
+
+    const related = stabilized.sections.find((section) => section.heading === "Related Work");
+    expect(related?.paragraphs.filter((paragraph) => /\bthird axis\b/iu.test(paragraph))).toHaveLength(1);
+  });
+
+  it("removes draft-facing citation and reporting instructions from reader sections", () => {
+    const stabilized = stabilizePaperManuscriptForSubmission({
+      title: "Compact Condition Study",
+      abstract: "A bounded condition comparison reports a screening result.",
+      keywords: [],
+      sections: [
+        {
+          heading: "Method",
+          paragraphs: [
+            "The experimental design uses the configured condition grid from the study design, with the baseline or comparator identified from the study metadata. The primary reported score and per-task, resource, and completion metrics are retained according to the run record.",
+            "The executed run used the selected local backbone and fixed training settings."
+          ]
+        },
+        {
+          heading: "Limitations",
+          paragraphs: [
+            "Several related-work notes available to this draft are conservative summaries rather than fully validated extraction records, so they should not be used as quantitative baselines. The final manuscript should cite stable sources for the base model and evaluation harness.",
+            "The available summary does not expose complete resource traces, so resource-efficiency claims remain outside the evidence ceiling."
+          ]
+        }
+      ],
+      appendix_sections: [
+        {
+          heading: "Supplementary Reporting Requirements for Replication",
+          paragraphs: [
+            "The uncertainty analysis should be reported at the level of baseline-relative contrasts. A final analysis should make clear whether intervals are computed over seeds or evaluated items.",
+            "The compact record lists the planned condition grid and execution counts."
+          ]
+        }
+      ],
+      tables: [],
+      figures: []
+    });
+
+    const text = JSON.stringify(stabilized);
+    expect(text).not.toMatch(/available to this draft|final manuscript should cite|stable sources/iu);
+    expect(text).not.toMatch(/configured condition grid from the study design|retained according to the run record/iu);
+    expect(text).not.toMatch(/final analysis should make clear/iu);
+    expect(text).toContain("resource-efficiency claims remain outside the evidence ceiling");
+    expect(text).toContain("planned condition grid and execution counts");
+  });
+
+  it("enriches provided condition summaries with structured result-analysis metadata", () => {
+    const manuscript: PaperManuscript = {
+      title: "Provided Summary Study",
+      abstract: "A compact comparison reports a small baseline-relative gain.",
+      keywords: ["condition comparison"],
+      sections: [
+        { heading: "Method", paragraphs: ["The method uses a fixed comparison grid."] },
+        { heading: "Results", paragraphs: ["Table 1 anchors the comparison."] }
+      ],
+      tables: [
+        {
+          caption: "Condition-level mean accuracy for the executed comparison grid.",
+          rows: [
+            { label: "Legacy comparison row", value: 0.45, average_accuracy: 0.45, is_comparator: true },
+            { label: "4 parameter 0 05", value: 0.455, average_accuracy: 0.455 },
+            { label: "8 parameter 0 0", value: 0.45, average_accuracy: 0.45 }
+          ]
+        }
+      ],
+      figures: []
+    };
+
+    const stabilized = stabilizePaperManuscriptForSubmission(manuscript, {
+      conditionSummaries: [
+        { label: "Legacy comparison row", average_accuracy_mean: 0.45, accuracy_delta_vs_baseline_mean: 0, is_comparator: true },
+        { label: "4 parameter 0 05", average_accuracy_mean: 0.455, accuracy_delta_vs_baseline_mean: 0.005 },
+        { label: "8 parameter 0 0", average_accuracy_mean: 0.45, accuracy_delta_vs_baseline_mean: 0, is_baseline: true }
+      ],
+      resultAnalysis: {
+        metrics: {
+          baseline_condition_marker: "8 parameter 0 0",
+          condition_results: [
+            { label: "4 parameter 0 0", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.44 } } },
+            { label: "4 parameter 0 05", average_accuracy: 0.455, accuracy_delta_vs_baseline: 0.005, evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.45 } } },
+            { label: "8 parameter 0 0", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.44 } } }
+          ]
+        }
+      } as any
+    });
+
+    const rows = stabilized.tables?.[0]?.rows || [];
+    expect(rows[0]).toMatchObject({
+      label: "Archived reference condition (factor x=4, factor y=0)",
+      condition_parameter_x: 4,
+      condition_parameter_y: 0,
+      is_comparator: true
+    });
+    expect(rows[1]).toMatchObject({
+      label: "Condition B (factor x=4, factor y=0.05)",
+      condition_parameter_x: 4,
+      condition_parameter_y: 0.05
+    });
+    expect(rows[2]).toMatchObject({
+      label: "Registered baseline condition, not delta reference (factor x=8, factor y=0)",
+      condition_parameter_x: 8,
+      condition_parameter_y: 0,
+      is_registered_baseline: true
+    });
+    expect(rows.map((row) => row.label).join(" ")).not.toContain("4 parameter 0 05");
+  });
+
+  it("uses reader-facing axis and task labels when manuscript context names them", () => {
+    const manuscript: PaperManuscript = {
+      title: "Adapter Condition Study",
+      abstract: "The run varies low-rank adapter rank and adapter dropout under a fixed budget.",
+      keywords: ["condition comparison"],
+      sections: [
+        { heading: "Method", paragraphs: ["The method varies low-rank adapter rank and adapter dropout. Evaluation uses Task Alpha and Task Beta."] },
+        { heading: "Results", paragraphs: ["Table 1 anchors the comparison and Figure 1 decomposes the task-level change."] }
+      ],
+      tables: [],
+      figures: []
+    };
+
+    const stabilized = stabilizePaperManuscriptForSubmission(manuscript, {
+      resultAnalysis: {
+        metrics: {
+          baseline_condition_marker: "8 parameter 0 0",
+          condition_results: [
+            { label: "4 parameter 0 0", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.44 } } },
+            { label: "8 parameter 0 0", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.44 } } },
+            { label: "12 parameter 0 05", average_accuracy: 0.48, accuracy_delta_vs_baseline: 0.03, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.50 } } }
+          ]
+        }
+      } as any
+    });
+
+    const rows = stabilized.tables?.[0]?.rows || [];
+    expect(rows[0]?.label).toContain("LoRA rank=4");
+    expect(rows[0]?.label).toContain("adapter dropout=0");
+    expect(stabilized.tables?.[0]?.condition_axis_x_label).toBe("LoRA rank");
+    expect(stabilized.tables?.[0]?.condition_axis_y_label).toBe("adapter dropout");
+    expect(rows.map((row) => row.label).join(" ")).not.toContain("factor x");
+    expect(stabilized.figures?.[0]?.bars.map((bar) => bar.label)).toEqual([
+      "Task Alpha task difference",
+      "Task Beta task difference"
+    ]);
+    expect(stabilized.figures?.[0]?.caption).toContain("LoRA rank=12");
+  });
+
+  it("keeps registered baseline separate from the archived reference condition", () => {
+    const conditionResults = [
+      {
+        label: "comparison_family",
+        condition_marker: "comparison_row_marker",
+        condition_parameter_x: 2,
+        condition_parameter_y: 0,
+        average_accuracy: 0.45,
+        accuracy_delta_vs_baseline: 0,
+        evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.44 } }
+      },
+      {
+        label: "registered_family",
+        condition_marker: "registered_row_marker",
+        condition_parameter_x: 4,
+        condition_parameter_y: 0,
+        average_accuracy: 0.45,
+        accuracy_delta_vs_baseline: 0,
+        evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.44 } }
+      },
+      {
+        label: "candidate_family_a",
+        condition_marker: "candidate_row_a_marker",
+        condition_parameter_x: 6,
+        condition_parameter_y: 0,
+        average_accuracy: 0.46,
+        accuracy_delta_vs_baseline: 0.01,
+        evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.46 } }
+      },
+      {
+        label: "candidate_family_b",
+        condition_marker: "candidate_row_b_marker",
+        condition_parameter_x: 6,
+        condition_parameter_y: 0.1,
+        average_accuracy: 0.47,
+        accuracy_delta_vs_baseline: 0.02,
+        evaluation: { task_a: { accuracy: 0.47 }, task_b: { accuracy: 0.47 } }
+      }
+    ];
+
+    const stabilized = stabilizePaperManuscriptForSubmission({
+      title: "Compact Condition Study",
+      abstract: "The aggregate result summary reports that the primary point-estimate objective was met.",
+      keywords: [],
+      sections: [
+        { heading: "Method", paragraphs: ["The method uses a fixed condition-parameter comparison grid."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The aggregate result table reports a positive value for the primary accuracy objective. The baseline row has mean accuracy 0.450000, while the best reported comparator row has mean accuracy 0.470000. This exceeds the predefined numerical threshold of +0.01."
+          ]
+        }
+      ],
+      tables: [],
+      figures: []
+    }, {
+      resultAnalysis: {
+        metrics: {
+          baseline_condition_marker: "comparison_row_marker",
+          condition_results: conditionResults
+        },
+        plan_context: {
+          selected_design: {
+            baselines: ["Primary trained baseline: factor x=4/factor y=0.0 with matched training budget."]
+          }
+        }
+      } as any
+    });
+
+    const rows = stabilized.tables?.[0]?.rows || [];
+    expect(stabilized.abstract).toContain("primary baseline-relative objective is therefore not accepted as met");
+    const results = stabilized.sections.find((section) => section.heading === "Results")?.paragraphs.join(" ") || "";
+    expect(results).toContain("registered-baseline objective is not accepted as met");
+    expect(results).not.toContain("primary accuracy objective");
+    expect(rows.find((row) => row.is_comparator)?.label).toBe("Archived reference condition (factor x=2, factor y=0)");
+    expect(rows.find((row) => row.is_registered_baseline)?.label).toBe("Registered baseline condition, not delta reference (factor x=4, factor y=0)");
+    expect(rows.find((row) => row.is_comparator)?.is_baseline).toBeUndefined();
+    expect(rows.find((row) => row.is_comparator)?.accuracy_delta_vs_baseline).toBeUndefined();
+    expect(rows.find((row) => row.is_comparator)?.accuracy_delta_vs_comparator).toBe(0);
+    expect(stabilized.figures?.[0]?.caption).toContain("registered baseline and delta-reference row are kept separate");
+    expect(stabilized.figures?.[0]?.caption).not.toContain("relative to the registered baseline");
+    expect(stabilized.figures?.[0]?.bars.map((row) => row.label)).toContain("Registered baseline, not reference");
+
+    const restabilizedWithoutPlanContext = stabilizePaperManuscriptForSubmission(stabilized, {
+      resultAnalysis: {
+        metrics: {
+          baseline_condition_marker: "comparison_row_marker",
+          condition_results: conditionResults
+        }
+      } as any
+    });
+    const preservedRows = restabilizedWithoutPlanContext.tables?.[0]?.rows || [];
+    expect(preservedRows.find((row) => row.is_comparator)?.label).toBe(
+      "Archived reference condition (factor x=2, factor y=0)"
+    );
+    expect(preservedRows.find((row) => row.is_registered_baseline)?.label).toBe(
+      "Registered baseline condition, not delta reference (factor x=4, factor y=0)"
+    );
+    expect(restabilizedWithoutPlanContext.figures?.[0]?.source_refs).toEqual(
+      expect.arrayContaining([{ kind: "artifact", id: DERIVED_MAIN_FIGURE_SOURCE_REF_ID }])
+    );
+    expect(restabilizedWithoutPlanContext.figures?.[0]?.caption).toContain("registered baseline and delta-reference row are kept separate");
+
+    const stabilizedFromStaleDerivedVisual = stabilizePaperManuscriptForSubmission({
+      title: "Compact Condition Study",
+      abstract: "A compact comparison reports a small baseline-relative gain.",
+      keywords: [],
+      sections: [
+        { heading: "Method", paragraphs: ["The method uses a fixed condition-parameter comparison grid."] },
+        { heading: "Results", paragraphs: ["Table 1 anchors the comparison."] }
+      ],
+      tables: [
+        {
+          caption: "Stale condition table.",
+          rows: [
+            {
+              label: "Registered baseline condition (factor x=2, factor y=0)",
+              value: 0.45,
+              is_baseline: true,
+              is_registered_baseline: true
+            }
+          ],
+          source_refs: [{ kind: "artifact", id: DERIVED_MAIN_TABLE_SOURCE_REF_ID }]
+        }
+      ],
+      figures: []
+    }, {
+      resultAnalysis: {
+        metrics: {
+          baseline_condition_marker: "comparison_row_marker",
+          condition_results: conditionResults
+        },
+        plan_context: {
+          selected_design: {
+            baselines: ["Primary trained baseline: factor x=4/factor y=0.0 with matched training budget."]
+          }
+        }
+      } as any
+    });
+    const restabilizedRows = stabilizedFromStaleDerivedVisual.tables?.[0]?.rows || [];
+    expect(restabilizedRows.find((row) => row.is_comparator)?.label).toBe(
+      "Archived reference condition (factor x=2, factor y=0)"
+    );
+    expect(restabilizedRows.find((row) => row.is_registered_baseline)?.label).toBe(
+      "Registered baseline condition, not delta reference (factor x=4, factor y=0)"
+    );
+  });
+
   it("runs a related-work scout and allows the writer to cite scout-only papers", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-related-work-scout-"));
     process.chdir(root);
@@ -3675,6 +4127,12 @@ describe("writePaper PDF build", () => {
 
     const run = makeRun("run-manuscript-quality-clean");
     const runDir = await seedRun(root, run);
+    await mkdir(path.join(runDir, "paper"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "paper", "manuscript_quality_failure.json"),
+      JSON.stringify({ stale: true }),
+      "utf8"
+    );
 
     const node = createWritePaperNode({
       config: {
@@ -3710,6 +4168,7 @@ describe("writePaper PDF build", () => {
     expect(await exists(path.join(runDir, "paper", "paper_readiness.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "readiness_risks.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_1_report.json"))).toBe(false);
+    expect(await exists(path.join(runDir, "paper", "manuscript_quality_failure.json"))).toBe(false);
     const gate = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
     ) as { action: string; summary_lines: string[] };

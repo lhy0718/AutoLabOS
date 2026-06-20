@@ -14,7 +14,7 @@ function makeReport() {
         {
           condition_id: "locked_baseline_condition",
           recipe_type: "locked_baseline",
-          is_locked_adapter_baseline: true,
+          is_locked_tuned_baseline: true,
           mean_zero_shot_accuracy: 0.3044
         },
         {

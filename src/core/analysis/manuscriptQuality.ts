@@ -110,7 +110,7 @@ export interface ManuscriptReviewReliabilityMetrics {
 
 export interface ManuscriptReviewValidationIssue {
   severity: "warning" | "fail";
-  code: "invalid_supporting_span" | "issue_missing_supporting_span" | "unanchored_supporting_span";
+  code: "invalid_supporting_span" | "invalid_visual_target" | "issue_missing_supporting_span" | "unanchored_supporting_span";
   section: string;
   message: string;
   issue_code?: ManuscriptReviewIssueCode;
@@ -575,7 +575,12 @@ export function buildManuscriptRepairPrompt(input: {
     "Do not rewrite the whole paper, and do not revise untargeted sections when a bounded local edit is enough.",
     "Preserve already-good sections, claims, visuals, and structure whenever possible.",
     "Do not add new evidence, new experiments, new citations, or stronger claims than the current evidence supports.",
+    "Preserve structured numeric facts exactly. Do not invent, round to a new value, average, interpolate, or reinterpret any metric, table value, interval, sample count, runtime, or memory value.",
+    "If the manuscript or review says the planned baseline/comparator alignment is ambiguous, do not claim that a baseline-relative target was met; describe the archived comparison as a bounded screening signal instead.",
+    "If multiple reported rows or conditions are tied, describe them as tied follow-up candidates. Do not privilege a single winner, recommendation, or strongest condition unless the repair plan supplies grounded tie-breaking evidence.",
+    "Keep the registered-baseline and locked-comparator distinction consistent. If the artifacts do not reconcile those roles, say the stronger baseline claim is deferred rather than resolved.",
     "Do not introduce internal instructions, TODO text, workflow directives, artifact paths, or system-language residue.",
+    "Remove reader-visible to-do language such as 'final paper should', 'full paper should', 'citation to-do', 'public citations should include', 'needs final citation', or 'bibliography is not final'. Replace it with polished limitation or related-work prose only when the target location is allowed.",
     "If an appendix contains contaminated text, clean or remove only the contaminated material.",
     "If a figure and table are redundant, keep the more informative one and make the remaining caption and label wording conservative.",
     "Use the repair plan as the hard editing boundary. Only the listed allowed_location_keys may change; everything else should remain unchanged unless a targeted visual or appendix item is being removed.",
@@ -722,6 +727,8 @@ export function buildFallbackManuscriptReview(manuscript: PaperManuscript): Manu
     fix_recommendation: `Restore a grounded ${humanizeHeading(heading)} section with paper-appropriate prose.`,
     supporting_spans: []
   }));
+  issues.push(...buildFallbackReviewManuscriptIssues(manuscript));
+  const checks = buildChecksWithFallbackIssues(issues);
   return {
     stage: "manuscript_review",
     generated_at: new Date().toISOString(),
@@ -729,11 +736,132 @@ export function buildFallbackManuscriptReview(manuscript: PaperManuscript): Manu
     summary:
       issues.length === 0
         ? "Fallback manuscript review found no obvious local manuscript issues."
-        : `Fallback manuscript review found ${issues.length} missing core section issue(s).`,
-    checks: buildDefaultChecks(),
+        : `Fallback manuscript review found ${issues.length} local manuscript issue(s).`,
+    checks,
     issues
   };
 }
+
+function buildFallbackReviewManuscriptIssues(manuscript: PaperManuscript): ManuscriptReviewIssue[] {
+  return dedupeManuscriptReviewIssues([
+    ...buildFallbackBaselineAlignmentIssues(manuscript),
+    ...buildFallbackResultsRedundancyIssues(manuscript)
+  ]).slice(0, 8);
+}
+
+function buildChecksWithFallbackIssues(
+  issues: ManuscriptReviewIssue[]
+): ManuscriptReviewArtifact["checks"] {
+  const checks = buildDefaultChecks();
+  for (const code of MANUSCRIPT_REVIEW_CODES) {
+    const codeIssues = issues.filter((issue) => issue.code === code);
+    if (codeIssues.length === 0) {
+      continue;
+    }
+    const hasFail = codeIssues.some((issue) => issue.severity === "fail");
+    checks[code] = {
+      status: hasFail ? "fail" : "warn",
+      note: codeIssues[0]?.message || `Fallback review found ${codeIssues.length} issue(s).`
+    };
+  }
+  return checks;
+}
+
+function buildFallbackBaselineAlignmentIssues(manuscript: PaperManuscript): ManuscriptReviewIssue[] {
+  const resultsSection = manuscript.sections.find((section) => normalizeHeading(section.heading) === "results");
+  if (!resultsSection) {
+    return [];
+  }
+  const candidates = resultsSection.paragraphs
+    .map((paragraph, paragraphIndex) => ({ paragraph, paragraphIndex }))
+    .filter(({ paragraph }) => isBaselineAlignmentAmbiguityParagraph(paragraph))
+    .slice(0, 2);
+  if (candidates.length === 0) {
+    return [];
+  }
+  return [
+    {
+      code: "alignment",
+      severity: "fail",
+      section: "Results",
+      repairable: true,
+      message:
+        "Results prose leaves the registered baseline, locked comparison row, or displayed contrast unreconciled, so the manuscript cannot claim a clean baseline-relative result.",
+      fix_recommendation:
+        "Revise the Results text and table/caption wording so the registered baseline and locked comparison row are clearly distinguished, and downgrade stronger baseline-relative language when the roles remain unreconciled.",
+      supporting_spans: candidates.map(({ paragraph, paragraphIndex }) => ({
+        section: resultsSection.heading,
+        paragraph_index: paragraphIndex,
+        excerpt: fallbackReviewExcerpt(paragraph),
+        reason: "This paragraph explicitly describes an unresolved baseline or condition-label ambiguity."
+      }))
+    }
+  ];
+}
+
+function buildFallbackResultsRedundancyIssues(manuscript: PaperManuscript): ManuscriptReviewIssue[] {
+  const resultsSection = manuscript.sections.find((section) => normalizeHeading(section.heading) === "results");
+  if (!resultsSection) {
+    return [];
+  }
+  const thresholdParagraphs = resultsSection.paragraphs
+    .map((paragraph, paragraphIndex) => ({ paragraph, paragraphIndex }))
+    .filter(({ paragraph }) => /\b(?:screening|configured|prespecified|threshold|exceed(?:s|ed|ing)|point estimate)\b/iu.test(paragraph));
+  if (thresholdParagraphs.length < 2) {
+    return [];
+  }
+  const paired = thresholdParagraphs.slice(0, 2);
+  return [
+    {
+      code: "paragraph_redundancy",
+      severity: "warning",
+      section: "Results",
+      repairable: true,
+      message:
+        "Results repeats the screening-threshold interpretation in multiple nearby paragraphs instead of consolidating the point once.",
+      fix_recommendation:
+        "Consolidate the threshold-exceedance interpretation into one Results paragraph and use the neighboring paragraph for a distinct table, uncertainty, or baseline-alignment takeaway.",
+      supporting_spans: paired.map(({ paragraph, paragraphIndex }) => ({
+        section: resultsSection.heading,
+        paragraph_index: paragraphIndex,
+        excerpt: fallbackReviewExcerpt(paragraph),
+        reason: "This paragraph repeats the local screening-threshold interpretation."
+      }))
+    }
+  ];
+}
+
+function isBaselineAlignmentAmbiguityParagraph(paragraph: string): boolean {
+  const text = cleanString(paragraph);
+  if (!/\b(?:baseline|comparison row|comparator|contrast|condition label|registered)\b/iu.test(text)) {
+    return false;
+  }
+  return /\b(?:whereas|in contrast|until|unless|not yet|should not yet|reconcile|ambiguous|ambiguity|does not clearly|needs reconciliation|unreconciled)\b/iu.test(text)
+    || (/\bstated baseline\b/iu.test(text) && /\bdisplayed\b/iu.test(text));
+}
+
+function fallbackReviewExcerpt(paragraph: string): string {
+  const sentences = splitSentences(paragraph).map(cleanString).filter(Boolean);
+  return (sentences[0] || cleanString(paragraph)).slice(0, 280);
+}
+
+function dedupeManuscriptReviewIssues(issues: ManuscriptReviewIssue[]): ManuscriptReviewIssue[] {
+  const seen = new Set<string>();
+  const result: ManuscriptReviewIssue[] = [];
+  for (const issue of issues) {
+    const spanKey = issue.supporting_spans
+      .map((span) => `${normalizeHeading(span.section)}:${span.paragraph_index}`)
+      .join("|");
+    const key = `${issue.code}:${normalizeHeading(issue.section)}:${spanKey}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(issue);
+  }
+  return result;
+}
+
 
 export function buildFallbackManuscriptReviewAudit(
   review: ManuscriptReviewArtifact,
@@ -861,9 +989,23 @@ export function validateManuscriptReviewArtifact(input: {
           return validated.span;
         })
         .filter((span): span is ManuscriptReviewSupportSpan => Boolean(span));
+      const validatedVisualTargets = (issue.visual_targets || [])
+        .map((target) => {
+          const validated = validateReviewVisualTargetGrounding({
+            target,
+            issue,
+            manuscript: input.manuscript
+          });
+          if (!validated.ok) {
+            issues.push(validated.issue);
+            return undefined;
+          }
+          return target;
+        })
+        .filter((target): target is ManuscriptReviewVisualTarget => Boolean(target));
 
       if (validatedSpans.length === 0) {
-        if (!issue.visual_targets?.length) {
+        if (validatedVisualTargets.length === 0) {
           issues.push({
             severity: issue.severity === "fail" ? "fail" : "warning",
             code: "issue_missing_supporting_span",
@@ -881,7 +1023,8 @@ export function validateManuscriptReviewArtifact(input: {
 
       return {
         ...issue,
-        supporting_spans: validatedSpans
+        supporting_spans: validatedSpans,
+        ...(validatedVisualTargets.length > 0 ? { visual_targets: validatedVisualTargets } : { visual_targets: undefined })
       };
     })
   };
@@ -890,6 +1033,7 @@ export function validateManuscriptReviewArtifact(input: {
   const warningCount = issues.filter((issue) => issue.severity === "warning").length;
   const mismatchCount = issues.filter((issue) =>
     issue.code === "invalid_supporting_span"
+    || issue.code === "invalid_visual_target"
     || issue.code === "issue_missing_supporting_span"
     || issue.code === "unanchored_supporting_span"
   ).length;
@@ -913,6 +1057,75 @@ export function validateManuscriptReviewArtifact(input: {
       }
     }
   };
+}
+
+function validateReviewVisualTargetGrounding(input: {
+  target: ManuscriptReviewVisualTarget;
+  issue: ManuscriptReviewIssue;
+  manuscript: PaperManuscript;
+}): { ok: true } | { ok: false; issue: ManuscriptReviewValidationIssue } {
+  const quotedClaims = extractQuotedVisualClaims(input.target.rationale || "");
+  if (quotedClaims.length === 0) {
+    return { ok: true };
+  }
+  const visualText = normalizeVisualGroundingText(resolveReviewVisualTargetText(input.manuscript, input.target));
+  const missing = quotedClaims.filter((claim) => !visualText.includes(normalizeVisualGroundingText(claim)));
+  if (missing.length === 0) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    issue: {
+      severity: input.issue.severity === "fail" ? "fail" : "warning",
+      code: "invalid_visual_target",
+      section: input.issue.section,
+      message:
+        `Review issue ${input.issue.code} cites visual wording that is not present in ` +
+        `${reviewVisualTargetToLocationKey(input.target)}: ${missing.slice(0, 2).join("; ")}.`,
+      issue_code: input.issue.code
+    }
+  };
+}
+
+function extractQuotedVisualClaims(text: string): string[] {
+  const claims: string[] = [];
+  const pattern = /["“”']([^"“”']{8,160})["“”']/gu;
+  for (const match of text.matchAll(pattern)) {
+    const claim = cleanString(match[1]);
+    if (claim) {
+      claims.push(claim);
+    }
+  }
+  return claims;
+}
+
+function resolveReviewVisualTargetText(manuscript: PaperManuscript, target: ManuscriptReviewVisualTarget): string {
+  const collection =
+    target.kind === "table"
+      ? manuscript.tables
+      : target.kind === "figure"
+        ? manuscript.figures
+        : target.kind === "appendix_table"
+          ? manuscript.appendix_tables
+          : manuscript.appendix_figures;
+  const item = collection?.[target.index];
+  if (!item) {
+    return "";
+  }
+  const rowTexts = "rows" in item
+    ? item.rows.map((row) => row.label).join(" ")
+    : "bars" in item
+      ? item.bars.map((bar) => bar.label).join(" ")
+      : "";
+  return `${item.caption} ${rowTexts}`;
+}
+
+function normalizeVisualGroundingText(text: string): string {
+  return cleanString(text)
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 export function normalizeManuscriptReviewAudit(
@@ -1099,7 +1312,7 @@ export function buildManuscriptRepairPlan(input: {
     targets.push(...lintTargets);
   }
 
-  const dedupedTargets = dedupeRepairTargets(targets);
+  const dedupedTargets = expandCloseGapAllowedLocationKeys(dedupeRepairTargets(targets));
   const dedupedBlockedTargets = dedupeBlockedTargets(blockedTargets);
   return {
     pass_index: input.passIndex,
@@ -1168,11 +1381,7 @@ export function buildManuscriptRepairVerificationArtifact(input: {
       .filter((anchorId): anchorId is string => Boolean(anchorId))
   );
   const targetLocationKeys = uniqueStrings(input.repairPlan.targets.map((target) => target.location_key));
-  const allowedLocationKeys = uniqueStrings(
-    input.repairPlan.targets.flatMap((target) =>
-      target.allowed_location_keys.length > 0 ? target.allowed_location_keys : [target.location_key]
-    )
-  );
+  const allowedLocationKeys = buildExpandedAllowedLocationKeys(input.repairPlan.targets);
   const changedLocationKeys = collectChangedLocationKeys(input.before, input.after);
   const afterIssueAnchorIds = new Set(
     input.reviewAfter.issues.flatMap((issue) =>
@@ -1346,6 +1555,73 @@ function isNearDuplicateOfRetainedParagraph(removedParagraph: unknown, retainedP
     }
     const sharedCount = [...removedTokens].filter((token) => retainedTokens.has(token)).length;
     return sharedCount / Math.min(removedTokens.size, retainedTokens.size) >= 0.8;
+  });
+}
+
+function buildExpandedAllowedLocationKeys(targets: ManuscriptRepairTarget[]): string[] {
+  return uniqueStrings(expandCloseGapAllowedLocationKeys(targets).flatMap((target) =>
+    target.allowed_location_keys.length > 0 ? target.allowed_location_keys : [target.location_key]
+  ));
+}
+
+function expandCloseGapAllowedLocationKeys(targets: ManuscriptRepairTarget[]): ManuscriptRepairTarget[] {
+  const groupToKeys = new Map<string, string[]>();
+  for (const target of targets) {
+    for (const key of target.allowed_location_keys.length > 0 ? target.allowed_location_keys : [target.location_key]) {
+      const parsed = parseParagraphLocationKey(key);
+      if (!parsed) {
+        continue;
+      }
+      const groupKey = `${parsed.kind}:${parsed.section}`;
+      groupToKeys.set(groupKey, [...(groupToKeys.get(groupKey) || []), key]);
+    }
+  }
+
+  const groupToBridgeKeys = new Map<string, string[]>();
+  for (const [groupKey, keys] of groupToKeys.entries()) {
+    const parsedKeys = keys
+      .map((key) => parseParagraphLocationKey(key))
+      .filter((key): key is NonNullable<ReturnType<typeof parseParagraphLocationKey>> => Boolean(key));
+    const indices = uniqueNumbers(parsedKeys.map((key) => key.index)).sort((left, right) => left - right);
+    const bridgeKeys: string[] = [];
+    for (let index = 1; index < indices.length; index += 1) {
+      const previous = indices[index - 1] as number;
+      const current = indices[index] as number;
+      if (current - previous >= 2 && current - previous <= 3) {
+        const sample = parsedKeys.find((key) => key.index === previous) || parsedKeys[0];
+        if (sample) {
+          for (let bridgeIndex = previous + 1; bridgeIndex < current; bridgeIndex += 1) {
+            bridgeKeys.push(buildParagraphLocationKey(sample.kind, sample.section, bridgeIndex));
+          }
+        }
+      }
+    }
+    if (bridgeKeys.length > 0) {
+      groupToBridgeKeys.set(groupKey, uniqueStrings(bridgeKeys));
+    }
+  }
+
+  if (groupToBridgeKeys.size === 0) {
+    return targets;
+  }
+
+  return targets.map((target) => {
+    const targetKeys = target.allowed_location_keys.length > 0 ? target.allowed_location_keys : [target.location_key];
+    const targetGroups = uniqueStrings(
+      targetKeys
+        .map((key) => parseParagraphLocationKey(key))
+        .filter((key): key is NonNullable<ReturnType<typeof parseParagraphLocationKey>> => Boolean(key))
+        .map((key) => `${key.kind}:${key.section}`)
+    );
+    const bridgeKeys = uniqueStrings(targetGroups.flatMap((groupKey) => groupToBridgeKeys.get(groupKey) || []));
+    if (bridgeKeys.length === 0) {
+      return target;
+    }
+    return {
+      ...target,
+      allowed_location_keys: uniqueStrings([...targetKeys, ...bridgeKeys]),
+      scope_reason: `${target.scope_reason} Close small gaps between targeted same-section edits may also be revised to preserve local paragraph flow.`
+    };
   });
 }
 
@@ -1603,6 +1879,9 @@ function buildAnchorlessSectionRepairTargets(
   manuscript: PaperManuscript,
   issue: ManuscriptReviewIssue
 ): ManuscriptRepairTarget[] {
+  if (issue.code === "appendix_hygiene") {
+    return buildAnchorlessAppendixRepairTargets(manuscript, issue);
+  }
   if (issue.code !== "citation_hygiene" && issue.code !== "related_work_quality") {
     return [];
   }
@@ -1635,6 +1914,46 @@ function buildAnchorlessSectionRepairTargets(
         scope_downgraded: true
       }];
     });
+}
+
+function buildAnchorlessAppendixRepairTargets(
+  manuscript: PaperManuscript,
+  issue: ManuscriptReviewIssue
+): ManuscriptRepairTarget[] {
+  const appendixSections = manuscript.appendix_sections || [];
+  if (appendixSections.length === 0) {
+    return [];
+  }
+  const namedSections = splitReviewSectionNames(issue.section).map(normalizeHeading);
+  const targetSections = appendixSections.filter((section) =>
+    namedSections.length === 0
+    || namedSections.includes("appendix")
+    || namedSections.includes(normalizeHeading(section.heading))
+  );
+  const sections = targetSections.length > 0 ? targetSections : appendixSections;
+  const allowedLocationKeys = sections.flatMap((section) =>
+    section.paragraphs.map((_, index) => buildParagraphLocationKey("appendix_paragraph", section.heading, index))
+  );
+  if (allowedLocationKeys.length === 0) {
+    return [];
+  }
+  const firstSection = sections[0];
+  return [{
+    source: "review" as const,
+    issue_code: issue.code,
+    severity: issue.severity,
+    kind: "appendix_paragraph" as const,
+    section: firstSection?.heading || "Appendix",
+    location_key: allowedLocationKeys[0] as string,
+    paragraph_index: 0,
+    excerpt: issue.message,
+    source_refs: firstSection?.source_refs || [],
+    edit_scope: "appendix_local" as const,
+    allowed_location_keys: uniqueStrings(allowedLocationKeys),
+    scope_reason:
+      "Appendix-hygiene repair may revise appendix paragraphs because the review identified appendix-level contamination but did not provide a safe paragraph span.",
+    scope_downgraded: true
+  }];
 }
 
 function splitReviewSectionNames(section: string): string[] {

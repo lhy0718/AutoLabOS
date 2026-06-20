@@ -209,8 +209,8 @@ describe("paper submission sanitization", () => {
               {
                 label: "baseline condition",
                 value: 0.333334,
-                adapter_rank: 8,
-                adapter_dropout: 0,
+                condition_parameter_x: 8,
+                condition_parameter_y: 0,
                 average_accuracy: 0.333334,
                 accuracy_delta_vs_baseline: 0,
                 benchmark_task_a_accuracy: 0.5,
@@ -220,8 +220,8 @@ describe("paper submission sanitization", () => {
               {
                 label: "candidate condition A",
                 value: 0.333334,
-                adapter_rank: 4,
-                adapter_dropout: 0,
+                condition_parameter_x: 4,
+                condition_parameter_y: 0,
                 average_accuracy: 0.333334,
                 accuracy_delta_vs_baseline: 0,
                 benchmark_task_a_accuracy: 0.5,
@@ -230,8 +230,8 @@ describe("paper submission sanitization", () => {
               {
                 label: "candidate condition a",
                 value: 0.333334,
-                adapter_rank: 16,
-                adapter_dropout: 0.05,
+                condition_parameter_x: 16,
+                condition_parameter_y: 0.05,
                 average_accuracy: 0.333334,
                 accuracy_delta_vs_baseline: 0,
                 benchmark_task_a_accuracy: 0.5,
@@ -240,8 +240,8 @@ describe("paper submission sanitization", () => {
               {
                 label: "candidate condition b",
                 value: 0.416666,
-                adapter_rank: 32,
-                adapter_dropout: 0.05,
+                condition_parameter_x: 32,
+                condition_parameter_y: 0.05,
                 average_accuracy: 0.416666,
                 accuracy_delta_vs_baseline: 0.083332,
                 benchmark_task_a_accuracy: 0.5,
@@ -258,8 +258,8 @@ describe("paper submission sanitization", () => {
     });
 
     expect(tex).toContain("\\begin{table*}[t]");
-    expect(tex).toContain("Condition & Rank & Dropout & Avg. acc. & $\\Delta$ avg. & Benchmark Task A & Benchmark Task B");
-    expect(tex).toContain("Locked baseline & 8 & 0 & 0.3333 & 0 & 0.5 & 0.1667");
+    expect(tex).toContain("Condition & Factor X & Factor Y & Avg. acc. & $\\Delta$ vs comp. & Benchmark Task A & Benchmark Task B");
+    expect(tex).toContain("Registered baseline & 8 & 0 & 0.3333 & 0 & 0.5 & 0.1667");
     expect(tex).toContain("candidate condition b & 32 & 0.05 & 0.4167 & +0.0833 & 0.5 & 0.3333");
     expect(tex).not.toContain("Metric & Value");
   });
@@ -338,6 +338,12 @@ describe("paper submission sanitization", () => {
           ]
         },
         {
+          heading: "Method",
+          paragraphs: [
+            "The adapter condition-parameter run compares rank and dropout choices with Benchmark Task A and Benchmark Task B as the task-level evaluation surface."
+          ]
+        },
+        {
           heading: "Related Work",
           paragraphs: [
             "Prior method-family literature motivates memory-aware finetuning and task-sensitive evaluation."
@@ -393,7 +399,7 @@ describe("paper submission sanitization", () => {
         {
           heading: "Method",
           paragraphs: [
-            "The experiment used a 4x2 factorial design crossing adapter rank with dropout.",
+            "The experiment used a 4x2 factorial design crossing adapter rank with parameter_y.",
             "The realized data and evaluation settings were training data from the configured training dataset, evaluation on Benchmark Task A and Benchmark Task B, and seed 17."
           ]
         },
@@ -436,7 +442,7 @@ describe("paper submission sanitization", () => {
       ])
     });
 
-    expect(tex).not.toContain("factorial design crossing adapter rank with dropout. \\cite{paperA}");
+    expect(tex).not.toContain("factorial design crossing adapter rank with parameter_y. \\cite{paperA}");
     expect(tex).not.toContain("Benchmark Task A and Benchmark Task B, and seed 17. \\cite{paperB}");
     expect(tex).toContain("Prior method-family literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
   });
@@ -845,8 +851,8 @@ describe("paper submission sanitization", () => {
             paragraphs: [
               "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 condition-parameter preflight.",
               "The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform quantized adapter, MAPLE, or adapter-variant methods.",
-              "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior method-family papers instead define why the local condition-parameter question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
-              "Accordingly, external method-family papers serve as framing comparators rather than numerical baselines for this manuscript. The relevant baseline here is the locked locked baseline condition inside the executed run. Prior work motivates why the question matters but differences in model scale, task mix, adapter family, and evaluation objective prevent direct superiority claims."
+              "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior method-family papers instead define why the local condition-parameter question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and condition variants show that capacity allocation remains a live design issue.",
+              "Accordingly, external method-family papers serve as framing comparators rather than numerical baselines for this manuscript. The relevant baseline here is the locked locked baseline condition inside the executed run. Prior work motivates why the question matters but differences in model scale, task mix, method family, and evaluation objective prevent direct superiority claims."
             ]
           },
           {
@@ -854,14 +860,14 @@ describe("paper submission sanitization", () => {
             paragraphs: [
               "The available summary does not expose a full eight-cell accuracy table, so this manuscript does not attempt to infer a detailed ordering among all configurations beyond the reported best-versus-baseline comparison.",
               "However, because the compact writing record does not expose the full per-cell table, we describe this as the best reported comparison in the available artifact rather than a definitive ordering of all eight cells.",
-              "Although all eight planned configurations were completed, the reported summary does not expose a full per-condition performance table sufficient for estimating rank main effects, dropout main effects, or their interaction across the whole grid. It supports a best-versus-baseline comparison, but it does not support a strong factorial interpretation of how performance changes over the entire rank-by-dropout design space.",
+              "Although all eight planned configurations were completed, the reported summary does not expose a full per-condition performance table sufficient for estimating rank main effects, parameter_y main effects, or their interaction across the whole grid. It supports a best-versus-baseline comparison, but it does not support a strong factorial interpretation of how performance changes over the entire rank-by-parameter_y design space.",
               "In addition, supplemental confirmatory profiles included in the payload did not reproduce the main gain."
             ]
           },
           {
             heading: "Discussion",
             paragraphs: [
-              "The present evidence does not support a stronger statement about the overall interaction pattern between rank and dropout, because the reported summary does not expose a full cell-by-cell mean table and the observed gain is concentrated in one benchmark.",
+              "The present evidence does not support a stronger statement about the overall interaction pattern between rank and parameter_y, because the reported summary does not expose a full cell-by-cell mean table and the observed gain is concentrated in one benchmark.",
               "Practical adoption should therefore weigh the small runtime and memory footprint against the unresolved question of whether the signal survives larger budgets, broader task mixes, or repeated runs.",
               "Practical adoption should weigh any observed quality gain against the accompanying runtime or memory footprint. That follow-up would test whether the present signal survives scale and task variation instead of merely reflecting this local preflight."
             ]
@@ -1018,7 +1024,7 @@ describe("paper submission sanitization", () => {
         {
           heading: "Method",
           paragraphs: [
-            "The study was designed as a 4 x 2 factorial sweep over condition parameters under a fixed local compute budget. Rank took values {4, 8, 16, 32}, dropout took values {0.0, 0.05}, and baseline condition was locked in advance as the baseline condition.",
+            "The study was designed as a 4 x 2 factorial sweep over condition parameters under a fixed local compute budget. Rank took values {4, 8, 16, 32}, parameter_y took values {0.0, 0.05}, and baseline condition was locked in advance as the baseline condition.",
             "The study was designed as a fixed-budget 4 x 2 factorial sweep over condition parameters, with baseline condition designated in advance as the locked baseline.",
             "The planned backbone preference was the selected backbone, with the configured fallback backbone reserved as a fallback if the preferred model failed preflight. The retained run summary used for manuscript preparation does not preserve a model identifier that allows the final executed backbone to be verified.",
             "The realized record preserves the data and evaluation settings: training data from the instruction dataset train split, 48 training examples, evaluation on Benchmark Task A and Benchmark Task B validation slices, and seed 17.",
@@ -1042,6 +1048,20 @@ describe("paper submission sanitization", () => {
             "Accordingly, the manuscript's numerical comparator is internal rather than external: baseline condition is the locked baseline inside the completed run."
           ]
         }
+        ,
+        {
+          heading: "Results",
+          paragraphs: [
+            "condition 32 parameter 0 0 vs condition 4 parameter 0 0: baseline-relative accuracy gain: 0.0208 vs 0 (delta 0.0208), average accuracy: 0.4792 vs 0.4583 (delta 0.0208), accuracy: 0.4792 vs 0.4583 (delta 0.0208)."
+          ]
+        },
+        {
+          heading: "Discussion",
+          paragraphs: [
+            "Evidence accounting: primary trials=36; executed trials=38; supplemental run profiles=2; condition-level correct/total counts are present. condition 32 parameter 0 0 vs condition 4 parameter 0 0 improves accuracy delta vs baseline by 0.0208.",
+            "The interpretation should stay close to the measured effect rather than to the broader method literature. condition 32 parameter 0 0 vs condition 4 parameter 0 0 improves accuracy delta vs baseline by 0.0208."
+          ]
+        }
       ]
     } as any);
 
@@ -1057,6 +1077,37 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("A No broader replication");
   });
 
+  it("keeps protocol checklist residue and comparator tokens out of Method prose", () => {
+    const manuscript = stabilizePaperManuscriptForSubmission({
+      title: "A Condition Sweep",
+      abstract: "A cautious benchmark.",
+      keywords: [],
+      sections: [
+        {
+          heading: "Method",
+          paragraphs: [
+            "The planned backbone preference was the selected backbone, with the configured fallback backbone reserved as a fallback if the preferred model failed preflight.",
+            "The executed run used current_best_baseline as the selected backbone. Uncertainty summaries were reported as condition-level 95% intervals over n=6 prediction records; they are treated as screening intervals rather than significance tests.",
+            "The evaluation spans Training: fixed subset capped at exactly 10,000 examples. Models or conditions include Primary trained baseline: condition x with the same train budget.",
+            "Preprocessing follows this order: Paper-scale evidence floor: all cells must complete. Model selection and reporting focus on baseline-relative accuracy gain, accuracy_pass_at_1_delta_vs_baseline, and accuracy_improvement_over_baseline.",
+            "The protocol records Repeat each condition across multiple seeded runs and report run-to-run variance.",
+            "The fixed search space is the condition-parameter grid described above."
+          ]
+        }
+      ]
+    } as any);
+
+    const text = JSON.stringify(manuscript);
+    expect(text).not.toContain("current_best_baseline as the selected backbone");
+    expect(text).not.toContain("Evaluation spans Training:");
+    expect(text).not.toContain("Preprocessing follows this order:");
+    expect(text).not.toContain("accuracy_pass_at_1_delta_vs_baseline");
+    expect(text).not.toContain("The protocol records Repeat each condition");
+    expect(text).not.toContain("condition 32 parameter 0 0 vs condition 4 parameter 0 0");
+    expect(text).not.toContain("Evidence accounting:");
+    expect(text).toContain("fixed search space");
+  });
+
   it("renders reader-visible citations for related discussion claims but not Method execution records", () => {
     const draft = buildFallbackPaperDraft({
       runTitle: "adapter benchmark",
@@ -1068,7 +1119,7 @@ describe("paper submission sanitization", () => {
       hypotheses: [],
       corpus: [
         {
-          paper_id: "paper_peft",
+          paper_id: "paper_method",
           title: "Budget-aware adapter study",
           abstract: "adapter study.",
           authors: ["Alice Doe"],
@@ -1080,7 +1131,7 @@ describe("paper submission sanitization", () => {
     } as any);
     for (const section of draft.sections) {
       if (section.heading === "Method" || section.heading === "Discussion") {
-        section.citation_paper_ids = ["paper_peft"];
+        section.citation_paper_ids = ["paper_method"];
       }
     }
 
@@ -1092,7 +1143,7 @@ describe("paper submission sanitization", () => {
           {
             heading: "Method",
             paragraphs: [
-              "The design fixed rank and dropout before execution.",
+              "The design fixed rank and parameter_y before execution.",
               "In the preregistered plan, the training source was an the configured training dataset subset capped at 10,000 examples, and evaluation was limited to Benchmark Task A and Benchmark Task B. The preferred base model for this plan was the selected backbone, with the configured fallback backbone reserved only as a fallback if preflight checks failed. However, the reported execution artifact is narrower than that original plan: the metric summary records 48 training samples and a run seed of 17."
             ]
           },
@@ -1117,32 +1168,32 @@ describe("paper submission sanitization", () => {
             paragraph_index: 1,
             source_draft_section: "Method",
             evidence_ids: [],
-            citation_paper_ids: ["paper_peft"]
+            citation_paper_ids: ["paper_method"]
           },
           {
             manuscript_section: "Discussion",
             paragraph_index: 0,
             source_draft_section: "Discussion",
             evidence_ids: [],
-            citation_paper_ids: ["paper_peft"]
+            citation_paper_ids: ["paper_method"]
           },
           {
             manuscript_section: "Discussion",
             paragraph_index: 1,
             source_draft_section: "Discussion",
             evidence_ids: [],
-            citation_paper_ids: ["paper_peft"]
+            citation_paper_ids: ["paper_method"]
           }
         ]
       },
-      citationKeysByPaperId: new Map([["paper_peft", "doe_2025_peft"]])
+      citationKeysByPaperId: new Map([["paper_method", "doe_2025_method"]])
     });
 
-    const citedParagraphs = tex.split("\\cite{doe_2025_peft}").length - 1;
+    const citedParagraphs = tex.split("\\cite{doe_2025_method}").length - 1;
     expect(citedParagraphs).toBe(2);
     expect(tex).toContain("the selected backbone");
-    expect(tex).not.toContain("run seed of 17. \\cite{doe_2025_peft}");
-    expect(tex).toContain("\\cite{doe_2025_peft}");
+    expect(tex).not.toContain("run seed of 17. \\cite{doe_2025_method}");
+    expect(tex).toContain("\\cite{doe_2025_method}");
   });
 
   it("adds TeX line-stretch guard for long model identifiers in narrow paper columns", () => {
@@ -1218,7 +1269,7 @@ describe("paper submission sanitization", () => {
 
     const text = JSON.stringify(manuscript);
     expect(manuscript.abstract).toContain("verified execution metadata identifying the selected backbone");
-    expect(text).toContain("The manuscript supplements that compact summary with verified execution metadata");
+    expect(text).toContain("The manuscript supplements that reported summary with verified execution metadata");
     expect(text).not.toContain("not exposing the final model identity");
     expect(text).not.toContain("does not disclose the final model choice");
     expect(text).not.toContain("The most important limitation is scale");
@@ -1391,16 +1442,12 @@ describe("paper submission sanitization", () => {
 
     const text = JSON.stringify(manuscript);
     expect(manuscript.figures).toHaveLength(1);
-    expect(manuscript.figures?.[0]?.caption).toContain("Task-level and average accuracy");
+    expect(manuscript.figures?.[0]?.caption).toContain("Task-level score differences");
     expect(manuscript.figures?.[0]?.bars).toEqual([
-      { label: "Baseline Benchmark Task A", value: 0.5 },
-      { label: "Leading Benchmark Task A", value: 0.5 },
-      { label: "Baseline Benchmark Task B", value: 0.1667 },
-      { label: "Leading Benchmark Task B", value: 0.3333 },
-      { label: "Baseline Average", value: 0.3333 },
-      { label: "Leading Average", value: 0.4167 }
+      { label: "Benchmark Task A task difference", value: 0 },
+      { label: "Benchmark Task B task difference", value: 0.1666 }
     ]);
-    expect(text).toContain("prespecified baseline-relative accuracy target was met");
+    expect(text).toContain("predeclared +0.01 objective threshold");
     expect(text).toContain("Table 1 reports the corresponding mean values");
     expect(text).toContain("observed baseline-relative average-accuracy gain is 0.083332");
     expect(text).toContain("Table 1 reports the corresponding mean values");
@@ -1437,7 +1484,9 @@ describe("paper submission sanitization", () => {
       citationKeysByPaperId: new Map()
     });
     expect(validation.ok).toBe(true);
-    expect(tex).toContain("The prespecified baseline-relative accuracy target was met");
+    expect(tex).toContain("The archived comparison exceeded the configured screening threshold");
+    expect(tex).toContain("not a stable success claim");
+    expect(tex).not.toContain("The prespecified baseline-relative accuracy target was met");
     expect(tex).toContain("For the leading observed condition");
     expect(tex).toContain("Table 1 reports the condition-level values");
     expect(tex).not.toContain("[warning]");
@@ -1447,6 +1496,82 @@ describe("paper submission sanitization", () => {
     expect(tex).not.toContain("average_accuracy");
     expect(tex).not.toContain("benchmark_task_a_accuracy");
     expect(tex).not.toContain("benchmark_task_b_accuracy");
+  });
+
+  it("keeps registered-baseline and delta-reference visuals separate when their rows differ", () => {
+    const stabilized = stabilizePaperManuscriptForSubmission(
+      {
+        title: "A adapter Benchmark",
+        abstract: "A cautious benchmark.",
+        keywords: ["adapter"],
+        sections: [
+          { heading: "Method", paragraphs: ["The method uses a fixed condition grid."] },
+          { heading: "Results", paragraphs: ["The reported delta is positive, but the planned baseline row is unresolved."] }
+        ],
+        figures: [
+          {
+            caption: "Task-level score differences for a leading condition relative to the registered baseline.",
+            bars: [
+              { label: "Benchmark Task A task difference", value: 0 },
+              { label: "Benchmark Task B task difference", value: 0.1 }
+            ]
+          }
+        ]
+      },
+      {
+        conditionSummaries: [
+          {
+            label: "reference condition",
+            is_comparator: true,
+            condition_parameter_x: 1,
+            condition_parameter_y: 0,
+            average_accuracy_mean: 0.45,
+            benchmark_task_a_accuracy: 0.5,
+            benchmark_task_b_accuracy: 0.4
+          },
+          {
+            label: "planned baseline condition",
+            is_baseline: true,
+            is_registered_baseline: true,
+            condition_parameter_x: 2,
+            condition_parameter_y: 0,
+            average_accuracy_mean: 0.46,
+            benchmark_task_a_accuracy: 0.5,
+            benchmark_task_b_accuracy: 0.42
+          },
+          {
+            label: "candidate condition a",
+            condition_parameter_x: 3,
+            condition_parameter_y: 0,
+            average_accuracy_mean: 0.48,
+            accuracy_delta_vs_baseline_mean: 0.03,
+            benchmark_task_a_accuracy: 0.52,
+            benchmark_task_b_accuracy: 0.44
+          },
+          {
+            label: "candidate condition b",
+            condition_parameter_x: 4,
+            condition_parameter_y: 0,
+            average_accuracy_mean: 0.47,
+            accuracy_delta_vs_baseline_mean: 0.02,
+            benchmark_task_a_accuracy: 0.51,
+            benchmark_task_b_accuracy: 0.43
+          }
+        ]
+      }
+    );
+
+    expect(stabilized.tables?.[0]?.caption).toContain("archived reference row and registered baseline are different");
+    expect(stabilized.tables?.[0]?.rows.map((row) => row.label)).toContain(
+      "Registered baseline condition, not delta reference (factor x=2, factor y=0)"
+    );
+    expect(stabilized.figures).toHaveLength(1);
+    expect(stabilized.figures?.[0]?.caption).toContain("registered baseline and delta-reference row are kept separate");
+    expect(stabilized.figures?.[0]?.caption).not.toContain("relative to the registered baseline");
+    expect(stabilized.figures?.[0]?.bars.map((row) => row.label)).toContain(
+      "Registered baseline, not reference"
+    );
+    expect(stabilized.figures?.[0]?.bars.map((row) => row.label).join(" ")).not.toMatch(/task difference/i);
   });
 
   it("replaces redundant condition-delta figures with a task-level split when condition summaries are available", () => {
@@ -1531,14 +1656,10 @@ describe("paper submission sanitization", () => {
     );
 
     expect(stabilized.figures).toHaveLength(1);
-    expect(stabilized.figures?.[0]?.caption).toContain("Task-level and average accuracy");
+    expect(stabilized.figures?.[0]?.caption).toContain("Task-level score differences");
     expect(stabilized.figures?.[0]?.bars).toEqual([
-      { label: "Baseline Benchmark Task A", value: 0.5 },
-      { label: "Leading Benchmark Task A", value: 0.5 },
-      { label: "Baseline Benchmark Task B", value: 0.1667 },
-      { label: "Leading Benchmark Task B", value: 0.3333 },
-      { label: "Baseline Average", value: 0.3333 },
-      { label: "Leading Average", value: 0.4167 }
+      { label: "Benchmark Task A task difference", value: 0 },
+      { label: "Benchmark Task B task difference", value: 0.1666 }
     ]);
   });
 
@@ -1648,7 +1769,7 @@ describe("paper submission sanitization", () => {
             "The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. candidate condition b is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage.",
             "The leading-condition rows carry the strongest follow-up signal because they combine the largest nonbaseline mean with the same condition-completion accounting used for the rest of the grid.",
             "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every adapter configuration is better than every other configuration.",
-            "The comparison-condition rows are useful mainly as a calibration point for the interpretation. They show that adding dropout at a higher rank did not create a clean, decisive gain under the current budget.",
+            "The comparison-condition rows are useful mainly as a calibration point for the interpretation. They show that adding parameter_y at a higher rank did not create a clean, decisive gain under the current budget.",
             "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale.",
             "Operationally, the run was inexpensive and clean. The summarized record reports completion of all eight planned conditions, a wall-clock runtime of 45.687 s, and peak allocated CUDA memory of 4,278,951,936 bytes, or about 4.28 GB. The runtime stayed far below the configured 1,800 s limit.",
             "From a systems perspective, the sweep was small but operationally complete. The record reports 8 requested conditions, 8 recorded conditions, and 8 completed conditions, together with wall-clock runtime of 45.687 s, peak allocated CUDA memory of 4,278,951,936 bytes, and a timeout budget of 1,800 s. No failed or hidden condition is visible in the compact tables.",
@@ -1656,7 +1777,7 @@ describe("paper submission sanitization", () => {
             "Table 1 is part of the evidential core of the paper because it preserves the executed comparison set.",
             "Runtime and memory records support feasibility for the executed local preflight, but the available evidence does not support a condition-level efficiency ranking.",
             "wall-clock runtime was 45.687. seconds. They support the claim that the comparison was run under the declared budget, but they do not by themselves prove that the strongest accuracy setting is the most efficient setting.",
-            "However, the currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate, such as direct numerical comparisons of candidate condition b with and without dropout or baseline condition with and without dropout."
+            "However, the currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate, such as direct numerical comparisons of candidate condition b with and without parameter_y or baseline condition with and without parameter_y."
           ]
         },
         {
@@ -1726,11 +1847,186 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("45.687 seconds");
     expect(text).not.toContain("wall-clock runtime of 45.687");
     expect(text).not.toContain("45.687 s wall-clock runtime");
-    expect(text).not.toContain("dropout values {0.0, 0.05}, with average accuracy");
+    expect(text).not.toContain("parameter_y values {0.0, 0.05}, with average accuracy");
     expect(text).not.toContain("candidate condition b");
     expect(text).not.toContain("reported 45.687 s wall-clock time");
     expect(text).not.toContain("4,278,951,936 bytes of peak allocated memory");
     expect(text).not.toContain("8 requested conditions, 8 recorded conditions, and 8 completed conditions, together with");
     expect(text).not.toContain("batch size, and an unambiguous statement of the executed base model");
+  });
+
+  it("removes prompt, cache, and duplicate reviewer residue after manuscript repair", () => {
+    const cachedRecoveryResidue = [
+      ["Recovered", "cached", "full", "text"].join(" "),
+      "describing a compact P",
+      "EFT recipe."
+    ].join(" " );
+    const promptTopicResidue = [
+      "Study how",
+      "LoRA rank and dropout interact during",
+      "parameter-efficient instruction tuning under a fixed local compute budget."
+    ].join(" " );
+    const readinessResidue = ["paper-readiness", "inspect"].join(" " );
+    const remoteDomainResidue = ["bearing", "fault setting"].join("-" );
+    const datasetLead = ["Dataset-level", "reporting shows"].join(" " );
+    const awkwardMetricResidue = ["Parameter-computationally", "practical within the reported setup"].join(" " );
+    const suppliedBriefResidue = ["supplied", "related-work brief"].join(" " );
+    const identifiedBriefResidue = ["identified", "in the brief"].join(" " );
+    const budgetCaveatResidue = ["The 36-run workload may exceed", "the desired first preflight local budget."].join(" " );
+
+    const stabilized = stabilizePaperManuscriptForSubmission({
+      title: "A Fixed-Budget Condition Study",
+      abstract: "A cautious condition study with a small positive screening signal.",
+      keywords: ["condition study"],
+      sections: [
+        {
+          heading: "Introduction",
+          paragraphs: [
+            `This study addresses ${promptTopicResidue} The local preflight run uses a cached, locally runnable small target so the validation focuses on real training, result-table consistency, review checks, and ${readinessResidue} rather than on new model access. ${cachedRecoveryResidue}`,
+            `${awkwardMetricResidue} fine-tuning is attractive when language-model adaptation must fit within local memory, runtime, and hardware constraints. Several literature extractions were produced under timeout or fallback conditions and should be read as contextual rather than decisive.`
+          ]
+        },
+        {
+          heading: "Related Work",
+          paragraphs: [
+            `One practical but remote adaptation contrast in the cited material is a lightweight LoRA-based model in a ${remoteDomainResidue}, which shares an interest in practical adaptation under constraints but differs in domain.`,
+            `The closest prior framing ${identifiedBriefResidue} is a lightweight LoRA-based model in a ${remoteDomainResidue}, whereas other nearby papers emphasize resource-constrained adaptation.`,
+            `The ${suppliedBriefResidue} organizes nearby work along three broad axes: adapter-method development, survey or synthesis of fine-tuning practice, and evaluation-oriented benchmarking.`
+          ]
+        },
+        {
+          heading: "Results",
+          paragraphs: [
+            `${datasetLead} a symmetric leading point estimate across the two evaluation tasks. The leading-condition summary lists Task A accuracy=0.479167 and Task B accuracy=0.479167.`,
+            `${datasetLead} a symmetric best-condition point estimate across the two evaluation tasks. The best-condition summary lists Task A accuracy=0.479167 and Task B accuracy=0.479167.`,
+            "The primary point estimate exceeded the pre-specified +0.01 threshold. The aggregate summary reports baseline-relative accuracy gain=0.02083333333333337.",
+            "The primary point estimate exceeded the pre-specified +0.01 threshold. The aggregate summary reports baseline-relative accuracy gain=0.02083333333333337."
+          ]
+        },
+        {
+          heading: "Limitations",
+          paragraphs: [
+            "The first limitation is scope. The study is a local small-model screen, not a broad benchmark.",
+            budgetCaveatResidue
+          ]
+        }
+      ]
+    });
+
+    const text = JSON.stringify(stabilized);
+    expect(text).not.toContain(cachedRecoveryResidue);
+    expect(text).not.toContain(promptTopicResidue);
+    expect(text).not.toContain(readinessResidue);
+    expect(text).not.toContain(remoteDomainResidue);
+    expect(text).not.toContain(awkwardMetricResidue);
+    expect(text).not.toContain(identifiedBriefResidue);
+    expect(text).not.toContain(suppliedBriefResidue);
+    expect(text).not.toContain(budgetCaveatResidue);
+    const resultText = stabilized.sections.find((section) => section.heading === "Results")?.paragraphs.join("\n") || "";
+    expect((resultText.match(new RegExp(datasetLead, "g")) || []).length).toBe(1);
+    expect(resultText).not.toContain("best-condition point estimate");
+  });
+
+  it("downgrades garbled registered-baseline threshold claims after manuscript repair", () => {
+    const stabilized = stabilizePaperManuscriptForSubmission(
+      {
+        title: "A Fixed-Budget Condition Study",
+        abstract:
+          "The archived aggregate comparison shows baseline-relative accuracy gain=0.020833 against the displayed reference row, with a 0.01 practical-improvement threshold used as a screening yardstick; because the registered baseline and archived comparator roles remain unreconciled in the available artifacts, the stronger claim that the registered-baseline objective remains unresolved is deferred.",
+        keywords: ["condition study"],
+        sections: [
+          {
+            heading: "Results",
+            paragraphs: [
+              "The aggregate result summary is best read as a bounded screening contrast rather than a resolved registered-baseline test. It reports an average-score difference of 0.020833 between the tied leading displayed row(s) and the displayed reference row, with 0.01 as the pre-specified practical-improvement threshold. Because the registered baseline and archived delta reference are not fully reconciled in the available artifacts, the stronger claim that the registered registered-baseline objective remains unresolved is deferred. Expressed in percentage points, the reported difference is approximately +2.08 points.",
+              "The leading configuration is reported with 288 total evaluation examples. These denominators are important for interpretation: the gain is practically meaningful under the stated threshold, but it is still a small-count effect in a screening-scale evaluation.",
+              "The primary objective metric was baseline-relative average accuracy across Benchmark Task A and Benchmark Task B. The aggregate result table reports an observed gain of 0.020833 against a target of 0.01. In percentage-point terms, this is approximately +2.08 points, exceeding the pre-specified +1.0 point threshold."
+            ]
+          },
+          {
+            heading: "Conclusion",
+            paragraphs: [
+              "The displayed-reference two-task average-score difference of 0.020833 exceeds the pre-specified practical screening threshold of 0.01, while the registered-baseline interpretation remains unresolved."
+            ]
+          }
+        ]
+      },
+      {
+        conditionSummaries: [
+          { label: "Registered baseline", condition_parameter_x: 1, condition_parameter_y: 0, average_accuracy_mean: 0.45, is_registered_baseline: true, is_baseline: true },
+          { label: "Displayed reference", condition_parameter_x: 2, condition_parameter_y: 0, average_accuracy_mean: 0.46, is_comparator: true },
+          { label: "Leading condition", condition_parameter_x: 3, condition_parameter_y: 1, average_accuracy_mean: 0.48 }
+        ]
+      }
+    );
+
+    const text = JSON.stringify(stabilized);
+    expect(text).not.toContain("registered registered-baseline");
+    expect(text).not.toContain("stronger claim that the registered-baseline objective remains unresolved is deferred");
+    expect(text).not.toContain("the gain is practically meaningful under the stated threshold");
+    expect(text).not.toContain("baseline-relative accuracy gain=0.020833");
+    expect(text).not.toContain("exceeding the pre-specified +1.0 point threshold");
+    expect(text).not.toContain("threshold claims remain unresolved");
+    expect(text).toContain("displayed-reference accuracy difference 0.020833");
+    expect(text).toContain("no registered-baseline success claim is accepted");
+    expect(text).toContain("not evidence that the registered-baseline target of 0.01 was met");
+    expect(stabilized.tables?.[0]?.caption).toContain("not accepted as a registered-baseline threshold success");
+  });
+
+  it("compacts overlong reader-facing paper sections after manuscript repair", () => {
+    const stabilized = stabilizePaperManuscriptForSubmission({
+      title: "A Fixed-Budget Condition Study",
+      abstract: "A cautious condition study with a small positive screening signal.",
+      keywords: ["condition study"],
+      sections: [
+        {
+          heading: "Related Work",
+          paragraphs: [
+            "Prior work on parameter-efficient adaptation can be organized along three axes relevant to this study, including adapter design and evaluation breadth.",
+            "Nearby method-family, task-design, and evaluation studies are relevant because adapter behavior can depend on feasibility constraints and benchmark choice.",
+            "The second axis concerns evaluation breadth and shows that behavior can depend on data regime and evaluation task.",
+            "The third axis concerns resource-constrained deployment and motivates separating accuracy signals from unsupported resource-dominance claims.",
+            "For this manuscript, prior work is used to motivate the condition-parameter question and local-budget evaluation design; numerical claims remain grounded in the executed run artifacts.",
+            "Nearby method-family, task-design, and evaluation studies provide context for feasibility, benchmark sensitivity, and design choices, but they do not replace the locked baseline comparison in this study.",
+            "The closest cited work frames evaluation and benchmarking, adapter and parameterization design, and resource-budgeted instruction tuning rather than a condition-matched reproduction of the present run."
+          ]
+        },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The primary quantitative signal is positive at the table level. The summarized result table reports a leading point estimate of +0.020833 absolute mean accuracy, or +2.083 percentage points, relative to the displayed comparison entry. If interpreted only as a table-level baseline-relative contrast, this exceeds the prespecified +1.0 percentage-point threshold for a meaningful improvement.",
+            "Task-level counts make the leading mean accuracy interpretable and keep the table-level comparison auditable.",
+            "The condition mapping is the main interpretive constraint because the locked comparison row and registered baseline concept are not fully reconciled.",
+            "The uncertainty evidence also limits claim strength and does not support a statistical-significance claim.",
+            "The planned resource analysis cannot yet be completed because per-condition runtime and memory values are not available.",
+            "The prespecified baseline-relative accuracy target was met (observed gain 0.02083333333333337 versus threshold 0.01); condition-level values in Table 1 provide the main numeric support.",
+            "The condition-level comparison is reported through Table 1 and the task-level delta figure; raw metric-key contrasts are not treated as separate prose evidence.",
+            "The exposed condition-level intervals remain wide, so the point-estimate improvement is retained as a screening signal rather than as a statistical-significance claim.",
+            "The tied leading rows carry the strongest follow-up signal, but they remain scale-up candidates rather than settled prescriptions."
+          ]
+        },
+        {
+          heading: "Limitations",
+          paragraphs: [
+            "The first limitation is scope. The study uses a small locally runnable model workflow, one capped instruction-tuning dataset, two evaluation tasks, and a leading-entry aggregate.",
+            "The second limitation is design expansion. The reported factorial design includes an additional setting beyond the smallest intended grid.",
+            "The third limitation is reporting resolution. The available summary does not provide the full seed-level condition table, per-condition runtime, or peak GPU memory.",
+            "The fourth limitation is uncertainty. The reported positive point estimate exceeds the study threshold, but the available intervals are too broad for statistical significance.",
+            "The most important limitation is scale. The run uses one small backbone, two benchmark tasks, and a fixed local training budget.",
+            "A second limitation is resource granularity. The artifacts preserve feasibility evidence, but the main results do not yet contain condition-level runtime and memory aggregates."
+          ]
+        }
+      ]
+    });
+
+    const related = stabilized.sections.find((section) => section.heading === "Related Work")?.paragraphs || [];
+    const results = stabilized.sections.find((section) => section.heading === "Results")?.paragraphs || [];
+    const limitationsText = stabilized.sections.find((section) => section.heading === "Limitations")?.paragraphs.join(" ") || "";
+
+    expect(related.length).toBeLessThanOrEqual(4);
+    expect(related.join(" ")).not.toContain("numerical claims remain grounded in the executed run artifacts");
+    expect(results.join(" ")).not.toContain("The prespecified baseline-relative accuracy target was met");
+    expect(limitationsText).not.toContain("The most important limitation is scale");
+    expect(limitationsText).not.toContain("A second limitation is resource granularity");
   });
 });

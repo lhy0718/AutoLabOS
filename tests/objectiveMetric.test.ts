@@ -392,7 +392,7 @@ describe("objectiveMetric", () => {
         },
         {
           baseline: false,
-          condition_marker: "rank_in_4_8_16_32_x_dropout_in_0_0_0_05",
+          condition_marker: "condition_grid_family_a",
           average_accuracy: 0.29166666666666663,
           status: "completed"
         }
@@ -493,8 +493,8 @@ describe("objectiveMetric", () => {
     const evaluation = evaluateObjectiveMetric(
       {
         conditions: {
-          decomposed_adapter: {
-            name: "decomposed_adapter",
+          candidate_condition_b: {
+            name: "candidate_condition_b",
             status: "completed",
             accuracy_delta_vs_baseline: -0.03125,
             evaluation: { mean_zero_shot_accuracy: 0.4765625 }
@@ -505,8 +505,8 @@ describe("objectiveMetric", () => {
             accuracy_delta_vs_baseline: -0.015625,
             evaluation: { mean_zero_shot_accuracy: 0.4921875 }
           },
-          rank_stabilized_adapter: {
-            name: "rank_stabilized_adapter",
+          stronger_candidate: {
+            name: "stronger_candidate",
             status: "completed",
             accuracy_delta_vs_baseline: -0.0078125,
             evaluation: { mean_zero_shot_accuracy: 0.5 }
@@ -547,8 +547,8 @@ describe("objectiveMetric", () => {
     const evaluation = evaluateObjectiveMetric(
       {
         conditions: {
-          decomposed_adapter: {
-            name: "decomposed_adapter",
+          candidate_condition_b: {
+            name: "candidate_condition_b",
             status: "completed",
             evaluation: { mean_zero_shot_accuracy: 0.4765625 },
             wall_clock_sec: 128.40490746498108,
@@ -561,8 +561,8 @@ describe("objectiveMetric", () => {
             wall_clock_sec: 28.637099504470825,
             device_info_end: { cuda_max_memory_allocated_bytes: 3031420928 }
           },
-          rank_stabilized_adapter: {
-            name: "rank_stabilized_adapter",
+          stronger_candidate: {
+            name: "stronger_candidate",
             status: "completed",
             evaluation: { mean_zero_shot_accuracy: 0.5078125 },
             wall_clock_sec: 81.93073916435242,
@@ -585,7 +585,7 @@ describe("objectiveMetric", () => {
     expect(evaluation.observedValue).toBeCloseTo(0.015625, 10);
     expect(evaluation.status).toBe("not_met");
     expect(evaluation.summary).toContain("Resource regression requirement not satisfied");
-    expect(evaluation.summary).toContain("rank stabilized adapter vs adapter baseline");
+    expect(evaluation.summary).toContain("stronger candidate vs adapter baseline");
     expect(evaluation.summary).toContain("runtime 2.86x");
     expect(evaluation.summary).toContain("memory 3.22x");
   });

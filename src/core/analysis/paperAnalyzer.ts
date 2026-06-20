@@ -3,6 +3,24 @@ import { parseStructuredModelJsonObject } from "./modelJson.js";
 import { AnalysisCorpusRow, ResolvedPaperSource, buildAbstractFallbackText } from "./paperText.js";
 import { ResponsesPdfAnalysisClient } from "../../integrations/openai/responsesPdfAnalysisClient.js";
 
+const FALLBACK_METRIC_TOKEN_SOURCES = [
+  "accuracy",
+  "f1",
+  "bleu",
+  "rouge",
+  "perplexity",
+  "pass@\\d+",
+  "runtime",
+  "latency",
+  "memory",
+  "throughput"
+];
+const FALLBACK_METRIC_TOKEN_SOURCE = `(?:${FALLBACK_METRIC_TOKEN_SOURCES.join("|")})`;
+
+function fallbackMetricTokenRegex(flags: string): RegExp {
+  return new RegExp(`\\b${FALLBACK_METRIC_TOKEN_SOURCE}\\b`, flags);
+}
+
 export interface PaperSummaryRow {
   paper_id: string;
   title: string;
@@ -758,10 +776,10 @@ function buildDeterministicPlannerTimeoutFallback(
         dataset_slot: structured.datasets.join("; ") || "Not yet structured.",
         metric_slot: structured.metrics.join("; ") || "Not yet structured.",
         evidence_span: evidenceSpan,
-        confidence: hasOperationalContract ? 0.62 : 0.35,
+        confidence: hasOperationalContract ? 0.62 : 0.45,
         confidence_reason: hasOperationalContract
           ? "Source is extracted full text; planner timed out before reviewer validation, so confidence is moderate."
-          : "Planner timed out before structured dataset and metric extraction completed, so this full-text row remains low confidence."
+          : "planner timeout occurred before structured dataset and metric extraction completed, so this full-text row remains low confidence."
       }
     ]
   };
@@ -785,8 +803,8 @@ function extractPlannerTimeoutFallbackSlots(sourceText: string): {
   ]).filter(Boolean).slice(0, 4);
   const metrics = uniqueStrings([
     ...extractHints(sourceText, [
-      /\b(?:metric|metrics|measured by|reported|reports|reporting|with)\s+([^.;\n]{0,120}\b(?:accuracy|f1|bleu|rouge|perplexity|pass@\d+|runtime|latency|memory|throughput)\b[^.;\n]{0,80})/giu,
-      /\b(?:accuracy|f1|bleu|rouge|perplexity|pass@\d+|runtime|latency|memory|throughput)\b/giu
+      new RegExp(`\\b(?:metric|metrics|measured by|reported|reports|reporting|with)\\s+([^.;\\n]{0,120}\\b${FALLBACK_METRIC_TOKEN_SOURCE}\\b[^.;\\n]{0,80})`, "giu"),
+      fallbackMetricTokenRegex("giu")
     ]).map(cleanMetricHint)
   ]).filter(Boolean).slice(0, 4);
   const method = supportSentence ? trimToLength(supportSentence, 180) : undefined;
@@ -811,7 +829,7 @@ function hasDatasetCue(sentence: string): boolean {
 }
 
 function hasMetricCue(sentence: string): boolean {
-  return /\b(?:metric|accuracy|f1|bleu|rouge|perplexity|pass@\d+|runtime|latency|memory|throughput)\b/iu.test(sentence);
+  return new RegExp(`\\b(?:metric|${FALLBACK_METRIC_TOKEN_SOURCE})\\b`, "iu").test(sentence);
 }
 
 function extractHints(text: string, patterns: RegExp[]): string[] {
@@ -827,13 +845,13 @@ function extractHints(text: string, patterns: RegExp[]): string[] {
 function cleanDatasetHint(value: string): string {
   return cleanHint(value)
     .replace(/\s+\b(?:with|using|measured by|reporting|reports?)\b.*$/iu, "")
-    .replace(/\b(?:accuracy|f1|bleu|rouge|perplexity|pass@\d+|runtime|latency|memory|throughput)\b.*$/iu, "")
+    .replace(new RegExp(`\\b${FALLBACK_METRIC_TOKEN_SOURCE}\\b.*$`, "iu"), "")
     .trim();
 }
 
 function cleanMetricHint(value: string): string {
   const cleaned = cleanHint(value);
-  const metricMatch = /\b(?:accuracy|f1|bleu|rouge|perplexity|pass@\d+|runtime|latency|memory|throughput)\b/iu.exec(cleaned);
+  const metricMatch = fallbackMetricTokenRegex("iu").exec(cleaned);
   return metricMatch ? metricMatch[0] : cleaned;
 }
 

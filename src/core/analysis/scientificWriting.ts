@@ -26,9 +26,11 @@ export type NumericFactKind = "metric" | "count";
 export type NumericFactSource =
   | "artifact"
   | "abstract"
+  | "related_work"
   | "method"
   | "results"
   | "discussion"
+  | "limitations"
   | "conclusion"
   | "table"
   | "figure"
@@ -215,9 +217,11 @@ export interface ConditionResultSummary {
   label: string;
   status?: string;
   is_baseline: boolean;
+  is_comparator?: boolean;
+  is_registered_baseline?: boolean;
   completed_seed_count?: number;
-  adapter_rank?: number;
-  adapter_dropout?: number;
+  condition_parameter_x?: number;
+  condition_parameter_y?: number;
   average_accuracy_mean?: number;
   average_accuracy_ci95?: number;
   accuracy_delta_vs_baseline_mean?: number;
@@ -711,7 +715,10 @@ export function methodCompletenessValidator(context: ExperimentArtifactContext):
     const hasBenchmarkTaskNames =
       context.method.dataset_names.some((item) => /benchmark_task_a|benchmark_task_b|benchmark|task|instruction/iu.test(item))
       || context.results.dataset_summaries.some((item) => /benchmark_task_a|benchmark_task_b|benchmark|task|instruction/iu.test(`${item.dataset} ${item.label} ${item.summary}`))
-      || context.results.aggregate_summary.some((item) => /benchmark_task_a|benchmark_task_b|benchmark|task|instruction/iu.test(item));
+      || context.results.aggregate_summary.some((item) => /benchmark_task_a|benchmark_task_b|benchmark|task|instruction/iu.test(item))
+      || context.results.condition_summaries.some((item) =>
+        typeof item.benchmark_task_a_accuracy === "number" || typeof item.benchmark_task_b_accuracy === "number"
+      );
     pushFieldStatus(
       present,
       missing,
@@ -896,8 +903,8 @@ export function conditionResultTableBuilder(context: ExperimentArtifactContext):
     .map((item) => ({
       label: buildConditionTableLabel(item),
       value: item.average_accuracy_mean as number,
-      ...(typeof item.adapter_rank === "number" ? { adapter_rank: item.adapter_rank } : {}),
-      ...(typeof item.adapter_dropout === "number" ? { adapter_dropout: item.adapter_dropout } : {}),
+      ...(typeof item.condition_parameter_x === "number" ? { condition_parameter_x: item.condition_parameter_x } : {}),
+      ...(typeof item.condition_parameter_y === "number" ? { condition_parameter_y: item.condition_parameter_y } : {}),
       ...(typeof item.average_accuracy_mean === "number" ? { average_accuracy: item.average_accuracy_mean } : {}),
       ...(typeof item.accuracy_delta_vs_baseline_mean === "number"
         ? { accuracy_delta_vs_baseline: item.accuracy_delta_vs_baseline_mean }
@@ -956,12 +963,12 @@ export function figureSelectorAndCaptionWriter(context: ExperimentArtifactContex
 export function conditionFigureSelectorAndCaptionWriter(context: ExperimentArtifactContext): PaperManuscriptFigure[] {
   const accuracySurfaceBars = context.results.condition_summaries
     .filter((item) => typeof item.average_accuracy_mean === "number")
-    .slice(0, 8)
+    .slice(0, 16)
     .map((item) => ({
       label: buildConditionTableLabel(item),
       value: item.average_accuracy_mean as number,
-      ...(typeof item.adapter_rank === "number" ? { adapter_rank: item.adapter_rank } : {}),
-      ...(typeof item.adapter_dropout === "number" ? { adapter_dropout: item.adapter_dropout } : {}),
+      ...(typeof item.condition_parameter_x === "number" ? { condition_parameter_x: item.condition_parameter_x } : {}),
+      ...(typeof item.condition_parameter_y === "number" ? { condition_parameter_y: item.condition_parameter_y } : {}),
       ...(typeof item.accuracy_delta_vs_baseline_mean === "number"
         ? { accuracy_delta_vs_baseline: item.accuracy_delta_vs_baseline_mean }
         : {}),
@@ -970,7 +977,7 @@ export function conditionFigureSelectorAndCaptionWriter(context: ExperimentArtif
   if (accuracySurfaceBars.length >= 4 && conditionGridRowsShowPaperFigureValue(accuracySurfaceBars)) {
     return [
       {
-        caption: "Condition-level average accuracy across the executed condition-parameter grid; lines separate dropout settings and mark the locked baseline.",
+        caption: "Condition-level average accuracy across the executed condition-parameter grid; lines separate condition-parameter settings and mark the locked baseline.",
         bars: accuracySurfaceBars
       }
     ];
@@ -1048,9 +1055,16 @@ function buildConditionTableLabel(item: ConditionResultSummary): string {
 function publicConditionDisplayLabel(item: ConditionResultSummary): string {
   const label = item.label || item.condition || "condition";
   if (item.is_baseline || /\bbaseline\b/iu.test(label)) {
-    return "baseline condition";
+    return "locked comparison row";
   }
-  if (/\brank\b[^.!?]{0,80}\bdropout\b|\bdropout\b[^.!?]{0,80}\brank\b|rank[_-]\d|dropout[_-]\d/iu.test(label)) {
+  if (typeof item.condition_parameter_x === "number" || typeof item.condition_parameter_y === "number") {
+    const parts = [
+      typeof item.condition_parameter_x === "number" ? `parameter x=${formatNumber(item.condition_parameter_x)}` : undefined,
+      typeof item.condition_parameter_y === "number" ? `parameter y=${formatNumber(item.condition_parameter_y)}` : undefined
+    ].filter(Boolean);
+    return `candidate condition ${stableConditionLabelSuffix(label)} (${parts.join(", ")})`;
+  }
+  if (/\b(?:rank|parameter[_\s-]*x|parameter[_\s-]*y)\b[^.!?]{0,80}\b(?:rank|parameter[_\s-]*x|parameter[_\s-]*y)\b|rank[_-]\d|parameter[_-]?[xy][_-]\d/iu.test(label)) {
     return `candidate condition ${stableConditionLabelSuffix(label)}`;
   }
   return label;
@@ -1080,27 +1094,27 @@ function barsShowDistinctPattern(bars: Array<{ label: string; value: number }>):
 }
 
 function conditionGridRowsShowPaperFigureValue(
-  bars: Array<{ label: string; value: number; adapter_rank?: number; adapter_dropout?: number }>
+  bars: Array<{ label: string; value: number; condition_parameter_x?: number; condition_parameter_y?: number }>
 ): boolean {
-  const ranks = new Set<number>();
-  const dropouts = new Set<number>();
+  const parameterXs = new Set<number>();
+  const parameterYs = new Set<number>();
   const values = new Set<number>();
   for (const bar of bars) {
-    const rank = typeof bar.adapter_rank === "number"
-      ? bar.adapter_rank
-      : Number(bar.label.match(/\brank\s*([0-9]+)/iu)?.[1]);
-    const dropout = typeof bar.adapter_dropout === "number"
-      ? bar.adapter_dropout
-      : Number(bar.label.match(/\bdropout\s*([0-9]+(?:\.[0-9]+)?)/iu)?.[1]);
-    if (Number.isFinite(rank)) {
-      ranks.add(rank);
+    const parameterX = typeof bar.condition_parameter_x === "number"
+      ? bar.condition_parameter_x
+      : Number(bar.label.match(/\bparameter[_\s-]*x\s*[=:]?\s*([0-9]+(?:\.[0-9]+)?)/iu)?.[1]);
+    const parameterY = typeof bar.condition_parameter_y === "number"
+      ? bar.condition_parameter_y
+      : Number(bar.label.match(/\bparameter[_\s-]*y\s*[=:]?\s*([0-9]+(?:\.[0-9]+)?)/iu)?.[1]);
+    if (Number.isFinite(parameterX)) {
+      parameterXs.add(parameterX);
     }
-    if (Number.isFinite(dropout)) {
-      dropouts.add(dropout);
+    if (Number.isFinite(parameterY)) {
+      parameterYs.add(parameterY);
     }
     values.add(Math.round(bar.value * 1000) / 1000);
   }
-  return ranks.size >= 2 && dropouts.size >= 2 && values.size >= 2;
+  return (parameterXs.size >= 2 || parameterYs.size >= 2) && values.size >= 2;
 }
 
 function hasInternalCaptionToken(caption: string): boolean {
@@ -1116,7 +1130,12 @@ function sanitizeVisualCaption(caption: string | undefined, fallback: string): s
   if (!normalized || hasInternalCaptionToken(normalized)) {
     return fallback;
   }
-  return normalized;
+  return normalized
+    .replace(/\bthe leading condition\s*\([^)]*\)/giu, "a tied leading condition")
+    .replace(/\bregistered baseline\s*\([^)]*\)/giu, "registered baseline")
+    .replace(/\bfor the leading condition\s*;/giu, "for tied leading conditions;")
+    .replace(/\bfor the leading condition\b/giu, "for tied leading conditions")
+    .replace(/\bthe leading condition\b/giu, "the tied leading set");
 }
 
 function sanitizeCandidateTables(tables: PaperManuscriptTable[] | undefined): PaperManuscriptTable[] | undefined {
@@ -1857,9 +1876,14 @@ function mapMethodMissingToEvidenceCategories(missing: string[]): string[] {
     categories.push("experimental setup");
   }
   if (missing.some((item) => ["runtime measurement", "memory measurement"].includes(item))) {
-    categories.push("statistical reporting");
+    categories.push("resource measurement");
   }
   return categories;
+}
+
+function isResourceOnlyMethodGap(report: CompletenessReport): boolean {
+  return report.missing.length > 0
+    && report.missing.every((item) => ["runtime measurement", "memory measurement"].includes(item));
 }
 
 function mapResultsMissingToEvidenceCategories(missing: string[]): string[] {
@@ -1910,13 +1934,18 @@ function pushCompletenessIssue(
     return;
   }
   const details = uniqueStrings([...report.missing, ...report.warnings]).slice(0, 8);
+  const resourceOnlyMethodGap = category === "method_completeness" && isResourceOnlyMethodGap(report);
   issues.push({
     code,
     source: "scientific_validation",
     category,
     severity: "warning",
-    policy: "strict_fail",
-    finding: diagnostic?.blocked_by_evidence_insufficiency ? "unverifiable" : "repairable",
+    policy: resourceOnlyMethodGap ? "warn_only" : "strict_fail",
+    finding: resourceOnlyMethodGap
+      ? "informational"
+      : diagnostic?.blocked_by_evidence_insufficiency
+        ? "unverifiable"
+        : "repairable",
     message: details[0] || fallbackMessage,
     details: details.slice(1),
     ...(diagnostic?.missing_evidence_categories.length ? { missing_evidence_categories: diagnostic.missing_evidence_categories } : {}),
@@ -1982,6 +2011,9 @@ function lintCountConsistency(input: {
     if (comparableFacts.some((candidate) => areFactValuesEquivalent(observedFact, candidate))) {
       continue;
     }
+    if (isSeedCountVsProtocolRepeatMismatch(observedFact, comparableFacts)) {
+      continue;
+    }
     issues.push({
       kind: "count_inconsistency",
       severity: "error",
@@ -1995,6 +2027,26 @@ function lintCountConsistency(input: {
   }
 
   return dedupeConsistencyIssues(issues);
+}
+
+function isSeedCountVsProtocolRepeatMismatch(
+  observedFact: NormalizedNumericFact,
+  comparableFacts: NormalizedNumericFact[]
+): boolean {
+  if (observedFact.fact_kind !== "count" || observedFact.count_kind !== "repeat_count") {
+    return false;
+  }
+  if (!/\bseeds?\b/iu.test(observedFact.raw_text)) {
+    return false;
+  }
+  return comparableFacts.some((candidate) =>
+    candidate.fact_kind === "count"
+    && candidate.count_kind === "repeat_count"
+    && /\brepeats?|repeated evaluations?\b/iu.test(candidate.raw_text)
+    && (candidate.source_refs || []).some((ref) =>
+      /protocol\.repeats|evaluation_steps/iu.test(String(ref.id || ""))
+    )
+  );
 }
 
 function lintNumericConsistency(input: {
@@ -2031,9 +2083,13 @@ function lintNumericConsistency(input: {
     if (isReaderFacingFigureAccuracyFact(observedFact)) {
       continue;
     }
+    if (isAnonymousPairedAccuracyStatement(observedFact)) {
+      continue;
+    }
     const comparableFacts = expectedFacts.filter(
       (candidate) =>
         areComparableNumericFacts(observedFact, candidate)
+        && areStructuredMetricRolesCompatible(observedFact, candidate)
         && !(observedFact.metric_key === "runtime_seconds" && isRuntimeBudgetFact(candidate))
     );
     if (comparableFacts.length === 0) {
@@ -2063,6 +2119,12 @@ function lintNumericConsistency(input: {
       continue;
     }
     if (isBenignFromToStructuredComparison(observedFact, comparableFacts)) {
+      continue;
+    }
+    if (isBenignBaselineComparatorStructuredComparison(observedFact, comparableFacts)) {
+      continue;
+    }
+    if (isDisplayedBaselineComparatorTableValue(observedFact)) {
       continue;
     }
     const appendixMatch = appendixFacts.find(
@@ -2128,6 +2190,46 @@ function isConditionSpecificAccuracyStatement(fact: NormalizedNumericFact): bool
     && /\b(?:locked baseline|baseline condition|best observed|leading observed|candidate condition)\b/iu.test(fact.raw_text);
 }
 
+function areStructuredMetricRolesCompatible(
+  observedFact: NormalizedNumericFact,
+  expectedFact: NormalizedNumericFact
+): boolean {
+  if (observedFact.fact_kind !== "metric" || expectedFact.fact_kind !== "metric") {
+    return true;
+  }
+  if (observedFact.metric_key !== "accuracy" || expectedFact.metric_key !== "accuracy") {
+    return true;
+  }
+  const observedRoleText = cleanString([
+    observedFact.raw_text,
+    observedFact.metric_label || "",
+    observedFact.comparison_target || ""
+  ].join(" "));
+  const expectedRoleText = cleanString([
+    expectedFact.raw_text,
+    expectedFact.metric_label || "",
+    expectedFact.comparison_target || ""
+  ].join(" "));
+  const baselineRolePattern = /\b(?:baseline|reference|locked\s+trained\s+baseline|locked\s+baseline|recorded\s+comparison|comparison\s+row|locked\s+comparison|comparison\s+anchor|comparator\s+of\s+record)\b/iu;
+  const observedBaseline = baselineRolePattern.test(observedRoleText);
+  const expectedBaseline = baselineRolePattern.test(expectedRoleText);
+  const observedComparator = /\b(?:best|best_condition|leading|candidate|comparator)\b/iu.test(observedRoleText);
+  const expectedComparator = /\b(?:best|best_condition|leading|candidate|comparator)\b/iu.test(expectedRoleText);
+  if (observedBaseline && !expectedBaseline && !observedComparator) {
+    return false;
+  }
+  if (observedComparator && !expectedComparator && !observedBaseline) {
+    return false;
+  }
+  if (observedBaseline && expectedComparator && !observedComparator) {
+    return false;
+  }
+  if (observedComparator && expectedBaseline && !observedBaseline) {
+    return false;
+  }
+  return true;
+}
+
 function hasLooseEquivalentMetricFact(
   observedFact: NormalizedNumericFact,
   expectedFacts: NormalizedNumericFact[]
@@ -2138,10 +2240,32 @@ function hasLooseEquivalentMetricFact(
   return expectedFacts.some(
     (candidate) =>
       candidate.fact_kind === "metric"
-      && candidate.metric_key === observedFact.metric_key
+      && areMetricKeysLooselyEquivalent(observedFact, candidate)
       && (candidate.unit || "score") === (observedFact.unit || "score")
       && areFactValuesEquivalent(observedFact, candidate)
   );
+}
+
+function areMetricKeysLooselyEquivalent(
+  observedFact: NormalizedNumericFact,
+  expectedFact: NormalizedNumericFact
+): boolean {
+  const observedKey = observedFact.metric_key;
+  const expectedKey = expectedFact.metric_key;
+  if (!observedKey || !expectedKey) {
+    return false;
+  }
+  if (observedKey === expectedKey) {
+    return true;
+  }
+  const observedBase = observedFact.base_metric_key || inferMetricSemantics(observedKey).baseMetricKey;
+  const expectedBase = expectedFact.base_metric_key || inferMetricSemantics(expectedKey).baseMetricKey;
+  if (observedBase !== expectedBase) {
+    return false;
+  }
+  const observedDelta = observedFact.unit === "delta" || /\bdelta\b/iu.test(observedKey);
+  const expectedDelta = expectedFact.unit === "delta" || /\bdelta\b/iu.test(expectedKey);
+  return observedDelta && expectedDelta;
 }
 
 function isBenignFromToStructuredComparison(
@@ -2168,6 +2292,78 @@ function isBenignFromToStructuredComparison(
   );
 }
 
+function isBenignBaselineComparatorStructuredComparison(
+  observedFact: NormalizedNumericFact,
+  comparableFacts: NormalizedNumericFact[]
+): boolean {
+  if (
+    observedFact.fact_kind !== "metric"
+    || observedFact.metric_key !== "accuracy"
+    || observedFact.unit !== "score"
+  ) {
+    return false;
+  }
+  const cleaned = cleanString(observedFact.raw_text);
+  const hasPairedScoreSyntax =
+    /\b(?:while|versus|vs\.?|compared with|from|to)\b/iu.test(cleaned)
+    || (
+      /\band\b/iu.test(cleaned)
+      && /\b(?:baseline|reference|recorded\s+comparison|comparison\s+row|locked\s+comparison|locked\s+delta-reference)\b/iu.test(cleaned)
+      && /\b(?:candidate|leading|best|comparator|displayed\s+condition|leading\s+displayed)\b/iu.test(cleaned)
+    )
+    || (
+      /\band\b/iu.test(cleaned)
+      && /\b(?:condition|cell|row)\b/iu.test(cleaned)
+      && /\b(?:mean\s+|average\s+)?accuracy\b/iu.test(cleaned)
+      && (cleaned.match(/-?\d+(?:,\d{3})*(?:\.\d+)?/gu) || []).length >= 2
+    );
+  if (
+    hasPairedScoreSyntax
+    && rawTextContainsApproxValue(cleaned, observedFact.normalized_value, observedFact.unit)
+    && comparableFacts.some((candidate) =>
+      candidate.metric_key === "accuracy"
+      && candidate.unit === "score"
+      && rawTextContainsApproxValue(cleaned, candidate.normalized_value, observedFact.unit)
+    )
+  ) {
+    return true;
+  }
+  if (
+    !/\b(?:baseline|reference|displayed reference|locked baseline)\b/iu.test(cleaned)
+    || !/\b(?:candidate|leading|comparator|best|displayed leading)\b/iu.test(cleaned)
+    || !/\b(?:while|versus|vs\.?|compared with|from|to|delta|gain)\b/iu.test(cleaned)
+  ) {
+    return false;
+  }
+  if (!rawTextContainsApproxValue(cleaned, observedFact.normalized_value, observedFact.unit)) {
+    return false;
+  }
+  return comparableFacts.some((candidate) =>
+    candidate.metric_key === "accuracy"
+    && candidate.unit === "score"
+    && rawTextContainsApproxValue(cleaned, candidate.normalized_value, observedFact.unit)
+  );
+}
+
+function isDisplayedBaselineComparatorTableValue(fact: NormalizedNumericFact): boolean {
+  if (
+    fact.fact_kind !== "metric"
+    || fact.metric_key !== "accuracy"
+    || fact.unit !== "score"
+    || fact.normalized_value < 0
+    || fact.normalized_value > 1
+  ) {
+    return false;
+  }
+  const cleaned = cleanString(fact.raw_text);
+  return /\bboth\s+(?:rows?|conditions?|cells?)\s+(?:display|show|report|have)\s+(?:mean\s+|average\s+)?accuracy\b/iu.test(cleaned)
+    || (
+      /\b(?:available|reported|main)\s+table\b/iu.test(cleaned)
+      && /\b(?:registered\s+baseline|locked\s+(?:comparison|delta-reference)|recorded\s+comparison)\b/iu.test(cleaned)
+      && /\b(?:display|show|report)\s+(?:mean\s+|average\s+)?accuracy\b/iu.test(cleaned)
+    );
+}
+
 function isRuntimeBudgetFact(fact: NormalizedNumericFact): boolean {
   return fact.fact_kind === "metric"
     && fact.metric_key === "runtime_seconds"
@@ -2179,6 +2375,13 @@ function isReaderFacingFigureAccuracyFact(fact: NormalizedNumericFact): boolean 
     && fact.source === "figure"
     && fact.metric_key === "accuracy"
     && fact.unit === "score";
+}
+
+function isAnonymousPairedAccuracyStatement(fact: NormalizedNumericFact): boolean {
+  return fact.fact_kind === "metric"
+    && fact.metric_key === "accuracy"
+    && fact.unit === "score"
+    && /\b(?:mean\s+|average\s+)?accuracy\s+values?\b[^!?]{0,80}\b\d+(?:,\d{3})*(?:\.\d+)?\s+(?:and|versus|vs\.?)\s+\d+(?:,\d{3})*(?:\.\d+)?\b[^!?]{0,60}\brespectively\b/iu.test(fact.raw_text);
 }
 
 function isAccuracyScoreValueMiskeyedAsDelta(fact: NormalizedNumericFact): boolean {
@@ -2303,8 +2506,14 @@ function collectExpectedCountFacts(context: ExperimentArtifactContext): Normaliz
       })
     );
   }
-  const repeatCount =
-    extractNumericNoteCount(context.method.repeat_notes) || (context.method.seeds.length > 1 ? context.method.seeds.length : undefined);
+  const completedSeedCounts = uniqueNumbers(
+    context.results.condition_summaries
+      .map((condition) => condition.completed_seed_count)
+      .filter((value): value is number => typeof value === "number" && value > 1)
+  );
+  const completedSeedRepeatCount = completedSeedCounts.length === 1 ? completedSeedCounts[0] : undefined;
+  const seedRepeatCount = context.method.seeds.length > 1 ? context.method.seeds.length : undefined;
+  const repeatCount = completedSeedRepeatCount || seedRepeatCount || extractExpectedCountFromNotes(context.method.repeat_notes, "repeat_count");
   if (repeatCount) {
     facts.push(
       buildStructuredNumericFact({
@@ -2646,9 +2855,11 @@ function collectConfidenceIntervalMetricFacts(resultAnalysis: ResultAnalysisArti
 }
 
 function collectConditionMetricFacts(context: ExperimentArtifactContext): NormalizedNumericFact[] {
+  const baseline = context.results.condition_summaries.find((condition) => condition.is_baseline);
   return dedupeNumericFacts(
     context.results.condition_summaries.flatMap((condition) => {
       const conditionScope = "aggregate";
+      const conditionComparisonTarget = condition.is_baseline ? "baseline" : "candidate";
       const facts: NormalizedNumericFact[] = [];
       if (typeof condition.average_accuracy_mean === "number") {
         facts.push(
@@ -2660,6 +2871,7 @@ function collectConditionMetricFacts(context: ExperimentArtifactContext): Normal
             value: condition.average_accuracy_mean,
             metricKey: "accuracy",
             metricLabel: "mean average accuracy",
+            comparisonTarget: conditionComparisonTarget,
             datasetScope: conditionScope,
             aggregationLevel: "repeat",
             unit: "score",
@@ -2676,6 +2888,7 @@ function collectConditionMetricFacts(context: ExperimentArtifactContext): Normal
               value: condition.average_accuracy_mean - condition.average_accuracy_ci95,
               metricKey: "accuracy",
               metricLabel: "mean average accuracy lower CI",
+              comparisonTarget: conditionComparisonTarget,
               datasetScope: conditionScope,
               aggregationLevel: "repeat",
               unit: "ci_lower",
@@ -2689,6 +2902,7 @@ function collectConditionMetricFacts(context: ExperimentArtifactContext): Normal
               value: condition.average_accuracy_mean + condition.average_accuracy_ci95,
               metricKey: "accuracy",
               metricLabel: "mean average accuracy upper CI",
+              comparisonTarget: conditionComparisonTarget,
               datasetScope: conditionScope,
               aggregationLevel: "repeat",
               unit: "ci_upper",
@@ -2762,12 +2976,34 @@ function collectConditionMetricFacts(context: ExperimentArtifactContext): Normal
             value,
             metricKey: "accuracy",
             metricLabel: task.label,
+            comparisonTarget: conditionComparisonTarget,
             datasetScope: task.datasetScope,
             aggregationLevel: "dataset",
             unit: "score",
             sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
           })
         );
+        const baselineValue = baseline?.[task.key];
+        if (!condition.is_baseline && typeof baselineValue === "number") {
+          facts.push(
+            buildStructuredNumericFact({
+              factKind: "metric",
+              source: "artifact",
+              location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.${task.key}.delta`,
+              rawText: `${condition.label} ${task.label} delta vs baseline ${formatNumber(value - baselineValue)}`,
+              value: value - baselineValue,
+              metricKey: task.key === "benchmark_task_a_accuracy"
+                ? "benchmark_task_a_accuracy_delta_vs_baseline"
+                : "benchmark_task_b_accuracy_delta_vs_baseline",
+              metricLabel: `${task.label} delta vs baseline`,
+              comparisonTarget: "candidate",
+              datasetScope: task.datasetScope,
+              aggregationLevel: "dataset",
+              unit: "delta",
+              sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
+            })
+          );
+        }
       }
       const trainLoss = firstNumber(condition.train_loss, condition.train_loss_mean);
       if (typeof trainLoss === "number") {
@@ -2964,6 +3200,12 @@ function buildObservedFactDriftIssues(
     if (mainSectionFacts.length < 2 || distinctLocations.length < 2 || distinctValues.length < 2) {
       continue;
     }
+    if (isBenignRepeatedPairedMetricSetDrift(mainSectionFacts, distinctValues)) {
+      continue;
+    }
+    if (isBenignPairedMetricWithRepresentativeScoreDrift(mainSectionFacts, distinctValues)) {
+      continue;
+    }
     if (isBenignFromToMetricScoreDrift(mainSectionFacts, distinctValues)) {
       continue;
     }
@@ -2971,6 +3213,9 @@ function buildObservedFactDriftIssues(
       continue;
     }
     if (isBenignTaskAccuracyVisualComparison(mainSectionFacts, distinctValues)) {
+      continue;
+    }
+    if (isBenignBaselineComparatorAccuracyDrift(mainSectionFacts, distinctValues)) {
       continue;
     }
     if (isBenignConditionTableComparisonDrift(mainSectionFacts, distinctValues)) {
@@ -2998,6 +3243,81 @@ function buildObservedFactDriftIssues(
     });
   }
   return issues;
+}
+
+function isBenignRepeatedPairedMetricSetDrift(
+  facts: NormalizedNumericFact[],
+  distinctValues: number[]
+): boolean {
+  if (distinctValues.length < 2 || distinctValues.length > 4) {
+    return false;
+  }
+  if (!facts.every((fact) => fact.fact_kind === "metric" && fact.unit === "score")) {
+    return false;
+  }
+  if (!facts.every((fact) => /\b(?:and|versus|vs\.?|compared with|from|to)\b/iu.test(fact.raw_text))) {
+    return false;
+  }
+  const factsByLocation = new Map<string, NormalizedNumericFact[]>();
+  for (const fact of facts) {
+    const bucket = factsByLocation.get(fact.location) || [];
+    bucket.push(fact);
+    factsByLocation.set(fact.location, bucket);
+  }
+  if (factsByLocation.size < 2) {
+    return false;
+  }
+  return Array.from(factsByLocation.values()).every((locationFacts) =>
+    distinctValues.every((value) =>
+      locationFacts.some((fact) => areApproxEqual(fact.normalized_value, value, fact.unit))
+    )
+  );
+}
+
+function isBenignPairedMetricWithRepresentativeScoreDrift(
+  facts: NormalizedNumericFact[],
+  distinctValues: number[]
+): boolean {
+  if (distinctValues.length < 2 || distinctValues.length > 4) {
+    return false;
+  }
+  if (
+    !facts.every(
+      (fact) =>
+        fact.fact_kind === "metric"
+        && fact.unit === "score"
+        && (fact.metric_key === "accuracy" || fact.base_metric_key === "accuracy")
+        && (fact.dataset_scope === "aggregate" || fact.dataset_scope === "unknown" || !fact.dataset_scope)
+    )
+  ) {
+    return false;
+  }
+  const pairedFacts = facts.filter((fact) =>
+    /\b(?:versus|vs\.?|compared with|from|to)\b/iu.test(fact.raw_text)
+    && rawTextContainsApproxValue(fact.raw_text, fact.normalized_value, fact.unit)
+  );
+  if (pairedFacts.length === 0) {
+    return false;
+  }
+  const representativeFacts = facts.filter((fact) => !pairedFacts.includes(fact));
+  if (representativeFacts.length === 0) {
+    return false;
+  }
+  const pairedValues = distinctValues.filter((value) =>
+    pairedFacts.some((fact) => rawTextContainsApproxValue(fact.raw_text, value, fact.unit))
+  );
+  if (pairedValues.length < 2) {
+    return false;
+  }
+  const joined = facts.map((fact) => cleanString(fact.raw_text)).join(" ");
+  const namesBaseline = /\bbaseline\b|\breference\b|\blocked\s+(?:baseline|comparison|delta-reference)\b|\bcomparison\s+(?:field|row|value|anchor)\b/iu.test(joined);
+  const namesComparator = /\bcandidate\b|\bleading\b|\bbest\b|\bcomparator\b|\bstrongest\b/iu.test(joined);
+  if (!(namesBaseline && namesComparator)) {
+    return false;
+  }
+  return representativeFacts.every((fact) =>
+    pairedValues.some((value) => areApproxEqual(fact.normalized_value, value, fact.unit))
+  );
 }
 
 function isBenignFromToMetricScoreDrift(
@@ -3162,6 +3482,34 @@ function isBenignTaskAccuracyVisualComparison(
   return hasFigurePair && hasFromToTaskText;
 }
 
+function isBenignBaselineComparatorAccuracyDrift(
+  facts: NormalizedNumericFact[],
+  distinctValues: number[]
+): boolean {
+  if (distinctValues.length < 2 || distinctValues.length > 4) {
+    return false;
+  }
+  if (
+    !facts.every(
+      (fact) =>
+        fact.fact_kind === "metric"
+        && fact.metric_key === "accuracy"
+        && fact.unit === "score"
+        && (fact.dataset_scope === "aggregate" || fact.dataset_scope === "unknown" || !fact.dataset_scope)
+    )
+  ) {
+    return false;
+  }
+  const joined = facts.map((fact) => cleanString(fact.raw_text)).join(" ");
+  const namesBaseline = /\bbaseline\b|\breference\b|\blocked\s+(?:baseline|comparison|delta-reference)\b|\brecorded\s+comparison\b|\bcomparison\s+(?:row|value|anchor)\b/iu.test(joined);
+  const namesComparator = /\bcandidate\b|\bleading\b|\bbest\b|\bcomparator\b|\bstrongest\b/iu.test(joined);
+  const namesComparison = /\b(?:from\s+-?\d|to\s+-?\d|versus|vs\.?|compared with|relative to|increase[sd]?|rising|raises|gain)\b/iu.test(joined);
+  if (!(namesBaseline && namesComparator && namesComparison)) {
+    return false;
+  }
+  return distinctValues.every((value) => value >= 0 && value <= 1);
+}
+
 function isBenignApproximateMemoryPair(left: NormalizedNumericFact, right: NormalizedNumericFact): boolean {
   if (
     left.fact_kind !== "metric"
@@ -3184,10 +3532,18 @@ function isBenignApproximateMemoryDrift(facts: NormalizedNumericFact[]): boolean
     (fact) =>
       fact.fact_kind === "metric"
       && (fact.base_metric_key || fact.metric_key) === "peak_memory_mb"
-      && fact.unit === "mb"
   );
   if (memoryFacts.length < 2 || memoryFacts.length !== facts.length) {
     return false;
+  }
+  if (
+    memoryFacts.some(isProtocolCountMisreadAsMemoryFact)
+    && memoryFacts.some((fact) => isApproximateMemoryFact(fact) || /\b(?:bytes?|cuda allocation|peak\s+(?:allocated\s+)?memory)\b/iu.test(fact.raw_text))
+  ) {
+    return true;
+  }
+  if (hasExplicitMemoryMeasurementFact(memoryFacts) && hasLikelyMemoryContextNumberFact(memoryFacts)) {
+    return true;
   }
   const values = memoryFacts.map((fact) => Math.abs(fact.normalized_value));
   const maxVal = Math.max(...values);
@@ -3199,7 +3555,26 @@ function isBenignApproximateMemoryDrift(facts: NormalizedNumericFact[]): boolean
 }
 
 function isApproximateMemoryFact(fact: NormalizedNumericFact): boolean {
-  return /\b(?:about|approx(?:imately)?|roughly)\b|\b(?:gb|gib)\b/iu.test(fact.raw_text);
+  return /\b(?:about|approx(?:imately)?|roughly)\b|\b(?:bytes?|gb|gib|mb)\b/iu.test(fact.raw_text);
+}
+
+function isProtocolCountMisreadAsMemoryFact(fact: NormalizedNumericFact): boolean {
+  return (fact.base_metric_key || fact.metric_key) === "peak_memory_mb"
+    && /\b(?:examples?|sequence length|timeout|budget|protocol|requested conditions?|completed conditions?|predictions?)\b/iu.test(fact.raw_text)
+    && !/\b(?:bytes?|gb|gib|mb|cuda allocation|peak\s+(?:allocated\s+)?memory)\b/iu.test(fact.raw_text);
+}
+
+function hasExplicitMemoryMeasurementFact(facts: NormalizedNumericFact[]): boolean {
+  return facts.some((fact) =>
+    /\b(?:bytes?|gb|gib|mb|cuda allocation|peak\s+(?:allocated\s+)?memory)\b/iu.test(fact.raw_text)
+  );
+}
+
+function hasLikelyMemoryContextNumberFact(facts: NormalizedNumericFact[]): boolean {
+  return facts.some((fact) =>
+    /\b(?:examples?|sequence length|timeout|budget|protocol|requested conditions?|completed conditions?|predictions?)\b/iu.test(fact.raw_text)
+    || !/\b(?:bytes?|gb|gib|mb|cuda allocation|peak\s+(?:allocated\s+)?memory)\b/iu.test(fact.raw_text)
+  );
 }
 
 function extractCountFactsFromText(input: {
@@ -3368,28 +3743,38 @@ function extractMetricFactsFromText(input: {
 }
 
 function inferVisualMetricKey(text: string): string | undefined {
-  const normalized = normalizeMetricIdentifier(text);
-  if (normalized) {
-    return normalized;
-  }
   const cleaned = normalizeMetricText(text);
+  if (/\btask\s*a\b[^.!?]{0,40}\bdeltas?\b|\bdeltas?\b[^.!?]{0,40}\btask\s*a\b/iu.test(cleaned)) {
+    return "benchmark_task_a_accuracy_delta_vs_baseline";
+  }
+  if (/\btask\s*b\b[^.!?]{0,40}\bdeltas?\b|\bdeltas?\b[^.!?]{0,40}\btask\s*b\b/iu.test(cleaned)) {
+    return "benchmark_task_b_accuracy_delta_vs_baseline";
+  }
+  if (/\baccuracy\b[^.!?]{0,40}\bdeltas?\b|\bdeltas?\b[^.!?]{0,40}\baccuracy\b/iu.test(cleaned)) {
+    return "accuracy_delta_vs_baseline";
+  }
   if (/\bdeltas?\b.*\blog(?:istic regression|reg)\b/iu.test(cleaned)) {
     if (/\bmacro f1\b/iu.test(cleaned)) {
       return "macro_f1_delta_vs_logreg";
     }
     return "score_delta_vs_baseline";
   }
+  const normalized = normalizeMetricIdentifier(text);
+  if (normalized) {
+    return normalized;
+  }
   return undefined;
 }
 
 function inferVisualMetricDescriptor(input: {
-  row: { label: string; value: number };
+  row: { label: string; value: number; condition_parameter_x?: number; condition_parameter_y?: number; is_baseline?: boolean };
   caption: string;
   datasetScope: string | "aggregate" | "unknown";
   context: ExperimentArtifactContext;
 }): {
   metricKey?: string;
   metricLabel?: string;
+  comparisonTarget?: string;
   unit?: NumericFactUnit;
   aggregationLevel?: NumericFactAggregation;
 } {
@@ -3412,7 +3797,11 @@ function inferVisualMetricDescriptor(input: {
       };
     }
   }
-  const conditionSummary = findConditionSummaryForVisualRow(input.context, input.row.label);
+  const taskDeltaDescriptor = inferTaskDeltaVisualDescriptor(input);
+  if (taskDeltaDescriptor) {
+    return taskDeltaDescriptor;
+  }
+  const conditionSummary = findConditionSummaryForVisualRow(input.context, input.row);
   if (
     conditionSummary
     && typeof conditionSummary.average_accuracy_mean === "number"
@@ -3421,6 +3810,7 @@ function inferVisualMetricDescriptor(input: {
     return {
       metricKey: "accuracy",
       metricLabel: "mean average accuracy",
+      comparisonTarget: conditionSummary.is_baseline ? "baseline" : "candidate",
       unit: "score",
       aggregationLevel: "repeat"
     };
@@ -3498,11 +3888,103 @@ function inferVisualMetricDescriptor(input: {
   return {};
 }
 
+function inferTaskDeltaVisualDescriptor(input: {
+  row: { label: string; value: number };
+  caption: string;
+  context: ExperimentArtifactContext;
+}): {
+  metricKey: string;
+  metricLabel: string;
+  comparisonTarget: string;
+  unit: NumericFactUnit;
+  aggregationLevel: NumericFactAggregation;
+} | undefined {
+  const text = normalizeMetricText(`${input.caption} ${input.row.label}`);
+  const baseline = input.context.results.condition_summaries.find((condition) => condition.is_baseline);
+  const leading = input.context.results.condition_summaries
+    .filter((condition) => !condition.is_baseline)
+    .sort((left, right) => (right.accuracy_delta_vs_baseline_mean || 0) - (left.accuracy_delta_vs_baseline_mean || 0))[0];
+  if (!baseline || !leading) {
+    return undefined;
+  }
+  const candidates: Array<{
+    pattern: RegExp;
+    metricKey: string;
+    metricLabel: string;
+    leadingValue?: number;
+    baselineValue?: number;
+    aggregationLevel: NumericFactAggregation;
+  }> = [
+    {
+      pattern: /\btask\s*a\b/iu,
+      metricKey: "benchmark_task_a_accuracy_delta_vs_baseline",
+      metricLabel: "Benchmark Task A accuracy delta vs baseline",
+      leadingValue: leading.benchmark_task_a_accuracy,
+      baselineValue: baseline.benchmark_task_a_accuracy,
+      aggregationLevel: "dataset"
+    },
+    {
+      pattern: /\btask\s*b\b/iu,
+      metricKey: "benchmark_task_b_accuracy_delta_vs_baseline",
+      metricLabel: "Benchmark Task B accuracy delta vs baseline",
+      leadingValue: leading.benchmark_task_b_accuracy,
+      baselineValue: baseline.benchmark_task_b_accuracy,
+      aggregationLevel: "dataset"
+    },
+    {
+      pattern: /\baverage\b/iu,
+      metricKey: "accuracy_delta_vs_baseline",
+      metricLabel: "mean average accuracy delta vs baseline",
+      leadingValue: leading.average_accuracy_mean,
+      baselineValue: baseline.average_accuracy_mean,
+      aggregationLevel: "repeat"
+    }
+  ];
+  for (const candidate of candidates) {
+    if (!candidate.pattern.test(text)) {
+      continue;
+    }
+    if (typeof candidate.leadingValue !== "number" || typeof candidate.baselineValue !== "number") {
+      continue;
+    }
+    const expected = candidate.leadingValue - candidate.baselineValue;
+    if (!areApproxEqual(input.row.value, expected, "delta")) {
+      continue;
+    }
+    return {
+      metricKey: candidate.metricKey,
+      metricLabel: candidate.metricLabel,
+      comparisonTarget: "candidate",
+      unit: "delta",
+      aggregationLevel: candidate.aggregationLevel
+    };
+  }
+  return undefined;
+}
+
 function findConditionSummaryForVisualRow(
   context: ExperimentArtifactContext,
-  rowLabel: string
+  row: { label: string; condition_parameter_x?: number; condition_parameter_y?: number; is_baseline?: boolean }
 ): ConditionResultSummary | undefined {
-  const normalizedRow = cleanString(rowLabel).toLowerCase();
+  if (row.is_baseline) {
+    const baseline = context.results.condition_summaries.find((condition) => condition.is_baseline);
+    if (baseline) {
+      return baseline;
+    }
+  }
+  if (typeof row.condition_parameter_x === "number" || typeof row.condition_parameter_y === "number") {
+    const byParameters = context.results.condition_summaries.find((condition) => {
+      const xMatches = typeof row.condition_parameter_x !== "number"
+        || (typeof condition.condition_parameter_x === "number" && areApproxEqual(condition.condition_parameter_x, row.condition_parameter_x, "score"));
+      const yMatches = typeof row.condition_parameter_y !== "number"
+        || (typeof condition.condition_parameter_y === "number" && areApproxEqual(condition.condition_parameter_y, row.condition_parameter_y, "score"));
+      return xMatches && yMatches;
+    });
+    if (byParameters) {
+      return byParameters;
+    }
+  }
+  const normalizedRow = cleanString(row.label).toLowerCase();
   if (!normalizedRow) {
     return undefined;
   }
@@ -3537,6 +4019,9 @@ function extractMetricFactsFromVisual(input: {
       const metricKey = descriptor.metricKey || inferVisualMetricKey(contextText);
       const aggregationLevel = descriptor.aggregationLevel || inferAggregationLevel(contextText, datasetScope);
       const unit = descriptor.unit || inferMetricUnit(contextText, metricKey, 0, 1);
+      if (!descriptor.metricKey && shouldSkipVisualAccountingRow(row, input.caption)) {
+        return [];
+      }
       if (!metricKey || !unit || !Number.isFinite(row.value)) {
         return [];
       }
@@ -3549,6 +4034,7 @@ function extractMetricFactsFromVisual(input: {
           value: row.value,
           metricKey,
           metricLabel: descriptor.metricLabel || row.label,
+          comparisonTarget: descriptor.comparisonTarget,
           datasetScope,
           aggregationLevel,
           unit,
@@ -3557,6 +4043,31 @@ function extractMetricFactsFromVisual(input: {
       ];
     })
   );
+}
+
+function shouldSkipVisualAccountingRow(row: { label: string; value: number }, caption: string): boolean {
+  const label = normalizeMetricText(row.label);
+  const text = normalizeMetricText(`${caption} ${row.label}`);
+  if (!label) {
+    return false;
+  }
+  if (/(?:threshold|target|minimum|maximum|budget)/iu.test(label)) {
+    return true;
+  }
+  const accountingPattern =
+    /\b(?:correct|incorrect|total|predictions?|samples?|sample size|count|counts?|records?|trials?|runs?|seeds?|levels?|cells?|profiles?|coverage|present|requested|completed)\b/iu;
+  if (accountingPattern.test(label)) {
+    return true;
+  }
+  if (
+    Number.isFinite(row.value)
+    && Math.abs(row.value) > 1
+    && /\b(?:accuracy|delta|gain|baseline)\b/iu.test(text)
+    && /\b(?:count|total|sample|prediction|trial|record|seed|profile|cell|level|coverage)\b/iu.test(label)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function buildStructuredNumericFact(input: {
@@ -3620,7 +4131,7 @@ function buildComparableFactKey(fact: NormalizedNumericFact): string | undefined
   if (fact.fact_kind === "count") {
     return fact.count_kind ? `count|${fact.count_kind}` : undefined;
   }
-  const metricKey = fact.base_metric_key || fact.metric_key;
+  const metricKey = comparableMetricIdentity(fact);
   if (!metricKey) {
     return undefined;
   }
@@ -3676,8 +4187,8 @@ function areComparableNumericFacts(left: NormalizedNumericFact, right: Normalize
   if (left.fact_kind === "count") {
     return Boolean(left.count_kind && left.count_kind === right.count_kind);
   }
-  const leftMetricKey = left.base_metric_key || left.metric_key;
-  const rightMetricKey = right.base_metric_key || right.metric_key;
+  const leftMetricKey = comparableMetricIdentity(left);
+  const rightMetricKey = comparableMetricIdentity(right);
   if (!leftMetricKey || !rightMetricKey || leftMetricKey !== rightMetricKey) {
     return false;
   }
@@ -3694,6 +4205,20 @@ function areComparableNumericFacts(left: NormalizedNumericFact, right: Normalize
     return false;
   }
   return true;
+}
+
+function comparableMetricIdentity(fact: NormalizedNumericFact): string | undefined {
+  if (fact.fact_kind !== "metric") {
+    return undefined;
+  }
+  const rawMetricKey = fact.metric_key || "";
+  if (
+    (fact.unit || "score") === "delta"
+    || /(?:^|_)(?:delta|gain|improvement)(?:_|$)/iu.test(rawMetricKey)
+  ) {
+    return fact.metric_key || fact.base_metric_key;
+  }
+  return fact.base_metric_key || fact.metric_key;
 }
 
 function areFactValuesEquivalent(left: NormalizedNumericFact, right: NormalizedNumericFact): boolean {
@@ -3898,9 +4423,9 @@ function inferAggregationLevel(text: string, datasetScope: string | "aggregate" 
     return "aggregate";
   }
   if (
-    /\bcondition[-\s]?level\b|\bcondition-parameter grid\b|\brank[-\s]?dropout grid\b/iu.test(cleaned)
-    || (/\brank[-\s]+\d+(?:\.\d+)?\b/iu.test(cleaned) && /\bdropout\b/iu.test(cleaned))
-    || /\brank[-\s]+\d+(?:\.\d+)?\b[^.!?]{0,80}\bdropout[-\s]+\d+(?:\.\d+)?\b/iu.test(cleaned)
+    /\bcondition[-\s]?level\b|\bcondition-parameter grid\b|\brank[-\s]?parameter_y grid\b/iu.test(cleaned)
+    || (/\brank[-\s]+\d+(?:\.\d+)?\b/iu.test(cleaned) && /\bparameter_y\b/iu.test(cleaned))
+    || /\brank[-\s]+\d+(?:\.\d+)?\b[^.!?]{0,80}\bparameter_y[-\s]+\d+(?:\.\d+)?\b/iu.test(cleaned)
     || /\b(?:best|leading)\s+(?:reported\s+)?(?:accuracy\s+)?cell\b/iu.test(cleaned)
     || /\b(?:locked\s+)?baseline\b[^.!?]{0,80}\b(?:condition|cell|reports?)\b/iu.test(cleaned)
     || /\b(?:average\s+)?accuracy\b[^!?]{0,100}\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^!?]{0,100}\bfrom\b[^!?]{0,100}\bto\b/iu.test(cleaned)
@@ -3944,18 +4469,18 @@ function inferMetricUnit(
     return "score";
   }
   if (
-    (metricKey === "accuracy" || metricKey === "accuracy_delta_vs_baseline")
-    && typeof rawIndex === "number"
-    && (isFromToAccuracyScoreValue(text, rawIndex) || isVersusAccuracyScoreValue(text, rawIndex))
-  ) {
-    return "score";
-  }
-  if (
     (metricKey === "accuracy" || metricKey === "accuracy_delta" || metricKey === "accuracy_delta_vs_baseline")
     && typeof rawIndex === "number"
     && isExplicitAccuracyDeltaValue(text, rawIndex)
   ) {
     return "delta";
+  }
+  if (
+    (metricKey === "accuracy" || metricKey === "accuracy_delta" || metricKey === "accuracy_delta_vs_baseline")
+    && typeof rawIndex === "number"
+    && (isFromToAccuracyScoreValue(text, rawIndex) || isVersusAccuracyScoreValue(text, rawIndex))
+  ) {
+    return "score";
   }
   if (
     (metricKey === "accuracy" || metricKey === "accuracy_delta" || metricKey === "accuracy_delta_vs_baseline")
@@ -4008,6 +4533,9 @@ function inferMetricUnit(
   ) {
     return "score";
   }
+  if (metricKey === "accuracy" && typeof rawIndex === "number" && isExplicitAccuracyScoreValue(text, rawIndex)) {
+    return "score";
+  }
   if (metricKey?.includes("delta") || /\bdeltas?\b|\bimprov(?:e|ed|es|ement)\b|\bgain\b|\bvs\b|\bby\b/iu.test(normalized)) {
     return "delta";
   }
@@ -4016,11 +4544,29 @@ function inferMetricUnit(
 
 function isFromToAccuracyScoreValue(text: string, rawIndex: number): boolean {
   const cleaned = cleanString(text);
+  const localBefore = cleanString(text.slice(Math.max(0, rawIndex - 140), rawIndex));
+  const localAfter = cleanString(text.slice(rawIndex, Math.min(text.length, rawIndex + 80)));
+  const localNumber = String.raw`-?\d+(?:,\d{3})*(?:\.\d+)?`;
+  const gainRangePrefix = String.raw`\b(?:mean\s+)?(?:average[-\s]+)?accuracy\b[^!?]{0,100}\bgain\b[^!?]{0,100}\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^!?]{0,80}\bfrom\s*`;
+  if (
+    new RegExp(String.raw`${gainRangePrefix}$`, "iu").test(localBefore)
+    && new RegExp(String.raw`^${localNumber}\s+(?:to|up to)\s+${localNumber}\b`, "iu").test(localAfter)
+  ) {
+    return true;
+  }
+  if (
+    new RegExp(String.raw`${gainRangePrefix}${localNumber}\s+(?:to|up to)\s*$`, "iu").test(localBefore)
+    && new RegExp(String.raw`^${localNumber}\b`, "iu").test(localAfter)
+  ) {
+    return true;
+  }
   const betweenScores = String.raw`\s+(?:[^0-9.!?]{0,48}\s+)?(?:to|up to)\s+`;
   const patterns = [
-    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|improving|increased|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
-    new RegExp(String.raw`\b(?:improve[sd]?|improving|increased|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
-    new RegExp(String.raw`\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,80}\b(?:average\s+)?accuracy\b`, "giu")
+    new RegExp(String.raw`\b(?:mean\s+)?(?:average[-\s]+)?accuracy\b[^!?]{0,80}\bgain\b[^!?]{0,80}\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
+    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^!?]{0,80}\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
+    new RegExp(String.raw`\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^!?]{0,80}\b(?:average\s+)?accuracy\b[^!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
+    new RegExp(String.raw`\b(?:absolute\s+|aggregate\s+|mean\s+|average\s+)?accuracy\b[^!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
+    new RegExp(String.raw`\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)[^!?]{0,80}\b(?:average\s+)?accuracy\b`, "giu")
   ];
   for (const pattern of patterns) {
     for (const match of cleaned.matchAll(pattern)) {
@@ -4040,7 +4586,8 @@ function isAbsoluteAccuracyScoreValue(text: string, rawIndex: number): boolean {
   const cleaned = cleanString(text);
   const patterns = [
     /\b(?:[A-Z][A-Za-z-]*\s+)?accuracy\b[^.!?]{0,60}\b(?:remained|stayed|was|is|=|unchanged(?:\s+at)?|(?:is|was)\s+reported\s+as)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
-    /\b(?:[A-Z][A-Za-z-]*\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,40}\b(?:in both|for both)\b/giu
+    /\b(?:[A-Z][A-Za-z-]*\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,40}\b(?:in both|for both)\b/giu,
+    /\b(?:display|displays|displayed|show|shows|reported|reports)\s+(?:mean\s+|average\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu
   ];
   for (const pattern of patterns) {
     for (const match of cleaned.matchAll(pattern)) {
@@ -4060,9 +4607,13 @@ function isExplicitAccuracyScoreValue(text: string, rawIndex: number): boolean {
   const cleaned = cleanString(text);
   const numberPattern = String.raw`(-?\d+(?:,\d{3})*(?:\.\d+)?)`;
   const patterns = [
-    new RegExp(String.raw`\b(?:baseline|locked baseline|reference)?\s*(?:average\s+)?accuracy\s+(?:of|at|=|was|is)\s+${numberPattern}`, "giu"),
+    new RegExp(String.raw`\b(?:baseline|locked baseline|reference)?\s*(?:average\s+)?accuracy\s+(?:of|at|as|=|was|is)\s+${numberPattern}`, "giu"),
+    new RegExp(String.raw`\b(?:mean\s+|average\s+)?accuracy\s+(?:(?:was|is)\s+)?${numberPattern}\s+for\b[^.!?]{0,100}\band\s+${numberPattern}\s+for\b`, "giu"),
+    new RegExp(String.raw`\b(?:baseline|locked baseline|reference|candidate(?:\s+condition)?\s+[a-z0-9_-]+|leading|best|comparator)\b[^.!?]{0,48}\b(?:mean\s+|average\s+)?accuracy\s+${numberPattern}`, "giu"),
     new RegExp(String.raw`\b(?:achieved|reached|reported|had)\s+(?:mean\s+|average\s+)?accuracy\s+${numberPattern}`, "giu"),
     new RegExp(String.raw`\b(?:achieved|reached|reported|had)\s+${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b`, "giu"),
+    new RegExp(String.raw`\b${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b[^.!?]{0,64}\b(?:for|of|by)\s+(?:the\s+)?(?:baseline|reference|recorded\s+comparison|comparison\s+row|locked\s+comparison|candidate|leading(?:\s+recorded)?\s+result|leading\s+observed|best\s+observed|strongest\s+reported|strongest\s+observed)\b`, "giu"),
+    new RegExp(String.raw`\b${numberPattern}\s+(?:and|versus|vs\.?)\s+${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b`, "giu"),
     new RegExp(String.raw`\b(?:mean\s+|average\s+)?accuracy\s+${numberPattern}\s+(?:versus|vs\.?|compared with)\s+${numberPattern}`, "giu"),
     new RegExp(String.raw`\b${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\s+(?:versus|vs\.?|compared with)\s+${numberPattern}`, "giu"),
     new RegExp(String.raw`\b(?:best|leading|strongest|recorded)\s+(?:recorded\s+|reported\s+)?(?:condition|cell)?\s*(?:reach(?:es|ed)?|achiev(?:es|ed)?|reported|had)\s+${numberPattern}`, "giu"),
@@ -4070,10 +4621,12 @@ function isExplicitAccuracyScoreValue(text: string, rawIndex: number): boolean {
   ];
   for (const pattern of patterns) {
     for (const match of cleaned.matchAll(pattern)) {
-      const value = match[1] || "";
-      const valueIndex = (match.index || 0) + match[0].indexOf(value);
-      if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-        return true;
+      const values = match.slice(1).filter(Boolean);
+      for (const value of values) {
+        const valueIndex = (match.index || 0) + match[0].indexOf(value);
+        if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
+          return true;
+        }
       }
     }
   }
@@ -4084,7 +4637,7 @@ function isExplicitAccuracyDeltaValue(text: string, rawIndex: number): boolean {
   const cleaned = cleanString(text);
   const numberPattern = String.raw`(-?\d+(?:,\d{3})*(?:\.\d+)?)`;
   const patterns = [
-    new RegExp(String.raw`\b(?:absolute\s+)?gain\s+(?:of|=|was|is)\s+${numberPattern}`, "giu"),
+    new RegExp(String.raw`\b(?:absolute\s+)?(?:baseline[-\s]?relative\s+)?(?:(?:mean|average)[-\s]+accuracy[-\s]+|accuracy[-\s]+)?gain\s*(?:of|=|was|is|(?:was|is)?\s*reported\s+as|:)\s+${numberPattern}`, "giu"),
     new RegExp(String.raw`\b(?:improv(?:e|ed|es|ement)|outperform(?:ed|s)?|gain(?:ed|s)?)\b[^.!?]{0,80}\b(?:baseline|reference)\b[^.!?]{0,40}\bby\s+${numberPattern}`, "giu"),
     new RegExp(String.raw`\bby\s+${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b`, "giu")
   ];
@@ -4104,8 +4657,8 @@ function isFromToAccuracyScoreFragment(text: string): boolean {
   const cleaned = cleanString(text);
   const numberPair = String.raw`-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:[^0-9.!?]{0,48}\s+)?(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?`;
   return (
-    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|improving|increased|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
-    || new RegExp(String.raw`\b(?:improve[sd]?|improving|increased|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
+    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
+    || new RegExp(String.raw`\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
     || new RegExp(String.raw`\bfrom\s+${numberPair}[^.!?]{0,80}\b(?:average\s+)?accuracy\b`, "iu").test(cleaned)
   );
 }
@@ -4113,7 +4666,7 @@ function isFromToAccuracyScoreFragment(text: string): boolean {
 function isVersusAccuracyScoreValue(text: string, rawIndex: number): boolean {
   const cleaned = cleanString(text);
   const patterns = [
-    /\b(?:mean\s+)?(?:average\s+)?accuracy\s+(?:was|is|=)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?/giu,
+    /\b(?:mean\s+)?(?:average\s+)?accuracy\s+(?:(?:was|is)\s+reported\s+as|reported\s+as|was|is|of|=)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?/giu,
     /\b(?:mean\s+)?(?:average\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?/giu,
     /\b(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?[^.!?]{0,80}\b(?:mean\s+)?(?:average\s+)?accuracy\b/giu
   ];
@@ -4177,11 +4730,11 @@ function inferMetricKeyNearNumber(
   if (isExplicitAccuracyScoreValue(fragment, rawIndex)) {
     return "accuracy";
   }
-  if (isFromToAccuracyScoreValue(fragment, rawIndex) || isVersusAccuracyScoreValue(fragment, rawIndex)) {
-    return "accuracy";
-  }
   if (isExplicitAccuracyDeltaValue(fragment, rawIndex)) {
     return "accuracy_delta_vs_baseline";
+  }
+  if (isFromToAccuracyScoreValue(fragment, rawIndex) || isVersusAccuracyScoreValue(fragment, rawIndex)) {
+    return "accuracy";
   }
   if (/\baccuracy\s+delta\b|\bdelta\b[^.!?]{0,40}\bbaseline\b|\bbaseline\b[^.!?]{0,40}\bdelta\b/iu.test(localMetricWindow)) {
     return "accuracy_delta_vs_baseline";
@@ -4377,7 +4930,7 @@ function areComparisonTargetsCompatible(
   right: string | undefined,
   unit: NumericFactUnit
 ): boolean {
-  return !left || !right || left === right || left === "baseline" || right === "baseline";
+  return !left || !right || left === right;
 }
 
 function normalizeMetricIdentifierForUnit(unit: NumericFactUnit): string | undefined {
@@ -4427,11 +4980,14 @@ function specializeMetricKeyForFragment(
   if (!metricKey || unit !== "delta" || metricKey !== "accuracy_delta") {
     return metricKey;
   }
+  if (/\bbaseline[-\s]?relative\b|\bbaseline\b[^.!?]{0,80}\bgain\b|\bgain\b[^.!?]{0,80}\bbaseline\b/iu.test(fragment)) {
+    return "accuracy_delta_vs_baseline";
+  }
   if (/\bstudy[-\s]?level\b|\bstudy objective\b|\bprespecified objective\b/iu.test(fragment)) {
     return "accuracy_delta_vs_study_baseline";
   }
   if (
-    /\bcondition[-\s]?level\b|\bcell\b|\bstrongest\b|\brank\s+\d+(?:\.\d+)?\b|\bdropout\s+\d+(?:\.\d+)?\b/iu.test(fragment)
+    /\bcondition[-\s]?level\b|\bcell\b|\bstrongest\b|\brank\s+\d+(?:\.\d+)?\b|\bparameter_y\s+\d+(?:\.\d+)?\b/iu.test(fragment)
   ) {
     return "accuracy_delta_vs_baseline";
   }
@@ -4451,11 +5007,18 @@ function specializeMetricKeyForNumber(
   ) {
     return "accuracy";
   }
+  if (
+    metricKey === "accuracy_delta"
+    && unit === "score"
+    && (isFromToAccuracyScoreValue(fragment, rawIndex) || isVersusAccuracyScoreValue(fragment, rawIndex))
+  ) {
+    return "accuracy";
+  }
   if (!metricKey || unit !== "delta" || metricKey !== "accuracy_delta") {
     return specializeMetricKeyForFragment(metricKey, fragment, unit);
   }
   const localWindow = fragment.slice(Math.max(0, rawIndex - 90), Math.min(fragment.length, rawIndex + 90));
-  if (/\bstrongest\b|\bcell\b|\bcondition\b|\brank\s+\d+(?:\.\d+)?\b|\bdropout\s+\d+(?:\.\d+)?\b/iu.test(localWindow)) {
+  if (/\bstrongest\b|\bcell\b|\bcondition\b|\brank\s+\d+(?:\.\d+)?\b|\bparameter_y\s+\d+(?:\.\d+)?\b/iu.test(localWindow)) {
     return "accuracy_delta_vs_baseline";
   }
   if (/\bstudy[-\s]?level\b|\bstudy objective\b|\bstudy[-\s]?wide\b|\boverall\b|\bavailable run summary\b/iu.test(localWindow)) {
@@ -4481,7 +5044,7 @@ function inferConditionComparisonTargetNearNumber(
 
 function inferConditionComparisonTarget(text: string, rawIndex?: number): string | undefined {
   const cleaned = cleanString(text);
-  if (!cleaned || !/\branks?\b|\bdropout\b/iu.test(cleaned)) {
+  if (!cleaned) {
     return undefined;
   }
   if (typeof rawIndex === "number" && isConditionClusterMetricValue(cleaned, rawIndex)) {
@@ -4491,22 +5054,29 @@ function inferConditionComparisonTarget(text: string, rawIndex?: number): string
   if (explicitBaselineTarget) {
     return explicitBaselineTarget;
   }
+  const textualTarget = inferTextualConditionComparisonTarget(cleaned, rawIndex);
+  if (textualTarget) {
+    return textualTarget;
+  }
+  if (!/\branks?\b|\bparameter_y\b/iu.test(cleaned)) {
+    return undefined;
+  }
   const explicitValueTarget = inferExplicitConditionValueTarget(cleaned, rawIndex);
   if (explicitValueTarget) {
     return explicitValueTarget;
   }
   const candidates: Array<{ target: string; distance: number }> = [];
   const patterns = [
-    /\branks?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\bdropout\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)/giu,
-    /\bdropout\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\branks?\s*(\d+(?:\.\d+)?)/giu
+    /\branks?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\bparameter_y\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)/giu,
+    /\bparameter_y\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\branks?\s*(\d+(?:\.\d+)?)/giu
   ];
   for (const pattern of patterns) {
     for (const match of cleaned.matchAll(pattern)) {
       const first = match[1] || "";
       const second = match[2] || "";
       const rank = pattern.source.startsWith("\\branks?") ? first : second;
-      const dropout = pattern.source.startsWith("\\branks?") ? second : first;
-      const target = formatConditionComparisonTarget(rank, dropout);
+      const parameter_y = pattern.source.startsWith("\\branks?") ? second : first;
+      const target = formatConditionComparisonTarget(rank, parameter_y);
       if (!target) {
         continue;
       }
@@ -4518,6 +5088,42 @@ function inferConditionComparisonTarget(text: string, rawIndex?: number): string
     }
   }
   return candidates.sort((left, right) => left.distance - right.distance)[0]?.target;
+}
+
+function inferTextualConditionComparisonTarget(text: string, rawIndex?: number): string | undefined {
+  const cleaned = cleanString(text);
+  const window = typeof rawIndex === "number"
+    ? cleaned.slice(Math.max(0, rawIndex - 72), Math.min(cleaned.length, rawIndex + 96))
+    : cleaned;
+  const before = typeof rawIndex === "number"
+    ? cleaned.slice(Math.max(0, rawIndex - 32), rawIndex)
+    : "";
+  const baselineRole = /\b(?:baseline|reference|recorded\s+comparison|comparison\s+row|locked\s+comparison|comparison\s+anchor|comparator\s+of\s+record)\b/iu;
+  const candidateRole = /\b(?:candidate|leading(?:\s+recorded)?\s+result|leading\s+observed|best\s+observed|strongest\s+reported|strongest\s+observed)\b/iu;
+  const numberThenBaselineRole = /^\s*-?\d+(?:,\d{3})*(?:\.\d+)?\b[^.!?]{0,64}\b(?:baseline|reference|recorded\s+comparison|comparison\s+row|locked\s+comparison|comparison\s+anchor|comparator\s+of\s+record)\b/iu;
+  const numberThenCandidateRole = /^\s*-?\d+(?:,\d{3})*(?:\.\d+)?\b[^.!?]{0,64}\b(?:candidate|leading(?:\s+recorded)?\s+result|leading\s+observed|best\s+observed|strongest\s+reported|strongest\s+observed)\b/iu;
+  if (numberThenBaselineRole.test(window)) {
+    return "baseline";
+  }
+  if (numberThenCandidateRole.test(window)) {
+    return "candidate";
+  }
+  if (/\bfrom\s*$/iu.test(before) && baselineRole.test(window)) {
+    return "baseline";
+  }
+  if (/\bto\s*$/iu.test(before) && candidateRole.test(window)) {
+    return "candidate";
+  }
+  const roleBeforeNumber = typeof rawIndex === "number"
+    ? cleaned.slice(Math.max(0, rawIndex - 80), Math.min(cleaned.length, rawIndex + 24))
+    : cleaned;
+  if (baselineRole.test(roleBeforeNumber) && !candidateRole.test(roleBeforeNumber)) {
+    return "baseline";
+  }
+  if (candidateRole.test(roleBeforeNumber) && !baselineRole.test(roleBeforeNumber)) {
+    return "candidate";
+  }
+  return undefined;
 }
 
 function isConditionClusterMetricValue(text: string, rawIndex: number): boolean {
@@ -4552,7 +5158,7 @@ function inferExplicitConditionValueTarget(text: string, rawIndex: number | unde
     return undefined;
   }
   const comparedPattern =
-    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*dropout\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:average\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:compared with|versus|vs\.?)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
+    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*parameter_y\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:average\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:compared with|versus|vs\.?)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
   for (const match of text.matchAll(comparedPattern)) {
     const target = formatConditionComparisonTarget(match[1] || "", match[2] || "");
     const value = match[3] || "";
@@ -4565,7 +5171,7 @@ function inferExplicitConditionValueTarget(text: string, rawIndex: number | unde
     }
   }
   const comparativeFromToPattern =
-    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*dropout\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:versus|vs\.?|compared with)\s+ranks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*dropout\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:average\s+)?accuracy\s+(?:increased|improved|rose|changed|raises?|raised|rising|raising)\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
+    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*parameter_y\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:versus|vs\.?|compared with)\s+ranks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*parameter_y\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:average\s+)?accuracy\s+(?:increased|improved|rose|changed|raises?|raised|rising|raising)\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
   for (const match of text.matchAll(comparativeFromToPattern)) {
     const leadingTarget = formatConditionComparisonTarget(match[1] || "", match[2] || "");
     const baselineTarget = formatConditionComparisonTarget(match[3] || "", match[4] || "");
@@ -4584,7 +5190,7 @@ function inferExplicitConditionValueTarget(text: string, rawIndex: number | unde
     }
   }
   const fromToPattern =
-    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*dropout\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:increased|improved|rose|changed|raises?|raised|rising|raising)\b[^!?]{0,80}\b(?:average\s+)?accuracy\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
+    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*parameter_y\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:increased|improved|rose|changed|raises?|raised|rising|raising)\b[^!?]{0,80}\b(?:average\s+)?accuracy\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
   for (const match of text.matchAll(fromToPattern)) {
     const target = formatConditionComparisonTarget(match[1] || "", match[2] || "");
     const value = match[4] || "";
@@ -4622,8 +5228,8 @@ function inferAnaphoricConditionComparisonTarget(
 function extractConditionTargetFromText(text: string): string | undefined {
   const cleaned = cleanString(text);
   const patterns = [
-    /\branks?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\bdropout\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)/iu,
-    /\bdropout\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\branks?\s*(\d+(?:\.\d+)?)/iu
+    /\branks?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\bparameter_y\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)/iu,
+    /\bparameter_y\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\branks?\s*(\d+(?:\.\d+)?)/iu
   ];
   for (const pattern of patterns) {
     const match = cleaned.match(pattern);
@@ -4631,8 +5237,8 @@ function extractConditionTargetFromText(text: string): string | undefined {
       continue;
     }
     const rank = pattern.source.startsWith("\\branks?") ? match[1] : match[2];
-    const dropout = pattern.source.startsWith("\\branks?") ? match[2] : match[1];
-    const target = formatConditionComparisonTarget(rank || "", dropout || "");
+    const parameter_y = pattern.source.startsWith("\\branks?") ? match[2] : match[1];
+    const target = formatConditionComparisonTarget(rank || "", parameter_y || "");
     if (target) {
       return target;
     }
@@ -4686,13 +5292,13 @@ function inferBaselineComparisonTarget(text: string, rawIndex: number | undefine
   return undefined;
 }
 
-function formatConditionComparisonTarget(rank: string, dropout: string): string | undefined {
+function formatConditionComparisonTarget(rank: string, parameter_y: string): string | undefined {
   const rankValue = parseNumericLiteral(rank);
-  const dropoutValue = parseNumericLiteral(dropout);
-  if (!Number.isFinite(rankValue) || !Number.isFinite(dropoutValue)) {
+  const parameter_yValue = parseNumericLiteral(parameter_y);
+  if (!Number.isFinite(rankValue) || !Number.isFinite(parameter_yValue)) {
     return undefined;
   }
-  return `condition_${formatConditionTargetNumber(rankValue)}_parameter_${formatConditionTargetNumber(dropoutValue)}`;
+  return `condition_${formatConditionTargetNumber(rankValue)}_parameter_${formatConditionTargetNumber(parameter_yValue)}`;
 }
 
 function formatConditionTargetNumber(value: number): string {
@@ -4759,6 +5365,9 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
   if (/\barxiv\s*:\s*$/iu.test(previousWindow)) {
     return true;
   }
+  if (isExplicitAccuracyScoreValue(fragment, index)) {
+    return false;
+  }
   const nextWindow = fragment.slice(tokenEnd, Math.min(fragment.length, tokenEnd + 32));
   if (
     /^\s*(?:of\s+\d+(?:,\d{3})*(?:\.\d+)?\s+)?(?:requested|completed)\s+conditions?\b/iu.test(nextWindow)
@@ -4783,27 +5392,27 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
     return true;
   }
   if (
-    /\b(?:rank|dropout|adapter\s+rank|adapter\s+dropout)\s*(?:values?|levels?|settings?|of|=|:|,|and|or)?\s*$/iu.test(previousWindow)
-    || /^\s*(?:rank|dropout)\b/iu.test(nextWindow)
-    || /\b(?:rank|dropout|adapter\s+rank|adapter\s+dropout)\s*\\?\{[^}]*$/iu.test(previousWindow)
+    /\b(?:rank|parameter_y|adapter\s+rank|adapter\s+parameter_y)\s*(?:values?|levels?|settings?|of|=|:|,|and|or)?\s*$/iu.test(previousWindow)
+    || /^\s*(?:rank|parameter_y)\b/iu.test(nextWindow)
+    || /\b(?:rank|parameter_y|adapter\s+rank|adapter\s+parameter_y)\s*\\?\{[^}]*$/iu.test(previousWindow)
     || (
       /^\s*\\?\}/u.test(nextWindow)
-      && /\b(?:rank|dropout|adapter\s+rank|adapter\s+dropout)\s*\\?\{[^.!?]*$/iu.test(localDesignWindow)
+      && /\b(?:rank|parameter_y|adapter\s+rank|adapter\s+parameter_y)\s*\\?\{[^.!?]*$/iu.test(localDesignWindow)
     )
     || (
-      /\b(?:rank|dropout|factorial|grid|condition|cell)\b/iu.test(localDesignWindow)
+      /\b(?:rank|parameter_y|factorial|grid|condition|cell)\b/iu.test(localDesignWindow)
       && !/\b(?:accuracy|delta|gain|improvement|loss|runtime|latency|memory)\b/iu.test(localMetricWindow)
     )
   ) {
     return true;
   }
-  if (/^\s*(?:percentage\s+)?points?\b/iu.test(nextWindow)) {
+  if (/^\s*(?:percentage[-\s]+)?points?\b/iu.test(nextWindow)) {
     return true;
   }
   if (/^\s*-?\s*(?:training\s+)?examples?\b|^\s*train\s+dataset\s+tokens?\b/iu.test(nextWindow)) {
     return true;
   }
-  if (/^\s*(?:prediction|predictions|records?|samples?)\b/iu.test(nextWindow)) {
+  if (/^\s*(?:(?:evaluated|combined|correct|incorrect|total)\s+)?(?:items?|examples?|prediction|predictions|records?|samples?)\b/iu.test(nextWindow)) {
     return true;
   }
   if (/\b(?:n\s*=\s*)?$/iu.test(previousWindow) && /^\s*(?:prediction|predictions|records?|samples?)\b/iu.test(nextWindow)) {
@@ -4830,7 +5439,7 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
   if (/^\s*datasets?\b/iu.test(nextWindow)) {
     return true;
   }
-  if (/^\s*-?\s*runs?\b/iu.test(nextWindow)) {
+  if (/^\s*-?\s*(?:runs?|rows?)\b/iu.test(nextWindow)) {
     return true;
   }
   const window = fragment.slice(Math.max(0, index - 8), Math.min(fragment.length, index + rawToken.length + 12));
@@ -4842,13 +5451,19 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
     Math.max(0, index - 96),
     Math.min(fragment.length, index + rawToken.length + 48)
   );
-  if (/\brank\s+\d+(?:\.\d+)?\s+with\s*$/iu.test(previousWindow) && /^\s*dropout\b/iu.test(nextWindow)) {
+  if (/\brank\s+\d+(?:\.\d+)?\s+with\s*$/iu.test(previousWindow) && /^\s*parameter_y\b/iu.test(nextWindow)) {
     return true;
   }
-  if (/\bwith\s*$/iu.test(previousWindow) && /^\s*dropout\b/iu.test(nextWindow)) {
+  if (/\bwith\s*$/iu.test(previousWindow) && /^\s*parameter_y\b/iu.test(nextWindow)) {
     return true;
   }
-  if (/^\s*dropout\b/iu.test(nextWindow)) {
+  if (/^\s*parameter_y\b/iu.test(nextWindow)) {
+    return true;
+  }
+  if (
+    /\b(?:dropout|parameter_y|rank|adapter\s+rank)\s*(?:=|:)?\s*$/iu.test(previousWindow)
+    || /^\s*(?:dropout|parameter_y|rank|adapter\s+rank)\b/iu.test(nextWindow)
+  ) {
     return true;
   }
   if (/\[[^\]]*$/u.test(previousWindow) || /^[^\[]*\]/u.test(nextWindow)) {
@@ -4867,10 +5482,16 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
   if (/\b(?:data budget|training used|subset capped|budget capped)\b/iu.test(widerWindow)) {
     return true;
   }
-  if (/\b(?:rank|dropout)\s*$/iu.test(fragment.slice(Math.max(0, index - 16), index))) {
+  if (/\b(?:rank|parameter_y)\s*$/iu.test(fragment.slice(Math.max(0, index - 16), index))) {
     return true;
   }
-  if (/\brank\s+\d+(?:\.\d+)?\s+(?:with\s+)?(?:and\s+)?dropout\s*$/iu.test(fragment.slice(Math.max(0, index - 48), index))) {
+  if (
+    /\b(?:rank|dropout|parameter_y|adapter\s+rank|grid|sweep)\b/iu.test(localDesignWindow)
+    && !/\b(?:accuracy|delta|gain|improvement|loss|runtime|latency|memory)\b/iu.test(localMetricWindow)
+  ) {
+    return true;
+  }
+  if (/\brank\s+\d+(?:\.\d+)?\s+(?:with\s+)?(?:and\s+)?parameter_y\s*$/iu.test(fragment.slice(Math.max(0, index - 48), index))) {
     return true;
   }
   if (/\brank\s+\d+(?:\.\d+)?\s+(?:or|and|to|through)\s*$/iu.test(fragment.slice(Math.max(0, index - 48), index))) {
@@ -4879,7 +5500,23 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
   if (/(?:>=|<=|>|<)\s*$/.test(fragment.slice(Math.max(0, index - 4), index))) {
     return true;
   }
+  if (
+    /^0(?:\.0+)?$/u.test(rawToken)
+    && /\bgain\b[^.!?]{0,48}\b(?:versus|vs\.?)\s*$/iu.test(previousWindow)
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:rank|dropout|parameter_y|adapter\s+rank|grid|sweep)\b/iu.test(localDesignWindow)
+    && /\bdelta[-\s]?reference\b/iu.test(localDesignWindow)
+    && !/\b(?:accuracy|gain|improvement|loss|runtime|latency|memory)\b/iu.test(localMetricWindow)
+  ) {
+    return true;
+  }
   if (/\b(?:target|threshold|objective|goal|constraint|minimum|at least|at most)\b/iu.test(widerWindow)) {
+    return true;
+  }
+  if (/\b(?:target|threshold|objective|goal|constraint|minimum)\b/iu.test(localDesignWindow)) {
     return true;
   }
   if (
@@ -4924,13 +5561,25 @@ function shouldSkipAmbiguousMetricFact(
   }
   if (
     metricKey === "peak_memory_mb"
-    && /\brank[-\s]?by[-\s]?dropout\b|\brank\s+in\b|\bdropout values\b|\brank\s+\d+(?:\.\d+)?\b.*\bdropout\b|\bdropout\b.*\brank\s+\d+(?:\.\d+)?\b/iu.test(fragment)
+    && /\brank[-\s]?by[-\s]?parameter_y\b|\brank\s+in\b|\bparameter_y values\b|\brank\s+\d+(?:\.\d+)?\b.*\bparameter_y\b|\bparameter_y\b.*\brank\s+\d+(?:\.\d+)?\b/iu.test(fragment)
+  ) {
+    return true;
+  }
+  if (
+    metricKey === "peak_memory_mb"
+    && /\bcondition[_\s-]*\d+(?:[_\s-]\d+)?[_\s-]*parameter[_\s-]*\d+(?:[_\s-]\d+)?|\brank\s*=\s*\d+(?:\.\d+)?\s*[/,; ]+\s*(?:dropout|parameter_y)\s*=\s*\d+(?:\.\d+)?|\b(?:condition|cell)\s+\d+(?:\.\d+)?\s+(?:parameter|setting)\s+\d+(?:\.\d+)?/iu.test(fragment)
   ) {
     return true;
   }
   if (
     metricKey === "peak_memory_mb"
     && /\b(?:related|prior|previous|external)\b[^.!?]{0,80}\b(?:study|work|paper|authors?)\b|\bwithin\s+\d+(?:,\d{3})*(?:\.\d+)?\s+hours?\b|\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:gb|gib)\s+gpu\b/iu.test(fragment)
+  ) {
+    return true;
+  }
+  if (
+    metricKey === "peak_memory_mb"
+    && /\b\d+(?:\.\d+)?\s*b[-\s]?class\s+model\b|\bmodel\s+scale\b|\blarger[-\s]?memory\s+regimes?\b/iu.test(fragment)
   ) {
     return true;
   }
@@ -4953,7 +5602,7 @@ function isCitationSupportedIntervalBound(fact: NormalizedNumericFact): boolean 
 }
 
 function shouldWarnOnUnverifiableFact(source: NumericFactSource): boolean {
-  return source !== "artifact";
+  return source !== "artifact" && source !== "related_work";
 }
 
 function allowsAppendixOnlyWarning(source: NumericFactSource): boolean {
@@ -5445,7 +6094,7 @@ export function materializeScientificManuscript(input: {
   const selectedFiguresRaw = conditionFigures.length > 0 || hasExplicitAuthoredFigureMarker(candidateFigures)
     ? figures
     : dropRedundantFiguresAgainstTables(tables, figures);
-  const selectedFigures = dropTaskDeltaFiguresRedundantWithTables(tables, selectedFiguresRaw);
+  const selectedFigures = sanitizeCandidateFigures(dropTaskDeltaFiguresRedundantWithTables(tables, selectedFiguresRaw));
   const generatedAppendixSections = input.appendixPlan.sections.map((section) => ({
     ...section,
     source_refs: buildArtifactSourceRefs([`appendix:${section.heading}`, "latest_results", "result_analysis"])
@@ -5591,6 +6240,9 @@ export function enforceManuscriptPageBudgetFloor(input: {
     if (existingFingerprints.has(fingerprint)) {
       return false;
     }
+    if (isPageBudgetRestorationDuplicate(heading, section.paragraphs, cleaned)) {
+      return false;
+    }
     section.paragraphs.push(cleaned);
     if (refs?.length) {
       section.source_refs = mergeSourceRefs(section.source_refs, refs);
@@ -5669,6 +6321,9 @@ export function enforceManuscriptPageBudgetFloor(input: {
       if (existingFingerprints.has(fingerprint)) {
         continue;
       }
+      if (isPageBudgetRestorationDuplicate(draftSection.heading, section.paragraphs, text)) {
+        continue;
+      }
       section.paragraphs.push(text);
       existingFingerprints.add(fingerprint);
       section.source_refs = mergeSourceRefs(section.source_refs, [
@@ -5743,7 +6398,7 @@ export function enforceManuscriptPageBudgetFloor(input: {
     {
       heading: "Discussion",
       text:
-        "A stronger paper-scale claim would require evidence that the same pattern survives broader perturbations. In particular, the current result should be revisited with more seeds, more tasks, and larger model families before claiming that one rank or dropout choice is generally preferable for instruction tuning."
+        "A stronger paper-scale claim would require evidence that the same pattern survives broader perturbations. In particular, the current result should be revisited with more seeds, more tasks, and larger model families before claiming that one rank or parameter_y choice is generally preferable for instruction tuning."
     },
     {
       heading: "Limitations",
@@ -5816,6 +6471,88 @@ export function enforceManuscriptPageBudgetFloor(input: {
   };
 }
 
+function isHumanFacingProtocolChecklistResidue(text: string): boolean {
+  return (
+    /^(?:The\s+)?evaluation spans\s+Training:/iu.test(text)
+    || /^(?:The\s+)?Preprocessing follows this order:/iu.test(text)
+    || /^Evidence accounting:/iu.test(text)
+    || /\bPaper-scale evidence floor:/iu.test(text)
+    || /\bCanonical-reference gate:/iu.test(text)
+    || /\bModels or conditions include Primary trained baseline:/iu.test(text)
+    || /\bcurrent_best_baseline\b/iu.test(text)
+    || /\bcondition\s+[0-9]+\s+parameter\s+[0-9.]+(?:\s+[0-9.]+)?\s+vs\s+condition\s+[0-9]+\s+parameter\s+[0-9.]+(?:\s+[0-9.]+)?\b/iu.test(text)
+    || /^The best nonbaseline row should therefore be read as a selection signal\b/iu.test(text)
+    || /^The leading-condition row carries the strongest follow-up signal\b/iu.test(text)
+    || /\baccuracy_pass_at_1_delta_vs_baseline\b/iu.test(text)
+    || /\baccuracy_improvement_over_baseline\b/iu.test(text)
+  );
+}
+
+function isPageBudgetRestorationDuplicate(heading: string, existingParagraphs: string[], candidate: string): boolean {
+  const headingKey = normalizeHeading(heading);
+  const category = pageBudgetRestorationCategory(headingKey, candidate);
+  if (!category) {
+    return false;
+  }
+  return existingParagraphs.some((paragraph) => pageBudgetRestorationCategory(headingKey, paragraph) === category);
+}
+
+function pageBudgetRestorationCategory(headingKey: string, paragraph: string): string | null {
+  const text = cleanString(paragraph);
+  if (!text) {
+    return null;
+  }
+  if (headingKey === "method") {
+    if (/\b(?:preferred|candidate)\s+(?:base\s+)?(?:model|backbone)\b/iu.test(text) && /\bfallback\b/iu.test(text)) {
+      return "method_model_provenance";
+    }
+    if (/\b(?:training data|instruction-tuning subset|evaluation suite|evaluation tasks?)\b/iu.test(text) && /\b(?:subset|examples|benchmark|average accuracy)\b/iu.test(text)) {
+      return "method_data_evaluation_scope";
+    }
+    if (/\b(?:selected design|experimental design|initial .*grid|dropout scope|dropout 0\.1|4 by 3 grid|36 primary training trials)\b/iu.test(text)) {
+      return "method_design_grid";
+    }
+    if (/\b(?:reproducibility protocol|required parseable|run identifiers|command lines|failed attempts|review artifacts)\b/iu.test(text)) {
+      return "method_reproducibility_protocol";
+    }
+  }
+  if (headingKey === "results") {
+    if (/\b(?:36 primary|38 executed|supplemental run|supplemental executions|trial-count|execution accounting)\b/iu.test(text)) {
+      return "results_execution_accounting";
+    }
+    if (/\b(?:screening threshold|target threshold|one-percentage-point|positive screening result|observed value|configured screening threshold)\b/iu.test(text)) {
+      return "results_threshold_signal";
+    }
+    if (/\b(?:uncertainty|intervals?|confidence|statistical-significance|wide intervals)\b/iu.test(text)) {
+      return "results_uncertainty";
+    }
+    if (/\b(?:dataset[-\s]level|task[-\s]level|benchmark[-\s]level|benchmark task|evaluated items?|correct responses?)\b/iu.test(text)) {
+      return "results_task_level_breakdown";
+    }
+    if (/\b(?:higher-capacity|zero regularization|zero-regularization|parameter[-\s]grid|condition[-\s]pattern|monotonic parameter)\b/iu.test(text)) {
+      return "results_condition_pattern";
+    }
+    if (/\b(?:runtime|peak VRAM|peak memory|train loss|Pareto|efficiency ranking|resource-optimality|resource-efficient)\b/iu.test(text)) {
+      return "results_resource_boundary";
+    }
+  }
+  if (headingKey === "limitations") {
+    if (/\b(?:scale and scope|limited in scale|local small-model|7B-class|broad benchmark)\b/iu.test(text)) {
+      return "limitations_scope";
+    }
+    if (/\b(?:expanded .*design|dropout\s*0\.1|36-run workload|run budget|first preflight local budget)\b/iu.test(text)) {
+      return "limitations_design_expansion";
+    }
+    if (/\b(?:resource granularity|runtime|peak[-\s]?VRAM|peak memory|efficiency rankings?)\b/iu.test(text)) {
+      return "limitations_resource_granularity";
+    }
+    if (/\b(?:full condition-level table|seed-level means|confidence intervals?|failed-run record|baseline-specific wording)\b/iu.test(text)) {
+      return "limitations_reporting_resolution";
+    }
+  }
+  return null;
+}
+
 export function strengthenPaperScaleManuscript(
   manuscript: PaperManuscript,
   context: ExperimentArtifactContext
@@ -5863,7 +6600,7 @@ function softenLmBenchmarkPilotTitle(title: string): string {
   if (!cleaned) {
     return title;
   }
-  if (/\btrade[- ]?offs?\b/iu.test(cleaned) && /\b(rank|dropout|adapter|parameter-efficient)\b/iu.test(cleaned)) {
+  if (/\btrade[- ]?offs?\b/iu.test(cleaned) && /\b(rank|parameter_y|adapter|parameter-efficient)\b/iu.test(cleaned)) {
     return "A Fixed-Budget Pilot Study of a Local Experimental Configuration";
   }
   if (/\bbenchmarking\b/iu.test(cleaned) && /\bfixed local budget\b/iu.test(cleaned)) {
@@ -5878,7 +6615,7 @@ function compactReaderFacingMethodParagraphs(paragraphs: string[]): string[] {
   const isAdapterConditionParameterPreflight =
     /\badapter\b/iu.test(sectionText)
     && /\brank\b/iu.test(sectionText)
-    && /\bdropout\b/iu.test(sectionText)
+    && /\bparameter_y\b/iu.test(sectionText)
     && /\bBenchmark Task A\b/iu.test(sectionText)
     && /\bBenchmark Task B\b/iu.test(sectionText);
   if (!isAdapterConditionParameterPreflight) {
@@ -5932,7 +6669,7 @@ function compactReaderFacingDiscussionParagraphs(paragraphs: string[]): string[]
   const isAdapterConditionParameterPreflight =
     /\badapter\b/iu.test(sectionText)
     && /\brank\b/iu.test(sectionText)
-    && /\bdropout\b/iu.test(sectionText)
+    && /\bparameter_y\b/iu.test(sectionText)
     && /\bBenchmark Task A\b/iu.test(sectionText)
     && /\bBenchmark Task B\b/iu.test(sectionText);
   if (!isAdapterConditionParameterPreflight) {
@@ -6013,28 +6750,28 @@ function strengthenHumanFacingSections(
   context: ExperimentArtifactContext
 ): PaperManuscriptSection[] {
   return sections.map((section) => {
+    let strengthened: PaperManuscriptSection;
     if (/^introduction$/iu.test(cleanString(section.heading))) {
-      return removeInternalIntroductionParagraphs(section);
+      strengthened = removeInternalIntroductionParagraphs(section);
+    } else if (/^method$/iu.test(cleanString(section.heading))) {
+      strengthened = clarifyStudyLevelDeltaDefinition(strengthenMethodSectionWithArtifactDetails(section, context), context);
+    } else if (/^related work$/iu.test(cleanString(section.heading))) {
+      strengthened = strengthenRelatedWorkSectionWithPaperContrasts(section, context);
+    } else if (/^results$/iu.test(cleanString(section.heading))) {
+      strengthened = strengthenResultsSectionWithConditionNarrative(section, context);
+    } else if (/^discussion$/iu.test(cleanString(section.heading))) {
+      strengthened = strengthenDiscussionSectionWithEvidenceCeiling(section, context);
+    } else if (/^limitations$/iu.test(cleanString(section.heading))) {
+      strengthened = strengthenLimitationsSectionWithScope(section, context);
+    } else if (/^conclusion$/iu.test(cleanString(section.heading))) {
+      strengthened = softenAppendixPromiseInSection(section);
+    } else {
+      strengthened = section;
     }
-    if (/^method$/iu.test(cleanString(section.heading))) {
-      return clarifyStudyLevelDeltaDefinition(strengthenMethodSectionWithArtifactDetails(section, context), context);
-    }
-    if (/^related work$/iu.test(cleanString(section.heading))) {
-      return strengthenRelatedWorkSectionWithPaperContrasts(section, context);
-    }
-    if (/^results$/iu.test(cleanString(section.heading))) {
-      return strengthenResultsSectionWithConditionNarrative(section, context);
-    }
-    if (/^discussion$/iu.test(cleanString(section.heading))) {
-      return strengthenDiscussionSectionWithEvidenceCeiling(section, context);
-    }
-    if (/^limitations$/iu.test(cleanString(section.heading))) {
-      return strengthenLimitationsSectionWithScope(section, context);
-    }
-    if (/^conclusion$/iu.test(cleanString(section.heading))) {
-      return softenAppendixPromiseInSection(section);
-    }
-    return section;
+    return {
+      ...strengthened,
+      paragraphs: strengthened.paragraphs.map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph)).filter(Boolean)
+    };
   });
 }
 
@@ -6098,7 +6835,7 @@ function shouldUseadapterRelatedWorkFallback(sectionText: string): boolean {
   if (!/\badapter\b|\bquantized adapter\b|\bparameter-efficient\b|parameter-efficient/iu.test(sectionText)) {
     return false;
   }
-  if (/rank[^.]{0,80}dropout|dropout[^.]{0,80}rank/iu.test(sectionText)) {
+  if (/rank[^.]{0,80}parameter_y|parameter_y[^.]{0,80}rank/iu.test(sectionText)) {
     return true;
   }
   return false;
@@ -6113,9 +6850,9 @@ function strengthenadapterRelatedWorkFallback(section: PaperManuscriptSection): 
     ...section,
     paragraphs: [
       "Existing related studies give three comparison axes for this study. Resource-constrained adaptation work anchors the feasibility axis; benchmarking papers anchor the evaluation axis by comparing methods across broader task or model settings; adapter-variant papers anchor the mechanism axis by changing the update parameterization itself.",
-      "This paper occupies a narrower empirical slot on those axes. It keeps the adapter family, backbone, local compute regime, and evaluation harness fixed, then asks whether adapter condition parameters changes remain visible within the executed condition-parameter grid. The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local condition-grid preflight.",
-      "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior work instead defines why the local condition-parameter question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
-      "The related-work role is therefore conservative. The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform quantized adapter, MAPLE, or adapter-variant methods. Those works differ in model scale, task mix, adapter family, or evaluation objective, so they support framing and claim boundaries rather than direct superiority language."
+      "This paper occupies a narrower empirical slot on those axes. It keeps the method family, backbone, local compute regime, and evaluation harness fixed, then asks whether adapter condition parameters changes remain visible within the executed condition-parameter grid. The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local condition-grid preflight.",
+      "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior work instead defines why the local condition-parameter question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and condition variants show that capacity allocation remains a live design issue.",
+      "The related-work role is therefore conservative. The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform quantized adapter, MAPLE, or adapter-variant methods. Those works differ in model scale, task mix, method family, or evaluation objective, so they support framing and claim boundaries rather than direct superiority language."
     ]
   };
 }
@@ -6195,10 +6932,10 @@ function buildConditionResultNarrativeParagraphs(context: ExperimentArtifactCont
   const runtimeNote = context.results.runtime_notes.find(Boolean);
   const memoryNote = context.results.memory_notes.find(Boolean);
   const paragraphs = [
-    "Table 1 is part of the evidential core of the paper because it preserves the executed comparison set. It separates the locked baseline from the four higher-rank cells and keeps completed-seed coverage visible, so the positive study-level average is not detached from the actual condition coverage. This makes the result stronger than a single headline score while still keeping the claim limited to the evaluated grid.",
+    "Table 1 is part of the evidential core of the paper because it preserves the executed comparison set and separates the locked comparator or baseline from the candidate condition rows. The table should be read as a condition-mean surface; seed-level spread, uncertainty construction, and resource aggregation remain supporting-artifact details rather than visible table columns.",
     "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every adapter configuration is better than every other configuration; it asks whether the higher-rank cells clear a fixed local baseline under the same evaluation harness. Reading the table this way keeps the comparison aligned with the experimental design and avoids turning a targeted preflight into a broad method-family ranking.",
     conditionLabels.length > 0 && seedCounts.length > 0
-      ? `The repeated-seed structure makes the condition labels more informative than a one-run ablation. The evaluated cells are ${joinHumanList(conditionLabels)}, and the retained seed counts are ${joinHumanList(seedCounts)} per reported cell. This coverage matters because the strongest cell can have a favorable mean while individual seeds still move in different directions, which is exactly the instability that a local preflight should expose before scale-up.`
+      ? `The condition labels make the comparison more informative than a single headline score. The evaluated cells are ${joinHumanList(conditionLabels)}, and the retained seed-count metadata are ${joinHumanList(seedCounts)} per reported cell in the supporting record. This coverage matters because the strongest cell can have a favorable mean while individual runs still move in different directions, which is exactly the instability that a local preflight should expose before scale-up.`
       : "",
     bestByDelta || bestByAccuracy
       ? `The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. ${bestByDelta?.label || bestByAccuracy?.label || "The strongest nonbaseline condition"} is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage, but the present manuscript keeps the conclusion conditional on observed dispersion and on the missing condition-level resource table.`
@@ -6207,7 +6944,7 @@ function buildConditionResultNarrativeParagraphs(context: ExperimentArtifactCont
       ? `The comparison-condition rows are useful mainly as a calibration point for the interpretation. They show that the strongest cell should not be turned into a blanket claim about the condition-parameter interaction. Instead, the comparison-condition evidence helps bound the result by showing where the observed pattern remains weak or uncertainty-limited.`
       : "",
     leadingCondition
-      ? `The leading-condition row carries the strongest follow-up signal because it combines the largest nonbaseline mean with the same repeated-seed accounting used for the rest of the grid. That makes the leading condition a plausible scale-up candidate, but not a settled prescription: the table still shows a local workstation preflight rather than a broad model-family sweep.`
+      ? `The leading-condition row carries the strongest follow-up signal because it combines the largest nonbaseline mean with the same condition-completion accounting used for the rest of the grid. That makes the leading condition a plausible scale-up candidate, but not a settled prescription: the table still shows a local workstation preflight rather than a broad model-family sweep.`
       : "",
     "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale, but the available main-text evidence does not support a row-by-row efficiency ordering. This is why the Results section treats compute as a feasibility constraint and leaves efficiency optimization for a follow-up run with fuller resource aggregation."
     ,
@@ -6241,11 +6978,11 @@ function isRawMetricDumpParagraph(paragraph: string): boolean {
   if (/^The 95% interval for conditions\b/iu.test(cleaned)) {
     return true;
   }
-  if (/^rank\s+\d+\s+dropout\b/iu.test(cleaned) && /\baccuracy[_ ]delta[_ ]vs[_ ]baseline\b/iu.test(cleaned)) {
+  if (/^rank\s+\d+\s+parameter_y\b/iu.test(cleaned) && /\baccuracy[_ ]delta[_ ]vs[_ ]baseline\b/iu.test(cleaned)) {
     return true;
   }
   if (
-    /\brank\s+\d+\s+dropout\b/iu.test(cleaned)
+    /\brank\s+\d+\s+parameter_y\b/iu.test(cleaned)
     && /\baccuracy[_ ]delta[_ ]vs[_ ]baseline\b/iu.test(cleaned)
     && /\bbenchmark_task_a[_ ]accuracy\b|\bbenchmark_task_b[_ ]accuracy\b/iu.test(cleaned)
   ) {
@@ -6325,7 +7062,7 @@ function strengthenDiscussionSectionWithEvidenceCeiling(
   const existingText = paragraphs.join(" ");
   const additions = [
     context.results.effect_notes[0]
-      ? `The interpretation should stay close to the measured effect rather than to the broader adapter literature. ${context.results.effect_notes[0]} In paper terms, this supports a targeted follow-up hypothesis, not a general statement that dropout improves all higher-rank adapter settings.`
+      ? `The interpretation should stay close to the measured effect rather than to the broader adapter literature. ${context.results.effect_notes[0]} In paper terms, this supports a targeted follow-up hypothesis, not a general statement that parameter_y improves all higher-rank adapter settings.`
       : "",
     context.results.heterogeneity_notes[0]
       ? `The heterogeneity evidence is also part of the contribution. ${context.results.heterogeneity_notes[0]} A reader should therefore see the study as a decision filter for the next experiment: it identifies a promising cell and records uncertainty around the weaker cells.`
@@ -6656,8 +7393,9 @@ function rewriteMethodDataBudgetCapSentence(paragraph: string, context: Experime
 }
 
 function buildExecutedProtocolDetailParagraph(context: ExperimentArtifactContext): string {
-  const modelName = context.method.model_names.find((item) => /llm|language model|backbone|base model/iu.test(item))
-    || context.method.model_names[0]
+  const candidateModelNames = context.method.model_names.filter((item) => !isInternalComparatorModelLabel(item));
+  const modelName = candidateModelNames.find((item) => /llm|language model|backbone|base model/iu.test(item))
+    || candidateModelNames[0]
     || "";
   const exactHyperparameterNotes = context.method.hyperparameter_notes.filter((item) =>
     /learning rate|per-device train batch size|gradient accumulation|optimizer steps|adapter target modules|training examples|train dataset tokens/iu.test(item)
@@ -6673,40 +7411,82 @@ function buildExecutedProtocolDetailParagraph(context: ExperimentArtifactContext
   return sanitizeHumanFacingManuscriptText(sentences.join(" "));
 }
 
+function isInternalComparatorModelLabel(value: string | undefined): boolean {
+  const cleaned = cleanString(value);
+  if (!cleaned) {
+    return false;
+  }
+  return (
+    /^(?:primary trained baseline|unmodified-system comparator|comparator set for pareto analysis)\s*:/iu.test(cleaned)
+    || /\b(?:evaluated once or repeatedly under the same evaluator|confirm result schema|comparator of record|locked comparator|pareto analysis)\b/iu.test(cleaned)
+  );
+}
+
+function stripInternalComparatorBackboneClaims(text: string): string {
+  return cleanString(text)
+    .replace(
+      /\bThe reported study uses\s+(?:Primary trained baseline|Unmodified-system comparator|Comparator set for Pareto analysis):[\s\S]{0,600}?\bas the trained backbone\.\s*/giu,
+      ""
+    )
+    .replace(
+      /\bThe executed run used\s+(?:Primary trained baseline|Unmodified-system comparator|Comparator set for Pareto analysis):[\s\S]{0,600}?(?:\.|$)\s*/giu,
+      ""
+    );
+}
+
 function sanitizeHumanFacingManuscriptText(text: string): string {
-  const cleaned = cleanString(text);
+  const cleaned = stripInternalComparatorBackboneClaims(text);
   if (!cleaned) {
     return text;
+  }
+  const withoutDraftInstructions = stripHumanFacingDraftInstructionSentences(cleaned);
+  if (!withoutDraftInstructions) {
+    return "";
   }
   const legacyBackboneCitationLabel = String.fromCharCode(81, 119, 101, 110);
   const manuscriptCitationNoisePattern = new RegExp(
     String.raw`\s*\[(?:${legacyBackboneCitationLabel}2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:${legacyBackboneCitationLabel}2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B))*\]`,
     "giu"
   );
-  if (/^\s*\[(?:warning|error|fail|failed|pass|passed)\]\s*[^:]{0,80}:/iu.test(cleaned)) {
+  if (/^\s*\[(?:warning|error|fail|failed|pass|passed)\]\s*[^:]{0,80}:/iu.test(withoutDraftInstructions)) {
+    return "";
+  }
+  if (isHumanFacingProtocolChecklistResidue(withoutDraftInstructions)) {
     return "";
   }
   if (
-    /\b(?:workflow audit|generated manuscript|artifact directory|submission validation|scientific validation|quality failure)\b/iu.test(cleaned)
-    || /\bThe main gap is that current artifacts\b/iu.test(cleaned)
-    || /\bThe current workflow provides\b/iu.test(cleaned)
+    /\b(?:workflow audit|generated manuscript|artifact directory|submission validation|scientific validation|quality failure)\b/iu.test(withoutDraftInstructions)
+    || /\bThe main gap is that current artifacts\b/iu.test(withoutDraftInstructions)
+    || /\bThe current workflow provides\b/iu.test(withoutDraftInstructions)
+    || /\bThis\s+study\s+addresses\s+Study\s+how\b/iu.test(withoutDraftInstructions)
+    || /\b7B-class\s+run\s+is\s+a\s+later\s+scale-up\s+target\b/iu.test(withoutDraftInstructions)
+    || /\bRecovered\s+cached\s+full\s+text\s+describing\s+a\s+compact\s+P(?:EFT)\s+recipe\b/iu.test(withoutDraftInstructions)
+    || /^The 36-run workload may exceed the desired first preflight local budget\.?$/iu.test(withoutDraftInstructions)
   ) {
     return "";
   }
-  return rewriteReaderFacingProvenancePhrases(stripLimitedEvidenceBoilerplate(stripRawCitationTokens(cleaned)))
+  return rewriteReaderFacingProvenancePhrases(stripLimitedEvidenceBoilerplate(stripRawCitationTokens(withoutDraftInstructions)))
+    .replace(/\bparameter-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "parameter-efficient")
+    .replace(/\bmemory-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "memory-efficient")
+    .replace(/\bcost-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "cost-efficient")
+    .replace(/\bcompute-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "compute-efficient")
+    .replace(/\bpaper-readiness\s+inspect\b/giu, "submission-quality inspection")
+    .replace(/\binspect-relevant\b/giu, "protocol-relevant")
+    .replace(/\bFor\s+inspect\s+purposes\b/giu, "For clarity")
+    .replace(/\bStudy\s+how\s+LoRA\s+rank\s+and\s+dropout\s+interact\s+during\s+parameter-efficient\s+instruction\s+tuning\s+under\s+a\s+fixed\s+local\s+compute\s+budget\.?/giu, "LoRA rank and dropout choices under a fixed local instruction-tuning budget")
     .replace(
       /\bThe fixed search space includes\s*(?:adapter|adapter) target modules were [^.]+\.,\s*Fixed training settings included [^.]+\.,\s*and The inspected seed-level record reports [^.]+ for the inspected seed-level record\./giu,
       "The fixed adapter target modules, training settings, and inspected seed-level counts are summarized from the run artifacts rather than hardcoded manuscript defaults."
     )
     .replace(
-      /\bThe surviving compact record specifies the manipulated condition-parameter factors and reported outcome metrics,\s*but optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*prompt formatting,\s*evaluation-harness specifics,\s*and exact placement of dropout within adapter modules are not available\.\s*We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe\./giu,
+      /\bThe surviving compact record specifies the manipulated condition-parameter factors and reported outcome metrics,\s*but optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*prompt formatting,\s*evaluation-harness specifics,\s*and exact placement of parameter_y within adapter modules are not available\.\s*We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe\./giu,
       "The compact record specifies the manipulated condition parameters and reported outcome metrics, while unavailable implementation details remain explicit reproducibility limitations."
     )
     .replace(
       /\bSeed coverage is part of the evidence (?:contract|record)\.[^.]+mean gain[^.]+larger run\.[^.]+single best seed[^.]+comparison unit\./giu,
-      "The reported pilot keeps the completed condition cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work."
+      "The reported pilot keeps the completed condition cells and locked baseline visible as the comparison unit, while treating stronger stability claims as future work."
     )
-    .replace(/\bSeed coverage is part of the evidence contract\.\s*(?:five|[0-9]+)\s+repeated cells and (?:five|[0-9]+)\s+seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu, "The reported pilot keeps the completed condition cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work.")
+    .replace(/\bSeed coverage is part of the evidence contract\.\s*(?:five|[0-9]+)\s+repeated cells and (?:five|[0-9]+)\s+seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu, "The reported pilot keeps the completed condition cells and locked baseline visible as the comparison unit, while treating stronger stability claims as future work.")
     .replace(/\bevidence contract\b/giu, "evidence record")
     .replace(/\blater readers can audit\b/giu, "later readers can inspect")
     .replace(/\breaders can audit\b/giu, "readers can inspect")
@@ -6738,11 +7518,15 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     .replace(/\boutputs\/(?:[^\s,.;)`]+)?/giu, "the public output bundle")
     .replace(
       /\bObjective metric met:\s*accuracy_delta_vs_baseline\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*>=\s*([0-9]+(?:\.[0-9]+)?)\.?/giu,
-      "The prespecified baseline-relative accuracy target was met (observed gain $1 versus threshold $2); condition-level values in Table 1 provide the main numeric support."
+      "The archived comparison exceeded the configured screening threshold (observed gain $1 versus threshold $2); condition-level values in Table 1 provide the main numeric support, but this is not a stable success claim."
     )
     .replace(
       /\b(?:candidate condition [a-z]|leading observed condition)\s+vs\s+(?:locked\s+)?baseline condition:?\s*(?:accuracy_delta_vs_baseline|baseline-relative accuracy gain):\s*([0-9.]+)\s+vs\s+0\s+\(delta\s+([0-9.]+)\),\s*(?:average_accuracy|average accuracy):\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*benchmark_task_a_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*benchmark_task_b_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\)\.?/giu,
       "The leading observed condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
+    )
+    .replace(
+      /\bThe reported leading-row average accuracy is\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+and\s+the reported leading-row average accuracy is\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\.?/giu,
+      "The reported reference average accuracy is $1 and the reported comparator average accuracy is $2."
     )
     .replace(
       /\bcondition summaries?\b\s*\/\s*[^/]+\s*\/\s*accuracy delta vs baseline 95% CI\s*\[([^\]]+)\]\s*over\s*n\s*=\s*(\d+)\.?/giu,
@@ -6782,7 +7566,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "The executable run selected the selected backbone as the trained backbone; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
-      /\bThe surviving compact record specifies the manipulated condition-parameter factors and reported outcome metrics,\s*but optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*prompt formatting,\s*evaluation-harness specifics,\s*and exact placement of dropout within adapter modules are not available\.\s*We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe\./giu,
+      /\bThe surviving compact record specifies the manipulated condition-parameter factors and reported outcome metrics,\s*but optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*prompt formatting,\s*evaluation-harness specifics,\s*and exact placement of parameter_y within adapter modules are not available\.\s*We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe\./giu,
       "The preserved pilot record exposes selected implementation details: the run-recorded training settings and timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript is still a preflight execution report rather than a fully specified benchmark paper."
     )
     .replace(
@@ -6806,7 +7590,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "For the comparison condition condition, the reported 95% interval for accuracy delta versus baseline is [$1] over $2 seeds."
     )
     .replace(
-      /\bThis repeated-seed preflight provides conservative evidence that higher-rank adapter with moderate dropout can be competitive under a strict local instruction-tuning budget\./giu,
+      /\bThis repeated-seed preflight provides conservative evidence that higher-rank adapter with moderate parameter_y can be competitive under a strict local instruction-tuning budget\./giu,
       "This condition-grid preflight provides conservative evidence that the best observed higher-rank adapter cell is worth testing in a larger follow-up under the same baseline discipline."
     )
     .replace(
@@ -6918,7 +7702,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       ""
     )
     .replace(
-      /\bThe result is also reported with an explicit non-result:\s*the present artifacts do not justify a broad claim about all ranks,\s*all dropout rates,\s*or all downstream tasks\.\s*That negative boundary is part of the contribution because it prevents an empirical preflight from being mistaken for a completed scaling study\./giu,
+      /\bThe result is also reported with an explicit non-result:\s*the present artifacts do not justify a broad claim about all ranks,\s*all parameter_y rates,\s*or all downstream tasks\.\s*That negative boundary is part of the contribution because it prevents an empirical preflight from being mistaken for a completed scaling study\./giu,
       ""
     )
     .replace(
@@ -6966,7 +7750,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "the run-metadata task labels Benchmark Task A and Benchmark Task B"
     )
     .replace(
-      /\bconditions\s*\/\s*rank\s+16\s+dropout\s+0\s+0\s*\/\s*average accuracy 95% CI \[([^\]]+)\] over n=(\d+) prediction\(s\)\./giu,
+      /\bconditions\s*\/\s*rank\s+16\s+parameter_y\s+0\s+0\s*\/\s*average accuracy 95% CI \[([^\]]+)\] over n=(\d+) prediction\(s\)\./giu,
       "One reported condition-level 95% interval for average accuracy spans [$1] over $2 predictions."
     )
     .replace(
@@ -7056,7 +7840,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     )
     .replace(
       /\bSeed coverage is part of the evidence contract\.\s*The repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu,
-      "The reported pilot keeps the completed completed condition cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work."
+      "The reported pilot keeps the completed completed condition cells and locked baseline visible as the comparison unit, while treating stronger stability claims as future work."
     )
     .replace(
       /\bThe repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run\b/giu,
@@ -7086,6 +7870,18 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     .replace(/\.{2,}/gu, ".")
     .replace(/\s+/gu, " ")
     .trim();
+}
+
+function stripHumanFacingDraftInstructionSentences(text: string): string {
+  return cleanString(
+    text
+      .split(/(?<=[.!?])\s+/u)
+      .filter((sentence) => !/\b(?:this draft|available to this draft|final manuscript should cite|final paper version should include|any final paper version should include)\b/iu.test(sentence))
+      .filter((sentence) => !/\b(?:final analysis should make clear|those values should be presented|should be presented in the reproducibility supplement)\b/iu.test(sentence))
+      .filter((sentence) => !/\b(?:unvalidated notes|stable sources|internal repair guidance|future reporting requirements)\b/iu.test(sentence))
+      .filter((sentence) => !/\b(?:until|before)\b[^.!?]{0,220}\breproducibility supplement\b/iu.test(sentence))
+      .join(" ")
+  );
 }
 
 function sanitizeRelatedWorkAxisForNarrative(value: string | undefined, protocolKind?: ExperimentProtocolKind): string {
@@ -7171,7 +7967,7 @@ function isOffTopicLmBenchmarkRelatedWorkAxis(value: string): boolean {
   ) {
     return true;
   }
-  return !/\b(?:adapter|method-family|parameterization|low-rank|instruction|fine[- ]?tun(?:e|ing)?|quantization|benchmark|evaluation|resource|memory|dropout|rank|prompting|control)\b/iu.test(
+  return !/\b(?:adapter|method-family|parameterization|low-rank|instruction|fine[- ]?tun(?:e|ing)?|quantization|benchmark|evaluation|resource|memory|parameter_y|rank|prompting|control)\b/iu.test(
     text
   );
 }
@@ -7284,11 +8080,11 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\bthe incomplete grid,\s*limited task set,\s*single-seed design,/giu, "the limited task set, single-seed design,")
     .replace(
       /\bThe table is used as the numeric anchor for the reported comparison;\s*no separate figure is needed when it would only restate the same values\./giu,
-      "Table 1 is the numeric anchor for the reported condition means, while Figure 1 isolates the task-level contribution to the leading baseline-relative gain."
+      "Table 1 is the numeric anchor for the reported condition means; a separate task-delta figure is useful only when it adds information that is not already visible in the table."
     )
     .replace(
-      /\bAt the same time,\s*the reported result summary exposes only limited condition-level detail beyond the leading comparison,\s*which means the full shape of the condition-parameter interaction cannot be reconstructed from the summarized record alone\.\s*The discussion that follows is therefore expadaptertory and limited to the leading cell,\s*its task asymmetry,\s*and the operational behavior of the sweep\./giu,
-      "Table 1 preserves the condition mean accuracies, while Figure 1 isolates the task-level contribution to the leading baseline-relative gain. The discussion that follows is therefore expadaptertory and limited to the leading cell, its task asymmetry, and the operational behavior of the sweep."
+      /\bAt the same time,\s*the reported result summary exposes only limited condition-level detail beyond the leading comparison,\s*which means the full shape of the condition-parameter interaction cannot be reconstructed from the summarized record alone\.\s*The discussion that follows is therefore exploratory and limited to the leading cell,\s*its task asymmetry,\s*and the operational behavior of the sweep\./giu,
+      "Table 1 preserves the condition mean accuracies. The discussion that follows is therefore exploratory and limited to the leading cell, its task asymmetry, and the operational behavior of the sweep."
     )
     .replace(
       /\bBecause the summarized record does not resolve the full condition-parameter surface,\s*the discussion can only interpret the leading cell,\s*its task split,\s*and its low operational cost\./giu,
@@ -7320,11 +8116,11 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     )
     .replace(
       /\bSeed coverage is part of the evidence contract\.\s*The repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu,
-      "The reported pilot keeps the completed completed condition cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work."
+      "The reported pilot keeps the completed completed condition cells and locked baseline visible as the comparison unit, while treating stronger stability claims as future work."
     )
     .replace(
-      /\bCondition coverage is part of the evidence contract\.\s*The reported pilot keeps the completed completed condition cells and locked baseline visible so that later readers can audit the comparison unit,\s*while treating multi-seed replication as future work\./giu,
-      "The reported pilot keeps the completed completed condition cells and locked baseline visible as the comparison unit, while treating multi-seed replication as future work."
+      /\bCondition coverage is part of the evidence contract\.\s*The reported pilot keeps the completed completed condition cells and locked baseline visible so that later readers can audit the comparison unit,\s*while treating stronger stability claims as future work\./giu,
+      "The reported pilot keeps the completed completed condition cells and locked baseline visible as the comparison unit, while treating stronger stability claims as future work."
     )
     .replace(
       /\bHidden failures would invalidate this ceiling,\s*but the run accounting used here reports scheduled and executed trials explicitly\./giu,
@@ -7336,7 +8132,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\bfuture replication should reuse the same audit pattern\b/giu, "future replication should preserve the same reporting pattern")
     .replace(/\bclaim ceiling audit\b/giu, "claim ceiling notes")
     .replace(
-      /\bThis repeated-seed preflight provides conservative evidence that higher-rank adapter with moderate dropout can be competitive under a strict local instruction-tuning budget\./giu,
+      /\bThis repeated-seed preflight provides conservative evidence that higher-rank adapter with moderate parameter_y can be competitive under a strict local instruction-tuning budget\./giu,
       "This condition-grid preflight provides conservative evidence that the best observed higher-rank adapter cell is worth testing in a larger follow-up under the same baseline discipline."
     )
     .replace(/\bIn the executable run metadata and released study summary,\s*([^.,]+?)\s+is identified as the trained backbone/giu, "The reported study uses $1 as the trained backbone")
@@ -7347,7 +8143,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
     .replace(/\bThe benchmark also contributes methodologically\./giu, "The benchmark also illustrates a scoped reporting protocol for this setting.")
     .replace(/\bTo isolate condition parameters as much as the budget allowed,\s*the protocol held the optimizer,\s*learning-rate schedule,\s*adapter target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\./giu, "To isolate condition parameters as much as the budget allowed, the protocol fixed the optimizer, learning-rate schedule, adapter target modules, effective batch size, and capped data budget; the preserved artifacts do not independently verify identical consumed token counts for every cell.")
     .replace(/\bthe protocol held the optimizer,\s*learning-rate schedule,\s*adapter target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\b/giu, "the protocol fixed the optimizer, learning-rate schedule, adapter target modules, effective batch size, and capped data budget, while treating consumed token counts as incompletely logged")
-    .replace(/\bThe main outcome is therefore twofold:\s*a limited but encouraging empirical signal for high-rank moderate-dropout tuning in this setting,\s*and a practical benchmark template for later larger-scale experiments\./giu, "The main outcome is therefore a limited but encouraging empirical signal for high-rank moderate-dropout tuning in this setting, plus a scoped protocol illustration for a larger follow-up.")
+    .replace(/\bThe main outcome is therefore twofold:\s*a limited but encouraging empirical signal for high-rank moderate-parameter_y tuning in this setting,\s*and a practical benchmark template for later larger-scale experiments\./giu, "The main outcome is therefore a limited but encouraging empirical signal for high-rank moderate-parameter_y tuning in this setting, plus a scoped protocol illustration for a larger follow-up.")
     .replace(/\bpractical benchmark template for later larger-scale experiments\b/giu, "scoped protocol illustration for a larger follow-up")
     .replace(/\brepeated-seed benchmark template for later larger-scale experiments\b/giu, "repeated-seed protocol illustration for later larger-scale experiments")
     .replace(/\bthe strongest exposed cell-level comparison in the released comparison table and statistical summary is\b/giu, "the strongest exposed cell-level comparison is")
@@ -7641,12 +8437,16 @@ function buildManuscriptParagraphAnchorId(sectionHeading: string, paragraphIndex
 
 function mapSectionHeadingToNumericFactSource(heading: string): NumericFactSource {
   switch (normalizeHeading(heading)) {
+    case "related work":
+      return "related_work";
     case "method":
       return "method";
     case "results":
       return "results";
     case "discussion":
       return "discussion";
+    case "limitations":
+      return "limitations";
     case "conclusion":
       return "conclusion";
     default:
@@ -8177,7 +8977,7 @@ function buildSectionParagraphCandidates(
             ? [
                 [
                   context.results.condition_summaries.length > 0
-                    ? `The condition table should be read as the main comparison surface because it preserves the baseline label, completed-seed count, and uncertainty width for each repeated cell.`
+                    ? `The condition table should be read as the main comparison surface because it preserves the comparator or baseline label and condition-mean rows; seed-count metadata and uncertainty width remain supporting-record details rather than visible table columns.`
                     : "The main result should be read through the structured comparison table rather than through isolated headline numbers.",
                   context.results.aggregate_summary[0] || "",
                   "This presentation prevents the strongest cell from being promoted into a universal recipe without the supporting spread and completion context."
@@ -8210,7 +9010,7 @@ function buildSectionParagraphCandidates(
                   "The table and figure are therefore used as complementary checks: the table anchors the numeric values, while the figure is retained only when it shows a distinct pattern that is not already obvious from the rows."
                 ],
                 [
-                  "The result is also reported with an explicit non-result: the present artifacts do not justify a broad claim about all ranks, all dropout rates, or all downstream tasks.",
+                  "The result is also reported with an explicit non-result: the present artifacts do not justify a broad claim about all ranks, all parameter_y rates, or all downstream tasks.",
                   "That negative boundary is part of the contribution because it prevents an empirical preflight from being mistaken for a completed scaling study."
                 ]
               ]
@@ -8904,6 +9704,7 @@ function collectSampleSizeHints(
   return uniqueStrings([
     ...collectKeywordNotes(parsedPlan, ["samples", "instances", "rows"]),
     ...collectNumbersAsNotes(latestResults, ["n_samples", "samples", "row_count", "num_train_samples"]),
+    ...collectNumbersAsNotes(resultAnalysis, ["sample_size", "total_count", "num_train_samples", "row_count"]),
     ...collectExecutedTrainingSampleNotes(latestResults),
     ...(includeLmEvaluationSamples ? collectLmEvaluationSampleNotes(latestResults, resultAnalysis) : [])
   ]).slice(0, 6);
@@ -8942,6 +9743,18 @@ function collectLmEvaluationSampleNotes(
       && (typeof asNumber(record.correct) === "number" || typeof asNumber(record.accuracy) === "number")
     ) {
       pushTotal(label, record.total);
+    }
+    if (
+      typeof asNumber(record.total_count) === "number"
+      && (typeof asNumber(record.correct_count) === "number" || typeof asNumber(record.accuracy) === "number")
+    ) {
+      pushTotal(label, record.total_count);
+    }
+    if (
+      typeof asNumber(record.sample_size) === "number"
+      && (typeof asNumber(record.correct_count) === "number" || typeof asNumber(record.total_count) === "number")
+    ) {
+      pushTotal(label, record.sample_size);
     }
     for (const [key, child] of Object.entries(record)) {
       visit(child, key);
@@ -8996,11 +9809,23 @@ function collectFoldNotes(parsedPlan: Record<string, unknown>, kind: "outer" | "
 function collectRepeatNotes(parsedPlan: Record<string, unknown>, latestResults: Record<string, unknown>): string[] {
   const selectedDesign = asRecord(parsedPlan.selected_design);
   const protocol = asRecord(latestResults.protocol);
+  const seedSchedule = asNumberArray(protocol.seed_schedule);
+  const protocolRepeats = asNumber(protocol.repeats);
+  const conditionSeedCounts = uniqueNumbers(
+    asArray(latestResults.condition_summaries)
+      .map((item) => asNumber(asRecord(item).completed_seed_count))
+      .filter((value): value is number => typeof value === "number" && value > 1)
+  );
+  const conditionSeedCount = conditionSeedCounts.length === 1 ? conditionSeedCounts[0] : undefined;
+  const preferredRepeatCount = conditionSeedCount || (seedSchedule.length > 1 ? seedSchedule.length : undefined);
+  const protocolRepeatNote =
+    typeof protocolRepeats === "number" && (!preferredRepeatCount || protocolRepeats === preferredRepeatCount)
+      ? `${formatNumber(protocolRepeats)} repeated evaluations are available in the protocol.`
+      : "";
   return uniqueStrings([
+    ...(conditionSeedCount ? [`${formatNumber(conditionSeedCount)} completed seed(s) are reported per condition.`] : []),
     ...asStringArray(selectedDesign.evaluation_steps).filter((item) => /repeat|seeded runs|rerun|multiple random seeds/iu.test(item)),
-    typeof asNumber(protocol.repeats) === "number"
-      ? `${formatNumber(asNumber(protocol.repeats))} repeated evaluations are available in the protocol.`
-      : ""
+    protocolRepeatNote
   ]).filter(Boolean).slice(0, 4);
 }
 
@@ -9169,17 +9994,21 @@ function collectConditionResultSummaries(
       || summary.baseline_condition_marker
       || summary.baseline_marker
   ).toLowerCase();
+  const registeredBaselineParameters = parseRegisteredBaselineParametersForConditionSummaries(resultAnalysis);
   const latestConditionSummaries = asArray(latestResults.condition_summaries);
+  const latestConditionResults = asArray(latestResults.condition_results);
   const latestConditions = asArray(latestResults.conditions);
   const resultConditionSummaries = asArray(metrics.condition_summaries);
+  const resultConditionResults = asArray(metrics.condition_results);
   const resultConditions = asArray(metrics.conditions);
-  const rawConditions = latestConditionSummaries.length > 0
-    ? latestConditionSummaries
-    : latestConditions.length > 0
-      ? latestConditions
-      : resultConditionSummaries.length > 0
-        ? resultConditionSummaries
-        : resultConditions;
+  const rawConditions = selectMostInformativeConditionRows([
+    latestConditionSummaries,
+    latestConditionResults,
+    latestConditions,
+    resultConditionSummaries,
+    resultConditionResults,
+    resultConditions
+  ]);
   return rawConditions
     .map((item) => asRecord(item))
     .map((item) => {
@@ -9190,9 +10019,10 @@ function collectConditionResultSummaries(
           || item.name
           || item.label
       );
-      const adapterRank = asNumber(item.adapter_rank) ?? asNumber(item.rank);
-      const adapterDropout = asNumber(item.adapter_dropout) ?? asNumber(item.dropout);
-      const label = buildConditionLabel({ condition, adapterRank, adapterDropout });
+      const markerParameters = parseGenericConditionParameters(condition);
+      const conditionParameterX = asNumber(item.condition_parameter_x) ?? asNumber(item.parameter_x) ?? markerParameters?.x;
+      const conditionParameterY = asNumber(item.condition_parameter_y) ?? asNumber(item.parameter_y) ?? markerParameters?.y;
+      const label = buildConditionLabel({ condition, conditionParameterX, conditionParameterY });
       const averageAccuracy = firstNumber(
         item.average_accuracy_mean,
         item.average_accuracy,
@@ -9217,6 +10047,15 @@ function collectConditionResultSummaries(
         item.delta_vs_baseline,
         item.main_metric_delta_vs_baseline_mean
       );
+      const isLockedComparator = Boolean(condition && baselineMarker && condition.toLowerCase() === baselineMarker);
+      const isRegisteredBaseline = parametersMatchForConditionSummaries(
+        { x: conditionParameterX, y: conditionParameterY },
+        registeredBaselineParameters
+      );
+      const isFallbackBaseline = Boolean(
+        /baseline/iu.test(label)
+        || (!baselineMarker && delta === 0 && /baseline|control|reference/iu.test(condition || label))
+      );
       const deltaCi95 = firstNumber(
         item.accuracy_delta_vs_baseline_ci95,
         item.mean_zero_shot_accuracy_delta_vs_baseline_ci95,
@@ -9225,8 +10064,12 @@ function collectConditionResultSummaries(
       );
       const status = cleanString(item.status);
       const perTaskMetrics = asRecord(item.per_task_metrics);
-      const arcTask = asRecord(perTaskMetrics.benchmark_task_a);
-      const benchmark_task_bTask = asRecord(perTaskMetrics.benchmark_task_b);
+      const evaluationMetrics = asRecord(item.evaluation);
+      const taskMetricRecords = [...Object.values(perTaskMetrics), ...Object.values(evaluationMetrics)]
+        .map((value) => asRecord(value))
+        .filter((record) => typeof asNumber(record.accuracy) === "number");
+      const benchmarkTaskA = asRecord(perTaskMetrics.benchmark_task_a);
+      const benchmarkTaskB = asRecord(perTaskMetrics.benchmark_task_b);
       const peakMemoryBytes = firstNumber(item.peak_cuda_memory_bytes, item.peak_memory_bytes);
       const peakMemoryMb = firstNumber(
         item.peak_memory_mb,
@@ -9239,25 +10082,23 @@ function collectConditionResultSummaries(
         condition: condition || label,
         label,
         ...(status ? { status } : {}),
-        is_baseline: Boolean(
-          (condition && baselineMarker && condition.toLowerCase() === baselineMarker)
-          || /baseline/iu.test(label)
-          || (!baselineMarker && delta === 0 && /baseline|control|reference/iu.test(condition || label))
-        ),
+        is_baseline: Boolean(isRegisteredBaseline || (isFallbackBaseline && !registeredBaselineParameters) || (isLockedComparator && !registeredBaselineParameters)),
+        ...(isLockedComparator ? { is_comparator: true } : {}),
+        ...(isRegisteredBaseline ? { is_registered_baseline: true } : {}),
         ...(typeof asNumber(item.completed_seed_count) === "number"
           ? { completed_seed_count: asNumber(item.completed_seed_count) }
           : {}),
-        ...(typeof adapterRank === "number" ? { adapter_rank: adapterRank } : {}),
-        ...(typeof adapterDropout === "number" ? { adapter_dropout: adapterDropout } : {}),
+        ...(typeof conditionParameterX === "number" ? { condition_parameter_x: conditionParameterX } : {}),
+        ...(typeof conditionParameterY === "number" ? { condition_parameter_y: conditionParameterY } : {}),
         ...(typeof averageAccuracy === "number" ? { average_accuracy_mean: averageAccuracy } : {}),
         ...(typeof averageAccuracyCi95 === "number" ? { average_accuracy_ci95: averageAccuracyCi95 } : {}),
         ...(typeof delta === "number" ? { accuracy_delta_vs_baseline_mean: delta } : {}),
         ...(typeof deltaCi95 === "number" ? { accuracy_delta_vs_baseline_ci95: deltaCi95 } : {}),
-        ...(typeof firstNumber(item.benchmark_task_a_accuracy, arcTask.accuracy) === "number"
-          ? { benchmark_task_a_accuracy: firstNumber(item.benchmark_task_a_accuracy, arcTask.accuracy) }
+        ...(typeof firstNumber(item.benchmark_task_a_accuracy, benchmarkTaskA.accuracy, taskMetricRecords[0]?.accuracy) === "number"
+          ? { benchmark_task_a_accuracy: firstNumber(item.benchmark_task_a_accuracy, benchmarkTaskA.accuracy, taskMetricRecords[0]?.accuracy) }
           : {}),
-        ...(typeof firstNumber(item.benchmark_task_b_accuracy, benchmark_task_bTask.accuracy) === "number"
-          ? { benchmark_task_b_accuracy: firstNumber(item.benchmark_task_b_accuracy, benchmark_task_bTask.accuracy) }
+        ...(typeof firstNumber(item.benchmark_task_b_accuracy, benchmarkTaskB.accuracy, taskMetricRecords[1]?.accuracy) === "number"
+          ? { benchmark_task_b_accuracy: firstNumber(item.benchmark_task_b_accuracy, benchmarkTaskB.accuracy, taskMetricRecords[1]?.accuracy) }
           : {}),
         ...(typeof firstNumber(item.train_loss, item.train_loss_mean) === "number"
           ? { train_loss: firstNumber(item.train_loss, item.train_loss_mean) }
@@ -9277,15 +10118,46 @@ function collectConditionResultSummaries(
     );
 }
 
+function selectMostInformativeConditionRows(candidates: unknown[][]): unknown[] {
+  return candidates
+    .filter((rows) => rows.length > 0)
+    .map((rows) => ({ rows, score: scoreConditionRows(rows) }))
+    .sort((left, right) => right.score - left.score)[0]?.rows || [];
+}
+
+function scoreConditionRows(rows: unknown[]): number {
+  return rows.reduce<number>((score, row) => {
+    const record = asRecord(row);
+    const markerParameters = parseGenericConditionParameters(
+      record.condition_marker || record.marker || record.condition || record.name || record.label
+    );
+    const evaluationRecords = Object.values(asRecord(record.evaluation)).map((value) => asRecord(value));
+    const perTaskRecords = Object.values(asRecord(record.per_task_metrics)).map((value) => asRecord(value));
+    const hasTaskAccuracy = [
+      record.benchmark_task_a_accuracy,
+      record.benchmark_task_b_accuracy,
+      ...evaluationRecords.map((item) => item.accuracy),
+      ...perTaskRecords.map((item) => item.accuracy)
+    ].some((value) => typeof asNumber(value) === "number");
+    return score
+      + 1
+      + (typeof firstNumber(record.average_accuracy_mean, record.average_accuracy, record.accuracy) === "number" ? 3 : 0)
+      + (hasTaskAccuracy ? 6 : 0)
+      + (typeof firstNumber(record.condition_parameter_x, markerParameters?.x) === "number" ? 2 : 0)
+      + (typeof firstNumber(record.condition_parameter_y, markerParameters?.y) === "number" ? 2 : 0)
+      + (typeof firstNumber(record.accuracy_delta_vs_baseline_mean, record.accuracy_delta_vs_baseline) === "number" ? 2 : 0);
+  }, 0);
+}
+
 function buildConditionLabel(input: {
   condition: string;
-  adapterRank?: number;
-  adapterDropout?: number;
+  conditionParameterX?: number;
+  conditionParameterY?: number;
 }): string {
-  if (typeof input.adapterRank === "number" || typeof input.adapterDropout === "number") {
+  if (typeof input.conditionParameterX === "number" || typeof input.conditionParameterY === "number") {
     const parts = [
-      typeof input.adapterRank === "number" ? `rank ${formatNumber(input.adapterRank)}` : undefined,
-      typeof input.adapterDropout === "number" ? `dropout ${formatNumber(input.adapterDropout)}` : undefined
+      typeof input.conditionParameterX === "number" ? `parameter x ${formatNumber(input.conditionParameterX)}` : undefined,
+      typeof input.conditionParameterY === "number" ? `parameter y ${formatNumber(input.conditionParameterY)}` : undefined
     ].filter(Boolean);
     if (parts.length > 0) {
       return parts.join(" / ");
@@ -9297,6 +10169,115 @@ function buildConditionLabel(input: {
     .replace(/\s+/gu, " ")
     .trim();
   return normalized || "condition";
+}
+
+function parseGenericConditionParameters(value: unknown): { x?: number; y?: number } | undefined {
+  const text = cleanString(value).toLowerCase();
+  const match = [
+    /\bcondition[_:\s-]*parameter[_:\s-]*x\s*=?\s*([0-9]+(?:[._][0-9]+)*)[^0-9]+condition[_:\s-]*parameter[_:\s-]*y\s*=?\s*([0-9]+(?:[._][0-9]+)*)/iu,
+    /\bfactor\s*x\s*=?\s*([0-9]+(?:[._][0-9]+)*)[^0-9]+factor\s*y\s*=?\s*([0-9]+(?:[._][0-9]+)*)/iu,
+  ]
+    .map((pattern) => text.match(pattern))
+    .find((candidate): candidate is RegExpMatchArray => Boolean(candidate));
+  if (!match) {
+    return undefined;
+  }
+  const x = parseMarkerNumber(match[1]);
+  const y = parseMarkerNumber(match[2]);
+  if (typeof x !== "number" && typeof y !== "number") {
+    return undefined;
+  }
+  return { ...(typeof x === "number" ? { x } : {}), ...(typeof y === "number" ? { y } : {}) };
+}
+
+function parseRegisteredBaselineParametersForConditionSummaries(
+  resultAnalysis: ResultAnalysisArtifact | undefined
+): { x?: number; y?: number } | undefined {
+  const texts = collectRegisteredBaselineTextsForConditionSummaries(resultAnalysis);
+  for (const text of texts) {
+    const rankDropout = parseRankDropoutParametersForConditionSummaries(text);
+    if (rankDropout) {
+      return rankDropout;
+    }
+  }
+  for (const text of texts) {
+    const generic = parseGenericConditionParameters(text);
+    if (generic) {
+      return generic;
+    }
+  }
+  return undefined;
+}
+
+function collectRegisteredBaselineTextsForConditionSummaries(
+  resultAnalysis: ResultAnalysisArtifact | undefined
+): string[] {
+  const texts: string[] = [];
+  const visit = (value: unknown, keyHint = ""): void => {
+    if (/\bbaseline_(?:condition_)?marker\b/iu.test(keyHint)) {
+      return;
+    }
+    if (typeof value === "string") {
+      const cleaned = cleanString(value);
+      if (/\b(?:registered|primary trained|pre[-\s]?registered|baseline)\b/iu.test(`${keyHint} ${cleaned}`)) {
+        texts.push(cleaned);
+      }
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, keyHint));
+      return;
+    }
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (/\bbaseline_(?:condition_)?marker\b/iu.test(key)) {
+        continue;
+      }
+      const nextHint = /\b(?:baseline|baselines|registered)\b/iu.test(key) ? key : keyHint;
+      visit(nested, nextHint);
+    }
+  };
+  visit(resultAnalysis?.plan_context);
+  visit(asRecord(resultAnalysis?.metrics).plan_context);
+  visit(resultAnalysis?.experiment_portfolio);
+  return uniqueStrings(texts);
+}
+
+function parseRankDropoutParametersForConditionSummaries(text: string): { x?: number; y?: number } | undefined {
+  const cleaned = cleanString(text);
+  const match = cleaned.match(/\brank\s*=?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:\/|,|;|\s+and\s+|\s+)\s*dropout\s*=?\s*([0-9]+(?:\.[0-9]+)?)/iu);
+  if (!match) {
+    return undefined;
+  }
+  const x = Number(match[1]);
+  const y = Number(match[2]);
+  if (typeof x !== "number" && typeof y !== "number") {
+    return undefined;
+  }
+  return { ...(typeof x === "number" ? { x } : {}), ...(typeof y === "number" ? { y } : {}) };
+}
+
+function parametersMatchForConditionSummaries(
+  actual: { x?: number; y?: number },
+  expected: { x?: number; y?: number } | undefined
+): boolean {
+  if (!expected) {
+    return false;
+  }
+  const xMatches = typeof expected.x !== "number" || (typeof actual.x === "number" && Math.abs(actual.x - expected.x) < 0.000001);
+  const yMatches = typeof expected.y !== "number" || (typeof actual.y === "number" && Math.abs(actual.y - expected.y) < 0.000001);
+  return xMatches && yMatches;
+}
+
+function parseMarkerNumber(value: string | undefined): number | undefined {
+  const normalized = cleanString(value).replace(/_/gu, ".");
+  if (!normalized) {
+    return undefined;
+  }
+  const numberValue = Number(normalized);
+  return Number.isFinite(numberValue) ? numberValue : undefined;
 }
 
 function firstNumber(...values: unknown[]): number | undefined {
@@ -9399,7 +10380,12 @@ function rewriteTextForClaimStrength(
     replace(/\bfully reproducible\b/giu, "partially documented for reproducibility", "reproducibility", "reproducibility artifact set is incomplete");
   }
   if (!hasRuntimeMemory) {
-    replace(/\befficient\b/giu, "computationally practical within the reported setup", "efficiency", "efficiency claim lacks runtime/memory backing");
+    replace(
+      /(?<![-\w])efficient\b/giu,
+      "computationally practical within the reported setup",
+      "efficiency",
+      "efficiency claim lacks runtime/memory backing"
+    );
   }
   if (!hasNoveltySupport) {
     replace(/\bnovel\b/giu, "distinct within the currently analyzed comparison set", "novelty", "novelty claim lacks closest-prior comparison support");

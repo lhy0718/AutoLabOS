@@ -99,6 +99,13 @@ export class FailureMemory {
     return nodeRecords.some((r) => r.do_not_retry);
   }
 
+  async latestDoNotRetry(nodeId: GraphNodeId): Promise<FailureRecord | undefined> {
+    const nodeRecords = await this.forNode(nodeId);
+    return nodeRecords
+      .filter((r) => r.do_not_retry)
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+  }
+
   async countEquivalentFailures(nodeId: GraphNodeId, fingerprint: string): Promise<number> {
     const nodeRecords = await this.forNode(nodeId);
     return nodeRecords.filter((r) => r.error_fingerprint === fingerprint).length;

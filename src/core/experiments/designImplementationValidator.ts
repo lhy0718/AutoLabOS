@@ -63,6 +63,11 @@ export async function validateDesignImplementationAlignment(input: {
     input.attempt.publicArtifacts
   );
 
+  if (input.attempt.scriptPath && /\.py$/iu.test(input.attempt.scriptPath)) {
+    checkedItems.push("python_runnable_surface");
+    findings.push(...validatePythonRunnableSurface(input.attempt.scriptPath, scriptText));
+  }
+
   checkedItems.push("run_command_paths");
   if (input.attempt.scriptPath) {
     checkedItems.push("script_path_binding");
@@ -305,7 +310,8 @@ function validatePlannedConditionImplementationSurface(input: {
   testCommand: string;
 }): ExperimentDesignImplementationValidationFinding[] {
   const findings: ExperimentDesignImplementationValidationFinding[] = [];
-  const implementationSignal = `${input.runCommand}\n${input.testCommand}\n${input.scriptText}`;
+  const implementationExecutionText = stripAutoLabOSPlannedConditionContractBlock(input.scriptText);
+  const implementationSignal = `${input.runCommand}\n${input.testCommand}\n${implementationExecutionText}`;
   const publicSignal = input.publicContractText;
   const requiredMarkers = dedupeStrings(input.contract.required_condition_markers || []);
   const baselineMarker = input.contract.baseline_condition_marker || requiredMarkers[0];
@@ -322,6 +328,20 @@ function validatePlannedConditionImplementationSurface(input: {
   }
 
   if (baselineMarker && requiredMarkers.length > 1) {
+    const missingBaselineMaterializationEvidence = findBaselineMarkerMissingFromDeclaredConditionCatalogEvidence(
+      input.scriptText,
+      baselineMarker
+    );
+    if (missingBaselineMaterializationEvidence) {
+      findings.push({
+        code: "PLANNED_BASELINE_MARKER_NOT_MATERIALIZED",
+        severity: "block",
+        message:
+          "The implementation indexes the locked baseline marker, but the declared condition catalog does not materialize that marker.",
+        evidence: missingBaselineMaterializationEvidence
+      });
+    }
+
     const declaredMarkerOrder = extractDeclaredConditionMarkerOrder(input.scriptText, requiredMarkers);
     if (declaredMarkerOrder.length > 1 && declaredMarkerOrder[0] !== baselineMarker) {
       findings.push({
@@ -344,13 +364,23 @@ function validatePlannedConditionImplementationSurface(input: {
         evidence: `declared=${declaredConditionCount}; required=${requiredConditionCount}`
       });
     }
+    if (declaredConditionCount !== undefined && declaredConditionCount > requiredConditionCount) {
+      findings.push({
+        code: "PLANNED_CONDITION_COUNT_EXPANDED",
+        severity: "block",
+        message: "The implementation declares more conditions than the approved design contract.",
+        evidence: `declared=${declaredConditionCount}; required=${requiredConditionCount}`
+      });
+    }
     const publicMarkerCount = requiredMarkers.filter((marker) => hasMarkerSignal(publicSignal, marker)).length;
-    if (publicMarkerCount > 0 && publicMarkerCount < requiredConditionCount) {
+    const requiredPublicMarkerCount =
+      requiredMarkers.length >= requiredConditionCount ? requiredConditionCount : requiredMarkers.length;
+    if (publicMarkerCount > 0 && publicMarkerCount < requiredPublicMarkerCount) {
       findings.push({
         code: "PUBLIC_CONDITION_MARKERS_CONTRACTED",
         severity: "block",
         message: "Published implementation docs expose fewer planned condition markers than the approved design contract.",
-        evidence: `public_markers=${publicMarkerCount}; required=${requiredConditionCount}`
+        evidence: `public_markers=${publicMarkerCount}; required=${requiredPublicMarkerCount}`
       });
     }
   }
@@ -406,6 +436,28 @@ function validatePlannedConditionImplementationSurface(input: {
       });
     }
 
+    const undefinedPerRunDependencyEvidence = findPerRunHelperUndefinedDependencyEvidence(input.scriptText);
+    if (undefinedPerRunDependencyEvidence) {
+      findings.push({
+        code: "PLANNED_PER_RUN_HELPER_UNDEFINED_DEPENDENCY",
+        severity: "block",
+        message:
+          "The implementation exposes a per-run helper, but that helper calls a concrete train/evaluate/model hook that is neither defined nor imported.",
+        evidence: `${undefinedPerRunDependencyEvidence}; py_compile_sufficient=false; required_runs=${requiredRunCount}`
+      });
+    }
+
+    const loaderPathDefaultsEvidence = findEntrypointLoaderPathDefaultsAfterDataLoaderEvidence(input.scriptText);
+    if (loaderPathDefaultsEvidence) {
+      findings.push({
+        code: "PLANNED_ENTRYPOINT_LOADER_PATH_DEFAULTS_AFTER_DATA_LOADER",
+        severity: "block",
+        message:
+          "The implementation materializes its data bundle before defaulting runtime path aliases needed by generated loaders.",
+        evidence: `${loaderPathDefaultsEvidence}; py_compile_sufficient=false; required_runs=${requiredRunCount}`
+      });
+    }
+
     const incompatibleRuntimeEntrypointEvidence = findRuntimeEntrypointMissingArgsKwargEvidence(input.scriptText);
     if (incompatibleRuntimeEntrypointEvidence) {
       findings.push({
@@ -428,6 +480,76 @@ function validatePlannedConditionImplementationSurface(input: {
         message:
           "The implementation defines a planned study runner but the Python CLI surface will not invoke it when run_experiments executes the script.",
         evidence: missingCliInvocationEvidence
+      });
+    }
+
+    const earlyMainGuardEvidence = findEarlyMainGuardBeforeGovernedScheduleEvidence(
+      input.scriptText,
+      input.runCommand
+    );
+    if (earlyMainGuardEvidence) {
+      findings.push({
+        code: "PLANNED_RUNTIME_EARLY_MAIN_GUARD",
+        severity: "block",
+        message:
+          "The Python CLI main guard appears before the governed schedule contract is fully declared, so run_experiments can execute before the condition plan exists.",
+        evidence: earlyMainGuardEvidence
+      });
+    }
+
+    const unresolvedDefaultFactoryEvidence = findUnresolvedDefaultFactoryBeforeDefinitionEvidence(
+      input.scriptText,
+      input.runCommand
+    );
+    if (unresolvedDefaultFactoryEvidence) {
+      findings.push({
+        code: "PLANNED_RUNTIME_DEFAULT_FACTORY_UNRESOLVED",
+        severity: "block",
+        message:
+          "The Python runtime surface uses a dataclass field default_factory before that factory is defined, so the class body can fail before run_experiments starts.",
+        evidence: unresolvedDefaultFactoryEvidence
+      });
+    }
+
+    const missingEntrypointStageHelperEvidence = findMissingEntrypointStageHelperEvidence(
+      input.scriptText,
+      input.runCommand
+    );
+    if (missingEntrypointStageHelperEvidence) {
+      findings.push({
+        code: "PLANNED_RUNTIME_ENTRYPOINT_STAGE_HELPER_MISSING",
+        severity: "block",
+        message:
+          "The Python entrypoint dispatches to a required runtime stage helper, but none of the advertised helper candidates are defined.",
+        evidence: `${missingEntrypointStageHelperEvidence}; required_runs=${requiredRunCount}`
+      });
+    }
+
+    const missingCallableResolverEvidence = findMissingGenericCallableResolverEvidence(
+      input.scriptText,
+      input.runCommand
+    );
+    if (missingCallableResolverEvidence) {
+      findings.push({
+        code: "PLANNED_RUNTIME_CALLABLE_RESOLVER_TARGET_MISSING",
+        severity: "block",
+        message:
+          "The Python entrypoint resolves a required callable from advertised candidates, but none of those candidates are defined.",
+        evidence: `${missingCallableResolverEvidence}; required_runs=${requiredRunCount}`
+      });
+    }
+
+    const unsafeArgparseDefaultEvidence = findUnsafeArgparseEmptyNumericDefaultEvidence(
+      input.scriptText,
+      input.runCommand
+    );
+    if (unsafeArgparseDefaultEvidence) {
+      findings.push({
+        code: "PLANNED_RUNTIME_ARGPARSE_EMPTY_NUMERIC_DEFAULT",
+        severity: "block",
+        message:
+          "The Python CLI parser can fail before execution because a numeric argparse default is wired to an empty environment-derived string.",
+        evidence: `${unsafeArgparseDefaultEvidence}; required_runs=${requiredRunCount}`
       });
     }
 
@@ -606,6 +728,275 @@ function findMissingCliEntrypointInvocationEvidence(scriptText: string, runComma
   return `run_command_executes_python_script=true; main_guard=missing; entrypoints=${callableEntrypoints.join(", ") || "none"}; cli_surface=${hasParserSurface ? "present" : "not_detected"}; command_runtime_flags=${commandPassesRuntimeFlags ? "present" : "not_detected"}`;
 }
 
+function findEarlyMainGuardBeforeGovernedScheduleEvidence(
+  scriptText: string,
+  runCommand: string
+): string | undefined {
+  if (!scriptText || !runCommandExecutesPythonScript(runCommand)) {
+    return undefined;
+  }
+  const guardMatch = /\n\s*if\s+__name__\s*==\s*["']__main__["']\s*:/u.exec(`\n${scriptText}`);
+  if (!guardMatch || guardMatch.index === undefined) {
+    return undefined;
+  }
+  const guardIndex = Math.max(0, guardMatch.index - 1);
+  const scheduleSignals = [
+    "PLANNED_CONDITION_MARKERS",
+    "REQUIRED_CONDITION_MARKERS",
+    "REQUIRED_CONDITION_COUNT",
+    "REQUIRED_RUN_COUNT",
+    "SEED_SCHEDULE"
+  ];
+  const lateSignals = scheduleSignals
+    .map((signal) => ({ signal, index: scriptText.indexOf(signal, guardIndex + 1) }))
+    .filter((entry) => entry.index >= 0)
+    .sort((left, right) => left.index - right.index);
+  if (lateSignals.length === 0) {
+    return undefined;
+  }
+  const firstLateSignal = lateSignals[0];
+  return [
+    `main_guard_line=${lineNumberAtIndex(scriptText, guardIndex)}`,
+    `late_schedule_signal=${firstLateSignal.signal}`,
+    `late_schedule_line=${lineNumberAtIndex(scriptText, firstLateSignal.index)}`
+  ].join("; ");
+}
+
+function lineNumberAtIndex(text: string, index: number): number {
+  if (index <= 0) {
+    return 1;
+  }
+  return text.slice(0, index).split("\n").length;
+}
+
+function findUnresolvedDefaultFactoryBeforeDefinitionEvidence(
+  scriptText: string,
+  runCommand: string
+): string | undefined {
+  if (!scriptText || !runCommandExecutesPythonScript(runCommand)) {
+    return undefined;
+  }
+  const builtinFactories = new Set([
+    "bytearray",
+    "bytes",
+    "dict",
+    "float",
+    "frozenset",
+    "int",
+    "list",
+    "set",
+    "str",
+    "tuple"
+  ]);
+  for (const match of scriptText.matchAll(/\bfield\s*\([^)]*\bdefault_factory\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\.)/gu)) {
+    const factoryName = match[1] || "";
+    if (!factoryName || builtinFactories.has(factoryName)) {
+      continue;
+    }
+    const matchIndex = match.index || 0;
+    const prefix = scriptText.slice(0, matchIndex);
+    if (hasPythonCallableDefinitionSignal(prefix, factoryName)) {
+      continue;
+    }
+    return [
+      `default_factory=${factoryName}`,
+      `field_line=${lineNumberAtIndex(scriptText, matchIndex)}`,
+      "definition=missing_before_field"
+    ].join("; ");
+  }
+  return undefined;
+}
+
+function findMissingEntrypointStageHelperEvidence(scriptText: string, runCommand: string): string | undefined {
+  if (!scriptText || !runCommandExecutesPythonScript(runCommand)) {
+    return undefined;
+  }
+  const hasStageDispatchSurface =
+    /Missing required\s+\{?stage_name\}?\s+helper;\s*tried/iu.test(scriptText) ||
+    /\bentrypoint_call_stage\s*\(/iu.test(scriptText);
+  if (!hasStageDispatchSurface) {
+    return undefined;
+  }
+  const dispatchWindows = extractEntrypointStageDispatchWindows(scriptText);
+  for (const windowText of dispatchWindows) {
+    const candidates = extractPythonStringLiterals(windowText)
+      .filter((literal) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(literal))
+      .filter((literal) => literal.includes("_"))
+      .filter((literal) => !/^(?:__main__|metrics_path|output_dir|run_id)$/u.test(literal));
+    const uniqueCandidates = dedupeStrings(candidates);
+    if (uniqueCandidates.length === 0) {
+      continue;
+    }
+    const missingCandidates = uniqueCandidates.filter((name) => !hasPythonCallableDefinitionSignal(scriptText, name));
+    if (missingCandidates.length === uniqueCandidates.length) {
+      return `missing_stage_helper_candidates=${uniqueCandidates.slice(0, 10).join(", ")}`;
+    }
+  }
+  return undefined;
+}
+
+function extractEntrypointStageDispatchWindows(scriptText: string): string[] {
+  const windows: string[] = [];
+  for (const match of scriptText.matchAll(/\b[A-Za-z_][A-Za-z0-9_]*entrypoint_call_stage\s*\(/giu)) {
+    const start = match.index || 0;
+    const nextDispatch = /\b[A-Za-z_][A-Za-z0-9_]*entrypoint_call_stage\s*\(/giu.exec(scriptText.slice(start + 1));
+    const maxEnd = nextDispatch?.index !== undefined
+      ? start + 1 + nextDispatch.index
+      : Math.min(scriptText.length, start + 1800);
+    windows.push(scriptText.slice(start, maxEnd));
+  }
+  if (windows.length === 0 && /Missing required\s+\{?stage_name\}?\s+helper;\s*tried/iu.test(scriptText)) {
+    windows.push(scriptText);
+  }
+  return windows;
+}
+
+function findMissingGenericCallableResolverEvidence(scriptText: string, runCommand: string): string | undefined {
+  if (!scriptText || !runCommandExecutesPythonScript(runCommand)) {
+    return undefined;
+  }
+  const resolverWindows = extractGenericCallableResolverWindows(scriptText);
+  for (const windowText of resolverWindows) {
+    const candidates = extractPythonStringLiterals(windowText)
+      .filter((literal) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(literal))
+      .filter((literal) => literal.includes("_"))
+      .filter((literal) => !/^(?:__main__|args|available|candidate_names|purpose)$/u.test(literal));
+    const purpose =
+      extractGenericCallableResolverPurpose(windowText) ||
+      (/\bruntime\s+context\s+resolution\b/iu.test(windowText) ? "runtime context resolution" : "required callable");
+    const uniqueCandidates = dedupeStrings(candidates);
+    if (uniqueCandidates.length === 0) {
+      continue;
+    }
+    const missingCandidates = uniqueCandidates.filter((name) => !hasPythonCallableDefinitionSignal(scriptText, name));
+    if (missingCandidates.length === uniqueCandidates.length) {
+      return [
+        `purpose=${purpose}`,
+        `missing_callable_candidates=${uniqueCandidates.slice(0, 10).join(", ")}`
+      ].join("; ");
+    }
+  }
+  return undefined;
+}
+
+function extractGenericCallableResolverWindows(scriptText: string): string[] {
+  const windows: string[] = [];
+  const resolverPatterns = [
+    /\b[A-Za-z_][A-Za-z0-9_]*lookup_callable\s*\(/giu,
+    /\b[A-Za-z_][A-Za-z0-9_]*resolve_callable\s*\(/giu,
+    /\b[A-Za-z_][A-Za-z0-9_]*resolve_orchestration_helper\s*\(/giu,
+    /\b[A-Za-z_][A-Za-z0-9_]*entry_call\s*\(/giu
+  ];
+  for (const pattern of resolverPatterns) {
+    for (const match of scriptText.matchAll(pattern)) {
+      const start = match.index || 0;
+      windows.push(scriptText.slice(start, Math.min(scriptText.length, start + 1600)));
+    }
+  }
+  if (/(?:No callable found for|No orchestration helper found for|No compatible orchestration helper found)\b/iu.test(scriptText)) {
+    const failureMatch = /(?:No callable found for|No orchestration helper found for|No compatible orchestration helper found)\b/iu.exec(scriptText);
+    if (failureMatch?.index !== undefined) {
+      const start = Math.max(0, failureMatch.index - 1600);
+      windows.push(scriptText.slice(start, Math.min(scriptText.length, failureMatch.index + 1600)));
+    }
+  }
+  return windows;
+}
+
+function extractGenericCallableResolverPurpose(windowText: string): string | undefined {
+  const purposeMatch =
+    /\b[A-Za-z_][A-Za-z0-9_]*resolve_orchestration_helper\s*\(\s*["']([^"']{3,80})["']/iu.exec(windowText) ||
+    /purpose\s*=\s*["']([^"']{3,80})["']/iu.exec(windowText) ||
+    /,\s*["']([^"']{3,80})["']\s*\)/u.exec(windowText);
+  return purposeMatch?.[1]?.replace(/\s+/gu, " ").trim();
+}
+
+function findUnsafeArgparseEmptyNumericDefaultEvidence(scriptText: string, runCommand: string): string | undefined {
+  if (!scriptText || !runCommandExecutesPythonScript(runCommand)) {
+    return undefined;
+  }
+  if (!/\bargparse\b/u.test(scriptText) || !/\badd_argument\s*\(/u.test(scriptText)) {
+    return undefined;
+  }
+  const emptyEnvDefaultNames = extractEmptyEnvDefaultConstantNames(scriptText);
+  if (emptyEnvDefaultNames.length === 0) {
+    return undefined;
+  }
+  const unsafeDefaultNames = new Set(emptyEnvDefaultNames);
+  for (const helperMatch of scriptText.matchAll(
+    /\b(?:_env_optional_int|_env_int|_env_optional_float|_env_float)\s*\([^)]*\b([A-Z][A-Z0-9_]{2,})\b\s*\)/gu
+  )) {
+    const constantName = helperMatch[1] || "";
+    if (unsafeDefaultNames.has(constantName)) {
+      unsafeDefaultNames.add(helperMatch[0] || "");
+    }
+  }
+  const singleLineEvidence = findUnsafeArgparseEmptyNumericDefaultLineEvidence(scriptText, emptyEnvDefaultNames);
+  if (singleLineEvidence) {
+    return singleLineEvidence;
+  }
+  for (const match of scriptText.matchAll(/\badd_argument\s*\(([\s\S]*?)\)/gu)) {
+    const callText = match[1] || "";
+    if (!/\btype\s*=\s*(?:int|float)\b/u.test(callText)) {
+      continue;
+    }
+    const defaultMatch = /\bdefault\s*=\s*([^,\n)]+)/u.exec(callText);
+    const defaultExpr = defaultMatch?.[1]?.trim() || "";
+    if (!defaultExpr) {
+      continue;
+    }
+    const referencedEmptyDefault = emptyEnvDefaultNames.find((name) => new RegExp(`\\b${escapeRegExp(name)}\\b`, "u").test(defaultExpr));
+    if (!referencedEmptyDefault) {
+      continue;
+    }
+    const flag = extractPythonStringLiterals(callText).find((literal) => literal.startsWith("--")) || "numeric_flag";
+    return [
+      `flag=${flag}`,
+      `empty_default=${referencedEmptyDefault}`,
+      `line=${lineNumberAtIndex(scriptText, match.index || 0)}`
+    ].join("; ");
+  }
+  return undefined;
+}
+
+function findUnsafeArgparseEmptyNumericDefaultLineEvidence(
+  scriptText: string,
+  emptyEnvDefaultNames: string[]
+): string | undefined {
+  const lines = scriptText.split(/\r?\n/u);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] || "";
+    if (!/\badd_argument\s*\(/u.test(line) || !/\btype\s*=\s*(?:int|float)\b/u.test(line)) {
+      continue;
+    }
+    const referencedEmptyDefault = emptyEnvDefaultNames.find((name) =>
+      new RegExp(`\\b${escapeRegExp(name)}\\b`, "u").test(line)
+    );
+    if (!referencedEmptyDefault) {
+      continue;
+    }
+    const flagMatch = /["'](--[a-z0-9][a-z0-9_-]*)["']/iu.exec(line);
+    return [
+      `flag=${flagMatch?.[1] || "numeric_flag"}`,
+      `empty_default=${referencedEmptyDefault}`,
+      `line=${index + 1}`
+    ].join("; ");
+  }
+  return undefined;
+}
+
+function extractEmptyEnvDefaultConstantNames(scriptText: string): string[] {
+  const names: string[] = [];
+  const pattern =
+    /^\s*([A-Z][A-Z0-9_]{2,})\s*=\s*(?:os\.)?environ\.get\([^\n,]+,\s*["']{2}\s*\)\s*(?:\.strip\(\))?/gmu;
+  for (const match of scriptText.matchAll(pattern)) {
+    if (match[1]) {
+      names.push(match[1]);
+    }
+  }
+  return dedupeStrings(names);
+}
+
 function runCommandExecutesPythonScript(runCommand: string): boolean {
   return /(?:^|\s)(?:python3?|python)\b[\s\S]*?\.py(?:["\\']|\s|$)/u.test(runCommand);
 }
@@ -680,6 +1071,45 @@ function extractTopLevelPythonFunctionBlock(scriptText: string, functionName: st
   return nextTopLevel ? scriptText.slice(start, start + match[0].length + nextTopLevel.index) : scriptText.slice(start);
 }
 
+function extractTopLevelPythonFunctionBlocks(
+  scriptText: string,
+  functionName: string
+): Array<{ block: string; line: number }> {
+  const escaped = escapeRegExp(functionName);
+  const blocks: Array<{ block: string; line: number }> = [];
+  for (const match of scriptText.matchAll(
+    new RegExp(`^\\s*def\\s+${escaped}\\s*\\([^)]*\\)\\s*(?:->\\s*[^:\\n]+)?\\s*:`, "gmu")
+  )) {
+    const start = match.index || 0;
+    const rest = scriptText.slice(start + match[0].length);
+    const nextTopLevel = /\n(?=\S)/u.exec(rest);
+    const end = nextTopLevel ? start + match[0].length + nextTopLevel.index : scriptText.length;
+    blocks.push({
+      block: scriptText.slice(start, end),
+      line: lineNumberAtIndex(scriptText, start)
+    });
+  }
+  return blocks;
+}
+
+function findEntrypointLoaderPathDefaultsAfterDataLoaderEvidence(scriptText: string): string | undefined {
+  if (!scriptText) {
+    return undefined;
+  }
+  for (const { block, line } of extractTopLevelPythonFunctionBlocks(scriptText, "_autolabos_entrypoint_run")) {
+    const loaderIndex = block.indexOf("_autolabos_entrypoint_loaded_data(config)");
+    const pathAliasIndex = block.indexOf("for _autolabos_paths_alias in ('paths', 'output_paths', 'artifact_paths'");
+    if (loaderIndex < 0 || pathAliasIndex < 0 || loaderIndex > pathAliasIndex) {
+      continue;
+    }
+    if (!/\bload_task_bundle\s*\(/u.test(scriptText) && !/\bartifact_paths\b/u.test(scriptText)) {
+      continue;
+    }
+    return `entrypoint=_autolabos_entrypoint_run; line=${line}; loader_before_path_alias=true; missing_alias=artifact_paths`;
+  }
+  return undefined;
+}
+
 function findMissingPerRunExecutionHelperEvidence(scriptText: string): string | undefined {
   if (!scriptText) {
     return undefined;
@@ -701,6 +1131,43 @@ function findMissingPerRunExecutionHelperEvidence(scriptText: string): string | 
   }
   const renderedCandidates = candidateNames.slice(0, 10).join(", ");
   return `missing_callable_candidates=${renderedCandidates}`;
+}
+
+function findPerRunHelperUndefinedDependencyEvidence(scriptText: string): string | undefined {
+  if (!scriptText) {
+    return undefined;
+  }
+  const missingDependencies: Array<{ helperName: string; dependencyName: string; line: number }> = [];
+  for (const helperName of PER_RUN_EXECUTION_HELPER_NAMES) {
+    const block = extractTopLevelPythonFunctionBlock(scriptText, helperName);
+    if (!block) {
+      continue;
+    }
+    const blockStart = scriptText.indexOf(block);
+    for (const match of block.matchAll(/\b((?:execute|run|train|evaluate)_[A-Za-z0-9_]*(?:condition|model|state|evaluation|training)[A-Za-z0-9_]*)\s*\(/gu)) {
+      const dependencyName = match[1] || "";
+      if (!dependencyName || dependencyName === helperName) {
+        continue;
+      }
+      if (hasPythonCallableDefinitionSignal(scriptText, dependencyName)) {
+        continue;
+      }
+      missingDependencies.push({
+        helperName,
+        dependencyName,
+        line: lineNumberAtIndex(scriptText, blockStart + (match.index || 0))
+      });
+    }
+  }
+  const first = missingDependencies[0];
+  if (!first) {
+    return undefined;
+  }
+  return [
+    `helper=${first.helperName}`,
+    `missing_dependency=${first.dependencyName}`,
+    `line=${first.line}`
+  ].join("; ");
 }
 
 function extractPerRunResolverCandidateNames(scriptText: string): string[] {
@@ -747,6 +1214,78 @@ function hasMarkerSignal(text: string, marker: string): boolean {
   const escaped = escapeRegExp(marker);
   const flexible = escaped.replace(/_/gu, "[_\\s.-]*");
   return new RegExp(`(?:^|[^A-Za-z0-9])${flexible}(?:$|[^A-Za-z0-9])`, "iu").test(text);
+}
+
+function findBaselineMarkerMissingFromDeclaredConditionCatalogEvidence(
+  scriptText: string,
+  baselineMarker: string
+): string | undefined {
+  if (!scriptText || !baselineMarker) {
+    return undefined;
+  }
+  const indexesBaselineMap = /\b(?:[A-Z][A-Z0-9_]*_)?CONDITION(?:S)?_BY_MARKER\s*\[\s*BASELINE_[A-Z0-9_]*MARKER\s*\]/u.test(
+    scriptText
+  );
+  if (!indexesBaselineMap) {
+    return undefined;
+  }
+  const literalCatalogMarkers = extractDeclaredLiteralConditionCatalogMarkers(scriptText);
+  if (literalCatalogMarkers.length > 0 && !literalCatalogMarkers.includes(baselineMarker)) {
+    return `baseline=${baselineMarker}; declared_markers=${literalCatalogMarkers.slice(0, 12).join(", ")}`;
+  }
+  const inferredCatalogMarkers = extractInferredParameterizedConditionGridMarkers(scriptText);
+  if (inferredCatalogMarkers.length > 0 && !inferredCatalogMarkers.includes(baselineMarker)) {
+    return `baseline=${baselineMarker}; inferred_markers=${inferredCatalogMarkers.slice(0, 12).join(", ")}`;
+  }
+  return undefined;
+}
+
+function extractDeclaredLiteralConditionCatalogMarkers(scriptText: string): string[] {
+  const catalogPatterns = [
+    /\b(?:REQUIRED|PLANNED|LOCKED|STUDY)?_?CONDITION_MARKERS\b\s*=\s*(?:\(|\[)([\s\S]*?)(?:\)|\])/gu,
+    /\b(?:REQUIRED|PLANNED|LOCKED|STUDY)?_?CONDITION_ORDER\b\s*=\s*(?:\(|\[)([\s\S]*?)(?:\)|\])/gu
+  ];
+  const markers: string[] = [];
+  for (const pattern of catalogPatterns) {
+    for (const match of scriptText.matchAll(pattern)) {
+      markers.push(...extractPythonStringLiterals(match[1] || "").filter((literal) => /condition|baseline|candidate/iu.test(literal)));
+    }
+  }
+  return dedupeStrings(markers);
+}
+
+function extractInferredParameterizedConditionGridMarkers(scriptText: string): string[] {
+  if (!/\bf\s*["']condition_\{[^"']+\}_parameter_\{[^"']+\}["']/u.test(scriptText)) {
+    return [];
+  }
+  if (!/\.rstrip\(\s*["']0["']\s*\)\.rstrip\(\s*["']\.["']\s*\)/u.test(scriptText)) {
+    return [];
+  }
+  const gridMatch = /\b[A-Z][A-Z0-9_]*CONDITION_GRID\b\s*=\s*\(([\s\S]*?)\n\s*\)/u.exec(scriptText);
+  if (!gridMatch) {
+    return [];
+  }
+  const markers: string[] = [];
+  for (const pair of (gridMatch[1] || "").matchAll(/\(\s*(\d+)\s*,\s*(\d+(?:\.\d+)?)\s*\)/gu)) {
+    const primary = pair[1] || "";
+    const secondary = normalizeMarkerNumberText(pair[2] || "");
+    if (primary && secondary) {
+      markers.push(`condition_${primary}_parameter_${secondary.replace(/\./gu, "_")}`);
+    }
+  }
+  return dedupeStrings(markers);
+}
+
+function stripAutoLabOSPlannedConditionContractBlock(text: string): string {
+  return text.replace(
+    /\n?# _autolabos_planned_condition_contract_marker_start\n[\s\S]*?# _autolabos_planned_condition_contract_marker_end\n?/gu,
+    "\n"
+  );
+}
+
+function normalizeMarkerNumberText(value: string): string {
+  const normalized = value.replace(/0+$/u, "").replace(/\.$/u, "");
+  return normalized.length > 0 ? normalized : "0";
 }
 
 function hasNumberSignal(text: string, value: number): boolean {
@@ -965,6 +1504,36 @@ function looksLikePath(value: string): boolean {
 
 function isRunnableScript(filePath: string): boolean {
   return /\.(py|js|mjs|cjs|sh)$/iu.test(filePath);
+}
+
+function validatePythonRunnableSurface(
+  scriptPath: string,
+  scriptText: string
+): ExperimentDesignImplementationValidationFinding[] {
+  if (!scriptText) {
+    return [];
+  }
+  const nonCommentCodeLines = scriptText
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+  const hasCanonicalSkeletonMarker = /AUTOLABOS\s+CANONICAL\s+SKELETON/iu.test(scriptText);
+  if (hasCanonicalSkeletonMarker && nonCommentCodeLines.length === 0) {
+    return [
+      {
+        code: "PYTHON_RUNNER_SKELETON_ONLY",
+        severity: "block",
+        message:
+          "The reported Python runner is only a canonical skeleton and cannot be handed off as a runnable implementation.",
+        evidence: [
+          `script_path=${scriptPath}`,
+          `non_comment_code_lines=${nonCommentCodeLines.length}`,
+          "py_compile_sufficient=false"
+        ].join("; ")
+      }
+    ];
+  }
+  return [];
 }
 
 async function findPublicRunCommandWrappers(publicDir: string, publicArtifacts: string[]): Promise<string[]> {

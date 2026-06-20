@@ -2178,11 +2178,11 @@ describe("objective metric propagation", () => {
           accuracy_delta_vs_baseline: 0,
           baseline_mean_accuracy: 0.546875,
           best_mean_accuracy: 0.546875,
-          best_recipe: "adapter_qv_r8",
+          best_recipe: "candidate_condition_a",
           results: [
             {
               recipe: "baseline",
-              peft_type: "none",
+              adapter_type: "none",
               status: "completed",
               mean_accuracy: 0.546875,
               benchmark_task_a_accuracy: 0.53125,
@@ -2190,8 +2190,8 @@ describe("objective metric propagation", () => {
               accuracy_delta_vs_baseline: 0
             },
             {
-              recipe: "adapter_qv_r8",
-              peft_type: "adapter",
+              recipe: "candidate_condition_a",
+              adapter_type: "adapter",
               status: "completed",
               mean_accuracy: 0.546875,
               benchmark_task_a_accuracy: 0.53125,
@@ -2434,9 +2434,9 @@ describe("objective metric propagation", () => {
               mean_zero_shot_accuracy_benchmark_tasks: 0.27919
             },
             {
-              condition_id: "locked_adapter_baseline_r8",
+              condition_id: "locked_tuned_baseline_r8",
               recipe_type: "locked_baseline",
-              is_locked_adapter_baseline: true,
+              is_locked_tuned_baseline: true,
               mean_zero_shot_accuracy_benchmark_tasks: 0.304353
             },
             {
@@ -2465,7 +2465,7 @@ describe("objective metric propagation", () => {
           expected_metric_effect: "Higher mean accuracy than baseline",
           abort_condition: "Abort if accuracy regresses",
           keep_or_discard_rule: "Keep if improved",
-          baselines: ["locked_adapter_baseline_r8"],
+          baselines: ["locked_tuned_baseline_r8"],
           metrics: ["mean_zero_shot_accuracy_benchmark_tasks"],
           results_table_schema: [
             {
@@ -2548,8 +2548,8 @@ describe("objective metric propagation", () => {
                 }
               }
             },
-            adapter_r4: {
-              recipe: "adapter_r4",
+            condition_parameter_x4: {
+              recipe: "condition_parameter_x4",
               evaluation: {
                 mean_zero_shot_accuracy: 0.53125,
                 per_benchmark_accuracy: {
@@ -2816,7 +2816,7 @@ describe("objective metric propagation", () => {
             },
             {
               baseline: false,
-              condition_marker: "rank_in_4_8_16_32_x_dropout_in_0_0_0_05",
+              condition_marker: "condition_grid_family_a",
               status: "completed",
               average_accuracy: 0.6666666666666667,
               accuracy_delta_vs_baseline: 0.02083333333333348,
@@ -2901,7 +2901,7 @@ describe("objective metric propagation", () => {
     };
     expect(analysisRaw.condition_comparisons[0]).toMatchObject({
       source: "metrics.conditions",
-      label: "rank in 4 8 16 32 x dropout in 0 0 0 05 vs baseline condition"
+      label: "condition grid family a vs baseline condition"
     });
     expect(analysisRaw.results_table).toEqual(
       expect.arrayContaining([
@@ -2950,7 +2950,7 @@ describe("objective metric propagation", () => {
             {
               marker: "baseline_condition",
               rank: 8,
-              dropout: 0,
+              parameter_y: 0,
               status: "success",
               average_accuracy: 0.5,
               accuracy_delta_vs_baseline: 0,
@@ -2959,7 +2959,7 @@ describe("objective metric propagation", () => {
             {
               marker: "baseline_condition5",
               rank: 8,
-              dropout: 0.05,
+              parameter_y: 0.05,
               status: "success",
               average_accuracy: 0.5,
               accuracy_delta_vs_baseline: 0,
@@ -2968,7 +2968,7 @@ describe("objective metric propagation", () => {
             {
               marker: "candidate_condition_f",
               rank: 32,
-              dropout: 0,
+              parameter_y: 0,
               status: "success",
               average_accuracy: 0.3125,
               accuracy_delta_vs_baseline: -0.1875,
@@ -3098,7 +3098,7 @@ describe("objective metric propagation", () => {
             {
               marker: "baseline_condition",
               rank: 8,
-              dropout: 0,
+              parameter_y: 0,
               status: "ok",
               average_accuracy: 0.333334,
               benchmark_task_a_accuracy: 0.5,
@@ -3112,7 +3112,7 @@ describe("objective metric propagation", () => {
             {
               marker: "candidate_condition_f5",
               rank: 32,
-              dropout: 0.05,
+              parameter_y: 0.05,
               status: "ok",
               average_accuracy: 0.416666,
               benchmark_task_a_accuracy: 0.5,
@@ -3414,7 +3414,7 @@ describe("objective metric propagation", () => {
             average_accuracy: 0.625,
             accuracy_delta_vs_baseline: 0.0625,
             rank: 8,
-            dropout: 0,
+            parameter_y: 0,
             tasks: {
               benchmark_task_a: { accuracy: 0.875 },
               benchmark_task_b: { accuracy: 0.375 }
@@ -3427,7 +3427,7 @@ describe("objective metric propagation", () => {
               average_accuracy: 0.5625,
               accuracy_delta_vs_baseline: 0,
               rank: 4,
-              dropout: 0,
+              parameter_y: 0,
               tasks: {
                 benchmark_task_a: { accuracy: 0.75 },
                 benchmark_task_b: { accuracy: 0.375 }
@@ -3439,7 +3439,7 @@ describe("objective metric propagation", () => {
               average_accuracy: 0.625,
               accuracy_delta_vs_baseline: 0.0625,
               rank: 8,
-              dropout: 0,
+              parameter_y: 0,
               tasks: {
                 benchmark_task_a: { accuracy: 0.875 },
                 benchmark_task_b: { accuracy: 0.375 }
@@ -3574,8 +3574,8 @@ describe("objective metric propagation", () => {
             best_value: 0
           },
           conditions: {
-            decomposed_adapter: {
-              name: "decomposed_adapter",
+            candidate_condition_b: {
+              name: "candidate_condition_b",
               status: "completed",
               accuracy_delta_vs_baseline: -0.03125,
               evaluation: {
@@ -3608,8 +3608,8 @@ describe("objective metric propagation", () => {
                 }
               }
             },
-            rank_stabilized_adapter: {
-              name: "rank_stabilized_adapter",
+            stronger_candidate: {
+              name: "stronger_candidate",
               status: "completed",
               accuracy_delta_vs_baseline: -0.0078125,
               evaluation: {
@@ -3706,7 +3706,7 @@ describe("objective metric propagation", () => {
     };
     expect(analysisRaw.condition_comparisons[0]).toMatchObject({
       source: "metrics.conditions",
-      label: "rank stabilized adapter vs adapter baseline"
+      label: "stronger candidate vs adapter baseline"
     });
     expect(analysisRaw.results_table).toEqual(
       expect.arrayContaining([
@@ -3944,8 +3944,8 @@ describe("objective metric propagation", () => {
               mean_zero_shot_accuracy: 0.375
             },
             {
-              condition_name: "vanilla_adapter_max_seq_length_1024_epochs_1_effective_batch_size_8",
-              condition_marker: "vanilla_adapter|max_seq_length_1024_epochs_1_effective_batch_siz",
+              condition_name: "reference_candidate_max_seq_length_1024_epochs_1_effective_batch_size_8",
+              condition_marker: "reference_candidate|max_seq_length_1024_epochs_1_effective_batch_siz",
               status: "completed",
               benchmark_task_a_accuracy: 0.3125,
               benchmark_task_b_accuracy: 0.4375,
@@ -3953,8 +3953,8 @@ describe("objective metric propagation", () => {
               accuracy_delta_vs_baseline: 0
             },
             {
-              condition_name: "rank_stabilized_adapter_max_seq_length_1024_epochs_1_effective_batch_size_8",
-              condition_marker: "rank_stabilized_adapter|max_seq_length_1024_epochs_1_effective_batch_siz",
+              condition_name: "stronger_candidate_max_seq_length_1024_epochs_1_effective_batch_size_8",
+              condition_marker: "stronger_candidate|max_seq_length_1024_epochs_1_effective_batch_siz",
               status: "completed",
               benchmark_task_a_accuracy: 0.296875,
               benchmark_task_b_accuracy: 0.453125,
@@ -3964,7 +3964,7 @@ describe("objective metric propagation", () => {
           ],
           summary: {
             best_tuned_accuracy_delta_vs_baseline: 0,
-            best_tuned_condition: "vanilla_adapter_max_seq_length_1024_epochs_1_effective_batch_size_8",
+            best_tuned_condition: "reference_candidate_max_seq_length_1024_epochs_1_effective_batch_size_8",
             completed_condition_count: 3,
             failed_condition_count: 0
           }

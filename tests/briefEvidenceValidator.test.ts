@@ -158,7 +158,7 @@ describe("briefEvidenceValidator", () => {
             category: "scope_limit",
             severity: "low",
             status: "risk",
-            summary: "Scope limitation: optional decomposed adapter variant was documented but not required.",
+            summary: "Scope limitation: optional candidate condition b variant was documented but not required.",
             evidence: ["plan_context.selected_design.risks"],
             recommended_action: "Document the limitation explicitly."
           }
@@ -185,7 +185,7 @@ describe("briefEvidenceValidator", () => {
           selected_design: {
             baselines: ["locked_adapter"],
             implementation_notes: [
-              "Planned tuned conditions: locked Standard adapter; adapter all-linear; adapter q_k_v_o; rank-stabilized adapter q_v."
+              "Planned tuned conditions: locked standard tuned baseline; candidate condition a; candidate condition b; candidate condition c."
             ],
             evaluation_steps: [],
             metrics: [],

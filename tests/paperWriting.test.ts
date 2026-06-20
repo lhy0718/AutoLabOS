@@ -5,8 +5,11 @@ import {
   buildRelatedWorkBrief,
   buildRelatedWorkNotes,
   PaperWritingBundle,
-  validatePaperDraft
+  validatePaperDraft,
+  renderPaperTex
 } from "../src/core/analysis/paperWriting.js";
+import { buildHeuristicObjectiveMetricProfile } from "../src/core/objectiveMetric.js";
+import { buildHeuristicConstraintProfile } from "../src/core/runConstraints.js";
 
 function makeBundle(): PaperWritingBundle {
   return {
@@ -377,5 +380,40 @@ describe("paperWriting related-work support", () => {
     expect(serialized).not.toContain("- Primary metric:");
     expect(serialized).toContain("Prior work");
     expect(validation.issues.some((item) => /bibliographic.*spillover/i.test(item.message))).toBe(true);
+  });
+
+  it("uses first-citation bibliography ordering in legacy TeX fallback", () => {
+    const tex = renderPaperTex({
+      runTitle: "Neutral Paper",
+      topic: "neutral evaluation",
+      objectiveMetric: "quality >= 0.8",
+      draft: {
+        title: "Neutral Paper",
+        abstract: "A concise abstract.",
+        keywords: [],
+        sections: [
+          {
+            heading: "Related Work",
+            paragraphs: [
+              {
+                text: "Prior work motivates the evaluation setting.",
+                evidence_ids: [],
+                citation_paper_ids: ["paper_1"]
+              }
+            ],
+            evidence_ids: [],
+            citation_paper_ids: ["paper_1"]
+          }
+        ],
+        claims: []
+      },
+      constraintProfile: buildHeuristicConstraintProfile([]),
+      objectiveMetricProfile: buildHeuristicObjectiveMetricProfile("quality >= 0.8"),
+      constraints: [],
+      citationKeysByPaperId: new Map([["paper_1", "doe_2025_method"]])
+    });
+
+    expect(tex).toContain("\\bibliographystyle{unsrt}");
+    expect(tex).not.toContain("\\bibliographystyle{plain}");
   });
 });

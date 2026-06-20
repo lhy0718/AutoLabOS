@@ -147,7 +147,7 @@ Under a fixed small-model adaptation budget, do the declared adaptation-conditio
 
 - Five complete baseline runs for the locked baseline condition over the configured seed set.
 - Twenty additional primary comparator runs from the declared grid.
-- One result table with model, rank, dropout, seed, task, accuracy, average accuracy, train loss, runtime, peak VRAM, status, and failure note.
+- One result table with model, rank, parameter_y, seed, task, accuracy, average accuracy, train loss, runtime, peak VRAM, status, and failure note.
 - One uncertainty summary over evaluation examples.
 - One limitations note covering model scale, subset size, prompt/evaluator sensitivity, seed count, and compute budget.
 - One claim-to-evidence mapping from every quantitative or comparative claim to concrete metrics artifacts.

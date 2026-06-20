@@ -231,8 +231,11 @@ async function buildMetaHarnessContext(input: {
       path.join(runRoot, "paper", "paper_critique.json"),
       path.join(runRoot, "paper", "readiness_risks.json"),
       path.join(runRoot, "paper", "render_validation.json"),
+      path.join(runRoot, "paper", "compile_report.json"),
       path.join(runRoot, "paper", "compiled_page_validation.json"),
       path.join(runRoot, "paper", "submission_validation.json"),
+      path.join(runRoot, "paper", "scientific_validation.json"),
+      path.join(runRoot, "paper", "manuscript_quality_gate.json"),
       path.join(runRoot, "paper", "gate_decision.json"),
       path.join(runRoot, "paper", "citation_consistency.json"),
       path.join(runRoot, "paper", "claim_evidence_table.json")
@@ -271,7 +274,7 @@ async function writeTaskFile(contextDir: string): Promise<void> {
     "paper_readiness.overall_score를 높일 수 있는 노드 프롬프트 파일의 개선안을 하나 제안하세요.",
     "review/node_strengthening_recommendations.json 또는 review/paper_scale_diagnostics.json이 있으면, 그 artifact가 지목한 target_node와 recheck_condition을 우선 반영하세요.",
     "prompt_target_map.json이 있으면, target_node가 직접 node-prompts 파일을 갖지 않는 경우에도 recommended_prompt_node를 사용해 가장 가까운 강화 가능 프롬프트로 결함을 되돌리세요.",
-    "paper/render_validation.json, paper/submission_validation.json, paper/gate_decision.json이 있으면 템플릿, 인용, 표/그림, page-budget 결함도 원인 노드로 되돌려 분석하세요.",
+    "paper/render_validation.json, paper/compile_report.json, paper/submission_validation.json, paper/scientific_validation.json, paper/manuscript_quality_gate.json, paper/gate_decision.json이 있으면 템플릿, 인용, BibTeX/style 파일, 표/그림, page-budget, manuscript-quality, scientific-quality 결함도 원인 노드로 되돌려 분석하세요.",
     "샘플 수 부족, seed 반복 부재, 한 문제 차이의 headline gain, smoke-test 수준 train budget, 핵심 문헌 누락은 polish가 아니라 upstream node 강화 대상으로 다루세요.",
     "반드시 다음 형식으로만 출력하세요:",
     "TARGET_FILE: node-prompts/<node>.md",
@@ -396,8 +399,11 @@ const EXTERNAL_CONTEXT_ARTIFACTS = [
   path.join("paper", "paper_critique.json"),
   path.join("paper", "readiness_risks.json"),
   path.join("paper", "render_validation.json"),
+  path.join("paper", "compile_report.json"),
   path.join("paper", "compiled_page_validation.json"),
   path.join("paper", "submission_validation.json"),
+  path.join("paper", "scientific_validation.json"),
+  path.join("paper", "manuscript_quality_gate.json"),
   path.join("paper", "gate_decision.json"),
   path.join("paper", "citation_consistency.json"),
   path.join("paper", "claim_evidence_table.json")
@@ -483,6 +489,92 @@ async function collectPromptTargetMapEntries(runRoot: string, runId: string, art
       recheck_condition: asString(diagnostic.recheck_condition) || undefined
     });
   }
+
+  const renderValidation = await readJsonObjectIfPresent(path.join(runRoot, "paper", "render_validation.json"));
+  const renderIssues = Array.isArray(renderValidation?.issues) ? renderValidation.issues.filter(isRecord) : [];
+  if (asString(renderValidation?.status) === "fail") {
+    entries.push({
+      run_id: runId,
+      source_artifact: `${artifactPrefix}paper/render_validation.json`,
+      target_node: "write_paper",
+      recommended_prompt_node: "review",
+      prompt_file: "node-prompts/review.md",
+      priority: "high",
+      diagnostic_ids: renderIssues.map((issue) => asString(issue.code)).filter(Boolean),
+      problem_summary: summarizeArtifactIssueCodes(renderIssues, "Render validation reported blocking paper-build or paper-surface issues."),
+      recheck_condition: "paper/render_validation.json reports status=pass and required template, bibliography, citation, table, figure, and page-budget checks pass."
+    });
+  }
+
+  const compileReport = await readJsonObjectIfPresent(path.join(runRoot, "paper", "compile_report.json"));
+  const compileIssueCodes = summarizeCompileReportIssueCodes(compileReport);
+  if (compileIssueCodes.length > 0) {
+    entries.push({
+      run_id: runId,
+      source_artifact: `${artifactPrefix}paper/compile_report.json`,
+      target_node: "write_paper",
+      recommended_prompt_node: "review",
+      prompt_file: "node-prompts/review.md",
+      priority: "high",
+      diagnostic_ids: compileIssueCodes,
+      problem_summary: `Compile report contains paper-build issues that can invalidate rendered references or template output. Codes: ${compileIssueCodes.join(", ")}.`,
+      recheck_condition: "paper/compile_report.json has no BibTeX style-file failures or unresolved bibliography build errors."
+    });
+  }
+
+  const manuscriptQualityGate = await readJsonObjectIfPresent(path.join(runRoot, "paper", "manuscript_quality_gate.json"));
+  const remainingManuscriptIssues = Array.isArray(manuscriptQualityGate?.issues_after)
+    ? manuscriptQualityGate.issues_after.filter(isRecord)
+    : [];
+  if (remainingManuscriptIssues.length > 0 || asString(manuscriptQualityGate?.action) === "stop") {
+    entries.push({
+      run_id: runId,
+      source_artifact: `${artifactPrefix}paper/manuscript_quality_gate.json`,
+      target_node: "write_paper",
+      recommended_prompt_node: "review",
+      prompt_file: "node-prompts/review.md",
+      priority: asString(manuscriptQualityGate?.action) === "stop" ? "high" : "medium",
+      diagnostic_ids: remainingManuscriptIssues.map((issue) => asString(issue.code)).filter(Boolean),
+      problem_summary: summarizeArtifactIssueCodes(remainingManuscriptIssues, "Manuscript-quality gate reported remaining paper-surface issues."),
+      recheck_condition: "paper/manuscript_quality_gate.json has no fail issues and remaining warnings are non-misleading."
+    });
+  }
+
+  const scientificValidation = await readJsonObjectIfPresent(path.join(runRoot, "paper", "scientific_validation.json"));
+  const missingEvidence = collectScientificMissingEvidence(scientificValidation);
+  const scientificStatus = asString(scientificValidation?.status);
+  if (missingEvidence.length > 0 || scientificStatus === "fail") {
+    entries.push({
+      run_id: runId,
+      source_artifact: `${artifactPrefix}paper/scientific_validation.json`,
+      target_node: "run_experiments",
+      recommended_prompt_node: "design_experiments",
+      prompt_file: "node-prompts/design_experiments.md",
+      priority: scientificStatus === "fail" ? "high" : "medium",
+      diagnostic_ids: missingEvidence,
+      problem_summary: missingEvidence.length > 0
+        ? `Scientific validation is missing: ${missingEvidence.join(", ")}.`
+        : "Scientific validation failed without a richer upstream evidence plan.",
+      recheck_condition: "paper/scientific_validation.json no longer reports missing evidence categories for the intended claim ceiling."
+    });
+  }
+
+  const gateDecision = await readJsonObjectIfPresent(path.join(runRoot, "paper", "gate_decision.json"));
+  const gateDecisionIssueCodes = summarizeGateDecisionIssueCodes(gateDecision);
+  if (gateDecisionIssueCodes.length > 0) {
+    entries.push({
+      run_id: runId,
+      source_artifact: `${artifactPrefix}paper/gate_decision.json`,
+      target_node: "write_paper",
+      recommended_prompt_node: "review",
+      prompt_file: "node-prompts/review.md",
+      priority: "high",
+      diagnostic_ids: gateDecisionIssueCodes,
+      problem_summary: `Scientific gate decision reports manuscript consistency defects. Codes: ${gateDecisionIssueCodes.join(", ")}.`,
+      recheck_condition: "paper/gate_decision.json has no blocking table/figure consistency defects."
+    });
+  }
+
   return entries;
 }
 
@@ -499,6 +591,48 @@ async function resolveMetaHarnessPromptPath(cwd: string, node: MetaHarnessNode):
     }
   }
   return undefined;
+}
+
+function summarizeCompileReportIssueCodes(report: Record<string, unknown> | null | undefined): string[] {
+  if (!report) {
+    return [];
+  }
+  const raw = JSON.stringify(report);
+  const codes: string[] = [];
+  if (/I could[^\n]*open style file\s+[^\s]+\.bst/iu.test(raw) || /I found no style file/iu.test(raw)) {
+    codes.push("missing_bibliography_style_file");
+  }
+  if (/Empty [^\n]*thebibliography[^\n]*environment/iu.test(raw) || /I found no \\citation commands/iu.test(raw)) {
+    codes.push("empty_bibliography");
+  }
+  return Array.from(new Set(codes));
+}
+
+function collectScientificMissingEvidence(report: Record<string, unknown> | null | undefined): string[] {
+  if (!report) {
+    return [];
+  }
+  const topLevel = asStringArray(report.missing_evidence_categories) || [];
+  const diagnostics = isRecord(report.evidence_diagnostics) ? report.evidence_diagnostics : undefined;
+  const nested = asStringArray(diagnostics?.missing_evidence_categories) || [];
+  return Array.from(new Set([...topLevel, ...nested]));
+}
+
+function summarizeGateDecisionIssueCodes(report: Record<string, unknown> | null | undefined): string[] {
+  if (!report) {
+    return [];
+  }
+  const raw = JSON.stringify(report);
+  const codes: string[] = [];
+  if (/Table 1 and Figure 1 report conflicting aggregate accuracy values/iu.test(raw)) {
+    codes.push("table_figure_aggregate_accuracy_conflict");
+  }
+  return codes;
+}
+
+function summarizeArtifactIssueCodes(issues: Record<string, unknown>[], fallback: string): string {
+  const codes = Array.from(new Set(issues.map((issue) => asString(issue.code)).filter(Boolean)));
+  return codes.length > 0 ? `${fallback} Codes: ${codes.join(", ")}.` : fallback;
 }
 
 function mapStrengtheningTargetToPromptNode(targetNode: string): MetaHarnessNode | undefined {

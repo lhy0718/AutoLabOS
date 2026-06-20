@@ -1665,6 +1665,97 @@ describe("StateGraphRuntime", () => {
     expect(updated.graph.nodeStates.run_experiments.note).toContain("without metrics output");
   });
 
+  it("does not schedule an auto retry when failure memory marks a node do-not-retry", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Structural Metrics Contract Failure",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 0;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "running";
+    await store.updateRun(run);
+
+    const errorMessage =
+      "Experiment metrics contract failed: Condition summary accuracy is inconsistent with correct/total counts.";
+    const failureMemory = FailureMemory.forRun(run.id);
+    await failureMemory.append({
+      run_id: run.id,
+      node_id: "run_experiments",
+      attempt: 1,
+      failure_class: "structural",
+      error_fingerprint: buildErrorFingerprint(errorMessage),
+      error_message: errorMessage,
+      do_not_retry: true,
+      do_not_retry_reason: "Structural metrics projection failure."
+    });
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(run, "run_experiments", errorMessage);
+
+    expect(updated.status).toBe("failed");
+    expect(updated.graph.retryCounters.run_experiments).toBe(3);
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("failed");
+    expect(updated.graph.nodeStates.run_experiments.note).toContain("Condition summary accuracy");
+  });
+
+  it("skips same-node write_paper retries when strict scientific validation needs upstream evidence", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Paper Upstream Evidence Failure",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "write_paper";
+    run.graph.currentNode = "write_paper";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 1;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "completed";
+    run.graph.nodeStates.analyze_results.status = "completed";
+    run.graph.nodeStates.figure_audit.status = "completed";
+    run.graph.nodeStates.review.status = "completed";
+    run.graph.nodeStates.write_paper.status = "running";
+    await store.updateRun(run);
+
+    const errorMessage =
+      "write_paper generated manuscript artifacts but stopped before PDF build because the scientific quality gate failed in strict-paper mode: Table 1 and Figure 1 report conflicting aggregate accuracy values. Evidence insufficiency remains in Method; missing categories: resource measurement.";
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(run, "write_paper", errorMessage);
+
+    expect(updated.status).toBe("running");
+    expect(updated.currentNode).toBe("review");
+    expect(updated.graph.currentNode).toBe("review");
+    expect(updated.graph.nodeStates.review.status).toBe("running");
+    expect(updated.graph.rollbackCounters.write_paper).toBe(1);
+    expect(updated.graph.retryCounters.write_paper).toBe(0);
+  });
+
   it("pauses instead of auto-applying backward jump when maxAutoBackwardJumps is reached (LV-015)", async () => {
     // Node that emits a backward-jump recommendation on analyze_results
     const registry = new Registry({

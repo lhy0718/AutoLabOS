@@ -16,6 +16,7 @@ Use only facts explicitly present in the payload.
 Be conservative: if evidence is incomplete, say so instead of guessing.
 Keep the review concise and actionable.
 Treat tiny evaluation sets, one-example headline gains, missing repeated seeds, smoke-scale train budgets, missing canonical method references, repeated filler prose, and template/citation defects as real review findings.
+Inspect paper/render_validation.json and paper/compile_report.json when available; missing bibliography style files, BibTeX failures, empty bibliographies, repeated citation bundles, or template-absent keyword surfaces must block paper-ready claims and route back to write_paper/review repair.
 When a problem originates upstream, recommend the upstream node to strengthen rather than trying to solve it only in write_paper.
 If review/node_strengthening_recommendations.json or paper_scale_diagnostics are available, align the decision and required_actions with those diagnostics.
 Allowed recommendations: advance, revise_in_place, backtrack_to_hypotheses, backtrack_to_design, backtrack_to_implement, manual_block.

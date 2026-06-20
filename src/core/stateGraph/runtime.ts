@@ -748,6 +748,20 @@ export class StateGraphRuntime {
     // skip remaining retries and proceed directly to rollback/failure.
     const failMem = FailureMemory.forRun(run.id);
     const fingerprint = buildErrorFingerprint(errorMessage);
+    const hasDoNotRetryMarker = await failMem.hasDoNotRetry(node);
+    if (hasDoNotRetryMarker && nextRetry < maxAttempts) {
+      nextRetry = maxAttempts;
+      run.graph.retryCounters[node] = nextRetry;
+      this.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node,
+        payload: {
+          text: `Skipping retries for ${node}: failure memory marks this node as do-not-retry until upstream repair.`
+        }
+      });
+    }
+
     const equivalentCount = await failMem.countEquivalentFailures(node, fingerprint);
     if (equivalentCount >= 3 && nextRetry < maxAttempts) {
       nextRetry = maxAttempts;
@@ -1411,6 +1425,10 @@ function shouldSkipAutoRetryForFailure(node: GraphNodeId, errorMessage: string):
     return isAnalyzePapersResponsesApiPdfConfigFailure(normalized);
   }
 
+  if (node === "write_paper") {
+    return isWritePaperUpstreamEvidenceFailure(normalized);
+  }
+
   return false;
 }
 
@@ -1444,6 +1462,16 @@ function shouldFailWithoutAutoRollback(node: GraphNodeId, errorMessage: string):
     return isImplementProviderEnvironmentFailure(normalized);
   }
   return false;
+}
+
+function isWritePaperUpstreamEvidenceFailure(normalizedErrorMessage: string): boolean {
+  return (
+    normalizedErrorMessage.includes("scientific quality gate failed in strict-paper mode:") &&
+    (
+      normalizedErrorMessage.includes("missing categories: resource measurement") ||
+      normalizedErrorMessage.includes("evidence insufficiency remains in method")
+    )
+  );
 }
 
 function isAnalyzePapersResponsesApiPdfConfigFailure(normalizedErrorMessage: string): boolean {

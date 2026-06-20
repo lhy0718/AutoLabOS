@@ -2095,6 +2095,47 @@ function readResultRowsFromMetrics(metrics: Record<string, unknown>): {
 
 function enrichResultRow(row: Record<string, unknown>): Record<string, unknown> {
   const next = { ...row };
+  const rawEvidence = asRecord(next.raw_evidence);
+  const nestedRawEvidence = asRecord(rawEvidence.raw_evidence);
+  const evidence = Object.keys(nestedRawEvidence).length > 0 ? nestedRawEvidence : rawEvidence;
+  const evidenceCondition = asRecord(evidence.condition);
+
+  for (const key of ["condition_name", "condition_id", "condition_marker", "marker"] as const) {
+    if (next[key] === undefined && evidence[key] !== undefined) {
+      next[key] = evidence[key];
+    }
+  }
+  if (next.condition_id === undefined && evidenceCondition.condition_id !== undefined) {
+    next.condition_id = evidenceCondition.condition_id;
+  }
+  if (next.condition_marker === undefined && evidenceCondition.marker !== undefined) {
+    next.condition_marker = evidenceCondition.marker;
+  }
+  if (next.is_baseline === undefined && evidenceCondition.is_baseline !== undefined) {
+    next.is_baseline = evidenceCondition.is_baseline;
+  }
+  if (next.average_accuracy === undefined && evidence.average_accuracy !== undefined) {
+    next.average_accuracy = evidence.average_accuracy;
+  }
+  if (next.train_loss === undefined && evidence.train_loss !== undefined) {
+    next.train_loss = evidence.train_loss;
+  }
+  if (next.runtime_sec === undefined && evidence.runtime_sec !== undefined) {
+    next.runtime_sec = evidence.runtime_sec;
+  }
+  if (next.peak_vram_bytes === undefined && evidence.peak_vram_bytes !== undefined) {
+    next.peak_vram_bytes = evidence.peak_vram_bytes;
+  }
+
+  const taskMetrics = asRecord(evidence.task_metrics);
+  for (const [taskName, value] of Object.entries(taskMetrics)) {
+    const taskRecord = asRecord(value);
+    const accuracy = asNumber(taskRecord.accuracy);
+    if (accuracy !== undefined && next[`${taskName}_accuracy`] === undefined) {
+      next[`${taskName}_accuracy`] = accuracy;
+    }
+  }
+
   const taskAccuracies = extractTaskAccuracies(next);
   if (taskAccuracies.length >= 2 && next.mean_accuracy === undefined) {
     next.mean_accuracy = meanRounded(taskAccuracies.map((entry) => entry.accuracy));
@@ -2605,9 +2646,32 @@ function mergeConditionRowsByName(rows: Array<Record<string, unknown>>): Array<R
       continue;
     }
     const existing = merged.get(name);
-    merged.set(name, existing ? { ...existing, ...row } : row);
+    merged.set(name, existing ? mergeConditionMetricRows(existing, row) : row);
   }
   return [...merged.values(), ...anonymous];
+}
+
+function mergeConditionMetricRows(
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>
+): Record<string, unknown> {
+  const merged = { ...existing, ...incoming };
+  for (const [key, value] of Object.entries(existing)) {
+    if (merged[key] === undefined || merged[key] === null) {
+      merged[key] = value;
+    }
+  }
+  const existingTask = asString(existing.task);
+  const incomingTask = asString(incoming.task);
+  const existingAccuracy = asNumber(existing.accuracy);
+  const incomingAccuracy = asNumber(incoming.accuracy);
+  if (existingTask && existingAccuracy !== undefined && merged[`${existingTask}_accuracy`] === undefined) {
+    merged[`${existingTask}_accuracy`] = existingAccuracy;
+  }
+  if (incomingTask && incomingAccuracy !== undefined && merged[`${incomingTask}_accuracy`] === undefined) {
+    merged[`${incomingTask}_accuracy`] = incomingAccuracy;
+  }
+  return enrichConditionRow(merged);
 }
 
 function isCompletedConditionRow(row: Record<string, unknown>): boolean {
@@ -3008,7 +3072,7 @@ function isMeanScoreMetric(key: string, value: number): boolean {
   }
   const normalized = key.toLocaleLowerCase();
   if (
-    /(?:^|[._-])(?:memory|bytes|byte|vram|ram|allocated|reserved|runtime|latency|duration|seconds|wall_clock|time|timestamp|started|finished|elapsed|count|total|planned|completed|failed|seed|rank|dropout|example|sample|step|epoch|token|parameter|index|order|trial)(?:[._-]|$)/u.test(
+    /(?:^|[._-])(?:memory|bytes|byte|vram|ram|allocated|reserved|runtime|latency|duration|seconds|wall_clock|time|timestamp|started|finished|elapsed|count|total|planned|completed|failed|seed|rank|parameter_y|example|sample|step|epoch|token|parameter|index|order|trial)(?:[._-]|$)/u.test(
       normalized
     )
   ) {

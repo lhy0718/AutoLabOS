@@ -17,7 +17,7 @@ The run remains network-assisted because the validation workspace declares model
 - Codex OAuth was available.
 - Workspace config, run-store write, workspace write, disk, Node, Python, pip, LaTeX, and PDF utilities passed.
 - CUDA was visible with two RTX-4090-class GPUs.
-- Required Python modules for parameter-efficient execution were available: `torch`, `transformers`, `datasets`, `peft`, `trl`, and `accelerate`.
+- Required Python modules for parameter-efficient execution were available, including the tensor, model, dataset, trainer, and acceleration libraries needed by the configured run.
 - Preferred and fallback small-model caches were present.
 - Required instruction and benchmark dataset caches were present.
 

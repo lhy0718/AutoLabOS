@@ -10,17 +10,17 @@ describe("planned condition coverage", () => {
         recipes: [
           {
             recipe: "baseline",
-            adapter: { peft_type: "none", trainable_parameters: 0 },
+            adapter: { adapter_type: "none", trainable_parameters: 0 },
             training: { skipped: true }
           },
           {
             recipe: "adapter",
-            adapter: { peft_type: "adapter", trainable_parameters: 1179648 },
+            adapter: { adapter_type: "adapter", trainable_parameters: 1179648 },
             training: { skipped: false }
           },
           {
             recipe: "ia3",
-            adapter: { peft_type: "ia3", trainable_parameters: 98304 },
+            adapter: { adapter_type: "compact_method", trainable_parameters: 98304 },
             training: { skipped: false }
           }
         ]
@@ -70,12 +70,12 @@ describe("planned condition coverage", () => {
           training: { skipped: true, trainable_params: 0 }
         },
         {
-          marker: "locked_adapter_baseline",
+          marker: "locked_tuned_baseline",
           status: "completed",
           training: { train_steps: 40, trainable_params: 1179648 }
         },
         {
-          marker: "decomposed_adapter",
+          marker: "candidate_condition_b",
           status: "completed",
           training: { train_steps: 40, trainable_params: 1179648 }
         },
@@ -85,7 +85,7 @@ describe("planned condition coverage", () => {
           training: { train_steps: 0 }
         },
         {
-          marker: "rank_stabilized_adapter",
+          marker: "stronger_candidate",
           status: "completed",
           training: { train_steps: 40, trainable_params: 1179648 }
         }

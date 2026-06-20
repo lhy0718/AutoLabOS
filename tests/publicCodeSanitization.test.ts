@@ -6,6 +6,7 @@ import path from "node:path";
 const ROOT = process.cwd();
 const CODE_DIRS = ["src", "tests", "docs", "scripts", "node-prompts", path.join(".codex", "skills")];
 const SHIPPED_CODE_DIRS = ["src", "docs", "scripts", "node-prompts", path.join(".codex", "skills")];
+const ROOT_PUBLIC_TEXT_FILES = ["ISSUES.md"];
 const TEXT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".md"]);
 
 function walkCodeFiles(dir: string): string[] {
@@ -35,9 +36,15 @@ function chars(values: number[]): string {
 
 const CONDITION_MARKER_PREFIX = chars([114, 97, 110, 107, 95]);
 const CONDITION_MARKER_MIDDLE = chars([95, 100, 114, 111, 112, 111, 117, 116, 95]);
+const NUMERIC_CONDITION_MARKER_PREFIX = chars([99, 111, 110, 100, 105, 116, 105, 111, 110, 95]);
+const NUMERIC_CONDITION_MARKER_MIDDLE = chars([95, 112, 97, 114, 97, 109, 101, 116, 101, 114, 95]);
 
-function conditionMarker(rank: number, dropoutCode: string): string {
-  return `${CONDITION_MARKER_PREFIX}${rank}${CONDITION_MARKER_MIDDLE}${dropoutCode}`;
+function conditionMarker(rank: number, parameter_yCode: string): string {
+  return `${CONDITION_MARKER_PREFIX}${rank}${CONDITION_MARKER_MIDDLE}${parameter_yCode}`;
+}
+
+function numericConditionMarker(parameter_x: number, parameter_yCode: string): string {
+  return `${NUMERIC_CONDITION_MARKER_PREFIX}${parameter_x}${NUMERIC_CONDITION_MARKER_MIDDLE}${parameter_yCode}`;
 }
 
 describe("public code sanitization", () => {
@@ -118,10 +125,19 @@ describe("public code sanitization", () => {
       chars([80, 69, 70, 84, 32, 99, 111, 110, 100, 105, 116, 105, 111, 110]),
       chars([80, 69, 70, 84, 32, 115, 116, 117, 100, 121]),
       chars([66, 97, 115, 101, 108, 105, 110, 101, 45, 102, 105, 114, 115, 116, 32, 80, 69, 70, 84]),
+      chars([82, 101, 99, 111, 118, 101, 114, 101, 100, 32, 99, 97, 99, 104, 101, 100, 32, 102, 117, 108, 108, 32, 116, 101, 120, 116]),
       chars([99, 111, 109, 112, 97, 99, 116, 32, 80, 69, 70, 84, 32, 114, 101, 99, 105, 112, 101]),
       chars([76, 111, 82, 65, 47, 81, 76, 111, 82, 65, 47, 80, 69, 70, 84]),
       chars([114, 97, 110, 107, 47, 100, 114, 111, 112, 111, 117, 116, 44, 32, 76, 111, 82, 65, 47, 81, 76, 111, 82, 65, 44, 32, 80, 69, 70, 84]),
       chars([80, 69, 70, 84, 32, 114, 101, 99, 105, 112, 101]),
+      chars([97, 100, 97, 112, 116, 101, 114, 95, 113, 118, 95, 114, 56]),
+      chars([112, 101, 102, 116, 95, 116, 121, 112, 101]),
+      chars([97, 100, 97, 112, 116, 101, 114, 95, 114, 97, 110, 107]),
+      chars([97, 100, 97, 112, 116, 101, 114, 95, 100, 114, 111, 112, 111, 117, 116]),
+      chars([118, 97, 110, 105, 108, 108, 97, 32, 97, 100, 97, 112, 116, 101, 114]),
+      chars([100, 101, 99, 111, 109, 112, 111, 115, 101, 100, 32, 97, 100, 97, 112, 116, 101, 114]),
+      chars([115, 116, 97, 98, 105, 108, 105, 122, 101, 100, 32, 97, 100, 97, 112, 116, 101, 114]),
+      chars([114, 97, 110, 107, 45, 115, 116, 97, 98, 105, 108, 105, 122, 101, 100, 32, 97, 100, 97, 112, 116, 101, 114]),
       chars([105, 100, 101, 110, 116, 105, 102, 121, 45, 119, 104, 105, 99, 104, 45, 108, 105, 103, 104, 116, 119, 101, 105, 103, 104, 116, 45, 112, 97, 114, 97, 109, 101, 116, 101, 114, 45, 101, 102, 102, 105, 99, 105, 101, 110, 116, 45, 105, 45, 55, 51, 48, 53, 48, 102, 56, 53]),
       chars([100, 97, 116, 97, 115, 101, 116, 95, 116, 111, 95, 98, 101, 95, 115, 101, 108, 101, 99, 116, 101, 100]),
       conditionMarker(4, "0_0"),
@@ -131,7 +147,15 @@ describe("public code sanitization", () => {
       conditionMarker(16, "0_0"),
       conditionMarker(16, "0_05"),
       conditionMarker(32, "0_0"),
-      conditionMarker(32, "0_05")
+      conditionMarker(32, "0_05"),
+      numericConditionMarker(4, "0_0"),
+      numericConditionMarker(4, "0_05"),
+      numericConditionMarker(8, "0_0"),
+      numericConditionMarker(8, "0_05"),
+      numericConditionMarker(16, "0_0"),
+      numericConditionMarker(16, "0_05"),
+      numericConditionMarker(32, "0_0"),
+      numericConditionMarker(32, "0_05")
     ];
 
     const bannedPatterns = [
@@ -142,10 +166,12 @@ describe("public code sanitization", () => {
       new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([114, 101, 112, 97, 105, 114, 80, 121, 116, 104, 111, 110, 76, 111, 114, 97])}[A-Za-z0-9_]*`, "u"),
       new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([95, 97, 117, 116, 111, 108, 97, 98, 111, 115, 95, 108, 111, 114, 97, 95])}[A-Za-z0-9_]*`, "u"),
       new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([108, 111, 99, 107, 101, 100, 95, 108, 111, 114, 97])}[A-Za-z0-9_]*`, "u"),
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([108, 111, 114, 97, 95, 114, 97, 110, 107])}(?:$|[^A-Za-z0-9_])`, "u")
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([108, 111, 114, 97, 95, 114, 97, 110, 107])}(?:$|[^A-Za-z0-9_])`, "u"),
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${NUMERIC_CONDITION_MARKER_PREFIX}\d+${NUMERIC_CONDITION_MARKER_MIDDLE}[A-Za-z0-9_]+`, "u")
     ];
 
-    const offenders = CODE_DIRS.flatMap(walkCodeFiles).flatMap((relativePath) => {
+    const scanFiles = [...CODE_DIRS.flatMap(walkCodeFiles), ...ROOT_PUBLIC_TEXT_FILES.filter((file) => fs.existsSync(path.join(ROOT, file)))];
+    const offenders = scanFiles.flatMap((relativePath) => {
       const text = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
       const literalOffenders = banned
         .filter((pattern) => text.includes(pattern))

@@ -699,6 +699,137 @@ describe("review node", () => {
     );
   });
 
+  it("backtracks when prior paper scientific validation reports upstream evidence gaps", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-node-scientific-gate-"));
+    process.chdir(root);
+
+    const run = makeRun("run-review-scientific-gate");
+    run.graph.nodeStates.write_paper.lastError =
+      "write_paper generated manuscript artifacts but stopped before PDF build because the scientific quality gate failed in strict-paper mode: Abstract, Results, and Conclusion report conflicting aggregate accuracy values. Evidence insufficiency remains in core sections; missing categories: resource measurement.";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(path.join(runDir, "figures"), { recursive: true });
+    await mkdir(path.join(runDir, "paper"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.91 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>\n", "utf8");
+    await writeFile(path.join(runDir, "corpus.jsonl"), `${JSON.stringify({ paper_id: "paper_1", title: "Reviewable Benchmark" })}\n`, "utf8");
+    await writeFile(path.join(runDir, "paper_summaries.jsonl"), `${JSON.stringify({ paper_id: "paper_1", summary: "Evidence summary." })}\n`, "utf8");
+    await writeFile(path.join(runDir, "evidence_store.jsonl"), `${JSON.stringify({ evidence_id: "ev_1", claim: "Evidence claim." })}\n`, "utf8");
+    await writeFile(path.join(runDir, "hypotheses.jsonl"), `${JSON.stringify({ hypothesis_id: "h_1", text: "Hypothesis.", evidence_links: ["ev_1"] })}\n`, "utf8");
+    await writeFile(path.join(runDir, "experiment_plan.yaml"), "selected_design:\n  title: Reviewable plan\n", "utf8");
+    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "baseline_condition", accuracy: 0.87 }), "utf8");
+    await writeFile(
+      path.join(runDir, "result_table.json"),
+      JSON.stringify({ rows: [{ method: "candidate_condition", accuracy: 0.91 }, { method: "baseline_condition", accuracy: 0.87 }] }),
+      "utf8"
+    );
+    await writeFile(path.join(runDir, "analyze_papers_richness_summary.json"), JSON.stringify({ readiness: "adequate", paper_count: 5 }), "utf8");
+    await writeFile(
+      path.join(runDir, "paper", "scientific_validation.json"),
+      JSON.stringify({
+        evidence_diagnostics: {
+          blocked_by_evidence_insufficiency: true,
+          missing_evidence_categories: ["resource measurement"]
+        }
+      }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "result_analysis.json"),
+      `${JSON.stringify({
+        analysis_version: 1,
+        generated_at: new Date().toISOString(),
+        mean_score: 0.91,
+        metrics: { accuracy: 0.91 },
+        objective_metric: {
+          raw: "accuracy at least 0.9",
+          evaluation: { status: "met", summary: "Objective metric met: accuracy=0.91 >= 0.9." },
+          profile: { source: "default", preferred_metric_keys: ["accuracy"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
+        },
+        overview: { objective_status: "met", objective_summary: "Objective metric met.", execution_runs: 3 },
+        plan_context: { shortlisted_designs: [], design_notes: [], implementation_notes: [], evaluation_notes: [], assumptions: [] },
+        metric_table: [],
+        condition_comparisons: [],
+        execution_summary: { observation_count: 3, commands: ["node run_condition_sweep_experiment.js"], sources: ["local_node"], stderr_excerpts: [] },
+        primary_findings: ["Candidate condition exceeded baseline."],
+        limitations: ["Resource measurements were not persisted."],
+        warnings: [],
+        paper_claims: [],
+        figure_specs: [],
+        supplemental_runs: [],
+        external_comparisons: [],
+        statistical_summary: { total_trials: 3, executed_trials: 3, cached_trials: 0, confidence_intervals: [], stability_metrics: [], effect_estimates: [], notes: [] },
+        failure_taxonomy: [],
+        transition_recommendation: {
+          action: "advance",
+          sourceNode: "analyze_results",
+          targetNode: "review",
+          reason: "Ready for review before paper writing.",
+          confidence: 0.88,
+          autoExecutable: true,
+          evidence: ["accuracy reached the configured target."],
+          suggestedCommands: ["/approve"],
+          generatedAt: new Date().toISOString()
+        }
+      }, null, 2)}\n`,
+      "utf8"
+    );
+
+    const node = createReviewNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: new LocalAciAdapter({ allowNetwork: false }),
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_implement",
+      targetNode: "implement_experiments"
+    });
+    const decision = JSON.parse(await readFile(path.join(runDir, "review", "decision.json"), "utf8")) as {
+      outcome: string;
+      recommended_transition?: string;
+      blocking_finding_ids?: string[];
+      required_actions?: string[];
+    };
+    expect(decision.outcome).toBe("backtrack_to_implement");
+    expect(decision.recommended_transition).toBe("backtrack_to_implement");
+    expect(decision.blocking_finding_ids).toEqual(
+      expect.arrayContaining([
+        "scientific_validation:blocked_by_evidence_insufficiency",
+        "scientific_validation:aggregate_accuracy_conflict"
+      ])
+    );
+    expect((decision.required_actions ?? []).join(" ")).toContain("resource measurement");
+
+    const strengthening = JSON.parse(
+      await readFile(path.join(runDir, "review", "node_strengthening_recommendations.json"), "utf8")
+    ) as { recommendations: Array<{ node: string; priority: string; diagnostic_ids: string[] }> };
+    expect(strengthening.recommendations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          node: "run_experiments",
+          priority: "high",
+          diagnostic_ids: expect.arrayContaining(["scientific_validation:missing_resource_measurement"])
+        }),
+        expect.objectContaining({
+          node: "write_paper",
+          priority: "high",
+          diagnostic_ids: expect.arrayContaining(["scientific_validation:aggregate_accuracy_conflict"])
+        })
+      ])
+    );
+  });
+
   it("keeps explicit baseline names in pre_review_summary when they come from analysis metrics instead of comparison labels", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-node-pre-summary-"));
     process.chdir(root);
@@ -1542,6 +1673,23 @@ describe("review node", () => {
     expect(result.status).toBe("success");
     expect(result.transitionRecommendation?.targetNode).not.toBe("write_paper");
     expect(result.transitionRecommendation?.action).toBe("backtrack_to_implement");
+
+    const decision = JSON.parse(await readFile(path.join(runDir, "review", "decision.json"), "utf8")) as {
+      outcome: string;
+      recommended_transition?: string;
+      blocking_finding_ids?: string[];
+      required_actions?: string[];
+    };
+    expect(decision.outcome).toBe("backtrack_to_implement");
+    expect(decision.recommended_transition).toBe("backtrack_to_implement");
+    expect((decision.blocking_finding_ids ?? []).length).toBeGreaterThan(0);
+    expect((decision.required_actions ?? []).join(" ").toLowerCase()).toContain("seed");
+
+    const reviewPacket = JSON.parse(await readFile(path.join(runDir, "review", "review_packet.json"), "utf8")) as {
+      decision?: { outcome?: string; recommended_transition?: string };
+    };
+    expect(reviewPacket.decision?.outcome).toBe("backtrack_to_implement");
+    expect(reviewPacket.decision?.recommended_transition).toBe("backtrack_to_implement");
 
     const critique = JSON.parse(await readFile(path.join(runDir, "review", "paper_critique.json"), "utf8")) as {
       manuscript_type: string;

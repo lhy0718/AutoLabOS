@@ -20,6 +20,18 @@ interface RawAnalysisSynthesis {
   confidence_statement?: unknown;
 }
 
+interface EvidenceAccountingSummary {
+  primary_trials?: number;
+  executed_trials?: number;
+  supplemental_run_count: number;
+  max_seed_count?: number;
+  max_ci_sample_size?: number;
+  has_condition_correct_totals: boolean;
+  has_task_correct_totals: boolean;
+  trial_count_difference_accounted_by_supplemental: boolean;
+  summary: string;
+}
+
 export async function synthesizeAnalysisReport(args: SynthesizeAnalysisArgs): Promise<AnalysisSynthesis> {
   try {
     args.eventStream?.emit({
@@ -50,12 +62,14 @@ export async function synthesizeAnalysisReport(args: SynthesizeAnalysisArgs): Pr
       }
     });
     const parsed = parseAnalysisSynthesisResponse(completion.text);
+    const evidenceAccounting = buildEvidenceAccountingSummary(args.report);
+    const grounded = groundAnalysisSynthesisToEvidence(parsed, evidenceAccounting);
     return {
       source: "llm",
-      discussion_points: parsed.discussion_points,
-      failure_analysis: parsed.failure_analysis,
-      follow_up_actions: parsed.follow_up_actions,
-      confidence_statement: parsed.confidence_statement
+      discussion_points: grounded.discussion_points,
+      failure_analysis: grounded.failure_analysis,
+      follow_up_actions: grounded.follow_up_actions,
+      confidence_statement: grounded.confidence_statement
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -87,6 +101,7 @@ function buildAnalysisSynthesisPrompt(
   run: Pick<RunRecord, "topic" | "objectiveMetric" | "constraints">,
   report: AnalysisReport
 ): string {
+  const evidenceAccounting = buildEvidenceAccountingSummary(report);
   const payload = {
     run: {
       topic: run.topic,
@@ -117,9 +132,11 @@ function buildAnalysisSynthesisPrompt(
     })),
     statistical_summary: {
       total_trials: report.statistical_summary.total_trials,
+      executed_trials: report.statistical_summary.executed_trials,
       confidence_intervals: report.statistical_summary.confidence_intervals.slice(0, 4).map((item) => ({
         metric_key: item.metric_key,
-        summary: item.summary
+        summary: item.summary,
+        sample_size: item.sample_size
       })),
       effect_estimates: report.statistical_summary.effect_estimates.slice(0, 3).map((item) => ({
         comparison_id: item.comparison_id,
@@ -127,6 +144,7 @@ function buildAnalysisSynthesisPrompt(
       })),
       notes: report.statistical_summary.notes.slice(0, 4)
     },
+    evidence_accounting: evidenceAccounting,
     verifier_feedback: report.verifier_feedback
       ? {
           status: report.verifier_feedback.status,
@@ -160,6 +178,11 @@ function buildAnalysisSynthesisPrompt(
     "- failure_analysis: 1-3 bullets. If no concrete execution failure occurred, focus on residual risks or remaining uncertainty instead of inventing a failure.",
     "- follow_up_actions: 1-3 concrete next steps grounded in the payload.",
     "- confidence_statement: one sentence explaining confidence level and why.",
+    "- Treat evidence_accounting as authoritative when describing seed counts, CI sample sizes, raw correct/total counts, and primary-vs-supplemental trial accounting.",
+    "- If evidence_accounting.has_condition_correct_totals is true, do not say condition-level raw correct/total counts or denominators are missing.",
+    "- If evidence_accounting.max_seed_count is greater than 1, do not describe the primary evidence as single-seed.",
+    "- If evidence_accounting.max_ci_sample_size is greater than 6, do not cite n=6 as the overall CI/sample-size limitation.",
+    "- If evidence_accounting.trial_count_difference_accounted_by_supplemental is true, do not call primary-vs-executed trial counts an ambiguity.",
     "- Do not use markdown or add any keys beyond the required JSON shape.",
     "",
     JSON.stringify(payload, null, 2)
@@ -210,6 +233,229 @@ function parseAnalysisSynthesisResponse(raw: string): Omit<AnalysisSynthesis, "s
         : ["Expand confirmatory runs or reporting depth before making stronger claims."],
     confidence_statement: confidenceStatement
   };
+}
+
+function buildEvidenceAccountingSummary(report: AnalysisReport): EvidenceAccountingSummary {
+  const primaryTrials = report.statistical_summary.total_trials;
+  const executedTrials = report.statistical_summary.executed_trials;
+  const supplementalRunCount = report.supplemental_runs.length;
+  const conditionRows = Array.isArray(report.metrics.condition_results)
+    ? report.metrics.condition_results
+    : [];
+  const maxCiSampleSize = maxNumber([
+    ...report.statistical_summary.confidence_intervals.map((item) => item.sample_size),
+    ...conditionRows.flatMap((item) => collectConditionConfidenceSampleSizes(item))
+  ]);
+  const maxSeedCount = maxNumber(conditionRows.map((item) => objectNumber(item, "seed_count")));
+  const hasConditionCorrectTotals = conditionRows.some(
+    (item) => objectNumber(item, "correct_count") !== undefined && objectNumber(item, "total_count") !== undefined
+  );
+  const hasTaskCorrectTotals = conditionRows.some((item) => hasNestedTaskCorrectTotals(item));
+  const trialCountDifferenceAccountedBySupplemental =
+    typeof primaryTrials === "number" &&
+    typeof executedTrials === "number" &&
+    supplementalRunCount > 0 &&
+    executedTrials === primaryTrials + supplementalRunCount;
+
+  return {
+    primary_trials: primaryTrials,
+    executed_trials: executedTrials,
+    supplemental_run_count: supplementalRunCount,
+    max_seed_count: maxSeedCount,
+    max_ci_sample_size: maxCiSampleSize,
+    has_condition_correct_totals: hasConditionCorrectTotals,
+    has_task_correct_totals: hasTaskCorrectTotals,
+    trial_count_difference_accounted_by_supplemental: trialCountDifferenceAccountedBySupplemental,
+    summary: renderEvidenceAccountingSummary({
+      primaryTrials,
+      executedTrials,
+      supplementalRunCount,
+      maxSeedCount,
+      maxCiSampleSize,
+      hasConditionCorrectTotals,
+      hasTaskCorrectTotals,
+      trialCountDifferenceAccountedBySupplemental
+    })
+  };
+}
+
+function renderEvidenceAccountingSummary(input: {
+  primaryTrials?: number;
+  executedTrials?: number;
+  supplementalRunCount: number;
+  maxSeedCount?: number;
+  maxCiSampleSize?: number;
+  hasConditionCorrectTotals: boolean;
+  hasTaskCorrectTotals: boolean;
+  trialCountDifferenceAccountedBySupplemental: boolean;
+}): string {
+  const parts: string[] = [];
+  if (typeof input.primaryTrials === "number") {
+    parts.push(`primary trials=${input.primaryTrials}`);
+  }
+  if (typeof input.executedTrials === "number") {
+    parts.push(`executed trials=${input.executedTrials}`);
+  }
+  if (input.supplementalRunCount > 0) {
+    parts.push(`supplemental run profiles=${input.supplementalRunCount}`);
+  }
+  if (typeof input.maxSeedCount === "number") {
+    parts.push(`max seed count per condition=${input.maxSeedCount}`);
+  }
+  if (typeof input.maxCiSampleSize === "number") {
+    parts.push(`max CI sample size=${input.maxCiSampleSize}`);
+  }
+  if (input.hasConditionCorrectTotals) {
+    parts.push("condition-level correct/total counts are present");
+  }
+  if (input.hasTaskCorrectTotals) {
+    parts.push("task-level correct/total counts are present");
+  }
+  if (input.trialCountDifferenceAccountedBySupplemental) {
+    parts.push("executed-trial count is explained by primary trials plus supplemental profiles");
+  }
+  return parts.length > 0 ? parts.join("; ") : "No detailed evidence-accounting fields were detected.";
+}
+
+function groundAnalysisSynthesisToEvidence(
+  synthesis: Omit<AnalysisSynthesis, "source" | "fallback_reason">,
+  accounting: EvidenceAccountingSummary
+): Omit<AnalysisSynthesis, "source" | "fallback_reason"> {
+  const evidencePoint = `Evidence accounting: ${accounting.summary}.`;
+  const discussionPoints = uniqueStrings([
+    evidencePoint,
+    ...synthesis.discussion_points.filter((item) => !contradictsEvidenceAccounting(item, accounting))
+  ]).slice(0, 4);
+  const failureAnalysis = synthesis.failure_analysis.filter(
+    (item) => !contradictsEvidenceAccounting(item, accounting)
+  );
+  const followUpActions = synthesis.follow_up_actions.filter(
+    (item) => !contradictsEvidenceAccounting(item, accounting)
+  );
+  const confidenceStatement = contradictsEvidenceAccounting(synthesis.confidence_statement, accounting)
+    ? buildEvidenceGroundedConfidenceStatement(accounting)
+    : synthesis.confidence_statement;
+
+  return {
+    discussion_points: discussionPoints.length > 0 ? discussionPoints : [evidencePoint],
+    failure_analysis:
+      failureAnalysis.length > 0
+        ? failureAnalysis.slice(0, 3)
+        : ["No concrete execution failure was identified beyond the structured warnings and limitations."],
+    follow_up_actions:
+      followUpActions.length > 0
+        ? followUpActions.slice(0, 3)
+        : ["Use the structured evidence-accounting fields when drafting claims and limitations."],
+    confidence_statement: confidenceStatement
+  };
+}
+
+function buildEvidenceGroundedConfidenceStatement(accounting: EvidenceAccountingSummary): string {
+  if (
+    (accounting.max_seed_count ?? 0) > 1 &&
+    (accounting.max_ci_sample_size ?? 0) > 6 &&
+    accounting.has_condition_correct_totals
+  ) {
+    return "Confidence is moderate for a bounded screening interpretation because repeated-condition evidence, confidence intervals, and correct/total counts are present, while broader claims still depend on experiment scope.";
+  }
+  return "Confidence is bounded by the structured evidence-accounting summary and should not exceed the reported experiment scope.";
+}
+
+function contradictsEvidenceAccounting(text: string, accounting: EvidenceAccountingSummary): boolean {
+  const normalized = text.toLowerCase();
+  if (
+    accounting.has_condition_correct_totals &&
+    /\b(?:missing|not provided|lack(?:ing)?|unavailable|without)\b[\s\S]{0,120}\b(?:raw|correct|total|denominator|count)s?\b/u.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+  if (
+    accounting.has_condition_correct_totals &&
+    /\b(?:export|add|provide|include)\b[\s\S]{0,120}\b(?:raw|correct|total|denominator|count)s?\b[\s\S]{0,80}\bbefore\b/u.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+  if (
+    (accounting.max_seed_count ?? 0) > 1 &&
+    /\b(?:single[- ]seed|only\s+(?:one|1)\s+seed|seed\s*=\s*\d+\s+only)\b/u.test(normalized)
+  ) {
+    return true;
+  }
+  if ((accounting.max_ci_sample_size ?? 0) > 6 && /\b(?:n\s*=\s*6|6\s+prediction)s?\b/u.test(normalized)) {
+    return true;
+  }
+  if (
+    (accounting.max_ci_sample_size ?? 0) >= 30 &&
+    /\btiny\b[\s\S]{0,80}\b(?:confidence[- ]interval\s+)?sample\s+sizes?\b/u.test(normalized)
+  ) {
+    return true;
+  }
+  if (
+    accounting.trial_count_difference_accounted_by_supplemental &&
+    /\b(?:trial[- ]accounting ambiguity|trial[- ]count discrepancy|trial counts?\s+(?:are|is)\s+ambiguous)\b/u.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function maxNumber(values: Array<number | undefined>): number | undefined {
+  const numbers = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return numbers.length > 0 ? Math.max(...numbers) : undefined;
+}
+
+function objectNumber(value: unknown, key: string): number | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const raw = (value as Record<string, unknown>)[key];
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+function hasNestedTaskCorrectTotals(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const evaluation = (value as Record<string, unknown>).evaluation;
+  if (!evaluation || typeof evaluation !== "object" || Array.isArray(evaluation)) {
+    return false;
+  }
+  return Object.values(evaluation as Record<string, unknown>).some(
+    (item) => objectNumber(item, "correct_count") !== undefined && objectNumber(item, "total_count") !== undefined
+  );
+}
+
+function collectConditionConfidenceSampleSizes(value: unknown): number[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+  const record = value as Record<string, unknown>;
+  const sizes: number[] = [];
+  const ownCi = record.confidence_interval;
+  const ownSampleSize = objectNumber(ownCi, "sample_size");
+  if (typeof ownSampleSize === "number") {
+    sizes.push(ownSampleSize);
+  }
+  const evaluation = record.evaluation;
+  if (evaluation && typeof evaluation === "object" && !Array.isArray(evaluation)) {
+    for (const taskValue of Object.values(evaluation as Record<string, unknown>)) {
+      if (!taskValue || typeof taskValue !== "object" || Array.isArray(taskValue)) {
+        continue;
+      }
+      const taskCi = (taskValue as Record<string, unknown>).confidence_interval;
+      const taskSampleSize = objectNumber(taskCi, "sample_size");
+      if (typeof taskSampleSize === "number") {
+        sizes.push(taskSampleSize);
+      }
+    }
+  }
+  return sizes;
 }
 
 function buildFallbackAnalysisSynthesis(report: AnalysisReport): AnalysisSynthesis {

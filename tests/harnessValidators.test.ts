@@ -462,6 +462,41 @@ describe("harness validators", () => {
     expect(codes).toContain("paper_render_validation_failed");
   });
 
+  it("reports missing ACL bibliography style file when acl_natbib is selected", async () => {
+    const runDir = createTempRunDir("autolabos-harness-validator-acl-bst-missing-");
+    await mkdir(path.join(runDir, "paper"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "paper", "main.tex"),
+      [
+        "\\documentclass[11pt]{article}",
+        "\\usepackage[review]{ACL2023}",
+        "\\begin{document}",
+        "\\section{Related Work}",
+        "Prior work supports the framing. \\cite{paperA}",
+        "\\bibliographystyle{acl_natbib}",
+        "\\bibliography{references}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "paper", "references.bib"),
+      "@article{paperA, title={Method A}}\n",
+      "utf8"
+    );
+
+    const result = await validateRunArtifactStructure({
+      runId: "run-paper-acl-bst-missing",
+      runDir,
+      nodeStates: makeNodeStates({
+        write_paper: "completed"
+      })
+    });
+
+    const codes = result.issues.map((item) => item.code);
+    expect(codes).toContain("paper_acl_bibliography_style_file_missing");
+  });
+
   it("reports missing metrics/objective artifacts when later nodes are marked completed", async () => {
     const runDir = createTempRunDir("autolabos-harness-validator-run-");
     await writeJson(path.join(runDir, "run_experiments_verify_report.json"), { status: "pass" });

@@ -361,7 +361,7 @@ describe("paperMinimumGate", () => {
         {
           marker: "baseline_condition",
           rank: 8,
-          dropout: 0,
+          parameter_y: 0,
           steps_completed: 4,
           per_task_metrics: {
             benchmark_task_a: { correct: 3, total: 6 },
@@ -372,7 +372,7 @@ describe("paperMinimumGate", () => {
         {
           marker: "candidate_condition_f5",
           rank: 32,
-          dropout: 0.05,
+          parameter_y: 0.05,
           steps_completed: 4,
           per_task_metrics: {
             benchmark_task_a: { correct: 3, total: 6 },
@@ -412,5 +412,43 @@ describe("paperMinimumGate", () => {
     const result = evaluateMinimumGate(input);
     const baselineCheck = result.checks.find(c => c.id === "baseline_or_comparator");
     expect(baselineCheck?.passed).toBe(true);
+  });
+
+  it("uses condition result seed arrays as repeated-seed evidence", () => {
+    const input = fullInput();
+    input.report.metrics = {
+      run_config: { seed: 36 },
+      condition_results: [
+        {
+          condition_marker: "baseline_condition",
+          seeds: [42, 43, 44],
+          seed_count: 3,
+          correct_count: 132,
+          total_count: 288,
+          evaluation: {
+            benchmark_task_a: { correct_count: 69, total_count: 144 },
+            benchmark_task_b: { correct_count: 63, total_count: 144 }
+          }
+        },
+        {
+          condition_marker: "candidate_condition_a",
+          seeds: [42, 43, 44],
+          seed_count: 3,
+          correct_count: 138,
+          total_count: 288,
+          evaluation: {
+            benchmark_task_a: { correct_count: 69, total_count: 144 },
+            benchmark_task_b: { correct_count: 69, total_count: 144 }
+          }
+        }
+      ]
+    } as unknown as AnalysisReport["metrics"];
+
+    const result = evaluateMinimumGate(input);
+
+    expect(result.paper_scale_diagnostics?.map((diagnostic) => diagnostic.id)).not.toContain(
+      "missing_seed_replication"
+    );
+    expect(result.checks.find((check) => check.id === "seed_replication")?.passed).toBe(true);
   });
 });

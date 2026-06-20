@@ -114,14 +114,14 @@ describe("designExperimentsPanel", () => {
         "accuracy_delta_vs_baseline"
       ],
       evaluation_steps: [
-        "Produce at least one completed source training batch covering the 8 rank x dropout conditions with real metrics.",
+        "Produce at least one completed source training batch covering the 8 rank x parameter_y conditions with real metrics.",
         "Construct audit packets from those outputs without inventing new accuracy values."
       ]
     });
     const factorial = candidate({
       id: "factorial",
       title: "Staged full 4x2 factorial with promotion gate to paper-ready evidence",
-      plan_summary: "Run the complete rank x dropout design under a staged evidence plan.",
+      plan_summary: "Run the complete rank x parameter_y design under a staged evidence plan.",
       metrics: ["Primary: avg_accuracy and delta_avg_accuracy_vs_baseline_pp", "benchmark_task_a_accuracy"]
     });
 

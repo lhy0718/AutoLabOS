@@ -37,8 +37,11 @@ describe("runMetaHarness", () => {
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "node_strengthening_recommendations.json"))).resolves.toBeTruthy();
     expect(task).toContain("node_strengthening_recommendations.json");
     expect(task).toContain("prompt_target_map.json");
+    expect(task).toContain("manuscript_quality_gate.json");
+    expect(task).toContain("scientific_validation.json");
+    expect(task).toContain("compile_report.json");
     const promptTargetMap = JSON.parse(await fs.readFile(path.join(result.contextDir, "prompt_target_map.json"), "utf8")) as {
-      targets: Array<{ target_node: string; recommended_prompt_node: string; prompt_file: string }>;
+      targets: Array<{ source_artifact?: string; target_node: string; recommended_prompt_node: string; prompt_file: string }>;
     };
     expect(promptTargetMap.targets).toEqual(
       expect.arrayContaining([
@@ -51,11 +54,41 @@ describe("runMetaHarness", () => {
           target_node: "write_paper",
           recommended_prompt_node: "review",
           prompt_file: "node-prompts/review.md"
+        }),
+        expect.objectContaining({
+          source_artifact: "paper/manuscript_quality_gate.json",
+          target_node: "write_paper",
+          recommended_prompt_node: "review",
+          prompt_file: "node-prompts/review.md"
+        }),
+        expect.objectContaining({
+          source_artifact: "paper/scientific_validation.json",
+          target_node: "run_experiments",
+          recommended_prompt_node: "design_experiments",
+          prompt_file: "node-prompts/design_experiments.md",
+          diagnostic_ids: expect.arrayContaining(["resource measurement"])
+        }),
+        expect.objectContaining({
+          source_artifact: "paper/gate_decision.json",
+          target_node: "write_paper",
+          recommended_prompt_node: "review",
+          prompt_file: "node-prompts/review.md",
+          diagnostic_ids: expect.arrayContaining(["table_figure_aggregate_accuracy_conflict"])
+        }),
+        expect.objectContaining({
+          source_artifact: "paper/compile_report.json",
+          target_node: "write_paper",
+          recommended_prompt_node: "review",
+          prompt_file: "node-prompts/review.md",
+          diagnostic_ids: expect.arrayContaining(["missing_bibliography_style_file"])
         })
       ])
     );
     await expect(fs.stat(path.join(result.contextDir, "node-prompts", "design_experiments.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "paper_readiness.json"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "manuscript_quality_gate.json"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "scientific_validation.json"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(result.contextDir, "runs", "run-1", "compile_report.json"))).resolves.toBeTruthy();
   });
 
   it("returns the context dir without modifying files in --no-apply mode", async () => {
@@ -141,7 +174,14 @@ describe("runMetaHarness", () => {
     expect(manifestRaw).not.toContain(externalRunA);
     expect(manifest.external_contexts[0]).toMatchObject({
       source_label: path.basename(externalRunA),
-      copied_artifacts: expect.arrayContaining(["result_analysis.json", "review/decision.json", "paper/paper_readiness.json"])
+      copied_artifacts: expect.arrayContaining([
+        "result_analysis.json",
+        "review/decision.json",
+        "paper/paper_readiness.json",
+        "paper/manuscript_quality_gate.json",
+        "paper/scientific_validation.json",
+        "paper/compile_report.json"
+      ])
     });
     expect(manifest.external_contexts[1]?.missing_optional_artifacts).toEqual(
       expect.arrayContaining(["review/decision.json", "paper/paper_readiness.json"])
@@ -160,6 +200,11 @@ describe("runMetaHarness", () => {
           source_artifact: "external-runs/external-1/review/node_strengthening_recommendations.json",
           target_node: "run_experiments",
           recommended_prompt_node: "design_experiments"
+        }),
+        expect.objectContaining({
+          source_artifact: "external-runs/external-1/paper/compile_report.json",
+          target_node: "write_paper",
+          recommended_prompt_node: "review"
         })
       ])
     );
@@ -366,6 +411,47 @@ async function createWorkspaceWithCompletedRun(): Promise<string> {
     JSON.stringify({ paper_ready: false, overall_score: 6.5 }, null, 2),
     "utf8"
   );
+  await fs.writeFile(
+    path.join(runRoot, "paper", "manuscript_quality_gate.json"),
+    JSON.stringify({ action: "pass", issues_after: [{ code: "alignment", section: "Results" }] }, null, 2),
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(runRoot, "paper", "scientific_validation.json"),
+    JSON.stringify({
+      status: "warn",
+      evidence_diagnostics: { missing_evidence_categories: ["resource measurement"] }
+    }, null, 2),
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(runRoot, "paper", "gate_decision.json"),
+    JSON.stringify({
+      status: "fail",
+      blocking_issues: [
+        { reason: "Table 1 and Figure 1 report conflicting aggregate accuracy values." }
+      ]
+    }, null, 2),
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(runRoot, "paper", "compile_report.json"),
+    JSON.stringify({
+      status: "success",
+      attempts: [
+        {
+          commands: [
+            {
+              step: "bibtex",
+              status: "error",
+              stdout: "I couldn't open style file manuscript_style.bst\nI found no style file"
+            }
+          ]
+        }
+      ]
+    }, null, 2),
+    "utf8"
+  );
   await fs.writeFile(path.join(workspace, "node-prompts", "analyze_results.md"), "Prompt\n", "utf8");
   await fs.writeFile(path.join(workspace, "node-prompts", "design_experiments.md"), "Design prompt\n", "utf8");
   await fs.writeFile(path.join(workspace, "node-prompts", "review.md"), "Review prompt\n", "utf8");
@@ -409,6 +495,39 @@ async function createExternalRunRoot(
     await fs.writeFile(
       path.join(root, "paper", "paper_readiness.json"),
       JSON.stringify({ paper_ready: false, overall_score: 5 }, null, 2),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(root, "paper", "manuscript_quality_gate.json"),
+      JSON.stringify({ action: "pass", issues_after: [{ code: "alignment" }] }, null, 2),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(root, "paper", "scientific_validation.json"),
+      JSON.stringify({
+        status: "warn",
+        evidence_diagnostics: { missing_evidence_categories: ["resource measurement"] }
+      }, null, 2),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(root, "paper", "gate_decision.json"),
+      JSON.stringify({
+        status: "fail",
+        blocking_issues: [
+          { reason: "Table 1 and Figure 1 report conflicting aggregate accuracy values." }
+        ]
+      }, null, 2),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(root, "paper", "compile_report.json"),
+      JSON.stringify({
+        status: "success",
+        attempts: [
+          { commands: [{ step: "bibtex", status: "error", stdout: "I couldn't open style file manuscript_style.bst" }] }
+        ]
+      }, null, 2),
       "utf8"
     );
   }

@@ -28,8 +28,8 @@ The first full live validation run should use a cached, locally runnable small L
 - Baseline: `<baseline_condition>`.
 - Current live-run conditions: one locked baseline plus candidate comparators from the declared grid.
 - Current live-run robustness signal: five seeds per condition, seeds 42 through 46.
-- Scale-up candidate: add rank=4 and larger evaluation slices only after the current run clears analyze/review/audit gates.
-- Result table minimum columns: model, rank, dropout, seed, task, accuracy, average accuracy, train loss, runtime, peak VRAM, status, failure note.
+- Scale-up candidate: add factor x=4 and larger evaluation slices only after the current run clears analyze/review/audit gates.
+- Result table minimum columns: model, factor x, factor y, seed, task, accuracy, average accuracy, train loss, runtime, peak VRAM, status, failure note.
 
 ## Why This Topic
 

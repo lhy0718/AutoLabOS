@@ -62,11 +62,11 @@ describe("resultAnalysis", () => {
         accuracy_delta_vs_baseline: 0,
         baseline_mean_accuracy: 0.546875,
         best_mean_accuracy: 0.546875,
-        best_recipe: "adapter_qv_r8",
+        best_recipe: "candidate_condition_a",
         results: [
           {
             recipe: "baseline",
-            peft_type: "none",
+            adapter_type: "none",
             status: "completed",
             mean_accuracy: 0.546875,
             benchmark_task_a_accuracy: 0.53125,
@@ -75,8 +75,8 @@ describe("resultAnalysis", () => {
             wall_clock_seconds: 7.5
           },
           {
-            recipe: "adapter_qv_r8",
-            peft_type: "adapter",
+            recipe: "candidate_condition_a",
+            adapter_type: "adapter",
             status: "completed",
             mean_accuracy: 0.546875,
             benchmark_task_a_accuracy: 0.53125,
@@ -115,7 +115,7 @@ describe("resultAnalysis", () => {
 
     expect(report.condition_comparisons).toHaveLength(1);
     expect(report.condition_comparisons[0]).toMatchObject({
-      id: "adapter_qv_r8_vs_baseline",
+      id: "candidate_condition_a_vs_baseline",
       source: "metrics.results"
     });
     expect(report.condition_comparisons[0]?.metrics).toEqual(
@@ -155,7 +155,7 @@ describe("resultAnalysis", () => {
           {
             condition_id: "locked_baseline_condition",
             recipe_type: "locked_baseline",
-            is_locked_adapter_baseline: true,
+            is_locked_tuned_baseline: true,
             mean_zero_shot_accuracy_benchmark_tasks: 0.304353,
             benchmark_task_b_accuracy: 0.332559,
             benchmark_task_a_accuracy: 0.276147
@@ -211,6 +211,218 @@ describe("resultAnalysis", () => {
     );
   });
 
+  it("groups task-level condition result rows with nested evidence into baseline comparisons", () => {
+    const report = buildAnalysisReport({
+      run: {
+        objectiveMetric: "Improve average accuracy over the locked baseline."
+      },
+      metrics: {
+        status: "completed",
+        best_condition_marker: "candidate_condition",
+        condition_results: [
+          {
+            condition_marker: "baseline_condition",
+            task: "task_alpha",
+            status: "completed",
+            accuracy: 0.25,
+            raw_evidence: {
+              raw_evidence: {
+                average_accuracy: 0.375,
+                condition: {
+                  condition_id: "baseline_condition",
+                  marker: "baseline_condition",
+                  is_baseline: true
+                },
+                task_metrics: {
+                  task_alpha: { accuracy: 0.25 },
+                  task_beta: { accuracy: 0.5 }
+                }
+              }
+            }
+          },
+          {
+            condition_marker: "baseline_condition",
+            task: "task_beta",
+            status: "completed",
+            accuracy: 0.5,
+            raw_evidence: {
+              raw_evidence: {
+                average_accuracy: 0.375,
+                condition: {
+                  condition_id: "baseline_condition",
+                  marker: "baseline_condition",
+                  is_baseline: true
+                },
+                task_metrics: {
+                  task_alpha: { accuracy: 0.25 },
+                  task_beta: { accuracy: 0.5 }
+                }
+              }
+            }
+          },
+          {
+            condition_marker: "candidate_condition",
+            task: "task_alpha",
+            status: "completed",
+            accuracy: 0.375,
+            raw_evidence: {
+              raw_evidence: {
+                average_accuracy: 0.4375,
+                condition: {
+                  condition_id: "candidate_condition",
+                  marker: "candidate_condition",
+                  is_baseline: false
+                },
+                task_metrics: {
+                  task_alpha: { accuracy: 0.375 },
+                  task_beta: { accuracy: 0.5 }
+                }
+              }
+            }
+          },
+          {
+            condition_marker: "candidate_condition",
+            task: "task_beta",
+            status: "completed",
+            accuracy: 0.5,
+            raw_evidence: {
+              raw_evidence: {
+                average_accuracy: 0.4375,
+                condition: {
+                  condition_id: "candidate_condition",
+                  marker: "candidate_condition",
+                  is_baseline: false
+                },
+                task_metrics: {
+                  task_alpha: { accuracy: 0.375 },
+                  task_beta: { accuracy: 0.5 }
+                }
+              }
+            }
+          }
+        ]
+      },
+      objectiveProfile: {
+        source: "llm",
+        raw: "Improve average accuracy over the locked baseline.",
+        primaryMetric: "average_accuracy",
+        preferredMetricKeys: ["average_accuracy", "task_alpha_accuracy", "task_beta_accuracy"],
+        comparator: ">=",
+        targetValue: 0.01,
+        targetDescription: "Average accuracy should improve by at least one point.",
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      objectiveEvaluation: {
+        rawObjectiveMetric: "Improve average accuracy over the locked baseline.",
+        profileSource: "llm",
+        primaryMetric: "average_accuracy",
+        preferredMetricKeys: ["average_accuracy", "task_alpha_accuracy", "task_beta_accuracy"],
+        matchedMetricKey: "average_accuracy",
+        comparator: ">=",
+        targetValue: 0.01,
+        observedValue: 0.4375,
+        status: "met",
+        summary: "Objective metric met."
+      }
+    });
+
+    expect(report.condition_comparisons[0]).toMatchObject({
+      id: "candidate_condition_vs_baseline_condition",
+      source: "metrics.condition_results"
+    });
+    expect(report.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "average_accuracy",
+          baseline_value: 0.375,
+          primary_value: 0.4375,
+          value: 0.0625
+        }),
+        expect.objectContaining({
+          key: "task_alpha_accuracy",
+          baseline_value: 0.25,
+          primary_value: 0.375,
+          value: 0.125
+        })
+      ])
+    );
+
+    const validation = buildResultsTableValidation({ report });
+    expect(validation.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "average_accuracy",
+          direction: "higher_better"
+        })
+      ])
+    );
+  });
+
+  it("keeps loss metrics lower-better when building structured result tables", () => {
+    const report = buildAnalysisReport({
+      run: {
+        objectiveMetric: "Improve average accuracy over the locked baseline."
+      },
+      metrics: {
+        best_condition_marker: "candidate_condition",
+        condition_results: [
+          {
+            condition_marker: "baseline_condition",
+            status: "completed",
+            average_accuracy: 0.4,
+            train_loss: 1.2,
+            is_baseline: true
+          },
+          {
+            condition_marker: "candidate_condition",
+            status: "completed",
+            average_accuracy: 0.45,
+            train_loss: 1.1
+          }
+        ]
+      },
+      objectiveProfile: {
+        source: "llm",
+        raw: "Improve average accuracy over the locked baseline.",
+        primaryMetric: "average_accuracy",
+        preferredMetricKeys: ["average_accuracy", "train_loss"],
+        comparator: ">=",
+        targetValue: 0.01,
+        targetDescription: "Average accuracy should improve by at least one point.",
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      objectiveEvaluation: {
+        rawObjectiveMetric: "Improve average accuracy over the locked baseline.",
+        profileSource: "llm",
+        primaryMetric: "average_accuracy",
+        preferredMetricKeys: ["average_accuracy", "train_loss"],
+        matchedMetricKey: "average_accuracy",
+        comparator: ">=",
+        targetValue: 0.01,
+        observedValue: 0.45,
+        status: "met",
+        summary: "Objective metric met."
+      }
+    });
+
+    const validation = buildResultsTableValidation({ report });
+    expect(validation.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "train_loss",
+          baseline: 1.2,
+          comparator: 1.1,
+          delta: -0.1,
+          direction: "lower_better"
+        })
+      ])
+    );
+  });
+
   it("projects node-owned metrics.recipes rows into baseline/comparator condition comparisons", () => {
     const report = buildAnalysisReport({
       run: {
@@ -231,8 +443,8 @@ describe("resultAnalysis", () => {
             },
             wall_time_sec: 1.4
           },
-          adapter_r4: {
-            recipe: "adapter_r4",
+          condition_parameter_x4: {
+            recipe: "condition_parameter_x4",
             evaluation: {
               mean_zero_shot_accuracy: 0.53125,
               per_benchmark_accuracy: {
@@ -282,7 +494,7 @@ describe("resultAnalysis", () => {
     });
 
     expect(report.condition_comparisons[0]).toMatchObject({
-      id: "adapter_r4_vs_baseline",
+      id: "condition_parameter_x4_vs_baseline",
       source: "metrics.recipes"
     });
     expect(report.condition_comparisons[0]?.metrics).toEqual(
@@ -429,8 +641,8 @@ describe("resultAnalysis", () => {
           {
             condition_marker: "baseline_condition",
             status: "completed",
-            adapter_rank: 8,
-            adapter_dropout: 0,
+            condition_parameter_x: 8,
+            condition_parameter_y: 0,
             completed_seed_count: 5,
             average_accuracy_mean: 0.4416666666666667,
             average_accuracy_ci95: 0.030006249349093926,
@@ -444,8 +656,8 @@ describe("resultAnalysis", () => {
           {
             condition_marker: "candidate_condition_d",
             status: "completed",
-            adapter_rank: 16,
-            adapter_dropout: 0,
+            condition_parameter_x: 16,
+            condition_parameter_y: 0,
             completed_seed_count: 5,
             average_accuracy_mean: 0.4666666666666667,
             average_accuracy_ci95: 0.0586068587188299,
@@ -459,8 +671,8 @@ describe("resultAnalysis", () => {
           {
             condition_marker: "candidate_condition_f5",
             status: "completed",
-            adapter_rank: 32,
-            adapter_dropout: 0.05,
+            condition_parameter_x: 32,
+            condition_parameter_y: 0.05,
             completed_seed_count: 5,
             average_accuracy_mean: 0.5083333333333333,
             average_accuracy_ci95: 0.04000833246545857,

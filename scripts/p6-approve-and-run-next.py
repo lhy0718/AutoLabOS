@@ -372,6 +372,93 @@ def should_observe_active_running(record: dict, *, force_run_active: bool) -> bo
     return is_active_running(record)
 
 
+def parse_iso_timestamp(value: object) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def running_record_updated_at(record: dict, node: str) -> float | None:
+    candidates = [
+        parse_iso_timestamp(record.get("updatedAt")),
+        parse_iso_timestamp(node_state(record, node).get("updatedAt")),
+    ]
+    candidates = [value for value in candidates if value is not None]
+    return max(candidates) if candidates else None
+
+
+def command_line_contains_live_run(cmdline: str, workspace: Path, run_id: str) -> bool:
+    normalized = cmdline.replace("\x00", " ")
+    if not normalized.strip():
+        return False
+    run_match = bool(run_id and run_id in normalized)
+    workspace_match = str(workspace) in normalized
+    autolabos_match = any(
+        token in normalized
+        for token in (
+            "AutoLabOS/dist/cli/main.js",
+            "dist/cli/main.js",
+            "p6-approve-and-run-next.py",
+            "run_command.sh",
+            ".autolabos/runs",
+        )
+    )
+    return bool(run_match or (workspace_match and autolabos_match))
+
+
+def has_live_process_for_run(workspace: Path, run_id: str) -> bool:
+    proc_root = Path("/proc")
+    if not proc_root.exists():
+        return False
+    current_pid = os.getpid()
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if int(entry.name) == current_pid:
+                continue
+        except ValueError:
+            continue
+        try:
+            cmdline = (entry / "cmdline").read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        if command_line_contains_live_run(cmdline, workspace, run_id):
+            return True
+    return False
+
+
+def reconcile_stale_running_before_attach(
+    workspace: Path,
+    run_id: str,
+    *,
+    max_age_seconds: float
+) -> bool:
+    if max_age_seconds <= 0:
+        return False
+    record = try_load_run_record(workspace, run_id)
+    if not record or not is_active_running(record):
+        return False
+    node = current_node(record)
+    updated_at = running_record_updated_at(record, node)
+    if updated_at is None:
+        return False
+    age_seconds = time.time() - updated_at
+    if age_seconds < max_age_seconds:
+        return False
+    if has_live_process_for_run(workspace, run_id):
+        return False
+    message = (
+        f"P6 helper found stale running state for {node}: no live AutoLabOS process matched "
+        f"run {run_id} after {int(age_seconds)} seconds; marking a helper-timeout boundary before attach."
+    )
+    return persist_helper_timeout_boundary(workspace, run_id, node, message)
+
+
 def has_record_stop_boundary(record: dict, node: str) -> bool:
     status = node_status(record, node)
     if status in {"needs_approval", "completed", "failed"}:
@@ -562,6 +649,7 @@ def wait_for_stop_boundary(
     candidate_seen_at = 0.0
     observed_target_running = False
     progress_signature = node_progress_signature(workspace, run_id, node)
+    live_process_checked_at = 0.0
     while time.time() < deadline:
         record = try_load_run_record(workspace, run_id)
         if is_target_node_running(record, node) and not observed_target_running:
@@ -577,8 +665,17 @@ def wait_for_stop_boundary(
                 base_timeout=timeout,
                 max_wall_deadline=max_wall_deadline,
             )
-        signature = fresh_record_stop_boundary_signature(record, node, initial_signature)
         now = time.time()
+        if observed_target_running and now - live_process_checked_at >= 15.0:
+            live_process_checked_at = now
+            if has_live_process_for_run(workspace, run_id):
+                deadline = extend_deadline_for_progress(
+                    now=now,
+                    current_deadline=deadline,
+                    base_timeout=timeout,
+                    max_wall_deadline=max_wall_deadline,
+                )
+        signature = fresh_record_stop_boundary_signature(record, node, initial_signature)
         if signature:
             if signature != candidate_signature:
                 candidate_signature = signature
@@ -940,6 +1037,44 @@ def run_selftest() -> int:
     if should_observe_active_running(analyze_running, force_run_active=True):
         print("FAIL: force-run-active should bypass observation of a stale running record")
         return 1
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
+        stale_run_id = "stale-running-run"
+        stale_node = "run_experiments"
+        stale_run_dir = workspace / ".autolabos" / "runs" / stale_run_id
+        stale_node_dir = stale_run_dir / stale_node
+        stale_node_dir.mkdir(parents=True)
+        stale_timestamp = "1970-01-01T00:00:00Z"
+        (stale_run_dir / "run_record.json").write_text(json.dumps({
+            "status": "running",
+            "currentNode": stale_node,
+            "updatedAt": stale_timestamp,
+            "graph": {
+                "currentNode": stale_node,
+                "nodeStates": {
+                    stale_node: {"status": "running", "updatedAt": stale_timestamp},
+                },
+            },
+        }), encoding="utf-8")
+        (stale_node_dir / "status.json").write_text(json.dumps({
+            "status": "running",
+            "stage": "running",
+            "updatedAt": stale_timestamp,
+        }), encoding="utf-8")
+        if not reconcile_stale_running_before_attach(workspace, stale_run_id, max_age_seconds=1):
+            print("FAIL: stale running state was not reconciled before attach")
+            return 1
+        stale_record = json.loads((stale_run_dir / "run_record.json").read_text(encoding="utf-8"))
+        stale_status = json.loads((stale_node_dir / "status.json").read_text(encoding="utf-8"))
+        if stale_record.get("status") != "paused" or node_status(stale_record, stale_node) != "failed":
+            print("FAIL: stale running reconciliation did not pause and fail the node")
+            return 1
+        if stale_status.get("status") != "failed" or stale_status.get("stage") != "p6_helper_timeout":
+            print("FAIL: stale running reconciliation did not close node-local status")
+            return 1
+        if not (stale_node_dir / "p6_helper_timeout.json").exists():
+            print("FAIL: stale running reconciliation did not write diagnostic artifact")
+            return 1
     if is_active_running(analyze_needs_approval):
         print("FAIL: needs_approval run was incorrectly detected as active-running")
         return 1
@@ -1143,6 +1278,7 @@ def main() -> int:
     timeout = float(os.environ.get("AUTOLABOS_P6_NEXT_TIMEOUT_SEC", "3600"))
     max_wall_seconds = float(os.environ.get("AUTOLABOS_P6_NEXT_MAX_WALL_SEC", str(max(timeout, timeout * 4))))
     handoff_grace_seconds = float(os.environ.get("AUTOLABOS_P6_HANDOFF_GRACE_SEC", str(HANDOFF_GRACE_SECONDS)))
+    stale_running_seconds = float(os.environ.get("AUTOLABOS_P6_STALE_RUNNING_SEC", "3600"))
     dist_main = repo_root / "dist" / "cli" / "main.js"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"p6-continue-{next_node}-output.txt"
@@ -1156,6 +1292,13 @@ def main() -> int:
     if not dist_main.exists():
         print(f"FAIL: expected built CLI at {dist_main}; run npm run build first")
         return 1
+    if os.environ.get("AUTOLABOS_P6_DISABLE_STALE_RUNNING_RECONCILE", "") != "1":
+        if reconcile_stale_running_before_attach(
+            workspace,
+            run_id,
+            max_age_seconds=stale_running_seconds,
+        ):
+            print(f"INFO: reconciled stale running state before attaching to run {run_id}.")
     record_before = load_run_record(workspace, run_id)
     force_run_active = os.environ.get("AUTOLABOS_P6_FORCE_RUN_ACTIVE", "") == "1"
     active_running_before = should_observe_active_running(record_before, force_run_active=force_run_active)

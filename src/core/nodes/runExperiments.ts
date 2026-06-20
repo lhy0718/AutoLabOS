@@ -66,8 +66,11 @@ import {
   repairPythonDataCollatorPrecomputedLabelReturnSurface,
   repairPythonDataCollatorTokenizerArgumentSurface,
   repairPythonDataclassEvaluationRecordCoercionSurface,
+  repairPythonNormalizedEvalExampleRecordSurface,
+  repairPythonDirectoryHelperAlias,
   repairPythonBenchmarkAccuracyComprehensionSurface,
   repairPythonEvaluationAnswerLabelAliasSurface,
+  repairPythonEvaluationArtifactDirReloadSurface,
   repairPythonEntrypointLookupHelperAliasSurface,
   repairPythonEntrypointParseArgsSingleArgumentSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
@@ -83,16 +86,28 @@ import {
   repairPythonSingleCellExecutorRuntimeKwargsSurface,
   repairPythonFailureEvidenceNonRecursiveSurface,
   repairPythonSupportedKwargsSemanticAliasSurface,
+  repairPythonSinglePlannedConditionCallableCandidateSurface,
+  repairPythonSinglePlannedConditionConditionOnlyVariantSurface,
+  repairPythonFinalMetricAggregationEntrypointSurface,
   repairPythonPlanEntryConditionSeedExecutorBridgeSurface,
   repairPythonSingleRunExecutionBridgeSurface,
   repairPythonSingleCellResolverAvoidSelfSurface,
   repairPythonObservedAverageAccuracyAliasSurface,
   repairPythonEvaluationSummaryObservedAverageSurface,
+  repairPythonEvaluationRuntimeHandleLoaderAliasSurface,
+  repairPythonEntrypointBudgetTimeoutArgparseSurface,
+  repairPythonEntrypointEvalTaskIterMetadataSurface,
+  repairPythonEntrypointConditionRuntimeCleanupSurface,
+  repairPythonEntrypointStateViewSpecMetadataSurface,
+  repairPythonSavePretrainedDtypeSerializationSurface,
+  repairPythonEntrypointModelCandidateFallbackSurface,
+  repairPythonEntrypointSetDefaultEmptyStringSurface,
   repairPythonLoopRunRecordRawResultMetricProjectionSurface,
   repairPythonHighLevelWorkloadContextAliasSurface,
   repairPythonConditionScheduleMarkerParameterSurface,
   repairPythonLockedConditionSingleRunnerBridgeSurface,
   repairPythonMultipleChoiceDataclassChoiceAliasSurface,
+  repairPythonMultipleChoiceListRawVariableSurface,
   repairPythonOutputDirArgparseAlias,
   repairPythonParameterSummaryRecordSurface,
   repairPythonMetricsPayloadProjectionSurface,
@@ -105,7 +120,10 @@ import {
   repairPythonSingleConditionExecutorBridgeSurface,
   repairPythonStudyRuntimeHelperAliasSurface,
   repairPythonTerminalMetricsExistingConditionCountSurface,
-  repairPythonTrainLossHelperAritySurface
+  repairPythonTrainLossHelperAritySurface,
+  repairPythonNestedTrainingTextExtractionSurface,
+  repairPythonRunCommandArgparseAliases,
+  resolvePythonVerificationScriptPath
 } from "../agents/implementSessionManager.js";
 
 type SupplementalProfileName = "quick_check" | "confirmatory";
@@ -226,6 +244,41 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
 
       const defaultMetricsPath = path.join(process.cwd(), ".autolabos", "runs", run.id, "metrics.json");
       const failureMemory = FailureMemory.forRun(run.id);
+      const preFailureMemoryRepairMessages: string[] = [];
+      let preFailureMemoryRepairApplied = false;
+      const preFailureMemoryRecordedScriptPath = resolveMaybeRelative(
+        await runContext.get<string>("implement_experiments.script"),
+        process.cwd()
+      );
+      const preFailureMemoryScriptPath =
+        (await resolvePythonVerificationScriptPath(preFailureMemoryRecordedScriptPath)) ||
+        (preFailureMemoryRecordedScriptPath && path.extname(preFailureMemoryRecordedScriptPath) === ".py"
+          ? preFailureMemoryRecordedScriptPath
+          : undefined);
+      if (preFailureMemoryScriptPath && (await fileExists(preFailureMemoryScriptPath))) {
+        const multipleChoiceListPreRepair =
+          await repairPythonMultipleChoiceListRawVariableSurface(preFailureMemoryScriptPath);
+        if (multipleChoiceListPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            multipleChoiceListPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Repaired multiple-choice list extraction variable scope in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const normalizedEvalExamplePreRepair =
+          await repairPythonNormalizedEvalExampleRecordSurface(preFailureMemoryScriptPath);
+        if (normalizedEvalExamplePreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            normalizedEvalExamplePreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Accepted already-normalized evaluation example records in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+      }
       const triageAttempts: RunExperimentsTriageAttempt[] = [];
       let executionPlan: RunExperimentsExecutionPlan | undefined;
       let rerunDecision: RunExperimentsRerunDecision = {
@@ -247,16 +300,57 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       };
 
       // --- Failure memory: check for do-not-retry before starting ---
-      const priorDoNotRetry = await failureMemory.hasDoNotRetry("run_experiments");
+      const latestDoNotRetry = await failureMemory.latestDoNotRetry("run_experiments");
+      const priorDoNotRetry = Boolean(latestDoNotRetry);
       if (priorDoNotRetry) {
+        const retryCount = run.graph.retryCounters.run_experiments ?? 0;
+        const upstreamRepairUpdatedAt = run.graph.nodeStates.implement_experiments?.updatedAt;
+        const upstreamRepairIsNewer = Boolean(
+          latestDoNotRetry?.timestamp &&
+            upstreamRepairUpdatedAt &&
+            Date.parse(upstreamRepairUpdatedAt) > Date.parse(latestDoNotRetry.timestamp)
+        );
+        const harnessRepairUpdatedAt = await currentRunExperimentsHarnessUpdatedAt();
+        const harnessRepairIsNewer = Boolean(
+          latestDoNotRetry?.timestamp &&
+            harnessRepairUpdatedAt !== undefined &&
+            harnessRepairUpdatedAt > Date.parse(latestDoNotRetry.timestamp)
+        );
+        if (retryCount > 0 && !upstreamRepairIsNewer && !harnessRepairIsNewer && !preFailureMemoryRepairApplied) {
+          const summary =
+            "Failure memory marks run_experiments as do-not-retry after a structural execution failure; blocking another same-node retry until upstream repair is applied.";
+          deps.eventStream.emit({
+            type: "OBS_RECEIVED",
+            runId: run.id,
+            node: "run_experiments",
+            payload: { text: summary }
+          });
+          return {
+            status: "failure",
+            error: summary,
+            summary,
+            toolCallsUsed: 0
+          };
+        }
         deps.eventStream.emit({
           type: "OBS_RECEIVED",
           runId: run.id,
           node: "run_experiments",
           payload: {
-            text: "Failure memory contains a do-not-retry marker for run_experiments. This attempt will proceed but previous structural failures should be reviewed."
+            text: preFailureMemoryRepairApplied
+              ? "Failure memory contains a do-not-retry marker for run_experiments; proceeding because a pre-run repair was applied before the retry gate."
+              : "Failure memory contains a do-not-retry marker for run_experiments; proceeding because an upstream or harness repair is newer than the latest failure marker."
           }
         });
+        for (const message of preFailureMemoryRepairMessages) {
+          deps.eventStream.emit({
+            type: "OBS_RECEIVED",
+            runId: run.id,
+            node: "run_experiments",
+            agentRole: "runner",
+            payload: { text: message }
+          });
+        }
       }
 
       /** Record a failure to the run-scoped failure memory JSONL. */
@@ -603,6 +697,24 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       } else {
         await runContext.put("run_experiments.previous_failure_artifact_backups", null);
       }
+      const previousEvidenceArtifactBackups = Array.from(new Set([
+        ...(await clearPreexistingExperimentEvidenceArtifacts(run, resolved.cwd)),
+        ...(await clearPreexistingExperimentEvidenceArtifacts(run, implementPublicDir))
+      ]));
+      if (previousEvidenceArtifactBackups.length > 0) {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            text: `Archived stale experiment evidence artifact(s) before execution to ${previousEvidenceArtifactBackups.join(", ")}.`
+          }
+        });
+        await runContext.put("run_experiments.previous_evidence_artifact_backups", previousEvidenceArtifactBackups);
+      } else {
+        await runContext.put("run_experiments.previous_evidence_artifact_backups", null);
+      }
       watchdog = createRunExperimentsWatchdogState({
         metricsPath: resolved.metricsPath,
         previousMetricsBackup,
@@ -635,12 +747,127 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         await persistPanelState();
       }
 
+      const skeletonSurfaceIssue = await detectPythonRunnerSkeletonOnlySurface({
+        runContext,
+        command: primaryCommand,
+        cwd: resolved.cwd,
+        workspaceRoot: process.cwd()
+      });
+      if (skeletonSurfaceIssue) {
+        const report = buildRunVerifierReport({
+          status: "fail",
+          trigger,
+          stage: "preflight_test",
+          summary: skeletonSurfaceIssue,
+          command: primaryCommand,
+          cwd: resolved.cwd,
+          metricsPath: resolved.metricsPath,
+          suggestedNextAction:
+            "Regenerate the Python runner so the public command targets a runnable implementation instead of a canonical skeleton."
+        });
+        deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            command: primaryCommand,
+            metrics_path: resolved.metricsPath,
+            stderr: skeletonSurfaceIssue
+          }
+        });
+        await persistRunVerifierReport(run, runContext, report);
+        await persistRunFailureState(runContext, {
+          command: primaryCommand,
+          cwd: resolved.cwd,
+          error: skeletonSurfaceIssue
+        });
+        await persistGovernanceCrash({
+          run,
+          runContext,
+          comparisonContract,
+          implementationContext,
+          objectiveMetricName: run.objectiveMetric,
+          rationale: report.summary,
+          resourceUsage: {
+            stage: "preflight_python_runner_surface",
+            command: primaryCommand,
+            cwd: resolved.cwd,
+            metrics_path: resolved.metricsPath
+          }
+        });
+        await recordRunFailure(skeletonSurfaceIssue, "structural");
+        return {
+          status: "failure",
+          error: skeletonSurfaceIssue,
+          toolCallsUsed: preflightToolCallsUsed
+        };
+      }
+
+      const progressSurfaceIssue = await detectLongRunningPythonRunnerWithoutProgressSurface({
+        runContext,
+        command: primaryCommand,
+        cwd: resolved.cwd,
+        workspaceRoot: process.cwd()
+      });
+      if (progressSurfaceIssue) {
+        const report = buildRunVerifierReport({
+          status: "fail",
+          trigger,
+          stage: "preflight_test",
+          summary: progressSurfaceIssue,
+          command: primaryCommand,
+          cwd: resolved.cwd,
+          metricsPath: resolved.metricsPath,
+          suggestedNextAction:
+            "Add node-owned progress, heartbeat, or partial-metrics artifacts for long-running experiment runners before executing the full command."
+        });
+        deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            command: primaryCommand,
+            metrics_path: resolved.metricsPath,
+            stderr: progressSurfaceIssue
+          }
+        });
+        await persistRunVerifierReport(run, runContext, report);
+        await persistRunFailureState(runContext, {
+          command: primaryCommand,
+          cwd: resolved.cwd,
+          error: progressSurfaceIssue
+        });
+        await persistGovernanceCrash({
+          run,
+          runContext,
+          comparisonContract,
+          implementationContext,
+          objectiveMetricName: run.objectiveMetric,
+          rationale: report.summary,
+          resourceUsage: {
+            stage: "preflight_progress_surface",
+            command: primaryCommand,
+            cwd: resolved.cwd,
+            metrics_path: resolved.metricsPath
+          }
+        });
+        await recordRunFailure(progressSurfaceIssue, "structural");
+        return {
+          status: "failure",
+          error: progressSurfaceIssue,
+          toolCallsUsed: preflightToolCallsUsed
+        };
+      }
+
       let parsedMetrics: Record<string, unknown> = {};
       let objectiveEvaluationSummary = "";
       let obs: Awaited<ReturnType<NodeExecutionDeps["aci"]["runCommand"]>> | undefined;
       let logFile = "";
       let primaryAttemptsUsed = 0;
       let automaticRerunsUsed = 0;
+      let latestCommandStartedAtMs: number | undefined;
 
       while (true) {
         const attemptNumber = primaryAttemptsUsed + 1;
@@ -658,6 +885,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         });
 
         const commandStartedAtMs = Date.now();
+        latestCommandStartedAtMs = commandStartedAtMs;
         obs = await deps.aci.runCommand(primaryCommand, resolved.cwd, abortSignal);
         logFile = await writeRunArtifact(
           run,
@@ -679,15 +907,23 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           const policyBlock = extractPolicyBlock(obs);
           const metricsFailureSummary = policyBlock.blocked
             ? undefined
-            : await loadFailedMetricsSummary(resolved.metricsPath, resolved.cwd);
+            : await loadFailedMetricsSummary(resolved.metricsPath, resolved.cwd, implementPublicDir);
           const failureStage = metricsFailureSummary ? "metrics" : policyBlock.blocked ? "policy" : "command";
           const triageStage = failureStage === "metrics" ? "metrics" : "command";
-          const failureSummary = metricsFailureSummary || obs.stderr || "Experiment command failed";
+          const failureSummary = metricsFailureSummary || buildCommandFailureSummary({
+            stderr: obs.stderr,
+            stdout: obs.stdout,
+            exitCode: obs.exit_code ?? 1,
+            metricsPath: resolved.metricsPath
+          });
           const suggestedNextAction = metricsFailureSummary
-            ? "Repair the experiment implementation so metrics.json records completed baseline/comparator execution instead of a top-level failed status."
+            ? buildMetricsFailureSuggestedNextAction(metricsFailureSummary)
             : policyBlock.blocked
               ? "Replace the blocked run command with a policy-compliant command before retrying."
-              : "Repair the experiment command or runtime dependencies before handing back to the runner.";
+              : buildCommandFailureSuggestedNextAction({
+                stderr: obs.stderr,
+                stdout: obs.stdout
+              });
           const triage = classifyRunExperimentsFailure({
             attempt: attemptNumber,
             stage: triageStage,
@@ -977,6 +1213,34 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             throw new Error("metrics.json must decode to an object");
           }
           parsedMetrics = parsed as Record<string, unknown>;
+          const runtimeMetadataPromotion = await enrichMetricsWithPythonRuntimeDefaults({
+            metrics: parsedMetrics,
+            command: primaryCommand,
+            cwd: resolved.cwd
+          });
+          if (runtimeMetadataPromotion) {
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "run_experiments",
+              agentRole: "runner",
+              payload: {
+                text: runtimeMetadataPromotion
+              }
+            });
+          }
+          const projectedConditionSummaries = promotePerExampleConditionRowsToSummaries(parsedMetrics);
+          if (projectedConditionSummaries) {
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "run_experiments",
+              agentRole: "runner",
+              payload: {
+                text: projectedConditionSummaries
+              }
+            });
+          }
           const promotedObjectiveMetric = promoteSummaryPrimaryMetric(parsedMetrics);
           if (promotedObjectiveMetric) {
             deps.eventStream.emit({
@@ -992,12 +1256,12 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           watchdog = setMetricsState(watchdog, "valid", logFile);
           const failedMetricsMessage = appendExperimentFailureArtifactEvidence(
             detectFailedMetricsPayload(parsedMetrics),
-            await loadExperimentFailureArtifactSummary(resolved.cwd)
+            await loadExperimentFailureArtifactSummary(resolved.cwd, implementPublicDir)
           );
           if (failedMetricsMessage) {
             const failedMetricsSuggestedNextAction = failedMetricsMessage.includes("Experiment dependency blocker:")
               ? "Prewarm or make the required experiment dependency available, or revise the governed experiment design to use an available model before rerunning."
-              : "Repair the experiment implementation so metrics.json records completed baseline/comparator execution instead of a top-level failed status.";
+              : buildMetricsFailureSuggestedNextAction(failedMetricsMessage);
             const triage = classifyRunExperimentsFailure({
               attempt: attemptNumber,
               stage: "metrics",
@@ -1251,7 +1515,8 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         objectiveProfile,
         runContext,
         workspaceRoot: process.cwd(),
-        metricsPath: resolved.metricsPath
+        metricsPath: resolved.metricsPath,
+        minModifiedAtMs: latestCommandStartedAtMs
       });
       if (publicMetricPromotion) {
         deps.eventStream.emit({
@@ -1285,7 +1550,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             `Experiment metrics contract failed: ${metricsContractIssues.join(" ")}`,
             parsedMetrics
           ),
-          await loadExperimentFailureArtifactSummary(resolved.cwd)
+          await loadExperimentFailureArtifactSummary(resolved.cwd, implementPublicDir)
         ) || `Experiment metrics contract failed: ${metricsContractIssues.join(" ")}`;
         await persistPanelState();
         const report = buildRunVerifierReport({
@@ -1300,8 +1565,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           stdout: obs?.stdout,
           stderr: contractMessage,
           logFile,
-          suggestedNextAction:
-            "Repair the experiment implementation so completed metrics include the configured objective metric and successful baseline/comparator results before analysis proceeds."
+          suggestedNextAction: buildMetricsContractSuggestedNextAction(contractMessage)
         });
         deps.eventStream.emit({
           type: "TEST_FAILED",
@@ -1548,6 +1812,257 @@ function detectZeroExitRuntimeFailure(stderr: string): string | undefined {
   return `Experiment command emitted fatal stderr despite zero exit status: ${excerpt}`;
 }
 
+function buildCommandFailureSummary(input: {
+  stderr?: string;
+  stdout?: string;
+  exitCode: number;
+  metricsPath: string;
+}): string {
+  const output = [input.stderr || "", input.stdout || ""].join("\n");
+  const details = [
+    `Experiment command failed with exit_code=${input.exitCode}`,
+    "metrics_written=false",
+    `metrics_path=${input.metricsPath}`
+  ];
+  const dependencySummary = detectModelDownloadOrCacheFailure(output);
+  if (dependencySummary) {
+    details.push(dependencySummary);
+  }
+  const excerpt = oneLine((input.stderr || input.stdout || "Experiment command failed").replace(/\s+/gu, " ")).slice(
+    0,
+    600
+  );
+  if (excerpt && !details.some((detail) => detail.includes(excerpt))) {
+    details.push(`stderr_excerpt=${excerpt}`);
+  }
+  return details.join(" | ");
+}
+
+function buildCommandFailureSuggestedNextAction(input: { stderr?: string; stdout?: string }): string {
+  if (detectModelDownloadOrCacheFailure([input.stderr || "", input.stdout || ""].join("\n"))) {
+    return "Repair the experiment dependency handling before retrying: reuse or prewarm the standard Hugging Face cache, avoid artifact-local model cache redownloads, set local_files_only when appropriate, or select an available local model/tokenizer.";
+  }
+  return "Repair the experiment command or runtime dependencies before handing back to the runner.";
+}
+
+function buildMetricsFailureSuggestedNextAction(summary: string): string {
+  if (detectRuntimeConfigAttributeFailure(summary)) {
+    return "Repair runtime config defaults before retrying: generated runners must either call their neutral config resolver or populate optional Namespace/runtime budget attributes, path aliases, and helper capabilities such as allow_model_download, local_files_only, cache_dir, trust_remote_code, output_dir, public_dir, run_artifact_dir, artifact_dir, artifacts_dir, condition_output_dir, condition_dir, metrics_path, paths, output_paths, artifact_paths, experiment_paths, runtime_paths, seed, max_train_examples, max_eval_examples_per_task, max_steps, and ensure_dirs before condition execution.";
+  }
+  if (detectEvaluationRuntimeHandleFailure(summary)) {
+    return "Repair the experiment implementation before retrying: preserve evaluator-required runtime handles in the in-memory condition result until evaluation completes, or reload the saved condition artifact before scoring; do not count train-only completion as evaluated evidence.";
+  }
+  if (detectEvaluationArtifactReloadFailure(summary)) {
+    return "Repair evaluation artifact reload before retrying: persist a valid per-condition trained artifact directory, pass that explicit path through the condition state, reload from that path instead of the process cwd or '.', and fail with artifact-path diagnostics before writing objective metric rows when the artifact is absent.";
+  }
+  if (detectEvaluationRecordScalarNormalizationFailure(summary)) {
+    return "Repair evaluation record normalization before retrying: generated runners must coerce mapping, sequence, dataclass, attribute-style, and scalar evaluation records before label/example access, must not use membership checks such as field in record until the record is known to be iterable, must preserve objective labels from gold, label, answer, answer_index, correct_index, and answerKey, and must emit per-task schema diagnostics instead of collapsing the task as missing.";
+  }
+  if (detectMissingExecutionDataBundleArgumentFailure(summary)) {
+    return "Repair the experiment invocation bridge before retrying: pass the materialized data/task/evaluation/path bundle and runtime context through neutral aliases such as task_bundle, task_data, dataset_bundle, data_bundle, eval_examples_by_task, eval_sets, benchmark_examples, train_examples, run, runtime, runtime_context, run_context, condition_result, paths, output_paths, and artifact_paths whenever a generated data loader, condition runner, or evaluator requires them.";
+  }
+  if (detectTrainingExamplesUnavailableFailure(summary)) {
+    return "Repair data materialization before retrying: generated runners must load real bounded training examples and evaluation examples from the declared reusable dataset/task contract, preserve train_records/train_examples aliases, preserve usable text from common fields such as instruction, input, output, prompt, response, text, question, answer, messages, and conversations, and fail at data_access with loader diagnostics instead of executing conditions with an empty train set.";
+  }
+  if (detectTrainCompleteEvaluationSkippedFailure(summary)) {
+    return "Repair condition evaluation handoff before retrying: train-complete condition states such as completed_training must remain eligible for evaluation, evaluators must run after training before final metrics are written, and skipped_not_completed rows must be emitted as a state-machine failure rather than objective evidence.";
+  }
+  if (detectTrainCompleteWithoutEvaluationMetricsFailure(summary)) {
+    return "Repair condition evaluation handoff before retrying: train-complete condition states such as completed_training must be evaluated before final metrics are written, task_metrics must be populated from objective scoring, train-only completion must not be emitted as final condition evidence, and runtime-only objects such as model/tokenizer must be kept out of metrics.json condition rows.";
+  }
+  if (detectEvaluationInvocationBridgeFailure(summary)) {
+    return "Repair the evaluation invocation bridge before retrying: inspect the evaluator signature, pass the condition state/result plus data, task, runtime, and artifact-path context through supported keyword aliases such as state, condition_state, condition_result, task_bundle, eval_examples_by_task, runtime, runtime_context, run_context, and artifact_paths, and fail with signature diagnostics instead of dropping required arguments.";
+  }
+  if (detectRecordShapeIndexingFailure(summary)) {
+    return "Repair record shape normalization before retrying: generated runners must normalize mapping, list/tuple, dataclass, and attribute-style condition/data/evaluation records before field access, must not index mapping records with numeric keys such as [0], and must emit schema diagnostics identifying the record family before writing failed condition rows.";
+  }
+  if (detectConditionSpecNormalizationFailure(summary)) {
+    return "Repair condition normalization before retrying: generated runners must normalize tuple, mapping, dataclass, and attribute-style condition records into a single condition spec with numeric-setting and name accessors before condition execution, and must preserve stable condition identifiers in metrics rows.";
+  }
+  if (detectTrainingExamplesUnavailableFailure(summary)) {
+    return "Repair data materialization before retrying: generated runners must load real bounded training examples and evaluation examples from the declared reusable dataset/task contract, preserve train_records/train_examples aliases, preserve usable text from common fields such as instruction, input, output, prompt, response, text, question, answer, messages, and conversations, and fail at data_access with loader diagnostics instead of executing conditions with an empty train set.";
+  }
+  if (detectEvaluationNoObjectiveMetricFailure(summary)) {
+    return "Repair evaluation data normalization before retrying: preserve or map objective labels such as gold, label, answer, answer_index, correct_index, and answerKey, keep evaluated counts nonzero when requested examples exist, and emit schema diagnostics instead of accuracy:null rows.";
+  }
+  return "Repair the experiment implementation so metrics.json records completed baseline/comparator execution instead of a top-level failed status.";
+}
+
+function buildMetricsContractSuggestedNextAction(summary: string): string {
+  if (detectEvaluationNoObjectiveMetricFailure(summary)) {
+    return "Repair metrics aggregation before retrying: convert evaluation task_metrics or average_accuracy into condition-level accuracy/objective metric rows, exclude train-only runtime fields such as model/tokenizer from metrics.json, and compute the baseline-relative objective before analysis proceeds.";
+  }
+  return "Repair the experiment implementation so completed metrics include the configured objective metric and successful baseline/comparator results before analysis proceeds.";
+}
+
+function detectRuntimeConfigAttributeFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /(?:AttributeError|has no attribute)[^|.;]*(?:Namespace|args|config|Config|Budget|budget)[^|.;]*(?:allow_model_download|allow_model_downloads|local_files_only|cache_dir|trust_remote_code|output_dir|public_dir|run_artifact_dir|artifact_dir|artifacts_dir|condition_output_dir|condition_dir|metrics_path|paths|output_paths|artifact_paths|experiment_paths|runtime_paths|seed|max_train_examples|max_eval_examples_per_task|max_steps|max_seq_len|ensure_dirs|ensure_output_dirs|ensure_runtime_dirs)/iu.test(normalized) ||
+    /(?:Namespace|args|config|Config|Budget|budget)[^|.;]*(?:has no attribute)[^|.;]*(?:allow_model_download|allow_model_downloads|local_files_only|cache_dir|trust_remote_code|output_dir|public_dir|run_artifact_dir|artifact_dir|artifacts_dir|condition_output_dir|condition_dir|metrics_path|paths|output_paths|artifact_paths|experiment_paths|runtime_paths|seed|max_train_examples|max_eval_examples_per_task|max_steps|max_seq_len|ensure_dirs|ensure_output_dirs|ensure_runtime_dirs)/iu.test(normalized) ||
+    /(?:AttributeError|has no attribute)[^|.;]*(?:Namespace|args|config|Config|Budget|budget)[^|.;]*has no attribute/iu.test(normalized)
+  );
+}
+
+function detectMissingExecutionDataBundleArgumentFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " " ).trim();
+  if (!normalized) {
+    return false;
+  }
+  return /Cannot call [^|.;]*(?:without required argument|missing required arguments?)[^|.;]*(?:task_bundle|task_bundles|task_data|task_dataset|dataset_bundle|data_bundle|eval_examples_by_task|evaluation_examples_by_task|eval_sets|evaluation_sets|task_sets|task_examples_by_name|benchmark_examples|benchmark_samples|train_examples|training_examples|train_records|training_records|train_rows|training_rows|train_bundle|training_bundle|train_source|training_source|run|runtime|runtime_context|run_context|condition_result|condition_state|paths|output_paths|artifact_paths|experiment_paths|runtime_paths)/iu.test(normalized);
+}
+
+function detectEvaluationInvocationBridgeFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /evaluation call failed[^|.;]*(?:Cannot call|TypeError|missing required|without required argument)[^|.;]*(?:state|condition_state|condition_result|task_bundle|eval_examples_by_task|runtime|runtime_context|run_context|artifact_paths)/iu.test(normalized) ||
+    /Cannot call [^|.;]*(?:evaluate|score|eval)[^|.;]*(?:without required argument|missing required arguments?)[^|.;]*(?:state|condition_state|condition_result|task_bundle|eval_examples_by_task|runtime|runtime_context|run_context|artifact_paths)/iu.test(normalized) ||
+    /(?:evaluate_condition|score_condition|run_evaluation)[^|.;]*(?:missing required|without required argument)[^|.;]*(?:state|condition_state|condition_result|task_bundle|eval_examples_by_task|runtime|runtime_context|run_context|artifact_paths)/iu.test(normalized)
+  );
+}
+
+function detectRecordShapeIndexingFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /(?:condition_result_reasons|failure_reason|reason)[^|.;]*(?:KeyError\((?:0|1|2)\)|KeyError:\s*(?:0|1|2)|KeyError["']?\s*(?:0|1|2))/iu.test(normalized) ||
+    /KeyError\((?:0|1|2)\)[^|.;]*(?:condition|record|row|example|sample|task|evaluation|data)/iu.test(normalized) ||
+    /(?:condition|record|row|example|sample|task|evaluation|data)[^|.;]*KeyError\((?:0|1|2)\)/iu.test(normalized)
+  );
+}
+
+function detectEvaluationRecordScalarNormalizationFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /argument of type \\*['"](?:int|float|bool|NoneType)\\*['"] is not iterable/iu.test(normalized) &&
+    /(?:evaluation|eval|task|dataset|data_access|schema_failures|missing_eval_tasks|objective|label|answer|gold|correct_index|answerKey)/iu.test(normalized)
+  );
+}
+
+function detectTrainingExamplesUnavailableFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /No training examples were supplied/iu.test(normalized) ||
+    /no training examples were provided/iu.test(normalized) ||
+    /training examples normalized to zero usable instruction texts/iu.test(normalized) ||
+    /zero usable instruction texts/iu.test(normalized) ||
+    /zero usable instruction\/training texts/iu.test(normalized) ||
+    /zero usable training texts(?: after normalization)?/iu.test(normalized) ||
+    /data_access[^|.;]*zero usable (?:instruction\/training|instruction|training) texts/iu.test(normalized) ||
+    /data_access_failure[^|.;]*zero usable training texts/iu.test(normalized) ||
+    /missing train (?:examples|rows|records)/iu.test(normalized) ||
+    /Experiment data bundle could not be materialized/iu.test(normalized) ||
+    /No real training records were loaded/iu.test(normalized) ||
+    /completed_condition_count=0\/\d+[^|]*(?:train|training)[^|]*(?:empty|missing|supplied|loaded)/iu.test(normalized)
+  );
+}
+
+function detectConditionSpecNormalizationFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /(?:AttributeError|has no attribute)[^|.;]*(?:tuple|list|dict|mapping)[^|.;]*(?:rank|dropout|condition|marker|name)/iu.test(normalized) ||
+    /condition[_ ]?(?:spec|record|row)[^|.;]*(?:tuple|mapping|dict)[^|.;]*(?:rank|dropout|marker|name)/iu.test(normalized) ||
+    /condition_result_samples=condition,status=failed,reason=AttributeError/iu.test(normalized)
+  );
+}
+
+function detectEvaluationNoObjectiveMetricFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /evaluation produced no objective metric/iu.test(normalized) ||
+    /completed_condition_missing_evaluation_metrics=\d+\/\d+/iu.test(normalized) ||
+    /(?:accuracy|score|metric)[^|.;]*(?:null|none|nan)/iu.test(normalized)
+  );
+}
+
+function detectTrainCompleteEvaluationSkippedFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /condition_evaluation_statuses=[^|.;]*skipped_not_completed(?!_training)/iu.test(normalized) ||
+    /evaluation_status["'=:\s]+skipped_not_completed(?!_training)/iu.test(normalized) ||
+    /skipped_not_completed(?!_training)[^|.;]*(?:completed_training|training_completed|train_complete)/iu.test(normalized) ||
+    /(?:completed_training|training_completed|train_complete)[^|.;]*skipped_not_completed(?!_training)/iu.test(normalized)
+  );
+}
+
+function detectTrainCompleteWithoutEvaluationMetricsFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /completed_condition_count=0\/\d+[^|.;]*(?:primary_metric_value|accuracy_delta_vs_baseline):null[^|.;]*condition_result_statuses=[^|.;]*(?:completed_training|training_completed|train_complete)/iu.test(normalized) ||
+    /condition_result_statuses=[^|.;]*(?:completed_training|training_completed|train_complete)[^|.;]*(?:primary_metric_value|accuracy_delta_vs_baseline):null/iu.test(normalized) ||
+    /condition_result_samples=[^|.;]*(?:status=completed_training|status=training_completed|status=train_complete)/iu.test(normalized)
+  );
+}
+
+function detectEvaluationRuntimeHandleFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /completed condition did not expose [^|.;]*(?:model|tokenizer|runtime handle|model bundle)/iu.test(normalized) ||
+    /(?:model bundle|runtime handle|model\/tokenizer)[^|.;]*(?:missing|omitted|discarded|not expose|unavailable)/iu.test(normalized) ||
+    /(?:condition result|condition state)[^|.;]*(?:model|tokenizer|runtime handle)[^|.;]*(?:missing|omitted|discarded|unavailable)/iu.test(normalized)
+  );
+}
+
+function detectEvaluationArtifactReloadFailure(output: string): boolean {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /condition_training_statuses=[^|.;]*(?:evaluation_failed_runtime_load|evaluation_failed_artifact_load|artifact_reload_failed)/iu.test(normalized) ||
+    /(?:evaluation_failed_runtime_load|evaluation_failed_artifact_load|artifact_reload_failed)/iu.test(normalized) ||
+    /Can't find ['"][^'"]*(?:adapter|model|runtime|artifact)[^'"]*['"] at ['"]\.(?:\/)?['"]/iu.test(normalized) ||
+    /(?:from_pretrained|reload|load_runtime|load_artifact)[^|.;]*(?:['"]\.['"]|process cwd|current working directory|cwd)[^|.;]*(?:missing|not found|can't find|absent|invalid)/iu.test(normalized) ||
+    /(?:trained artifact|artifact directory|adapter directory|checkpoint directory|runtime artifact)[^|.;]*(?:missing|not found|absent|invalid|empty)/iu.test(normalized)
+  );
+}
+
+function detectModelDownloadOrCacheFailure(output: string): string | undefined {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return undefined;
+  }
+  const dependencyPattern =
+    /\b(?:hugging\s*face|huggingface|xet|xethub|from_pretrained|local_files_only|cache_dir|model_cache|tokenizer|model download|download|downloading|\.incomplete|temporary failure in name resolution|failed to lookup address information|name or service not known|connection timed out|read timed out|network is unreachable)\b/iu;
+  if (!dependencyPattern.test(normalized)) {
+    return undefined;
+  }
+  const evidence =
+    normalized.match(
+      /(?:Temporary failure in name resolution|failed to lookup address information|xet|xethub|from_pretrained|local_files_only|cache_dir|\.incomplete|download(?:ing)?|Read timed out|Connection timed out|Network is unreachable)[^|]{0,220}/iu
+    )?.[0] || normalized.slice(0, 240);
+  return `model_download_or_cache_failure=true | dependency_evidence=${evidence.slice(0, 240)}`;
+}
+
 function detectSentinelWatchdogFindings(
   metrics: Record<string, unknown>
 ): Array<{
@@ -1673,7 +2188,8 @@ function isFailureLikeMetricsStatus(status: string): boolean {
 
 async function loadFailedMetricsSummary(
   metricsPath: string | undefined,
-  artifactDir?: string
+  artifactDir?: string,
+  publicDir?: string
 ): Promise<string | undefined> {
   if (!metricsPath || !(await fileExists(metricsPath))) {
     return undefined;
@@ -1685,7 +2201,7 @@ async function loadFailedMetricsSummary(
     }
     return appendExperimentFailureArtifactEvidence(
       detectFailedMetricsPayload(parsed as Record<string, unknown>) || undefined,
-      await loadExperimentFailureArtifactSummary(artifactDir)
+      await loadExperimentFailureArtifactSummary(artifactDir, publicDir)
     );
   } catch {
     return undefined;
@@ -1702,28 +2218,105 @@ function appendExperimentFailureArtifactEvidence(
   return artifactSummary ? `${message} ${artifactSummary}` : message;
 }
 
-async function loadExperimentFailureArtifactSummary(artifactDir: string | undefined): Promise<string | undefined> {
-  if (!artifactDir) {
+async function loadExperimentFailureArtifactSummary(
+  artifactDir: string | undefined,
+  publicDir?: string
+): Promise<string | undefined> {
+  if (!artifactDir && !publicDir) {
     return undefined;
   }
   const summaries: string[] = [];
-  const studyFailurePath = path.join(artifactDir, "study_failure.json");
-  const studyFailuresPath = path.join(artifactDir, "study_failures.json");
-  const studyFailure = await readJsonRecordIfExists(studyFailurePath);
-  if (studyFailure) {
-    const summary = summarizeFailureRecord("study_failure.json", studyFailure);
-    if (summary) {
-      summaries.push(summary);
+  if (artifactDir) {
+    const studyFailurePath = path.join(artifactDir, "study_failure.json");
+    const studyFailuresPath = path.join(artifactDir, "study_failures.json");
+    const studyFailure = await readJsonRecordIfExists(studyFailurePath);
+    if (studyFailure) {
+      const summary = summarizeFailureRecord("study_failure.json", studyFailure);
+      if (summary) {
+        summaries.push(summary);
+      }
+    }
+    const studyFailures = await readJsonArrayIfExists(studyFailuresPath);
+    for (const failure of studyFailures.slice(0, 2)) {
+      const summary = summarizeFailureRecord("study_failures.json", failure);
+      if (summary) {
+        summaries.push(summary);
+      }
     }
   }
-  const studyFailures = await readJsonArrayIfExists(studyFailuresPath);
-  for (const failure of studyFailures.slice(0, 2)) {
-    const summary = summarizeFailureRecord("study_failures.json", failure);
-    if (summary) {
-      summaries.push(summary);
-    }
+  const dataAccessSummary = await loadDataAccessPreviewSummary(publicDir, artifactDir);
+  if (dataAccessSummary) {
+    summaries.push(dataAccessSummary);
   }
   return summaries.length > 0 ? `Failure artifact evidence: ${summaries.join(" | ")}.` : undefined;
+}
+
+async function loadDataAccessPreviewSummary(
+  publicDir: string | undefined,
+  artifactDir?: string
+): Promise<string | undefined> {
+  const candidates = [publicDir, artifactDir]
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .flatMap((candidate) => [candidate, path.join(candidate, "experiment")]);
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const previewPath = path.join(candidate, "data_access_preview.json");
+    if (seen.has(previewPath)) {
+      continue;
+    }
+    seen.add(previewPath);
+    const preview = await readJsonRecordIfExists(previewPath);
+    if (!preview) {
+      continue;
+    }
+    const parts = summarizeDataAccessPreview(preview);
+    if (parts.length > 0) {
+      return `data_access_preview.json; ${parts.join("; ")}`;
+    }
+  }
+  return undefined;
+}
+
+function summarizeDataAccessPreview(preview: Record<string, unknown>): string[] {
+  const parts: string[] = [];
+  const trainCount = asNumber(preview.train_count);
+  if (trainCount !== undefined) {
+    parts.push(`train_count=${trainCount}`);
+    if (trainCount === 0) {
+      parts.push("zero usable instruction/training texts");
+    }
+  }
+  const evalCounts = asRecord(preview.eval_counts);
+  const evalCountEntries = Object.entries(evalCounts)
+    .map(([task, count]) => {
+      const numericCount = asNumber(count);
+      return numericCount === undefined ? undefined : `${task}:${numericCount}`;
+    })
+    .filter((entry): entry is string => Boolean(entry));
+  if (evalCountEntries.length > 0) {
+    parts.push(`eval_counts=${evalCountEntries.slice(0, 6).join(",")}`);
+  }
+  const diagnostics = asRecord(preview.diagnostics);
+  const schemaErrors = Array.isArray(diagnostics.schema_errors)
+    ? diagnostics.schema_errors
+        .map((item) => asString(item))
+        .filter((item): item is string => Boolean(item))
+    : [];
+  if (schemaErrors.length > 0) {
+    parts.push(`schema_errors=${schemaErrors.slice(0, 3).map((item) => trimShort(item, 160)).join(" | ")}`);
+  }
+  const tasks = asRecord(diagnostics.tasks);
+  const trainCounts = Object.entries(tasks)
+    .map(([task, value]) => {
+      const taskRecord = asRecord(value);
+      const count = asNumber(taskRecord.normalized_train_count);
+      return count === undefined ? undefined : `${task}:${count}`;
+    })
+    .filter((entry): entry is string => Boolean(entry));
+  if (trainCounts.length > 0) {
+    parts.push(`task_train_counts=${trainCounts.slice(0, 6).join(",")}`);
+  }
+  return parts;
 }
 
 async function readJsonRecordIfExists(filePath: string): Promise<Record<string, unknown> | undefined> {
@@ -1836,6 +2429,11 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
     parts.push(`metrics_evidence=${evidenceMessages.join(" | ")}`);
   }
 
+  const evaluationHandoffMessages = summarizeConditionEvaluationHandoffEvidence(metrics);
+  if (evaluationHandoffMessages.length > 0) {
+    parts.push(...evaluationHandoffMessages);
+  }
+
   const seedFailureMessages = summarizeSeedFailureMessages(metrics);
   if (seedFailureMessages.length > 0) {
     parts.push(`seed_failure_messages=${seedFailureMessages.join(" | ")}`);
@@ -1909,6 +2507,15 @@ function summarizeMetricsErrorMessages(metrics: Record<string, unknown>): string
   }
 
   return messages;
+}
+
+async function currentRunExperimentsHarnessUpdatedAt(): Promise<number | undefined> {
+  try {
+    const stats = await fs.stat(new URL(import.meta.url));
+    return stats.mtimeMs;
+  } catch {
+    return undefined;
+  }
 }
 
 function summarizeMetricsEvidenceRecords(metrics: Record<string, unknown>): string[] {
@@ -1987,10 +2594,13 @@ function summarizeConditionResultFailureEvidence(metrics: Record<string, unknown
   const conditionRows = [
     ...collectConditionRows(metrics.condition_results),
     ...collectConditionRows(metrics.conditions),
+    ...collectConditionRows(metrics.raw_condition_results),
     ...collectConditionRows(study.condition_results),
     ...collectConditionRows(study.conditions),
+    ...collectConditionRows(study.raw_condition_results),
     ...collectConditionRows(studySummary.condition_results),
-    ...collectConditionRows(studySummary.conditions)
+    ...collectConditionRows(studySummary.conditions),
+    ...collectConditionRows(studySummary.raw_condition_results)
   ];
   if (conditionRows.length === 0) {
     return [];
@@ -2010,12 +2620,7 @@ function summarizeConditionResultFailureEvidence(metrics: Record<string, unknown
       reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
     }
     if (sampleFailures.length < 2) {
-      const id =
-        asString(row.condition_marker) ||
-        asString(row.marker) ||
-        asString(row.condition_id) ||
-        asString(row.condition) ||
-        asString(row.name);
+      const id = conditionResultId(row);
       const sample = [
         id ? trimShort(id, 80) : "unlabeled_condition",
         `status=${status}`,
@@ -2026,6 +2631,16 @@ function summarizeConditionResultFailureEvidence(metrics: Record<string, unknown
   }
 
   const parts = [`condition_result_statuses=${formatCountMap(statusCounts, 6)}`];
+  const completedRows = conditionRows.filter((row) => isCompletedConditionStatus(normalizeConditionResultStatus(row)));
+  if (completedRows.length > 0) {
+    const metricKeyCounts = summarizeCompletedConditionMetricKeyCounts(completedRows);
+    const formattedMetricKeys = formatCountMap(metricKeyCounts, 8);
+    parts.push(`completed_condition_metric_keys=${formattedMetricKeys || "none"}`);
+    const rowsWithoutEvaluationMetrics = completedRows.filter((row) => !conditionRowHasEvaluationMetric(row)).length;
+    if (rowsWithoutEvaluationMetrics > 0) {
+      parts.push(`completed_condition_missing_evaluation_metrics=${rowsWithoutEvaluationMetrics}/${completedRows.length}`);
+    }
+  }
   const formattedReasons = formatCountMap(reasonCounts, 4);
   if (formattedReasons) {
     parts.push(`condition_result_reasons=${formattedReasons}`);
@@ -2036,16 +2651,126 @@ function summarizeConditionResultFailureEvidence(metrics: Record<string, unknown
   return parts;
 }
 
+function summarizeConditionEvaluationHandoffEvidence(metrics: Record<string, unknown>): string[] {
+  const study = asRecord(metrics.study);
+  const studySummary = asRecord(metrics.study_summary);
+  const conditionRows = [
+    ...collectConditionRows(metrics.condition_results),
+    ...collectConditionRows(metrics.conditions),
+    ...collectConditionRows(study.condition_results),
+    ...collectConditionRows(study.conditions),
+    ...collectConditionRows(studySummary.condition_results),
+    ...collectConditionRows(studySummary.conditions)
+  ];
+  if (conditionRows.length === 0) {
+    return [];
+  }
+
+  const evaluationStatusCounts = new Map<string, number>();
+  const trainingStatusCounts = new Map<string, number>();
+  for (const row of conditionRows) {
+    const rawEvidence = asRecord(row.raw_evidence);
+    const evaluationStatus = asString(row.evaluation_status) || asString(rawEvidence.evaluation_status);
+    if (evaluationStatus) {
+      const normalized = evaluationStatus.toLowerCase().replace(/\s+/gu, "_");
+      evaluationStatusCounts.set(normalized, (evaluationStatusCounts.get(normalized) || 0) + 1);
+    }
+    const trainingStatus = asString(rawEvidence.status) || asString(row.training_status) || asString(rawEvidence.training_status);
+    if (trainingStatus) {
+      const normalized = trainingStatus.toLowerCase().replace(/\s+/gu, "_");
+      trainingStatusCounts.set(normalized, (trainingStatusCounts.get(normalized) || 0) + 1);
+    }
+  }
+
+  const parts: string[] = [];
+  const formattedEvaluationStatuses = formatCountMap(evaluationStatusCounts, 6);
+  if (formattedEvaluationStatuses) {
+    parts.push(`condition_evaluation_statuses=${formattedEvaluationStatuses}`);
+  }
+  const formattedTrainingStatuses = formatCountMap(trainingStatusCounts, 6);
+  if (formattedTrainingStatuses) {
+    parts.push(`condition_training_statuses=${formattedTrainingStatuses}`);
+  }
+  return parts;
+}
+
+function summarizeCompletedConditionMetricKeyCounts(rows: Record<string, unknown>[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    for (const key of conditionRowEvaluationMetricKeys(row)) {
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+  return counts;
+}
+
+function conditionRowHasEvaluationMetric(row: Record<string, unknown>): boolean {
+  return conditionRowEvaluationMetricKeys(row).length > 0;
+}
+
+const EVALUATION_METRIC_KEY_TERMS = [
+  "accuracy",
+  "f1",
+  "bleu",
+  "rouge",
+  "perplexity",
+  "score",
+  "metric",
+  "auc",
+  "mcc"
+];
+
+function normalizedKeyContainsMetricTerm(normalized: string): boolean {
+  return EVALUATION_METRIC_KEY_TERMS.some(
+    (term) =>
+      normalized === term ||
+      normalized.startsWith(`${term}_`) ||
+      normalized.endsWith(`_${term}`) ||
+      normalized.includes(`_${term}_`)
+  );
+}
+
+function conditionRowEvaluationMetricKeys(row: Record<string, unknown>): string[] {
+  const keys = new Set<string>();
+  const addMetric = (record: Record<string, unknown> | undefined, prefix = "") => {
+    if (!record) {
+      return;
+    }
+    for (const [key, value] of Object.entries(record)) {
+      const normalized = key.toLowerCase();
+      const metricLike =
+        normalizedKeyContainsMetricTerm(normalized) ||
+        normalized === "value" ||
+        normalized === "primary_metric_value";
+      if (!metricLike || asNumber(value) === undefined) {
+        continue;
+      }
+      keys.add(prefix ? `${prefix}.${key}` : key);
+    }
+  };
+  addMetric(row);
+  addMetric(asRecord(row.metrics), "metrics");
+  addMetric(asRecord(row.evaluation), "evaluation");
+  addMetric(asRecord(row.eval_result), "eval_result");
+  addMetric(asRecord(row.evaluation_result), "evaluation_result");
+  return [...keys].sort();
+}
+
 function normalizeConditionResultStatus(row: Record<string, unknown>): string {
-  const explicitStatus = asString(row.status)?.toLowerCase();
-  if (explicitStatus) {
-    return explicitStatus.replace(/\s+/gu, "_");
+  const nestedRecords = conditionResultNestedRecords(row);
+  for (const source of [row, ...nestedRecords]) {
+    const explicitStatus = asString(source.status)?.toLowerCase().replace(/\s+/gu, "_");
+    if (explicitStatus && !["unknown", "none", "null", "n_a", "na", "not_available"].includes(explicitStatus)) {
+      return explicitStatus;
+    }
   }
-  if (row.success === true || row.completed === true) {
-    return "completed";
-  }
-  if (row.success === false || row.completed === false) {
-    return "failed";
+  for (const source of [row, ...nestedRecords]) {
+    if (source.success === true || source.completed === true) {
+      return "completed";
+    }
+    if (source.success === false || source.completed === false) {
+      return "failed";
+    }
   }
   return "unknown";
 }
@@ -2058,11 +2783,48 @@ function isFailedConditionStatus(status: string): boolean {
   return ["failed", "failure", "error", "errored", "exception"].includes(status);
 }
 
+function conditionResultNestedRecords(row: Record<string, unknown>): Array<Record<string, unknown>> {
+  return [
+    asRecord(row.condition),
+    asRecord(row.train_result),
+    asRecord(row.training_result),
+    asRecord(row.eval_result),
+    asRecord(row.evaluation_result),
+    asRecord(row.result),
+    asRecord(row.raw_result),
+    asRecord(row.condition_raw_result),
+    asRecord(row.failure),
+    asRecord(row.error)
+  ].filter((record) => Object.keys(record).length > 0);
+}
+
+function conditionResultId(row: Record<string, unknown>): string | undefined {
+  const candidates: unknown[] = [
+    row.condition_marker,
+    row.marker,
+    row.condition_id,
+    row.condition,
+    row.name
+  ];
+  for (const nested of conditionResultNestedRecords(row)) {
+    candidates.push(nested.condition_marker, nested.marker, nested.condition_id, nested.id, nested.name);
+  }
+  for (const candidate of candidates) {
+    const value = asString(candidate);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
 function collectExecutionStatusRows(metrics: Record<string, unknown>): Array<Record<string, unknown>> {
   const study = asRecord(metrics.study);
   const studySummary = asRecord(metrics.study_summary);
   return [
     ...collectConditionRows(metrics.rows),
+    ...collectConditionRows(metrics.raw_condition_results),
+    ...collectConditionRows(metrics.condition_results),
     ...collectConditionRows(metrics.run_results),
     ...collectConditionRows(metrics.per_run_results),
     ...collectConditionRows(metrics.raw_results),
@@ -2085,17 +2847,102 @@ function collectExecutionStatusRows(metrics: Record<string, unknown>): Array<Rec
   ].filter((row) => normalizeConditionResultStatus(row) !== "unknown");
 }
 
+function collectConditionSeedValues(row: Record<string, unknown>): unknown[] {
+  const candidates: unknown[] = [row.seed, row.seed_id, row.random_seed, row.evaluation_seed];
+  for (const nested of conditionResultNestedRecords(row)) {
+    candidates.push(nested.seed, nested.seed_id, nested.random_seed, nested.evaluation_seed);
+  }
+  const rawEvidence = asRecord(row.raw_evidence);
+  candidates.push(rawEvidence.seed, rawEvidence.seed_id, rawEvidence.random_seed, rawEvidence.evaluation_seed);
+  for (const value of [row.seeds, row.seed_schedule, row.planned_seeds]) {
+    if (Array.isArray(value)) {
+      candidates.push(...value);
+    }
+  }
+  return candidates.filter((value) => value !== undefined && value !== null && String(value).trim() !== "");
+}
+
+function collectSeedProvenanceRows(metrics: Record<string, unknown>): Array<Record<string, unknown>> {
+  const study = asRecord(metrics.study);
+  const studySummary = asRecord(metrics.study_summary);
+  return [
+    ...collectConditionRows(metrics.raw_condition_results),
+    ...collectConditionRows(metrics.condition_results),
+    ...collectConditionRows(metrics.condition_summaries),
+    ...collectConditionRows(metrics.rows),
+    ...collectConditionRows(metrics.run_results),
+    ...collectConditionRows(metrics.per_run_results),
+    ...collectConditionRows(metrics.raw_results),
+    ...collectConditionRows(metrics.seed_results),
+    ...collectConditionRows(metrics.per_seed_rows),
+    ...collectConditionRows(metrics.per_seed_results),
+    ...collectConditionRows(metrics.condition_seed_rows),
+    ...collectConditionRows(study.raw_condition_results),
+    ...collectConditionRows(study.condition_results),
+    ...collectConditionRows(study.condition_summaries),
+    ...collectConditionRows(study.run_results),
+    ...collectConditionRows(study.per_run_results),
+    ...collectConditionRows(study.seed_results),
+    ...collectConditionRows(studySummary.raw_condition_results),
+    ...collectConditionRows(studySummary.condition_results),
+    ...collectConditionRows(studySummary.condition_summaries),
+    ...collectConditionRows(studySummary.run_results),
+    ...collectConditionRows(studySummary.per_run_results),
+    ...collectConditionRows(studySummary.seed_results)
+  ];
+}
+
+function countUniqueCompletedConditionSeedEvidence(metrics: Record<string, unknown>): number {
+  const pairs = new Set<string>();
+  for (const row of collectSeedProvenanceRows(metrics)) {
+    const status = normalizeConditionResultStatus(row);
+    if (status !== "unknown" && !isCompletedConditionStatus(status)) {
+      continue;
+    }
+    const marker = conditionResultMarker(row);
+    if (!marker) {
+      continue;
+    }
+    for (const seed of collectConditionSeedValues(row)) {
+      pairs.add(`${marker}::${String(seed)}`);
+    }
+  }
+  return pairs.size;
+}
+
+function conditionResultMarker(row: Record<string, unknown>): string | undefined {
+  return (
+    asString(row.condition_marker) ||
+    asString(row.marker) ||
+    asString(row.condition_id) ||
+    asString(row.condition) ||
+    asString(row.name)
+  );
+}
+
 function conditionResultReason(row: Record<string, unknown>): string | undefined {
-  const errorRecord = asRecord(row.error);
-  const reason =
-    asString(row.reason) ||
-    asString(row.failure_reason) ||
-    asString(row.error_message) ||
-    asString(row.message) ||
-    asString(errorRecord.message) ||
-    asString(errorRecord.error) ||
-    (typeof row.error === "string" ? row.error : undefined);
-  return reason ? trimShort(reason, 160) : undefined;
+  const candidates: unknown[] = [row.reason, row.failure_reason, row.error_message, row.message];
+  if (typeof row.error === "string") {
+    candidates.push(row.error);
+  }
+  for (const nested of conditionResultNestedRecords(row)) {
+    candidates.push(
+      nested.reason,
+      nested.failure_reason,
+      nested.error_message,
+      nested.message,
+      nested.error,
+      nested.failure,
+      nested.failure_type
+    );
+  }
+  for (const candidate of candidates) {
+    const reason = asString(candidate);
+    if (reason) {
+      return trimShort(reason, 160);
+    }
+  }
+  return undefined;
 }
 
 function formatCountMap(counts: Map<string, number>, limit: number): string {
@@ -2761,6 +3608,7 @@ async function promoteObjectiveMetricFromPublicBundle(input: {
   runContext: RunContextMemory;
   workspaceRoot: string;
   metricsPath: string;
+  minModifiedAtMs?: number;
 }): Promise<string | undefined> {
   const preferredKeys = [...new Set([
     ...input.objectiveProfile.preferredMetricKeys,
@@ -2783,6 +3631,10 @@ async function promoteObjectiveMetricFromPublicBundle(input: {
   ];
   for (const candidate of candidates) {
     if (candidate === input.metricsPath || !(await fileExists(candidate))) {
+      continue;
+    }
+    const candidateStat = await fs.stat(candidate).catch(() => undefined);
+    if (input.minModifiedAtMs !== undefined && candidateStat && candidateStat.mtimeMs + 1000 < input.minModifiedAtMs) {
       continue;
     }
     const candidateMetrics = await readMetricsObject(candidate, input.workspaceRoot);
@@ -2857,7 +3709,11 @@ async function recoverPublicBundleMetricsOutput(input: {
       const publicPrimaryKey = asString(metrics.primary_metric_key);
       const publicHasPrimaryValue = Boolean(publicPrimaryKey && asNumber(metrics[publicPrimaryKey]) !== undefined);
       const existingHasPrimaryValue = Boolean(publicPrimaryKey && asNumber(existingMetrics[publicPrimaryKey]) !== undefined);
-      if (!publicHasPrimaryValue || existingHasPrimaryValue) {
+      const publicStatus = asString(metrics.status)?.toLowerCase();
+      const existingStatus = asString(existingMetrics.status)?.toLowerCase();
+      const publicCompleted = publicStatus === "completed" || publicStatus === "success" || publicStatus === "succeeded";
+      const existingFailed = existingStatus === "failed" || existingStatus === "failure" || existingStatus === "error";
+      if (!publicHasPrimaryValue || (existingHasPrimaryValue && !(publicCompleted && existingFailed))) {
         continue;
       }
     }
@@ -2903,6 +3759,16 @@ async function restorePreexistingMetricsOutput(input: {
       `exec_logs/rejected_metrics_${Date.now()}.json`,
       rejectedMetrics
     );
+    await writeRunArtifact(
+      input.run,
+      `exec_logs/metrics_restore_skipped_${Date.now()}.json`,
+      JSON.stringify({
+        preserved_rejected_metrics: input.metricsPath,
+        previous_backup: input.backupPath,
+        reason: input.reason
+      }, null, 2)
+    );
+    return undefined;
   }
 
   const previousMetrics = await fs.readFile(input.backupPath, "utf8");
@@ -2943,7 +3809,107 @@ async function clearPreexistingExperimentFailureArtifacts(
     await fs.unlink(filePath);
     backups.push(backupPath);
   }
+  const nestedFailurePaths = await collectNestedFailureArtifactPaths(artifactDir);
+  for (const [index, filePath] of nestedFailurePaths.entries()) {
+    const existingArtifact = await fs.readFile(filePath, "utf8");
+    const relativePath = path.relative(artifactDir, filePath).replace(/\\/gu, "/");
+    const backupPath = await writeRunArtifact(
+      run,
+      `exec_logs/preexisting_nested_failure_${Date.now()}_${index}.json`,
+      JSON.stringify(
+        {
+          relative_path: relativePath,
+          artifact: safeJsonParse(existingArtifact) ?? existingArtifact
+        },
+        null,
+        2
+      )
+    );
+    await fs.unlink(filePath);
+    backups.push(backupPath);
+  }
   return backups;
+}
+
+async function clearPreexistingExperimentEvidenceArtifacts(
+  run: Parameters<typeof writeRunArtifact>[0],
+  artifactDir: string | undefined
+): Promise<string[]> {
+  if (!artifactDir) {
+    return [];
+  }
+
+  const candidatePaths = [
+    path.join(artifactDir, "artifacts", "raw_evaluation_evidence.jsonl"),
+    path.join(artifactDir, "raw_evaluation_evidence.jsonl"),
+    path.join(artifactDir, "artifacts", "evaluation_evidence.jsonl"),
+    path.join(artifactDir, "evaluation_evidence.jsonl")
+  ];
+  const backups: string[] = [];
+  const seen = new Set<string>();
+  for (const filePath of candidatePaths) {
+    const resolvedPath = path.resolve(filePath);
+    if (seen.has(resolvedPath) || !(await fileExists(resolvedPath))) {
+      continue;
+    }
+    seen.add(resolvedPath);
+    const existingArtifact = await fs.readFile(resolvedPath, "utf8");
+    const relativePath = path.relative(artifactDir, resolvedPath).replace(/\\/gu, "/");
+    const safeName = relativePath
+      .replace(/\.jsonl$/u, "")
+      .replace(/[^a-z0-9]+/giu, "_")
+      .replace(/^_+|_+$/gu, "") || "evidence";
+    const backupPath = await writeRunArtifact(
+      run,
+      `exec_logs/preexisting_${safeName}_${Date.now()}.jsonl`,
+      existingArtifact
+    );
+    await fs.unlink(resolvedPath);
+    backups.push(backupPath);
+  }
+  return backups;
+}
+
+async function collectNestedFailureArtifactPaths(artifactDir: string): Promise<string[]> {
+  const results: string[] = [];
+  const stack = [artifactDir];
+  while (stack.length > 0 && results.length < 200) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+    let entries: Array<import("node:fs").Dirent>;
+    try {
+      entries = await fs.readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.name === "node_modules" || entry.name === ".git" || entry.name === ".autolabos") {
+        continue;
+      }
+      const entryPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(entryPath);
+        continue;
+      }
+      if (entry.isFile() && entry.name === "failure.json" && path.dirname(entryPath) !== artifactDir) {
+        results.push(entryPath);
+        if (results.length >= 200) {
+          break;
+        }
+      }
+    }
+  }
+  return results.sort();
+}
+
+function safeJsonParse(text: string): unknown | undefined {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 function isManagedStandardRunCommand(command: string): boolean {
@@ -3008,29 +3974,33 @@ async function appendPythonTimeoutArgIfAccepted(
   cwd: string,
   timeoutSec: number | undefined
 ): Promise<string> {
-  if (!timeoutSec || /--(?:budget-)?timeout-sec\b/u.test(command)) {
+  if (!timeoutSec) {
     return command;
   }
-  const scriptPath = extractPythonScriptPathFromCommand(command, cwd);
+  const scriptPath = await resolvePythonRunCommandScriptPath(command, cwd);
   if (!scriptPath || path.extname(scriptPath) !== ".py" || !(await fileExists(scriptPath))) {
     return command;
   }
   const source = await fs.readFile(scriptPath, "utf8");
   const acceptedFlags = extractPythonArgparseLongFlagsForRunCommand(source);
-  if (acceptedFlags.has("--timeout-sec")) {
-    return `${command} --timeout-sec ${timeoutSec}`;
+  let nextCommand = command;
+  if (!/--(?:budget-)?timeout-sec\b/u.test(nextCommand)) {
+    if (acceptedFlags.has("--timeout-sec")) {
+      nextCommand = `${nextCommand} --timeout-sec ${timeoutSec}`;
+    } else if (acceptedFlags.has("--budget-timeout-sec")) {
+      nextCommand = `${nextCommand} --budget-timeout-sec ${timeoutSec}`;
+    }
   }
-  if (acceptedFlags.has("--budget-timeout-sec")) {
-    return `${command} --budget-timeout-sec ${timeoutSec}`;
+  if (acceptedFlags.has("--condition-timeout-sec") && !hasCommandFlag(nextCommand, "--condition-timeout-sec")) {
+    nextCommand = `${nextCommand} --condition-timeout-sec ${Math.max(1, Math.floor(timeoutSec))}`;
   }
-  return command;
+  return nextCommand;
 }
-
 async function appendPythonOverwriteOutputArgIfAccepted(command: string, cwd: string): Promise<string> {
   if (hasCommandFlag(command, "--overwrite-output")) {
     return command;
   }
-  const scriptPath = extractPythonScriptPathFromCommand(command, cwd);
+  const scriptPath = await resolvePythonRunCommandScriptPath(command, cwd);
   if (!scriptPath || path.extname(scriptPath) !== ".py" || !(await fileExists(scriptPath))) {
     return command;
   }
@@ -3043,6 +4013,97 @@ async function appendPythonOverwriteOutputArgIfAccepted(command: string, cwd: st
   const source = await fs.readFile(scriptPath, "utf8");
   const acceptedFlags = extractPythonArgparseLongFlagsForRunCommand(source);
   return acceptedFlags.has("--overwrite-output") ? `${command} --overwrite-output` : command;
+}
+async function resolvePythonRunCommandScriptPath(command: string, cwd: string): Promise<string | undefined> {
+  const directScriptPath = extractPythonScriptPathFromCommand(command, cwd);
+  if (directScriptPath) {
+    return directScriptPath;
+  }
+  return resolveForwardedShellWrapperPythonScriptPath(command, cwd);
+}
+
+async function resolveForwardedShellWrapperPythonScriptPath(command: string, cwd: string): Promise<string | undefined> {
+  const wrapperPath = extractShellScriptPathFromCommand(command, cwd);
+  if (!wrapperPath || !(await fileExists(wrapperPath))) {
+    return undefined;
+  }
+  const wrapperSource = await fs.readFile(wrapperPath, "utf8");
+  if (!/(?:["']?\$@["']?|\$\{[@*]\})/u.test(wrapperSource)) {
+    return undefined;
+  }
+  const scriptDir = path.dirname(wrapperPath);
+  const variableValues = new Map<string, string>([["SCRIPT_DIR", scriptDir]]);
+  const assignmentPattern = /^\s*([A-Za-z_][A-Za-z0-9_]*)=(["'])(.*?)\2\s*$/gmu;
+  for (const match of wrapperSource.matchAll(assignmentPattern)) {
+    const name = match[1];
+    const rawValue = match[3] || "";
+    if (!name || !rawValue.includes(".py")) {
+      continue;
+    }
+    const resolved = resolveShellWrapperPathExpression(rawValue, variableValues, scriptDir);
+    if (resolved && path.extname(resolved) === ".py" && (await fileExists(resolved))) {
+      variableValues.set(name, resolved);
+      return resolved;
+    }
+  }
+  const directPythonMatch = wrapperSource.match(
+    /\b(?:python|python3|\$\{PYTHON_BIN:-python3\})\b[\s\\]+(?:"([^"]+\.py)"|'([^']+\.py)'|(\S+\.py))/u
+  );
+  const directCandidate = directPythonMatch?.[1] || directPythonMatch?.[2] || directPythonMatch?.[3];
+  if (directCandidate) {
+    const resolved = resolveShellWrapperPathExpression(directCandidate, variableValues, scriptDir);
+    if (resolved && path.extname(resolved) === ".py" && (await fileExists(resolved))) {
+      return resolved;
+    }
+  }
+  const variablePythonMatch = wrapperSource.match(/\b(?:python|python3|\$\{PYTHON_BIN:-python3\})\b[\s\\]+["']?\$([A-Za-z_][A-Za-z0-9_]*)["']?/u);
+  const variableName = variablePythonMatch?.[1];
+  if (variableName) {
+    const resolved = variableValues.get(variableName);
+    if (resolved && path.extname(resolved) === ".py" && (await fileExists(resolved))) {
+      return resolved;
+    }
+  }
+  return undefined;
+}
+
+function extractShellScriptPathFromCommand(command: string, cwd: string): string | undefined {
+  const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = unquoteShellToken(tokens[index] || "");
+    if (!token || token.startsWith("-")) {
+      continue;
+    }
+    const candidate =
+      token === "bash" || token === "sh" || token.endsWith("/bash") || token.endsWith("/sh")
+        ? unquoteShellToken(tokens[index + 1] || "")
+        : token;
+    if (!candidate || candidate.startsWith("-") || path.extname(candidate) !== ".sh") {
+      continue;
+    }
+    return path.isAbsolute(candidate) ? candidate : path.join(cwd, candidate);
+  }
+  return undefined;
+}
+
+function resolveShellWrapperPathExpression(
+  rawValue: string,
+  variableValues: Map<string, string>,
+  scriptDir: string
+): string | undefined {
+  let value = rawValue.trim();
+  for (const [name, replacement] of variableValues.entries()) {
+    value = value
+      .replace(new RegExp(`\\$\\{${escapeRegex(name)}\\}`, "gu"), replacement)
+      .replace(new RegExp(`\\${escapeRegex(name)}\\b`, "gu"), replacement);
+  }
+  value = value.replace(/\$\((?:cd|dirname)[^)]+\)/gu, scriptDir);
+  if (!value.includes(".py")) {
+    return undefined;
+  }
+  const pyMatch = value.match(/(.+?\.py)(?:\s|$)/u);
+  const candidate = pyMatch?.[1] || value;
+  return path.isAbsolute(candidate) ? candidate : path.resolve(scriptDir, candidate);
 }
 
 function hasCommandFlag(command: string, flag: string): boolean {
@@ -3078,9 +4139,27 @@ async function looksLikeReusableExperimentOutputDir(dirPath: string): Promise<bo
 }
 
 function extractPythonArgparseLongFlagsForRunCommand(source: string): Set<string> {
+  const primaryParserFunctionNames = [
+    "parse_args",
+    "parse_cli_args",
+    "parse_arguments",
+    "build_arg_parser",
+    "make_arg_parser",
+    "create_arg_parser"
+  ];
+  for (const functionName of primaryParserFunctionNames) {
+    const body = extractPythonTopLevelFunctionBody(source, functionName);
+    if (body && /\badd_argument\s*\(/u.test(body)) {
+      return extractPythonArgparseLongFlagsFromText(body);
+    }
+  }
+  return extractPythonArgparseLongFlagsFromText(source);
+}
+
+function extractPythonArgparseLongFlagsFromText(text: string): Set<string> {
   const flags = new Set<string>();
   const addArgumentPattern = /\badd_argument\s*\(([\s\S]*?)\)/gu;
-  for (const match of source.matchAll(addArgumentPattern)) {
+  for (const match of text.matchAll(addArgumentPattern)) {
     const callText = match[1] || "";
     for (const flagMatch of callText.matchAll(/["'](--[a-z0-9][a-z0-9_-]*)["']/giu)) {
       flags.add(flagMatch[1].toLowerCase());
@@ -3089,15 +4168,43 @@ function extractPythonArgparseLongFlagsForRunCommand(source: string): Set<string
   return flags;
 }
 
+function extractPythonTopLevelFunctionBody(source: string, functionName: string): string | undefined {
+  const lines = source.split(/\r?\n/u);
+  const definitionPattern = new RegExp(`^def\\s+${escapeRegex(functionName)}\\s*\\(`, "u");
+  const startIndex = lines.findIndex((line) => definitionPattern.test(line));
+  if (startIndex < 0) {
+    return undefined;
+  }
+  let endIndex = lines.length;
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index] || "";
+    if (line.trim() && !/^[ \t]/u.test(line)) {
+      endIndex = index;
+      break;
+    }
+  }
+  return lines.slice(startIndex, endIndex).join("\n");
+}
+
 async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   runContext: RunContextMemory;
   command: string;
   cwd: string;
   workspaceRoot: string;
 }): Promise<{ repaired: boolean; message: string }> {
+  const recordedScriptPath = resolveMaybeRelative(
+    await input.runContext.get<string>("implement_experiments.script"),
+    input.workspaceRoot
+  );
+  const commandScriptPath = extractPythonScriptPathFromCommand(input.command, input.cwd);
+  const wrapperScriptPath =
+    (recordedScriptPath && path.extname(recordedScriptPath) === ".sh" ? recordedScriptPath : undefined) ||
+    extractShellScriptPathFromCommand(input.command, input.cwd);
   const scriptPath =
-    resolveMaybeRelative(await input.runContext.get<string>("implement_experiments.script"), input.workspaceRoot) ||
-    extractPythonScriptPathFromCommand(input.command, input.cwd);
+    (await resolvePythonVerificationScriptPath(recordedScriptPath)) ||
+    (await resolvePythonVerificationScriptPath(wrapperScriptPath)) ||
+    (recordedScriptPath && path.extname(recordedScriptPath) === ".py" ? recordedScriptPath : undefined) ||
+    commandScriptPath;
   if (!scriptPath || path.extname(scriptPath) !== ".py" || !(await fileExists(scriptPath))) {
     return { repaired: false, message: "" };
   }
@@ -3106,11 +4213,127 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   let repaired = false;
 
   const source = await fs.readFile(scriptPath, "utf8");
-  const repairedSource = removeUnsupportedTrainingArgumentsKwargLines(source);
+  let repairedSource = removeUnsupportedTrainingArgumentsKwargLines(source);
   if (repairedSource !== source) {
     await fs.writeFile(scriptPath, repairedSource, "utf8");
     repaired = true;
     messages.push(`Removed unsupported TrainingArguments kwarg(s) from ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const datasetLoadKwargRepairedSource = removeUnsupportedDatasetLoadKwargLines(repairedSource);
+  if (datasetLoadKwargRepairedSource !== repairedSource) {
+    await fs.writeFile(scriptPath, datasetLoadKwargRepairedSource, "utf8");
+    repairedSource = datasetLoadKwargRepairedSource;
+    repaired = true;
+    messages.push(`Removed unsupported dataset loader kwarg(s) from ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const evaluationRuntimeHandleLoaderRepair = await repairPythonEvaluationRuntimeHandleLoaderAliasSurface(scriptPath);
+  if (evaluationRuntimeHandleLoaderRepair.repaired) {
+    repaired = true;
+    messages.push(
+      evaluationRuntimeHandleLoaderRepair.message ||
+        `Aliased generated evaluation runtime handle loaders in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const entrypointSetDefaultEmptyStringRepair = await repairPythonEntrypointSetDefaultEmptyStringSurface(scriptPath);
+  if (entrypointSetDefaultEmptyStringRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointSetDefaultEmptyStringRepair.message ||
+        `Allowed generated entrypoint defaults to replace empty strings in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const entrypointModelCandidateFallbackRepair = await repairPythonEntrypointModelCandidateFallbackSurface(scriptPath);
+  if (entrypointModelCandidateFallbackRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointModelCandidateFallbackRepair.message ||
+        `Accepted generated model candidate globals in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const entrypointBudgetTimeoutArgparseRepair = await repairPythonEntrypointBudgetTimeoutArgparseSurface(scriptPath);
+  if (entrypointBudgetTimeoutArgparseRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointBudgetTimeoutArgparseRepair.message ||
+        `Added generated budget-timeout argparse aliases in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const wrapperCommandSurface = wrapperScriptPath ? await readOptionalText(wrapperScriptPath) : "";
+  const runCommandArgparseAliasRepair = await repairPythonRunCommandArgparseAliases(
+    scriptPath,
+    [input.command, wrapperCommandSurface].filter((part) => part.trim()).join("\n")
+  );
+  if (runCommandArgparseAliasRepair.repaired) {
+    repaired = true;
+    messages.push(
+      runCommandArgparseAliasRepair.message ||
+        `Added run_command argparse aliases to ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const nestedTrainingTextExtractionRepair = await repairPythonNestedTrainingTextExtractionSurface(scriptPath);
+  if (nestedTrainingTextExtractionRepair.repaired) {
+    repaired = true;
+    messages.push(
+      nestedTrainingTextExtractionRepair.message ||
+        `Allowed generated training text extractors to recover nested bundle records in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const entrypointEvalTaskIterMetadataRepair = await repairPythonEntrypointEvalTaskIterMetadataSurface(scriptPath);
+  if (entrypointEvalTaskIterMetadataRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointEvalTaskIterMetadataRepair.message ||
+        `Skipped generated evaluation-task metadata wrappers in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const entrypointConditionRuntimeCleanupRepair = await repairPythonEntrypointConditionRuntimeCleanupSurface(scriptPath);
+  if (entrypointConditionRuntimeCleanupRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointConditionRuntimeCleanupRepair.message ||
+        `Released generated condition runtime handles after evaluation in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const entrypointStateViewSpecMetadataRepair = await repairPythonEntrypointStateViewSpecMetadataSurface(scriptPath);
+  if (entrypointStateViewSpecMetadataRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointStateViewSpecMetadataRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) ||
+        `Flattened generated condition spec metadata into entrypoint state views in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const savePretrainedDtypeSerializationRepair = await repairPythonSavePretrainedDtypeSerializationSurface(scriptPath);
+  if (savePretrainedDtypeSerializationRepair.repaired) {
+    repaired = true;
+    messages.push(
+      savePretrainedDtypeSerializationRepair.message ||
+        `Normalized non-JSON dtype fields before save_pretrained in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const evaluationArtifactDirReloadRepair = await repairPythonEvaluationArtifactDirReloadSurface(scriptPath);
+  if (evaluationArtifactDirReloadRepair.repaired) {
+    repaired = true;
+    messages.push(
+      evaluationArtifactDirReloadRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Resolved generated evaluation reloads to trained adapter artifact directories in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
   }
 
   const outputDirArgparseRepair = await repairPythonOutputDirArgparseAlias(scriptPath, input.command);
@@ -3468,6 +4691,18 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
     messages.push(multipleChoiceDataclassChoiceAliasRepair.message || `Accepted multiple-choice dataclass choice aliases in ${path.basename(scriptPath)} before run_experiments execution.`);
   }
 
+  const multipleChoiceListRawVariableRepair =
+    await repairPythonMultipleChoiceListRawVariableSurface(scriptPath);
+  if (multipleChoiceListRawVariableRepair.repaired) {
+    repaired = true;
+    messages.push(
+      multipleChoiceListRawVariableRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Repaired multiple-choice list extraction variable scope in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
   const mainMetricsRawResultsAliasRepair =
     await repairPythonMainMetricsRawResultsAliasSurface(scriptPath);
   if (mainMetricsRawResultsAliasRepair.repaired) {
@@ -3500,6 +4735,65 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
   if (dataclassEvaluationRecordRepair.repaired) {
     repaired = true;
     messages.push(dataclassEvaluationRecordRepair.message || `Coerced dataclass evaluation records in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
+  const normalizedEvalExampleRecordRepair =
+    await repairPythonNormalizedEvalExampleRecordSurface(scriptPath);
+  if (normalizedEvalExampleRecordRepair.repaired) {
+    repaired = true;
+    messages.push(
+      normalizedEvalExampleRecordRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Accepted already-normalized evaluation example records in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const directoryHelperAliasRepair = await repairPythonDirectoryHelperAlias(scriptPath);
+  if (directoryHelperAliasRepair.repaired) {
+    repaired = true;
+    messages.push(
+      directoryHelperAliasRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Added directory helper alias in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const singlePlannedConditionCandidateRepair =
+    await repairPythonSinglePlannedConditionCallableCandidateSurface(scriptPath);
+  if (singlePlannedConditionCandidateRepair.repaired) {
+    repaired = true;
+    messages.push(
+      singlePlannedConditionCandidateRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Added generated single-condition callable candidates in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const singlePlannedConditionConditionOnlyVariantRepair =
+    await repairPythonSinglePlannedConditionConditionOnlyVariantSurface(scriptPath);
+  if (singlePlannedConditionConditionOnlyVariantRepair.repaired) {
+    repaired = true;
+    messages.push(
+      singlePlannedConditionConditionOnlyVariantRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Added condition-only single-condition call variant in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+
+  const finalMetricAggregationEntrypointRepair =
+    await repairPythonFinalMetricAggregationEntrypointSurface(scriptPath);
+  if (finalMetricAggregationEntrypointRepair.repaired) {
+    repaired = true;
+    messages.push(
+      finalMetricAggregationEntrypointRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Added final metric aggregation entrypoint in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
   }
 
   const conditionMarkerDefaultKwargRepair =
@@ -3819,8 +5113,8 @@ async function repairPythonAdjacentBackendTrainingInputsBridgeSurface(scriptPath
     "            if bridge_training_model is None or bridge_tokenizer is None:",
     "                model_bundle = load_condition_model_bundle(",
     "                    base_model_name=str(bridge_model_name),",
-    "                    adapter_rank=rank,",
-    "                    adapter_dropout=dropout,",
+    "                    condition_parameter_x=rank,",
+    "                    condition_parameter_y=parameter_y,",
     "                    cache_dir=bridge_cache_dir,",
     "                    max_sequence_length=int(runtime_context.get(\"max_sequence_length\") or runtime_context.get(\"max_seq_length\") or globals().get(\"DEFAULT_MAX_SEQ_LENGTH\", 256)),",
     "                )",
@@ -3856,6 +5150,149 @@ async function repairPythonAdjacentBackendTrainingInputsBridgeSurface(scriptPath
     message: `Bridged model/tokenizer/train_examples inputs for adjacent backend training in ${path.basename(backendPath)} before run_experiments execution.`
   };
 }
+async function detectPythonRunnerSkeletonOnlySurface(input: {
+  runContext: RunContextMemory;
+  command: string;
+  cwd: string;
+  workspaceRoot: string;
+}): Promise<string | undefined> {
+  const explicitScript = resolveMaybeRelative(
+    await input.runContext.get<string>("implement_experiments.script"),
+    input.workspaceRoot
+  );
+  const commandScript = extractPythonScriptPathFromCommand(input.command, input.cwd);
+  const candidates = [commandScript, explicitScript]
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .filter((candidate) => path.extname(candidate) === ".py");
+  const scriptPath = await firstExistingCandidate(candidates);
+  if (!scriptPath) {
+    return undefined;
+  }
+
+  let source = "";
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  if (!isCanonicalPythonRunnerSkeletonOnly(source)) {
+    return undefined;
+  }
+
+  return [
+    "Python experiment runner " + path.basename(scriptPath) + " is still a canonical skeleton and has no executable main entrypoint.",
+    "run_experiments must not execute a skeleton-only runner or recover stale metrics as experiment evidence."
+  ].join(" ");
+}
+
+function isCanonicalPythonRunnerSkeletonOnly(source: string): boolean {
+  if (!/AUTOLABOS\s+CANONICAL\s+SKELETON/iu.test(source)) {
+    return false;
+  }
+  if (hasUnfilledCriticalAutolabosRunnerSection(source)) {
+    return true;
+  }
+  const hasMainFunction = /(?:^|\n)def\s+main\s*\(/u.test(source);
+  const hasMainGuard = /if\s+__name__\s*==\s*["']__main__["']/u.test(source);
+  const hasDirectCliExit = /raise\s+SystemExit\s*\(|sys\.exit\s*\(/u.test(source);
+  return !hasMainFunction || !hasMainGuard || !hasDirectCliExit;
+}
+
+function hasUnfilledCriticalAutolabosRunnerSection(source: string): boolean {
+  const criticalSections = ["runner_evaluation", "runner_metrics", "runner_entrypoint"];
+  return criticalSections.some((sectionId) => {
+    const bodies = extractAutolabosSectionBodies(source, sectionId);
+    return bodies.length > 0 && bodies.some((body) => !pythonSectionHasExecutableContent(body));
+  });
+}
+
+function extractAutolabosSectionBodies(source: string, sectionId: string): string[] {
+  const escapedSectionId = sectionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    String.raw`^\s*#\s*BEGIN AUTOLABOS SECTION\s+${escapedSectionId}[^\n]*\n([\s\S]*?)^\s*#\s*END AUTOLABOS SECTION\s+${escapedSectionId}\b[^\n]*`,
+    "gmu"
+  );
+  return Array.from(source.matchAll(pattern), (match) => match[1] || "");
+}
+
+function pythonSectionHasExecutableContent(body: string): boolean {
+  return body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .some((line) => !line.startsWith("#"));
+}
+
+async function detectLongRunningPythonRunnerWithoutProgressSurface(input: {
+  runContext: RunContextMemory;
+  command: string;
+  cwd: string;
+  workspaceRoot: string;
+}): Promise<string | undefined> {
+  const explicitScript = resolveMaybeRelative(
+    await input.runContext.get<string>("implement_experiments.script"),
+    input.workspaceRoot
+  );
+  const commandScript = extractPythonScriptPathFromCommand(input.command, input.cwd);
+  const candidates = [commandScript, explicitScript]
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .filter((candidate) => path.extname(candidate) === ".py");
+  const scriptPath = await firstExistingCandidate(candidates);
+  if (!scriptPath) {
+    return undefined;
+  }
+
+  let source = "";
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const requiredRunCount = inferRequiredRunCountFromPythonSource(source);
+  const longRunShape = requiredRunCount !== undefined && requiredRunCount >= 8;
+  const heavyExecutionShape = /\b(?:from_pretrained|get_peft_model|optimizer\.step|loss\.backward|train_steps_per_run|while\s+step_count\s*<)\b/u.test(source);
+  if (!longRunShape || !heavyExecutionShape) {
+    return undefined;
+  }
+  if (hasPythonProgressOrPartialMetricsSurface(source)) {
+    return undefined;
+  }
+
+  return [
+    "Long-running Python experiment runner " + path.basename(scriptPath) + " declares required_run_count=" + requiredRunCount + " and model/training execution but has no observable progress, heartbeat, or partial-metrics surface.",
+    "A full paper-scale run must emit node-owned progress artifacts before long training/evaluation loops so the meta harness can distinguish real progress from a hang or silent dependency stall."
+  ].join(" ");
+}
+
+function inferRequiredRunCountFromPythonSource(source: string): number | undefined {
+  const direct = source.match(/\b(?:REQUIRED_RUN_COUNT|PLANNED_RUN_COUNT|required_run_count)\b\s*[:=]\s*(\d+)/u);
+  if (direct) {
+    return Number.parseInt(direct[1], 10);
+  }
+  const conditionCount = source.match(/\b(?:REQUIRED_CONDITION_COUNT|PLANNED_CONDITION_COUNT|required_condition_count)\b\s*[:=]\s*(\d+)/u);
+  const seedTuple = source.match(/\b(?:PLANNED_SEEDS|SEED_SCHEDULE|seeds)\b\s*[:=]\s*\(([^)]*)\)/u);
+  if (!conditionCount || !seedTuple) {
+    return undefined;
+  }
+  const seedCount = seedTuple[1].split(",").map((part) => part.trim()).filter(Boolean).length;
+  return Number.parseInt(conditionCount[1], 10) * Math.max(1, seedCount);
+}
+
+function hasPythonProgressOrPartialMetricsSurface(source: string): boolean {
+  return /\b(?:progress_path|heartbeat_path|partial_metrics_path|progress_file|heartbeat_file|status_path|progress_jsonl|heartbeat_jsonl|partial_metrics|run_progress|write_progress|emit_progress|record_progress|progress\.jsonl|heartbeat\.jsonl|partial_metrics\.json)\b/iu.test(source);
+}
+
+async function firstExistingCandidate(candidates: string[]): Promise<string | undefined> {
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
 function extractPythonScriptPathFromCommand(command: string, cwd: string): string | undefined {
   const match = command.match(/(?:^|\s)python(?:3)?(?:\s+-B)?\s+(?:"([^"]+\.py)"|'([^']+\.py)'|(\S+\.py))/u);
   const candidate = match?.[1] || match?.[2] || match?.[3];
@@ -3863,6 +5300,186 @@ function extractPythonScriptPathFromCommand(command: string, cwd: string): strin
     return undefined;
   }
   return path.isAbsolute(candidate) ? candidate : path.join(cwd, candidate);
+}
+
+async function enrichMetricsWithPythonRuntimeDefaults(input: {
+  metrics: Record<string, unknown>;
+  command: string;
+  cwd: string;
+}): Promise<string | undefined> {
+  const scriptPath = extractPythonScriptPathFromCommand(input.command, input.cwd);
+  if (!scriptPath) {
+    return undefined;
+  }
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const existingRunConfig = asRecord(input.metrics.run_config);
+  const runConfig: Record<string, unknown> = { ...existingRunConfig };
+  let changed = false;
+  const setMetricString = (key: string, value: string | undefined): void => {
+    if (!value || asString(input.metrics[key])) {
+      return;
+    }
+    input.metrics[key] = value;
+    changed = true;
+  };
+  const setRunConfigNumber = (key: string, value: number | undefined): void => {
+    if (typeof value !== "number" || !Number.isFinite(value) || asNumber(runConfig[key]) !== undefined) {
+      return;
+    }
+    runConfig[key] = value;
+    changed = true;
+  };
+  const setRunConfigArray = (key: string, value: unknown[] | undefined): void => {
+    if (!value || value.length === 0 || Array.isArray(runConfig[key])) {
+      return;
+    }
+    runConfig[key] = value;
+    changed = true;
+  };
+
+  setMetricString("selected_model_id", readPythonStringConstant(source, [
+    "SELECTED_BASE_MODEL",
+    "SELECTED_MODEL",
+    "PREFERRED_BASE_MODEL",
+    "PREFERRED_MODEL",
+    "BASE_MODEL",
+    "DEFAULT_BASE_MODEL"
+  ]));
+  setMetricString("preferred_model_id", readPythonStringConstant(source, [
+    "PREFERRED_BASE_MODEL",
+    "PREFERRED_MODEL",
+    "DEFAULT_PREFERRED_MODEL"
+  ]));
+  setMetricString("fallback_model", readPythonStringConstant(source, [
+    "FALLBACK_BASE_MODEL",
+    "FALLBACK_MODEL",
+    "DEFAULT_FALLBACK_MODEL"
+  ]));
+  setMetricString("fallback_model_id", asString(input.metrics.fallback_model));
+
+  setRunConfigNumber("learning_rate", readPythonNumberConstant(source, ["DEFAULT_LEARNING_RATE", "LEARNING_RATE"]));
+  setRunConfigNumber("max_steps", readPythonNumberConstant(source, ["DEFAULT_MAX_STEPS", "DEFAULT_OPTIMIZER_STEPS", "MAX_STEPS"]));
+  setRunConfigNumber("optimizer_steps", asNumber(runConfig.max_steps));
+  setRunConfigNumber("per_device_batch_size", readPythonNumberConstant(source, ["DEFAULT_BATCH_SIZE", "DEFAULT_PER_DEVICE_BATCH_SIZE", "BATCH_SIZE"]));
+  setRunConfigNumber("per_device_train_batch_size", asNumber(runConfig.per_device_batch_size));
+  setRunConfigNumber("gradient_accumulation_steps", readPythonNumberConstant(source, ["DEFAULT_GRAD_ACCUM_STEPS", "DEFAULT_GRADIENT_ACCUMULATION_STEPS", "GRADIENT_ACCUMULATION_STEPS"]));
+  setRunConfigNumber("max_seq_length", readPythonNumberConstant(source, ["DEFAULT_MAX_SEQ_LENGTH", "DEFAULT_MAX_SEQUENCE_LENGTH", "MAX_SEQ_LENGTH", "MAX_SEQUENCE_LENGTH"]));
+  setRunConfigNumber("timeout_sec", readPythonNumberConstant(source, ["DEFAULT_TIMEOUT_SEC", "TIMEOUT_SEC"]));
+  setRunConfigNumber("max_train_samples", readPythonNumberConstant(source, ["DEFAULT_MAX_TRAIN_EXAMPLES", "MAX_TRAIN_EXAMPLES"]));
+  setRunConfigNumber("max_eval_samples_per_task", readPythonNumberConstant(source, ["DEFAULT_MAX_EVAL_EXAMPLES_PER_TASK", "MAX_EVAL_EXAMPLES_PER_TASK"]));
+  setRunConfigArray("seeds", readPythonTupleConstant(source, ["SEED_SCHEDULE", "PLANNED_SEEDS", "DEFAULT_SEEDS"]));
+
+  if (changed) {
+    if (Object.keys(runConfig).length > 0) {
+      input.metrics.run_config = runConfig;
+    }
+    return `Projected runtime metadata from ${path.basename(scriptPath)} into metrics.json for reproducibility reporting.`;
+  }
+  return undefined;
+}
+
+function readPythonStringConstant(source: string, names: string[]): string | undefined {
+  for (const name of names) {
+    const match = source.match(new RegExp(`^\\s*${escapeRegExp(name)}\\s*=\\s*(["'])(.*?)\\1`, "mu"));
+    const value = match?.[2]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readPythonNumberConstant(source: string, names: string[]): number | undefined {
+  for (const name of names) {
+    const match = source.match(new RegExp(`^\\s*${escapeRegExp(name)}\\s*=\\s*([-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:e[-+]?\\d+)?)`, "mi"));
+    if (!match?.[1]) {
+      continue;
+    }
+    const value = Number(match[1]);
+    if (Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readPythonTupleConstant(source: string, names: string[]): unknown[] | undefined {
+  for (const name of names) {
+    const match = source.match(new RegExp(`^\\s*${escapeRegExp(name)}\\s*=\\s*\\(([^\\)]*)\\)`, "mu"));
+    if (!match?.[1]) {
+      continue;
+    }
+    const values = match[1]
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => {
+        const numeric = Number(item);
+        return Number.isFinite(numeric) ? numeric : item.replace(/^['"]|['"]$/gu, "");
+      });
+    if (values.length > 0) {
+      return values;
+    }
+  }
+  return undefined;
+}
+
+function removeUnsupportedDatasetLoadKwargLines(source: string): string {
+  if (!/\b(?:datasets\.)?load_dataset\s*\(/u.test(source) || !/\btrust_remote_code\s*=/u.test(source)) {
+    return source;
+  }
+
+  const lines = source.split(/\r?\n/u);
+  const nextLines: string[] = [];
+  let inDatasetLoadCall = false;
+  let parenDepth = 0;
+  let changed = false;
+
+  for (const line of lines) {
+    const startsDatasetLoadCall = /\b(?:datasets\.)?load_dataset\s*\(/u.test(line);
+    let nextLine = line;
+    if (startsDatasetLoadCall) {
+      inDatasetLoadCall = true;
+    }
+
+    if ((startsDatasetLoadCall || inDatasetLoadCall) && /\btrust_remote_code\s*=/u.test(nextLine)) {
+      const repairedLine = nextLine
+        .replace(/\btrust_remote_code\s*=\s*[^,\)\n]+,\s*/gu, "")
+        .replace(/,\s*trust_remote_code\s*=\s*[^,\)\n]+/gu, "")
+        .replace(/\(\s*,\s*/gu, "(")
+        .replace(/,\s*\)/gu, ")");
+      if (repairedLine !== nextLine) {
+        nextLine = repairedLine;
+        changed = true;
+      }
+      if (/^\s*trust_remote_code\s*=.*?,?\s*(?:#.*)?$/u.test(line)) {
+        changed = true;
+        parenDepth += countTextOccurrences(line, "(") - countTextOccurrences(line, ")");
+        if (parenDepth <= 0) {
+          inDatasetLoadCall = false;
+          parenDepth = 0;
+        }
+        continue;
+      }
+    }
+
+    nextLines.push(nextLine);
+    if (inDatasetLoadCall) {
+      parenDepth += countTextOccurrences(nextLine, "(") - countTextOccurrences(nextLine, ")");
+      if (parenDepth <= 0) {
+        inDatasetLoadCall = false;
+        parenDepth = 0;
+      }
+    }
+  }
+
+  return changed ? nextLines.join("\n").replace(/\n{3,}/gu, "\n\n") : source;
 }
 
 function removeUnsupportedTrainingArgumentsKwargLines(source: string): string {
@@ -3905,6 +5522,346 @@ function removeUnsupportedTrainingArgumentsKwargLines(source: string): string {
   }
 
   return changed ? nextLines.join("\n").replace(/\n{3,}/gu, "\n\n") : source;
+}
+
+function promotePerExampleConditionRowsToSummaries(metrics: Record<string, unknown>): string | undefined {
+  const conditionRows = collectConditionRows(metrics.condition_results);
+  const rawRows = collectConditionRows(metrics.raw_condition_results);
+  const rows = shouldPreferRawRowsForConditionProjection(conditionRows, rawRows) ? rawRows : conditionRows;
+  if (rows.length === 0) {
+    return undefined;
+  }
+  const alreadySummarized = rows.some((row) =>
+    asNumber(row.average_accuracy) !== undefined ||
+    Object.keys(asRecord(row.evaluation)).length > 0 ||
+    Object.keys(asRecord(row.task_metrics)).length > 0
+  );
+  if (alreadySummarized) {
+    return undefined;
+  }
+  const metricRows = rows.filter((row) => {
+    const marker = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id);
+    const value = asNumber(row.accuracy) ?? asNumber(row.metric) ?? asNumber(row.score) ?? asNumber(row.value);
+    return Boolean(marker) && (value !== undefined || typeof row.correct === "boolean");
+  });
+  if (metricRows.length === 0) {
+    return undefined;
+  }
+
+  type Group = { rows: Array<Record<string, unknown>>; tasks: Map<string, Array<Record<string, unknown>>> };
+  const grouped = new Map<string, Group>();
+  const rowSeed = (row: Record<string, unknown>): unknown => {
+    return projectionRowSeed(row);
+  };
+  for (const row of metricRows) {
+    const marker = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id) || "condition";
+    const tasks = projectionRowTasks(row);
+    const group = grouped.get(marker) ?? { rows: [], tasks: new Map<string, Array<Record<string, unknown>>>() };
+    group.rows.push(row);
+    for (const task of tasks) {
+      const taskRows = group.tasks.get(task) ?? [];
+      taskRows.push(row);
+      group.tasks.set(task, taskRows);
+    }
+    grouped.set(marker, group);
+  }
+  if (grouped.size === 0) {
+    return undefined;
+  }
+
+  const confidenceIntervals: Array<Record<string, unknown>> = [];
+  const summaries: Array<Record<string, unknown>> = [];
+  const means = new Map<string, number>();
+  for (const [marker, group] of grouped.entries()) {
+    const evaluation: Record<string, unknown> = {};
+    const seeds: unknown[] = [];
+    for (const row of group.rows) {
+      const seed = rowSeed(row);
+      if (seed !== undefined && seed !== null && !seeds.some((seen) => String(seen) === String(seed))) {
+        seeds.push(seed);
+      }
+    }
+    const allValues: number[] = [];
+    let totalCorrect = 0;
+    let totalCount = 0;
+    for (const [task, taskRows] of [...group.tasks.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      const values: number[] = [];
+      let correctCount = 0;
+      let count = 0;
+      const predictions: Array<Record<string, unknown>> = [];
+      for (const row of taskRows) {
+        const taskMetrics = conditionRowTaskMetrics(row, task);
+        const raw = asRecord(row.raw_evidence);
+        const nestedRaw = asRecord(raw.raw_evidence);
+        const explicitValue = firstNumber(
+          taskMetrics.accuracy,
+          taskMetrics.metric,
+          taskMetrics.score,
+          taskMetrics.value,
+          row.accuracy,
+          row.metric,
+          row.score,
+          row.value
+        );
+        const correct = typeof row.correct === "boolean" ? row.correct : undefined;
+        const rowCorrectCount = firstNumber(
+          row.correct_count,
+          row.corrects,
+          row.num_correct,
+          row.correct,
+          raw.correct_count,
+          raw.corrects,
+          raw.num_correct,
+          raw.correct,
+          nestedRaw.correct_count,
+          nestedRaw.corrects,
+          nestedRaw.num_correct,
+          nestedRaw.correct,
+          taskMetrics.correct_count,
+          taskMetrics.corrects,
+          taskMetrics.num_correct,
+          taskMetrics.correct
+        );
+        const rowTotalCount = firstNumber(
+          row.total_count,
+          row.total,
+          row.evaluated_count,
+          row.sample_size,
+          row.n,
+          raw.total_count,
+          raw.total,
+          raw.evaluated_count,
+          raw.sample_size,
+          raw.n,
+          nestedRaw.total_count,
+          nestedRaw.total,
+          nestedRaw.evaluated_count,
+          nestedRaw.sample_size,
+          nestedRaw.n,
+          taskMetrics.total_count,
+          taskMetrics.total,
+          taskMetrics.evaluated_count,
+          taskMetrics.sample_size,
+          taskMetrics.n
+        );
+        const value = explicitValue ?? (correct === undefined ? undefined : correct ? 1 : 0);
+        if (value === undefined) {
+          continue;
+        }
+        values.push(value);
+        if (rowCorrectCount !== undefined && rowTotalCount !== undefined && rowTotalCount > 0) {
+          correctCount += rowCorrectCount;
+          count += rowTotalCount;
+        } else if (correct !== undefined) {
+          correctCount += correct ? 1 : 0;
+          count += 1;
+        }
+        if (correct !== undefined || row.prediction !== undefined || row.example_id !== undefined) {
+          predictions.push({
+            correct: correct ?? value >= 0.5,
+            seed: rowSeed(row) ?? null,
+            prediction: row.prediction ?? asRecord(row.raw_evidence).prediction ?? null,
+            gold_key: row.gold_key ?? asRecord(row.raw_evidence).gold_key ?? null,
+            example_id: row.example_id ?? asRecord(row.raw_evidence).example_id ?? null
+          });
+        }
+      }
+      if (values.length === 0) {
+        continue;
+      }
+      const accuracy = count > 0 ? correctCount / count : mean(values);
+      if (count === 0) {
+        count = values.length;
+        correctCount = Math.round(accuracy * count);
+      }
+      const interval = wilsonInterval(correctCount, count);
+      const taskSummary: Record<string, unknown> = {
+        accuracy,
+        correct_count: correctCount,
+        total_count: count,
+        predictions
+      };
+      if (interval) {
+        taskSummary.confidence_interval = interval;
+        confidenceIntervals.push({ metric_key: `condition_results.${marker}.${task}.accuracy`, ...interval });
+      }
+      evaluation[task] = taskSummary;
+      allValues.push(accuracy);
+      totalCorrect += correctCount;
+      totalCount += count;
+    }
+    if (allValues.length === 0) {
+      continue;
+    }
+    const averageAccuracy = totalCount > 0 ? totalCorrect / totalCount : mean(allValues);
+    const overallInterval = wilsonInterval(totalCorrect, totalCount);
+    const summary: Record<string, unknown> = {
+      condition_marker: marker,
+      marker,
+      status: "completed",
+      accuracy: averageAccuracy,
+      average_accuracy: averageAccuracy,
+      correct_count: totalCorrect,
+      total_count: totalCount,
+      seeds,
+      seed_count: seeds.length,
+      evaluation
+    };
+    if (overallInterval) {
+      summary.confidence_interval = overallInterval;
+      confidenceIntervals.push({ metric_key: `condition_results.${marker}.average_accuracy`, ...overallInterval });
+    }
+    summaries.push(summary);
+    means.set(marker, averageAccuracy);
+  }
+  if (summaries.length === 0 || means.size === 0) {
+    return undefined;
+  }
+
+  const inferredBaselineMarker = inferBaselineConditionMarker([...rows, ...summaries]);
+  const baselineMarker = inferredBaselineMarker || asString(metrics.baseline_condition_marker) || [...means.keys()].sort()[0];
+  const baselineMetric = means.get(baselineMarker) ?? means.get([...means.keys()].sort()[0]);
+  if (baselineMetric !== undefined) {
+    for (const summary of summaries) {
+      const value = asNumber(summary.average_accuracy);
+      if (value !== undefined) {
+        summary.accuracy_delta_vs_baseline = value - baselineMetric;
+      }
+    }
+    const best = summaries.reduce((current, candidate) => {
+      const currentValue = asNumber(current.average_accuracy) ?? Number.NEGATIVE_INFINITY;
+      const candidateValue = asNumber(candidate.average_accuracy) ?? Number.NEGATIVE_INFINITY;
+      return candidateValue > currentValue ? candidate : current;
+    }, summaries[0]);
+    metrics.baseline_condition_marker = baselineMarker;
+    metrics.baseline_metric = baselineMetric;
+    metrics.best_condition = best;
+    metrics.best_condition_marker = asString(best.condition_marker) || asString(best.marker);
+    const bestDelta = asNumber(best.accuracy_delta_vs_baseline);
+    if (bestDelta !== undefined) {
+      metrics.accuracy_delta_vs_baseline = bestDelta;
+      metrics.primary_metric_key = asString(metrics.primary_metric_key) || "accuracy_delta_vs_baseline";
+      metrics.primary_metric_value = bestDelta;
+    }
+  }
+
+  if (!Array.isArray(metrics.raw_condition_results)) {
+    metrics.raw_condition_results = rows;
+  }
+  metrics.condition_results = summaries;
+  if (!Array.isArray(metrics.condition_summaries)) {
+    metrics.condition_summaries = summaries;
+  }
+  metrics.completed_condition_count = summaries.length;
+  metrics.required_condition_count = asNumber(metrics.required_condition_count) ?? summaries.length;
+  const completedRunCount = summaries.reduce((sum, row) => {
+    const seedCount = Array.isArray(row.seeds) ? row.seeds.length : asNumber(row.seed_count);
+    return sum + Math.max(1, seedCount ?? 0);
+  }, 0);
+  metrics.completed_run_count = asNumber(metrics.completed_run_count) ?? completedRunCount;
+  metrics.required_run_count = asNumber(metrics.required_run_count) ?? completedRunCount;
+  metrics.confidence_intervals = confidenceIntervals;
+  metrics.statistical_summary = {
+    ...asRecord(metrics.statistical_summary),
+    confidence_intervals: confidenceIntervals
+  };
+  return `Projected ${metricRows.length} per-example metric row(s) into ${summaries.length} condition summary row(s) with confidence intervals before contract evaluation.`;
+}
+
+function shouldPreferRawRowsForConditionProjection(
+  conditionRows: Array<Record<string, unknown>>,
+  rawRows: Array<Record<string, unknown>>
+): boolean {
+  if (rawRows.length === 0) {
+    return conditionRows.length === 0;
+  }
+  if (conditionRows.length === 0) {
+    return true;
+  }
+  const conditionSeedRows = conditionRows.filter((row) => projectionRowSeed(row) !== undefined).length;
+  const rawSeedRows = rawRows.filter((row) => projectionRowSeed(row) !== undefined).length;
+  const rawMetricRows = rawRows.filter((row) => {
+    const marker = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id);
+    const value = firstNumber(row.accuracy, row.metric, row.score, row.value);
+    return Boolean(marker) && (value !== undefined || typeof row.correct === "boolean");
+  }).length;
+  return rawMetricRows > 0 && rawSeedRows > conditionSeedRows;
+}
+
+function projectionRowSeed(row: Record<string, unknown>): unknown {
+  const raw = asRecord(row.raw_evidence);
+  const nestedRaw = asRecord(raw.raw_evidence);
+  return row.seed ?? row.seed_id ?? row.random_seed ?? raw.seed ?? raw.seed_id ?? raw.random_seed ?? nestedRaw.seed ?? nestedRaw.seed_id ?? nestedRaw.random_seed;
+}
+
+function projectionRowTasks(row: Record<string, unknown>): string[] {
+  const explicitTask = asString(row.task) || asString(row.benchmark) || asString(row.dataset);
+  if (explicitTask) {
+    return [explicitTask];
+  }
+  const tasks = new Set<string>();
+  const candidates = [
+    row,
+    asRecord(row.raw_evidence),
+    asRecord(asRecord(row.raw_evidence).raw_evidence),
+    asRecord(row.result),
+    asRecord(asRecord(row.raw_evidence).result)
+  ];
+  for (const candidate of candidates) {
+    for (const key of Object.keys(asRecord(candidate.task_metrics))) {
+      tasks.add(key);
+    }
+    for (const key of Object.keys(asRecord(candidate.evaluation))) {
+      tasks.add(key);
+    }
+  }
+  return tasks.size > 0 ? [...tasks].sort() : ["overall"];
+}
+
+function conditionRowTaskMetrics(row: Record<string, unknown>, task: string): Record<string, unknown> {
+  const candidates = [
+    row,
+    asRecord(row.raw_evidence),
+    asRecord(asRecord(row.raw_evidence).raw_evidence),
+    asRecord(row.result),
+    asRecord(asRecord(row.raw_evidence).result)
+  ];
+  for (const candidate of candidates) {
+    const taskMetrics = asRecord(candidate.task_metrics);
+    const taskRecord = asRecord(taskMetrics[task]);
+    if (Object.keys(taskRecord).length > 0) {
+      return taskRecord;
+    }
+    const evaluation = asRecord(candidate.evaluation);
+    const evaluationRecord = asRecord(evaluation[task]);
+    if (Object.keys(evaluationRecord).length > 0) {
+      return evaluationRecord;
+    }
+  }
+  return {};
+}
+
+function mean(values: number[]): number {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function wilsonInterval(correctCount: number, totalCount: number): Record<string, unknown> | undefined {
+  if (!Number.isFinite(correctCount) || !Number.isFinite(totalCount) || totalCount <= 0) {
+    return undefined;
+  }
+  const z = 1.96;
+  const p = correctCount / totalCount;
+  const denominator = 1 + (z * z) / totalCount;
+  const center = (p + (z * z) / (2 * totalCount)) / denominator;
+  const half = (z * Math.sqrt((p * (1 - p) + (z * z) / (4 * totalCount)) / totalCount)) / denominator;
+  return {
+    confidence_level: 0.95,
+    lower: Math.max(0, center - half),
+    upper: Math.min(1, center + half),
+    sample_size: totalCount,
+    correct_count: correctCount,
+    total_count: totalCount
+  };
 }
 
 function promoteSummaryPrimaryMetric(metrics: Record<string, unknown>): string | undefined {
@@ -4093,8 +6050,22 @@ function derivePrimaryMetricFromConditionSummaries(
 
 function inferBaselineConditionMarker(rows: Record<string, unknown>[]): string | undefined {
   for (const row of rows) {
-    if (row.is_baseline === true) {
+    if (projectionRowBaselineFlag(row) === true) {
       return asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id) || asString(row.id);
+    }
+  }
+  return undefined;
+}
+
+function projectionRowBaselineFlag(row: Record<string, unknown>): boolean | undefined {
+  const raw = asRecord(row.raw_evidence);
+  const nestedRaw = asRecord(raw.raw_evidence);
+  for (const candidate of [row, raw, nestedRaw, asRecord(row.result), asRecord(raw.result)]) {
+    if (candidate.is_baseline === true || candidate.baseline === true) {
+      return true;
+    }
+    if (candidate.is_baseline === false || candidate.baseline === false) {
+      return false;
     }
   }
   return undefined;
@@ -4916,6 +6887,258 @@ function validatePlannedConditionCoverage(input: {
   ].join(" ");
 }
 
+function validatePlannedConditionExpansion(input: {
+  metrics: Record<string, unknown>;
+  briefSections?: MarkdownRunBriefSections;
+  experimentPortfolio?: ExperimentPortfolio;
+}): string[] {
+  const primaryGroup =
+    input.experimentPortfolio?.trial_groups.find(
+      (group) => group.id === input.experimentPortfolio?.primary_trial_group_id
+    ) || input.experimentPortfolio?.trial_groups[0];
+  const requirement = deriveRequiredPlannedConditionCount(input.briefSections, {
+    summary: primaryGroup?.label,
+    implementation_notes: primaryGroup?.notes,
+    evaluation_steps: primaryGroup?.notes,
+    resource_notes: primaryGroup?.notes,
+    metrics: primaryGroup?.metrics
+  });
+  const issues: string[] = [];
+  if (requirement) {
+    const executedCount = countExecutedPlannedConditions(input.metrics, {
+      tunedOnly: requirement.tunedOnly
+    });
+    if (executedCount > requirement.conditionCount) {
+      issues.push(
+        [
+          "Planned condition contract expanded:",
+          `observed ${executedCount} successful${requirement.tunedOnly ? " tuned" : ""} condition(s)`,
+          `but the brief/design declares ${requirement.conditionCount}.`
+        ].join(" ")
+      );
+    }
+  }
+
+  const axisIssues = validateDeclaredParameterAxisMembership(input);
+  issues.push(...axisIssues);
+
+  const seedIssue = validatePrimarySeedExpansion(input.metrics, input.briefSections);
+  if (seedIssue) {
+    issues.push(seedIssue);
+  }
+
+  return issues;
+}
+
+function validateDeclaredParameterAxisMembership(input: {
+  metrics: Record<string, unknown>;
+  briefSections?: MarkdownRunBriefSections;
+  experimentPortfolio?: ExperimentPortfolio;
+}): string[] {
+  const axes = parseDeclaredNumericParameterAxes(input.briefSections, input.experimentPortfolio);
+  if (axes.size === 0) {
+    return [];
+  }
+
+  const rows = collectMetricsConditionRows(input.metrics);
+  const issues: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    for (const [axis, allowed] of axes.entries()) {
+      const observed = asNumber(row[axis]);
+      if (observed === undefined || allowed.has(observed)) {
+        continue;
+      }
+      const key = `${axis}:${observed}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      issues.push(
+        `Planned condition parameter contract violated: ${axis}=${observed} is outside declared values {${[
+          ...allowed
+        ].join(",")}}.`
+      );
+    }
+  }
+  return issues;
+}
+
+function parseDeclaredNumericParameterAxes(
+  briefSections?: MarkdownRunBriefSections,
+  experimentPortfolio?: ExperimentPortfolio
+): Map<string, Set<number>> {
+  const text = [
+    briefSectionText(briefSections?.constraints),
+    briefSections?.minimumExperimentPlan,
+    briefSections?.minimumAcceptableEvidence,
+    briefSections?.plan,
+    briefSections?.datasetTaskBench,
+    ...(experimentPortfolio?.trial_groups ?? []).flatMap((group) => [
+      group.label,
+      ...(group.notes ?? []),
+      ...(group.metrics ?? [])
+    ])
+  ]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join("\n");
+  const axes = new Map<string, Set<number>>();
+  for (const match of text.matchAll(/\b([A-Za-z][A-Za-z0-9_-]*)\s+in\s+`?\{([^}]+)\}`?/giu)) {
+    const axis = normalizeMetricFieldName(match[1]);
+    const values = match[2]
+      .split(",")
+      .map((item) => Number.parseFloat(item.trim().replace(/[`'"]/gu, "")))
+      .filter((value) => Number.isFinite(value));
+    if (!axis || values.length === 0) {
+      continue;
+    }
+    axes.set(axis, new Set(values));
+  }
+  return axes;
+}
+
+function normalizeMetricFieldName(value: string | undefined): string {
+  return (value || "").trim().toLowerCase().replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "");
+}
+
+function briefSectionText(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    const text = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).join("\n");
+    return text || undefined;
+  }
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function collectMetricsConditionRows(metrics: Record<string, unknown>): Array<Record<string, unknown>> {
+  const study = asRecord(metrics.study);
+  const studySummary = asRecord(metrics.study_summary);
+  return [
+    ...collectConditionRows(metrics.condition_summaries),
+    ...collectConditionRows(metrics.condition_results),
+    ...collectConditionRows(metrics.conditions),
+    ...collectConditionRows(metrics.result_rows),
+    ...collectConditionRows(metrics.raw_results),
+    ...collectConditionRows(metrics.per_seed_results),
+    ...collectConditionRows(metrics.condition_seed_rows),
+    ...collectConditionRows(study.condition_summaries),
+    ...collectConditionRows(study.condition_results),
+    ...collectConditionRows(study.conditions),
+    ...collectConditionRows(studySummary.condition_summaries),
+    ...collectConditionRows(studySummary.condition_results),
+    ...collectConditionRows(studySummary.conditions)
+  ];
+}
+
+function validatePrimarySeedExpansion(
+  metrics: Record<string, unknown>,
+  briefSections?: MarkdownRunBriefSections
+): string | undefined {
+  const governedSeedCount = deriveGovernedSeedsPerCondition(metrics);
+  const declaredSeedCount = parseDeclaredPrimarySeedCount(briefSections);
+  const expectedSeedCount = governedSeedCount ?? declaredSeedCount;
+  if (expectedSeedCount === undefined) {
+    return undefined;
+  }
+  const rows = collectMetricsConditionRows(metrics);
+  const expanded = new Map<string, number>();
+  for (const row of rows) {
+    const seedCount =
+      asNumber(row.planned_seed_count) ??
+      asNumber(row.seed_count) ??
+      asNumber(row.completed_seed_count);
+    if (seedCount === undefined || seedCount <= expectedSeedCount) {
+      continue;
+    }
+    const marker =
+      asString(row.condition_marker) ||
+      asString(row.marker) ||
+      asString(row.condition_id) ||
+      asString(row.name) ||
+      `condition_${expanded.size + 1}`;
+    expanded.set(marker, Math.max(expanded.get(marker) || 0, seedCount));
+  }
+  if (expanded.size === 0) {
+    return undefined;
+  }
+
+  const allowedExpandedConditionCount = briefMentionsTargetedRepeats(briefSections) ? 2 : 0;
+  if (expanded.size <= allowedExpandedConditionCount) {
+    return undefined;
+  }
+  const samples = [...expanded.entries()]
+    .slice(0, 4)
+    .map(([marker, count]) => `${trimShort(marker, 80)}:${count}`)
+    .join(",");
+  return (
+    `Primary seed contract expanded: ${expanded.size} condition(s) report planned seed counts above ` +
+    `${expectedSeedCount}${samples ? ` (${samples})` : ""}.`
+  );
+}
+
+function deriveGovernedSeedsPerCondition(metrics: Record<string, unknown>): number | undefined {
+  const requiredRunCount = asNumber(metrics.required_run_count);
+  const requiredConditionCount = asNumber(metrics.required_condition_count);
+  if (
+    requiredRunCount === undefined ||
+    requiredConditionCount === undefined ||
+    requiredConditionCount <= 0 ||
+    requiredRunCount <= requiredConditionCount
+  ) {
+    return undefined;
+  }
+  const seedsPerCondition = requiredRunCount / requiredConditionCount;
+  if (!Number.isFinite(seedsPerCondition) || seedsPerCondition < 1 || !Number.isInteger(seedsPerCondition)) {
+    return undefined;
+  }
+  return seedsPerCondition;
+}
+
+function parseDeclaredPrimarySeedCount(briefSections?: MarkdownRunBriefSections): number | undefined {
+  const text = [
+    briefSectionText(briefSections?.constraints),
+    briefSections?.minimumExperimentPlan,
+    briefSections?.datasetTaskBench,
+    briefSections?.allowedBudgetedPasses
+  ]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join("\n");
+  const explicitList = text.match(/\b(?:seeds?|random\s+seeds?)\s*[:=]\s*`?\{?([0-9,\s]+)\}?`?/iu);
+  if (explicitList) {
+    const values = explicitList[1]
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (values.length > 1) {
+      return values.length;
+    }
+  }
+  const countMatch = text.match(/\b(\d+)\s+(?:primary\s+)?(?:random\s+)?seeds?\b/iu);
+  if (countMatch) {
+    const count = Number.parseInt(countMatch[1], 10);
+    if (Number.isFinite(count) && count > 0 && count < 1000) {
+      return count;
+    }
+  }
+  if (
+    /\ball\s+primary\s+conditions\s+use\s+seed\s+\d+\b/iu.test(text) ||
+    /\bseed\s*:\s*`?\d+`?\s+for\s+the\s+primary\b/iu.test(text)
+  ) {
+    return 1;
+  }
+  return undefined;
+}
+
+function briefMentionsTargetedRepeats(briefSections?: MarkdownRunBriefSections): boolean {
+  const text = [
+    briefSections?.allowedBudgetedPasses,
+    briefSections?.minimumAcceptableEvidence,
+    briefSections?.paperWorthinessGate
+  ]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join("\n");
+  return /\brepeat\s+runs?\s+for\s+the\s+baseline\s+and\s+strongest\b/iu.test(text);
+}
+
 function validateRunMetricsContract(input: {
   metrics: Record<string, unknown>;
   objectiveEvaluation: ObjectiveMetricEvaluation;
@@ -4936,6 +7159,13 @@ function validateRunMetricsContract(input: {
   if (conditionCoverageIssue) {
     issues.push(conditionCoverageIssue);
   }
+  issues.push(
+    ...validatePlannedConditionExpansion({
+      metrics: input.metrics,
+      briefSections: input.briefSections,
+      experimentPortfolio: input.experimentPortfolio
+    })
+  );
 
   const study = asRecord(input.metrics.study);
   const studySummary = asRecord(input.metrics.study_summary);
@@ -4950,6 +7180,15 @@ function validateRunMetricsContract(input: {
   ].find((value): value is number => typeof value === "number");
   const derivedRequiredRunCount = deriveRequiredPlannedRunCount(input);
   const requiredRunCount = explicitRequiredRunCount ?? derivedRequiredRunCount;
+  if (
+    explicitRequiredRunCount !== undefined &&
+    derivedRequiredRunCount !== undefined &&
+    explicitRequiredRunCount < derivedRequiredRunCount
+  ) {
+    issues.push(
+      "Experiment metrics contracted required_run_count below the governed run plan: required_run_count=" + explicitRequiredRunCount + ", governed_required_run_count=" + derivedRequiredRunCount + "."
+    );
+  }
   const completedRunCount = [
     asNumber(input.metrics.completed_run_count),
     asNumber(studySummary.completed_run_count),
@@ -5012,9 +7251,41 @@ function validateRunMetricsContract(input: {
   ].find((value): value is number => typeof value === "number");
   if (requiredConditionCount !== undefined && requiredConditionCount > 0 && completedConditionCount === 0) {
     issues.push(
-      `No required experiment conditions completed successfully (${completedConditionCount}/${requiredConditionCount}).`
+      "No required experiment conditions completed successfully (" + completedConditionCount + "/" + requiredConditionCount + ")."
     );
   }
+  if (
+    requiredRunCount !== undefined &&
+    requiredConditionCount !== undefined &&
+    requiredRunCount > requiredConditionCount
+  ) {
+    const seedRows = collectSeedProvenanceRows(input.metrics);
+    const completedSeedRows = seedRows.filter((row) => {
+      const status = normalizeConditionResultStatus(row);
+      return status === "unknown" || isCompletedConditionStatus(status);
+    });
+    const seedValues = new Set(completedSeedRows.flatMap((row) => collectConditionSeedValues(row)).map((value) => String(value)));
+    if (completedSeedRows.length > 0 && seedValues.size === 0) {
+      issues.push(
+        "Repeated-run contract requires seed provenance, but " + completedSeedRows.length + " completed evidence row(s) omit seed or seed_id."
+      );
+    }
+    const conditionSeedEvidence = countUniqueCompletedConditionSeedEvidence(input.metrics);
+    const expectedEvidenceCount = Math.min(requiredRunCount, completedRunCount ?? requiredRunCount);
+    if (completedRunCount !== undefined && completedRunCount > 0 && conditionSeedEvidence < expectedEvidenceCount) {
+      issues.push(
+        `Repeated-run evidence incomplete: observed_condition_seed_count=${conditionSeedEvidence}/${expectedEvidenceCount}; ` +
+          `metrics report completed_run_count=${completedRunCount}/${requiredRunCount} without matching condition-seed provenance.`
+      );
+    }
+  }
+  issues.push(
+    ...validateConditionSummaryConsistency({
+      metrics: input.metrics,
+      requiredRunCount,
+      requiredConditionCount
+    })
+  );
 
   const aggregate = asRecord(study.aggregate);
   if (Object.keys(aggregate).length > 0) {
@@ -5047,6 +7318,117 @@ function validateRunMetricsContract(input: {
   }
 
   return [...new Set(issues.map((issue) => issue.trim()).filter(Boolean))];
+}
+
+function validateConditionSummaryConsistency(input: {
+  metrics: Record<string, unknown>;
+  requiredRunCount?: number;
+  requiredConditionCount?: number;
+}): string[] {
+  const rows = collectConditionSummaryRows(input.metrics).filter((row) =>
+    isCompletedConditionStatus(normalizeConditionResultStatus(row))
+  );
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const issues: string[] = [];
+  const expectedSeedsPerCondition =
+    input.requiredRunCount !== undefined &&
+    input.requiredConditionCount !== undefined &&
+    input.requiredConditionCount > 0 &&
+    input.requiredRunCount > input.requiredConditionCount
+      ? Math.floor(input.requiredRunCount / input.requiredConditionCount)
+      : undefined;
+  let inconsistentAccuracyCount = 0;
+  let zeroSeedSummaryCount = 0;
+  let undersizedSummaryIntervalCount = 0;
+
+  for (const row of rows) {
+    const evaluation = asRecord(row.evaluation);
+    const evaluationOverall = asRecord(evaluation.overall);
+    const confidenceInterval = asRecord(row.confidence_interval);
+    const nestedConfidenceInterval = asRecord(evaluationOverall.confidence_interval);
+    const accuracy = firstNumber(row.average_accuracy, row.accuracy, evaluationOverall.accuracy);
+    const correctCount = firstNumber(
+      row.correct_count,
+      row.correct,
+      evaluationOverall.correct_count,
+      evaluationOverall.correct
+    );
+    const totalCount = firstNumber(
+      row.total_count,
+      row.total,
+      row.evaluated_count,
+      evaluationOverall.total_count,
+      evaluationOverall.total,
+      evaluationOverall.evaluated_count
+    );
+    if (
+      accuracy !== undefined &&
+      correctCount !== undefined &&
+      totalCount !== undefined &&
+      totalCount > 0 &&
+      Math.abs(accuracy - correctCount / totalCount) > 1e-6
+    ) {
+      inconsistentAccuracyCount += 1;
+    }
+
+    if (expectedSeedsPerCondition !== undefined && expectedSeedsPerCondition > 1) {
+      const seedCount = firstNumber(row.seed_count, row.completed_seed_count, evaluationOverall.seed_count);
+      const sampleSize = firstNumber(
+        confidenceInterval.sample_size,
+        nestedConfidenceInterval.sample_size,
+        evaluationOverall.sample_size
+      );
+      if (seedCount === 0) {
+        zeroSeedSummaryCount += 1;
+      }
+      if (sampleSize !== undefined && sampleSize < expectedSeedsPerCondition) {
+        undersizedSummaryIntervalCount += 1;
+      }
+    }
+  }
+
+  if (inconsistentAccuracyCount > 0) {
+    issues.push(
+      `Condition summary accuracy is inconsistent with correct/total counts for ${inconsistentAccuracyCount}/${rows.length} completed condition summary row(s).`
+    );
+  }
+  if (zeroSeedSummaryCount > 0) {
+    issues.push(
+      `Repeated-run condition summaries report seed_count=0 for ${zeroSeedSummaryCount}/${rows.length} completed condition summary row(s).`
+    );
+  }
+  if (undersizedSummaryIntervalCount > 0 && expectedSeedsPerCondition !== undefined) {
+    issues.push(
+      `Repeated-run condition summaries use confidence intervals with sample_size below the expected per-condition seed count (${undersizedSummaryIntervalCount}/${rows.length} row(s), expected at least ${expectedSeedsPerCondition}).`
+    );
+  }
+  return issues;
+}
+
+function collectConditionSummaryRows(metrics: Record<string, unknown>): Array<Record<string, unknown>> {
+  const study = asRecord(metrics.study);
+  const studySummary = asRecord(metrics.study_summary);
+  for (const value of [
+    metrics.condition_summaries,
+    study.condition_summaries,
+    studySummary.condition_summaries,
+    metrics.condition_results,
+    study.condition_results,
+    studySummary.condition_results
+  ]) {
+    const rows = collectConditionRows(value);
+    if (rows.length > 0) {
+      return rows;
+    }
+  }
+  return [];
+}
+
+function firstNumber(...values: unknown[]): number | undefined {
+  return values.map(asNumber).find((value): value is number => typeof value === "number");
 }
 
 function deriveRequiredPlannedRunCount(input: {

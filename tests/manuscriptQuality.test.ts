@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PaperManuscript, PaperTraceabilityReport } from "../src/core/analysis/paperManuscript.js";
 import {
   buildManuscriptRepairPlan,
+  buildManuscriptRepairPrompt,
   buildManuscriptRepairVerificationArtifact,
   buildFallbackManuscriptReview,
   buildManuscriptReviewPrompt,
@@ -119,6 +120,59 @@ function makeCleanManuscript(): PaperManuscript {
 }
 
 describe("manuscriptQuality style lint", () => {
+  it("instructs bounded repairs to preserve numeric facts and avoid overclaiming ambiguous comparisons", () => {
+    const manuscript = makeCleanManuscript();
+    const prompt = buildManuscriptRepairPrompt({
+      manuscript,
+      review: buildFallbackManuscriptReview(manuscript),
+      lint: { issues: [], summary: [] },
+      repairPlan: {
+        pass_index: 1,
+        repair_scope: "bounded_local",
+        targets: [
+          {
+            source: "review",
+            issue_code: "alignment",
+            severity: "fail",
+            kind: "paragraph",
+            section: "Results",
+            location_key: "paragraph:results:0",
+            paragraph_index: 0,
+            anchor_id: "paragraph:results:0",
+            excerpt: "A comparison paragraph overstates the result.",
+            source_refs: [],
+            edit_scope: "paragraph_local",
+            allowed_location_keys: ["paragraph:results:0"],
+            scope_reason: "Targeted local repair."
+          }
+        ],
+        blocked_targets: [],
+        preservation_rules: [],
+        summary: "Repair one local comparison paragraph."
+      },
+      passIndex: 1,
+      remainingAllowedRepairs: 1,
+      mustImproveIssues: [
+        {
+          source: "review",
+          code: "alignment",
+          severity: "fail",
+          repairable: true,
+          section: "Results",
+          message: "The manuscript says the planned baseline comparison is ambiguous while claiming the target was met.",
+          anchor_ids: ["paragraph:results:0"],
+          suggested_fix: "Use bounded screening language."
+        }
+      ]
+    });
+
+    expect(prompt).toContain("Preserve structured numeric facts exactly");
+    expect(prompt).toContain("do not claim that a baseline-relative target was met");
+    expect(prompt).toContain("If multiple reported rows or conditions are tied");
+    expect(prompt).toContain("Remove reader-visible to-do language");
+    expect(prompt).toContain("registered-baseline and locked-comparator distinction");
+  });
+
   it("adds reader-visible citation callouts to the manuscript review prompt", () => {
     const manuscript = makeCleanManuscript();
     const traceability = makeTraceability(manuscript);
@@ -241,6 +295,34 @@ describe("manuscriptQuality style lint", () => {
     expect(fallback.issues[0]?.supporting_spans).toEqual([]);
   });
 
+  it("fallback review flags baseline ambiguity and repeated screening-threshold prose", () => {
+    const manuscript = makeCleanManuscript();
+    const results = manuscript.sections.find((section) => section.heading === "Results");
+    expect(results).toBeTruthy();
+    results!.paragraphs = [
+      "The stated baseline is the registered comparison row. The displayed contrast uses a different locked comparison row, so the baseline-relative result is not yet reconciled.",
+      "The archived comparison exceeded the configured screening threshold, but this remains a screening signal rather than a stable success claim.",
+      "The threshold-exceeding point estimate is repeated here as another screening-threshold interpretation instead of adding a distinct result takeaway."
+    ];
+
+    const fallback = buildFallbackManuscriptReview(manuscript);
+    const validated = validateManuscriptReviewArtifact({
+      review: fallback,
+      manuscript,
+      traceability: makeTraceability(manuscript)
+    });
+
+    expect(fallback.overall_decision).toBe("repair");
+    expect(fallback.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining(["alignment", "paragraph_redundancy"])
+    );
+    expect(fallback.checks.alignment.status).toBe("fail");
+    expect(fallback.checks.paragraph_redundancy.status).toBe("warn");
+    expect(validated.validation.ok).toBe(true);
+    expect(validated.validation.retained_issue_count).toBeGreaterThanOrEqual(2);
+    expect(validated.review.issues.flatMap((issue) => issue.supporting_spans).every((span) => span.anchor_id)).toBe(true);
+  });
+
   it("validates supporting spans into traceability anchors and source refs", () => {
     const manuscript = makeCleanManuscript();
     const review = normalizeManuscriptReview(
@@ -284,6 +366,61 @@ describe("manuscriptQuality style lint", () => {
     expect(validated.review.issues[0]?.supporting_spans[0]?.source_refs).toEqual([
       { kind: "citation", id: "paper_1" }
     ]);
+  });
+
+  it("rejects reviewer visual targets whose quoted rationale is not present in the visual", () => {
+    const manuscript = makeCleanManuscript();
+    const review = normalizeManuscriptReview(
+      {
+        overall_decision: "repair",
+        summary: "The review misreads a table label while citing a local paragraph correctly.",
+        issues: [
+          {
+            code: "alignment",
+            severity: "fail",
+            section: "Results; Table 1",
+            repairable: true,
+            message: "The table and Results paragraph appear inconsistent.",
+            fix_recommendation: "Retry the review with the actual visual labels.",
+            supporting_spans: [
+              {
+                section: "Results",
+                paragraph_index: 1,
+                excerpt: "The main table preserves the exact comparison",
+                reason: "This paragraph is a valid local anchor."
+              }
+            ],
+            visual_targets: [
+              {
+                kind: "table",
+                index: 0,
+                rationale: "The first row is labeled \"Registered baseline condition (factor x=0)\"."
+              }
+            ]
+          }
+        ]
+      },
+      manuscript
+    );
+
+    const validated = validateManuscriptReviewArtifact({
+      review,
+      manuscript,
+      traceability: makeTraceability(manuscript)
+    });
+
+    expect(validated.validation.ok).toBe(false);
+    expect(validated.validation.retry_requested).toBe(true);
+    expect(validated.validation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "fail",
+          code: "invalid_visual_target",
+          issue_code: "alignment"
+        })
+      ])
+    );
+    expect(validated.review.issues[0]?.visual_targets).toBeUndefined();
   });
 
   it("marks warning-only review grounding gaps as partially grounded and records validation metrics", () => {
@@ -683,13 +820,77 @@ describe("manuscriptQuality style lint", () => {
     );
   });
 
+  it("builds appendix-local targets for anchorless blocking appendix hygiene issues", () => {
+    const manuscript: PaperManuscript = {
+      ...makeCleanManuscript(),
+      appendix_sections: [
+        {
+          heading: "Supplementary Notes",
+          paragraphs: [
+            "A final submission should include an internal checklist.",
+            "Suggested confirmatory analysis belongs outside the final supplement."
+          ]
+        }
+      ]
+    };
+    const review = normalizeManuscriptReview(
+      {
+        overall_decision: "repair",
+        summary: "Appendix contains internal planning residue.",
+        issues: [
+          {
+            code: "appendix_hygiene",
+            severity: "fail",
+            section: "Appendix",
+            repairable: true,
+            message: "Appendix contains internal planning residue.",
+            fix_recommendation: "Clean appendix planning language without changing main claims.",
+            supporting_spans: []
+          }
+        ]
+      },
+      manuscript
+    );
+    const repairPlan = buildManuscriptRepairPlan({
+      passIndex: 1,
+      manuscript,
+      review,
+      lint: buildManuscriptStyleLint({ manuscript, traceability: makeTraceability(manuscript) }),
+      mustImproveIssues: [
+        {
+          source: "review",
+          code: "appendix_hygiene",
+          severity: "fail",
+          section: "Appendix",
+          repairable: true,
+          message: "Appendix contains internal planning residue."
+        }
+      ]
+    });
+
+    expect(repairPlan.blocked_targets).toHaveLength(0);
+    expect(repairPlan.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issue_code: "appendix_hygiene",
+          kind: "appendix_paragraph",
+          scope_downgraded: true,
+          allowed_location_keys: [
+            "appendix_paragraph:supplementary_notes:0",
+            "appendix_paragraph:supplementary_notes:1"
+          ]
+        })
+      ])
+    );
+  });
+
   it("keeps appendix traceability anchors in appendix-local repair scope", () => {
     const manuscript = makeCleanManuscript();
     manuscript.appendix_sections = [
       {
         heading: "Supplementary Experimental Details",
         paragraphs: [
-          "The full planning space covered rank and dropout cells, while the confirmatory stage focused on the cells that fit the live validation budget."
+          "The full planning space covered rank and parameter_y cells, while the confirmatory stage focused on the cells that fit the live validation budget."
         ]
       }
     ];
@@ -719,7 +920,7 @@ describe("manuscriptQuality style lint", () => {
               {
                 section: "Supplementary Experimental Details",
                 paragraph_index: 0,
-                excerpt: "The full planning space covered rank and dropout cells",
+                excerpt: "The full planning space covered rank and parameter_y cells",
                 reason: "This is the local appendix paragraph."
               }
             ]
@@ -1402,6 +1603,179 @@ describe("manuscriptQuality style lint", () => {
 
     expect(verification.out_of_scope_changes).toContain("paragraph:results:6");
     expect(verification.locality_ok).toBe(false);
+  });
+
+  it("allows a one-paragraph bridge between close same-section repair targets", () => {
+    const before = makeCleanManuscript();
+    before.sections[3] = {
+      heading: "Results",
+      paragraphs: [
+        "Result paragraph zero remains unchanged.",
+        "Result paragraph one states the main metric.",
+        "Result paragraph two explains the task split.",
+        "Result paragraph three remains unchanged.",
+        "Result paragraph four remains unchanged.",
+        "Result paragraph five remains unchanged.",
+        "Result paragraph six repeats the threshold statement.",
+        "Result paragraph seven bridges the local results narrative.",
+        "Result paragraph eight closes the results section.",
+        "Result paragraph nine transitions to discussion."
+      ]
+    };
+    const after = structuredClone(before);
+    after.sections[3] = {
+      heading: "Results",
+      paragraphs: [
+        before.sections[3]!.paragraphs[0]!,
+        before.sections[3]!.paragraphs[1]!,
+        before.sections[3]!.paragraphs[2]!,
+        before.sections[3]!.paragraphs[3]!,
+        before.sections[3]!.paragraphs[4]!,
+        before.sections[3]!.paragraphs[5]!,
+        "Result paragraph six now states the threshold once.",
+        "Result paragraph seven now bridges the repaired local results narrative.",
+        "Result paragraph eight now closes the results section more cleanly.",
+        "Result paragraph nine now transitions to discussion."
+      ]
+    };
+
+    const verification = buildManuscriptRepairVerificationArtifact({
+      passIndex: 1,
+      before,
+      after,
+      repairPlan: {
+        pass_index: 1,
+        repair_scope: "bounded_local",
+        targets: [
+          {
+            source: "review",
+            issue_code: "paragraph_redundancy",
+            severity: "warning",
+            kind: "paragraph",
+            section: "Results",
+            location_key: "paragraph:results:6",
+            paragraph_index: 6,
+            excerpt: before.sections[3]!.paragraphs[6]!,
+            source_refs: [],
+            edit_scope: "paragraph_local",
+            allowed_location_keys: ["paragraph:results:6"],
+            scope_reason: "Repair is limited to the targeted manuscript paragraph."
+          },
+          {
+            source: "review",
+            issue_code: "section_transition",
+            severity: "warning",
+            kind: "paragraph",
+            section: "Results",
+            location_key: "paragraph:results:9",
+            paragraph_index: 9,
+            excerpt: before.sections[3]!.paragraphs[9]!,
+            source_refs: [],
+            edit_scope: "adjacent_two_paragraphs",
+            allowed_location_keys: ["paragraph:results:8", "paragraph:results:9"],
+            scope_reason: "Section-transition repair may revise one adjacent paragraph pair."
+          }
+        ],
+        blocked_targets: [],
+        preservation_rules: [],
+        summary: "Two close local results repairs should be bridged."
+      },
+      reviewAfter: buildFallbackManuscriptReview(after)
+    });
+
+    expect(verification.allowed_location_keys).toEqual(
+      expect.arrayContaining(["paragraph:results:6", "paragraph:results:7", "paragraph:results:8", "paragraph:results:9"])
+    );
+    expect(verification.out_of_scope_changes).not.toContain("paragraph:results:7");
+    expect(verification.locality_ok).toBe(true);
+  });
+
+  it("allows a two-paragraph bridge between close same-section repair target clusters", () => {
+    const before = makeCleanManuscript();
+    before.sections[3] = {
+      heading: "Results",
+      paragraphs: [
+        "Result paragraph zero states the primary comparison.",
+        "Result paragraph one explains the first table row.",
+        "Result paragraph two introduces the visual comparison.",
+        "Result paragraph three connects the visual to the table.",
+        "Result paragraph four states the uncertainty caveat.",
+        "Result paragraph five closes the results section.",
+        "Result paragraph six transitions to discussion."
+      ]
+    };
+    const after = structuredClone(before);
+    after.sections[3] = {
+      heading: "Results",
+      paragraphs: [
+        "Result paragraph zero now states the primary comparison.",
+        "Result paragraph one now explains the first table row.",
+        "Result paragraph two now introduces the visual comparison.",
+        "Result paragraph three now connects the visual to the table.",
+        "Result paragraph four now states the uncertainty caveat.",
+        "Result paragraph five now closes the results section.",
+        before.sections[3]!.paragraphs[6]!
+      ]
+    };
+
+    const verification = buildManuscriptRepairVerificationArtifact({
+      passIndex: 1,
+      before,
+      after,
+      repairPlan: {
+        pass_index: 1,
+        repair_scope: "bounded_local",
+        targets: [
+          {
+            source: "review",
+            issue_code: "alignment",
+            severity: "fail",
+            kind: "paragraph",
+            section: "Results",
+            location_key: "paragraph:results:0",
+            paragraph_index: 0,
+            excerpt: before.sections[3]!.paragraphs[0]!,
+            source_refs: [],
+            edit_scope: "adjacent_two_paragraphs",
+            allowed_location_keys: ["paragraph:results:0", "paragraph:results:1", "paragraph:results:2"],
+            scope_reason: "Alignment repair may revise neighboring framing paragraphs."
+          },
+          {
+            source: "review",
+            issue_code: "section_transition",
+            severity: "warning",
+            kind: "paragraph",
+            section: "Results",
+            location_key: "paragraph:results:5",
+            paragraph_index: 5,
+            excerpt: before.sections[3]!.paragraphs[5]!,
+            source_refs: [],
+            edit_scope: "adjacent_two_paragraphs",
+            allowed_location_keys: ["paragraph:results:5"],
+            scope_reason: "Section-transition repair may revise the targeted paragraph."
+          }
+        ],
+        blocked_targets: [],
+        preservation_rules: [],
+        summary: "Two nearby Results clusters should be bridged."
+      },
+      reviewAfter: buildFallbackManuscriptReview(after)
+    });
+
+    expect(verification.allowed_location_keys).toEqual(
+      expect.arrayContaining([
+        "paragraph:results:0",
+        "paragraph:results:1",
+        "paragraph:results:2",
+        "paragraph:results:3",
+        "paragraph:results:4",
+        "paragraph:results:5"
+      ])
+    );
+    expect(verification.out_of_scope_changes).not.toContain("paragraph:results:2");
+    expect(verification.out_of_scope_changes).not.toContain("paragraph:results:3");
+    expect(verification.out_of_scope_changes).not.toContain("paragraph:results:4");
+    expect(verification.locality_ok).toBe(true);
   });
 
   it("flags overclaiming changed visual captions in repair verification artifacts", () => {
