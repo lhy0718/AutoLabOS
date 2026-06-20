@@ -913,7 +913,8 @@ async function loadSupplementalExpectation(
   }>(
     path.join(".autolabos", "runs", runId, "run_experiments_supplemental_expectation.json"),
     warnings,
-    "run_experiments_supplemental_expectation.json"
+    "run_experiments_supplemental_expectation.json",
+    { ignoreNull: true }
   );
   if (explicitExpectation) {
     return {
@@ -958,11 +959,15 @@ async function loadSupplementalExpectation(
 async function readJsonObject<T extends object>(
   filePath: string,
   warnings: string[],
-  label: string
+  label: string,
+  options: { ignoreNull?: boolean } = {}
 ): Promise<T | undefined> {
   try {
     const raw = await fs.readFile(filePath, "utf8");
     const parsed = JSON.parse(raw) as unknown;
+    if (parsed === null && options.ignoreNull) {
+      return undefined;
+    }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new Error(`${label} must decode to an object`);
     }

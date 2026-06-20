@@ -251,6 +251,137 @@ describe("objective metric propagation", () => {
     });
   });
 
+  it("treats null supplemental expectations and benign ML stderr as non-blocking analysis context", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-benign-runtime-context-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-benign-runtime-context";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const execLogsDir = path.join(runDir, "exec_logs");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(execLogsDir, { recursive: true });
+    await mkdir(path.join(runDir, "run_experiments_panel"), { recursive: true });
+
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          accuracy_delta_vs_baseline: 0,
+          completed_run_count: 2,
+          required_run_count: 2,
+          completed_condition_count: 2,
+          required_condition_count: 2,
+          condition_summaries: [
+            {
+              marker: "baseline_condition",
+              status: "completed",
+              accuracy: 0.5,
+              average_accuracy: 0.5,
+              correct_count: 5,
+              total_count: 10,
+              accuracy_delta_vs_baseline: 0
+            },
+            {
+              marker: "candidate_condition_a",
+              status: "completed",
+              accuracy: 0.5,
+              average_accuracy: 0.5,
+              correct_count: 5,
+              total_count: 10,
+              accuracy_delta_vs_baseline: 0
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(runDir, "run_experiments_supplemental_expectation.json"), "null\n", "utf8");
+    await writeFile(
+      path.join(runDir, "run_experiments_panel", "execution_plan.json"),
+      JSON.stringify({ managed_supplemental_profiles: [] }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      path.join(execLogsDir, "observations.jsonl"),
+      `${JSON.stringify({
+        command: "node run_condition_sweep_experiment.js",
+        source: "local_node",
+        status: "success",
+        stderr:
+          "`torch_dtype` is deprecated! Use `dtype` instead! Loading weights: 100%|##########| 10/10 [00:00<00:00, 100.00it/s] You shouldn't move a model that is dispatched using accelerate hooks.",
+        log_file: ".autolabos/runs/run-analyze-benign-runtime-context/exec_logs/run_experiments.txt"
+      })}\n`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "run_experiments_verify_report.json"),
+      JSON.stringify(
+        {
+          status: "pass",
+          trigger: "manual",
+          stage: "success",
+          summary: "Objective metric not met: accuracy_delta_vs_baseline=0 does not satisfy >= 0.01.",
+          command: "node run_condition_sweep_experiment.js",
+          metrics_path: path.join(runDir, "metrics.json"),
+          log_file: path.join(execLogsDir, "run_experiments.txt")
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
+      warnings: string[];
+      supplemental_expectation?: { applicable: boolean; reason?: string };
+      execution_summary: { stderr_excerpts: string[] };
+      failure_taxonomy: Array<{ id: string }>;
+    };
+    expect(analysis.execution_summary.stderr_excerpts.length).toBeGreaterThan(0);
+    expect(analysis.supplemental_expectation).toMatchObject({ applicable: false });
+    expect(analysis.failure_taxonomy.some((item) => item.id === "objective_not_met")).toBe(true);
+    expect(
+      analysis.warnings.some((warning) => warning.includes("run_experiments_supplemental_expectation"))
+    ).toBe(false);
+    expect(analysis.warnings.some((warning) => warning.includes("Execution stderr was recorded"))).toBe(false);
+  });
+
   it("evaluates objective metrics during run, analysis, and paper writing", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-objective-propagation-"));
     process.chdir(root);
@@ -665,7 +796,7 @@ describe("objective metric propagation", () => {
       targetNode: "figure_audit"
     });
     expect(analysis.synthesis?.source).toBe("llm");
-    expect(analysis.synthesis?.discussion_points[0]).toContain("shared-state schema");
+    expect(analysis.synthesis?.discussion_points.some((point) => point.includes("shared-state schema"))).toBe(true);
     expect(analysis.synthesis?.confidence_statement).toContain("Confidence is moderate");
 
     const synthesisRaw = await readFile(path.join(runDir, "result_analysis_synthesis.json"), "utf8");

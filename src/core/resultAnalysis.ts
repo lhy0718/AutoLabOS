@@ -726,7 +726,7 @@ function buildWarnings(args: {
   if (!args.planContext.selected_design) {
     warnings.push("Experiment plan context was missing, so design-aware comparisons are limited.");
   }
-  if (args.executionSummary.stderr_excerpts.length > 0) {
+  if (args.executionSummary.stderr_excerpts.some((item) => !isBenignExecutionStderr(item))) {
     warnings.push(`Execution stderr was recorded: ${args.executionSummary.stderr_excerpts[0]}`);
   }
   if (args.objectiveEvaluation.status === "missing" || args.objectiveEvaluation.status === "unknown") {
@@ -739,6 +739,21 @@ function buildWarnings(args: {
     warnings.push("No supplemental quick_check or confirmatory metrics were available for deeper comparison.");
   }
   return warnings;
+}
+
+function isBenignExecutionStderr(excerpt: string): boolean {
+  const normalized = excerpt.toLowerCase();
+  if (!normalized.trim()) {
+    return true;
+  }
+  const benignSignals = [
+    "deprecated",
+    "loading weights",
+    "it/s",
+    "accelerate hooks",
+    "you shouldn't move a model that is dispatched"
+  ];
+  return benignSignals.some((signal) => normalized.includes(signal));
 }
 
 function buildLimitations(planContext: AnalysisPlanContext, warnings: string[]): string[] {
