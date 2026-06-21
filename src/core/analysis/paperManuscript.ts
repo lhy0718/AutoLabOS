@@ -807,8 +807,8 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
     .replace(/\bPareto analysis\b/giu, "resource-aware screening analysis")
     .replace(/\bPareto\b/giu, "resource-aware screening")
     .replace(/\bpaper-readiness\s+inspect\b/giu, "submission-quality inspection")
-    .replace(new RegExp("\\bRecovered\\s+cached\\s+full\\s+text\\s+describing\\s+a\\s+compact\\s+P" + "EFT\\s+recipe\\.?", "giu"), "")
-    .replace(/\bStudy\s+how\s+LoRA\s+rank\s+and\s+dropout\s+interact\s+during\s+parameter-efficient\s+instruction\s+tuning\s+under\s+a\s+fixed\s+local\s+compute\s+budget\.?/giu, "LoRA rank and dropout choices under a fixed local instruction-tuning budget");
+    .replace(/\bRecovered\s+cached\s+full\s+text(?:\s+describing\s+[^.]{0,160})?\.?/giu, "")
+    .replace(/\bStudy\s+how\s+[^.]{10,180}\s+under\s+a\s+fixed\s+local\s+compute\s+budget\.?/giu, "condition choices under a fixed local compute budget");
   if (/^This draft studies\b/iu.test(cleaned)) {
     return "This paper reports a fixed-budget experimental pilot. It identifies the selected artifacts, configured comparison set, baseline or comparator, evaluation tasks, condition coverage, and uncertainty limits while treating the result as a screening study rather than as a statistically definitive conclusion.";
   }
@@ -1364,8 +1364,8 @@ function inferConditionAxisLabels(conditions: Array<PaperManuscriptConditionSumm
   const text = conditions
     .map((condition) => String(condition.label || "") + " " + String("condition" in condition ? condition.condition || "" : ""))
     .join(" ");
-  if (/\b(?:lo[-\s]?ra|low[-\s]?rank adapter)\b/iu.test(text) && /\brank\b/iu.test(text) && /\bdropout\b/iu.test(text)) {
-    return { x: "LoRA rank", y: "adapter dropout" };
+  if (/\bcondition\s+parameter\s+x\b/iu.test(text) && /\bcondition\s+parameter\s+y\b/iu.test(text)) {
+    return { x: "condition parameter x", y: "condition parameter y" };
   }
   if (/\brank\b/iu.test(text) && /\bdropout\b/iu.test(text)) {
     return { x: "rank", y: "dropout" };
@@ -1379,8 +1379,8 @@ function resolveConditionAxisLabelsForSubmission(
   conditionSummaries: PaperManuscriptConditionSummary[]
 ): ConditionAxisLabels {
   const context = collectSubmissionAxisContext(manuscript, options);
-  if (/\b(?:lo[-\s]?ra|low[-\s]?rank adapter)\b/iu.test(context) && /\brank\b/iu.test(context) && /\bdropout\b/iu.test(context)) {
-    return { x: "LoRA rank", y: "adapter dropout" };
+  if (/\bcondition\s+parameter\s+x\b/iu.test(context) && /\bcondition\s+parameter\s+y\b/iu.test(context)) {
+    return { x: "condition parameter x", y: "condition parameter y" };
   }
   if (/\brank\b/iu.test(context) && /\bdropout\b/iu.test(context)) {
     return { x: "rank", y: "dropout" };

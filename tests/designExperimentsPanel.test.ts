@@ -169,4 +169,49 @@ describe("designExperimentsPanel", () => {
       result.selection.scores.find((score) => score.candidate_id === "resource_preservation")?.evidence_strength_score || 0
     );
   });
+
+  it("does not promote one-seed pilot designs over paper-scale repeated-seed alternatives", () => {
+    const repeatedSeedFactorial = candidate({
+      id: "repeated_seed_factorial",
+      title: "Paper-scale repeated-seed condition factorial",
+      plan_summary:
+        "Run a complete repeated-seed factorial sweep to estimate condition effects, interaction stability, completion failures, and compute tradeoffs without relying on one seed.",
+      metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "seed_level_confidence_interval"],
+      baselines: ["baseline_condition", "unmodified_system_baseline", "current_best_baseline"],
+      implementation_notes: [
+        "Run all condition cells with at least three seeds per cell before making any directional model-quality claim."
+      ],
+      evaluation_steps: [
+        "Evaluate every completed condition on the full validation split.",
+        "Report raw counts, confidence intervals, seed variance, missing cells, runtime, and memory."
+      ],
+      risks: ["Fewer than three seeds per cell forces a downgrade to exploratory evidence."],
+      resource_notes: ["Higher workload, but it is the minimum paper-scale evidence package."]
+    });
+    const oneSeedPilot = candidate({
+      id: "one_seed_pilot",
+      title: "One-seed factorial audit pilot",
+      plan_summary:
+        "Run a one-seed audit pilot to validate local training, parseable tables, failure visibility, and claim-downgrade logic. The pilot ceiling is explicit: it cannot support paper-ready rank, dropout, interaction, or model-quality claims because it has only one training seed per cell.",
+      metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "failed_run_visibility_pass"],
+      implementation_notes: ["Use one seed per condition and label the output as pilot evidence only."],
+      evaluation_steps: ["If all cells complete, use this pilot to authorize repeated-seed design; do not use it as final evidence."],
+      risks: ["One seed cannot separate true condition effects from seed artifacts."],
+      resource_notes: ["Lowest-cost preflight option."]
+    });
+
+    const result = runDesignExperimentsPanel({
+      candidates: [oneSeedPilot, repeatedSeedFactorial],
+      objectiveProfile: accuracyObjective,
+      managedBundleSupported: false
+    });
+
+    expect(result.selected.id).toBe("repeated_seed_factorial");
+    expect(result.selection.scores.find((score) => score.candidate_id === "one_seed_pilot")?.blocked_by).toContain(
+      "statistical_reviewer"
+    );
+    expect(result.selection.scores.find((score) => score.candidate_id === "one_seed_pilot")?.evidence_strength_score).toBeLessThan(
+      result.selection.scores.find((score) => score.candidate_id === "repeated_seed_factorial")?.evidence_strength_score || 0
+    );
+  });
 });

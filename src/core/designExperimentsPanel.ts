@@ -150,18 +150,21 @@ function buildStatisticalReview(
     .slice(0, 2)
     .some((metric) => preferredMetrics.includes(metric.toLowerCase()));
   const objectiveDrift = isLikelyObjectiveDrift(candidate, objectiveProfile, preferredMetrics, primaryMetricMatch);
+  const insufficientPaperScaleEvidence = isInsufficientPaperScaleEvidence(candidate, objectiveProfile);
   const hardBlock =
     candidate.metrics.length === 0 ||
     candidate.baselines.length === 0 ||
     candidate.evaluation_steps.length === 0 ||
-    objectiveDrift;
+    objectiveDrift ||
+    insufficientPaperScaleEvidence;
   const rawScore =
     2 +
     (candidate.metrics.length > 0 ? 1 : 0) +
     (candidate.baselines.length > 0 ? 1 : 0) +
     (candidate.evaluation_steps.length > 0 ? 1 : 0) +
     (metricMatch ? 1 : 0) -
-    (objectiveDrift ? 2 : 0);
+    (objectiveDrift ? 2 : 0) -
+    (insufficientPaperScaleEvidence ? 3 : 0);
   return {
     reviewer_id: "statistical_reviewer",
     reviewer_label: "Statistical reviewer",
@@ -169,13 +172,18 @@ function buildStatisticalReview(
     score_1_to_5: clampScore(rawScore),
     hard_block: hardBlock,
     summary: hardBlock
-      ? objectiveDrift
+      ? insufficientPaperScaleEvidence
+        ? "The plan is explicitly limited to pilot or preflight evidence and cannot support the requested paper-scale model-quality claim."
+        : objectiveDrift
         ? "The plan drifts from the objective into a reporting-integrity audit and cannot support the requested model-quality comparison."
         : "The plan cannot support a reliable comparison because metrics, baselines, or evaluation steps are incomplete."
       : metricMatch
         ? "The plan is statistically aligned with the objective metric and comparison requirements."
         : "The plan is viable, but the metric set is only loosely aligned with the objective profile.",
     findings: uniqueStrings([
+      insufficientPaperScaleEvidence
+        ? "The candidate states a pilot/preflight ceiling or one-seed limitation, so it may validate infrastructure but not serve as paper-scale evidence."
+        : "",
       objectiveDrift
         ? "The primary metric surface is report-gating or claim-integrity focused while the objective is a model-quality metric."
         : "",
@@ -188,6 +196,31 @@ function buildStatisticalReview(
       candidate.evaluation_steps[0] || ""
     ]).slice(0, 3)
   };
+}
+
+function isInsufficientPaperScaleEvidence(
+  candidate: ExperimentDesignCandidate,
+  objectiveProfile: ObjectiveMetricProfile
+): boolean {
+  if (!isModelQualityObjective(objectiveProfile)) {
+    return false;
+  }
+  const text = buildCandidateText(candidate);
+  const explicitPilotOnly =
+    /\b(?:pilot|preflight|audit)\s+ceiling\b/u.test(text) ||
+    /\b(?:pilot|preflight)\s+(?:only|stage|record|evidence)\b/u.test(text) ||
+    /\b(?:cannot|can\s+not)\s+support\s+(?:paper[- ]ready|paper[- ]scale|rank|dropout|interaction|model[- ]quality|directional)\s+(?:claim|claims|evidence|conclusion|recommendation)s?\b/u.test(text) ||
+    /\b(?:no|not)\s+(?:paper[- ]ready|paper[- ]scale|statistical significance|rank recommendation|interaction claim)\b/u.test(text);
+  const oneSeedOnly =
+    /\bone[- ]seed\b/u.test(text) ||
+    /\bonly\s+one\s+(?:training\s+)?seed\b/u.test(text) ||
+    /\bone\s+seed\s+cannot\b/u.test(text) ||
+    /\b1\s+seed\s+per\s+(?:cell|condition|run)\b/u.test(text);
+  const repeatedSeedRepair =
+    /\b(?:repeated|multiple|multi[- ]seed|replicated)\s+seeds?\b/u.test(text) ||
+    /\bat\s+least\s+(?:[3-9]|three|four|five)\s+seeds?\b/u.test(text);
+
+  return explicitPilotOnly || (oneSeedOnly && !repeatedSeedRepair);
 }
 
 function isLikelyObjectiveDrift(
@@ -296,29 +329,15 @@ function buildEvidenceStrengthScore(
   candidate: ExperimentDesignCandidate,
   objectiveProfile: ObjectiveMetricProfile
 ): number {
-  const objectiveText = uniqueStrings([
-    objectiveProfile.primaryMetric || "",
-    objectiveProfile.raw || "",
-    ...(objectiveProfile.preferredMetricKeys || [])
-  ]).join(" ").toLowerCase().replace(/[_-]+/g, " ");
-  const candidateText = [
-    candidate.title,
-    candidate.plan_summary,
-    candidate.metrics.join(" "),
-    candidate.baselines.join(" "),
-    candidate.evaluation_steps.join(" "),
-    candidate.risks.join(" "),
-    candidate.resource_notes.join(" ")
-  ].join(" ").toLowerCase().replace(/[_-]+/g, " ");
+  const candidateText = buildCandidateText(candidate);
   const titleSummaryText = [candidate.title, candidate.plan_summary]
     .join(" ")
     .toLowerCase()
     .replace(/[_-]+/g, " ");
-  const modelQualityObjective =
-    /\b(accuracy|pass@?1|f1|auc|rouge|bleu|perplexity|benchmark|score|quality|delta)\b/u.test(objectiveText);
+  const modelQualityObjective = isModelQualityObjective(objectiveProfile);
   let score = 3;
 
-  if (/\b(repeat(?:ed)?|replication|replicate|seed|confidence|interval|bootstrap|paired|stability)\b/u.test(candidateText)) {
+  if (/\b(repeat(?:ed)?|replication|replicate|multi[- ]seed|multiple\s+seeds?|at\s+least\s+(?:[3-9]|three|four|five)\s+seeds?|confidence|interval|bootstrap|paired|stability)\b/u.test(candidateText)) {
     score += 1;
   }
   if (/\b(full\s+(?:validation|test|split|grid)|all\s+cells?|complete\s+(?:table|grid)|raw\s+n|sample\s+size|per\s+condition|condition\s+table)\b/u.test(candidateText)) {
@@ -327,12 +346,37 @@ function buildEvidenceStrengthScore(
   if (
     modelQualityObjective &&
     /\b(resource|budget|memory|runtime|throughput|efficiency|cost|lower\s+memory)\b/u.test(titleSummaryText) &&
-    /\b(without\s+losing|not\s+lose|non\s+inferior|lower\s+memory|efficiency|resource|budget)\b/u.test(titleSummaryText)
+      /\b(without\s+losing|not\s+lose|non\s+inferior|lower\s+memory|efficiency|resource|budget)\b/u.test(titleSummaryText)
   ) {
     score -= 1;
   }
+  if (modelQualityObjective && isInsufficientPaperScaleEvidence(candidate, objectiveProfile)) {
+    score -= 2;
+  }
 
   return clampScore(score);
+}
+
+function isModelQualityObjective(objectiveProfile: ObjectiveMetricProfile): boolean {
+  const objectiveText = uniqueStrings([
+    objectiveProfile.primaryMetric || "",
+    objectiveProfile.raw || "",
+    ...(objectiveProfile.preferredMetricKeys || [])
+  ]).join(" ").toLowerCase().replace(/[_-]+/g, " ");
+  return /\b(accuracy|pass@?1|f1|auc|rouge|bleu|perplexity|benchmark|score|quality|delta)\b/u.test(objectiveText);
+}
+
+function buildCandidateText(candidate: ExperimentDesignCandidate): string {
+  return [
+    candidate.title,
+    candidate.plan_summary,
+    candidate.metrics.join(" "),
+    candidate.baselines.join(" "),
+    candidate.implementation_notes.join(" "),
+    candidate.evaluation_steps.join(" "),
+    candidate.risks.join(" "),
+    candidate.resource_notes.join(" ")
+  ].join(" ").toLowerCase().replace(/[_-]+/g, " ");
 }
 
 function buildSelectionRationale(

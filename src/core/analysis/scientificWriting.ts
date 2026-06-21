@@ -7460,7 +7460,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     || /\bThe current workflow provides\b/iu.test(withoutDraftInstructions)
     || /\bThis\s+study\s+addresses\s+Study\s+how\b/iu.test(withoutDraftInstructions)
     || /\b7B-class\s+run\s+is\s+a\s+later\s+scale-up\s+target\b/iu.test(withoutDraftInstructions)
-    || /\bRecovered\s+cached\s+full\s+text\s+describing\s+a\s+compact\s+P(?:EFT)\s+recipe\b/iu.test(withoutDraftInstructions)
+    || /\bRecovered\s+cached\s+full\s+text(?:\s+describing\s+[^.]{0,160})?\.?/iu.test(withoutDraftInstructions)
     || /^The 36-run workload may exceed the desired first preflight local budget\.?$/iu.test(withoutDraftInstructions)
   ) {
     return "";
@@ -7473,7 +7473,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     .replace(/\bpaper-readiness\s+inspect\b/giu, "submission-quality inspection")
     .replace(/\binspect-relevant\b/giu, "protocol-relevant")
     .replace(/\bFor\s+inspect\s+purposes\b/giu, "For clarity")
-    .replace(/\bStudy\s+how\s+LoRA\s+rank\s+and\s+dropout\s+interact\s+during\s+parameter-efficient\s+instruction\s+tuning\s+under\s+a\s+fixed\s+local\s+compute\s+budget\.?/giu, "LoRA rank and dropout choices under a fixed local instruction-tuning budget")
+    .replace(/\bStudy\s+how\s+[^.]{10,180}\s+under\s+a\s+fixed\s+local\s+compute\s+budget\.?/giu, "condition choices under a fixed local compute budget")
     .replace(
       /\bThe fixed search space includes\s*(?:adapter|adapter) target modules were [^.]+\.,\s*Fixed training settings included [^.]+\.,\s*and The inspected seed-level record reports [^.]+ for the inspected seed-level record\./giu,
       "The fixed adapter target modules, training settings, and inspected seed-level counts are summarized from the run artifacts rather than hardcoded manuscript defaults."

@@ -1858,13 +1858,13 @@ describe("paper submission sanitization", () => {
   it("removes prompt, cache, and duplicate reviewer residue after manuscript repair", () => {
     const cachedRecoveryResidue = [
       ["Recovered", "cached", "full", "text"].join(" "),
-      "describing a compact P",
-      "EFT recipe."
+      "describing a compact",
+      "adaptation recipe."
     ].join(" " );
     const promptTopicResidue = [
       "Study how",
-      "LoRA rank and dropout interact during",
-      "parameter-efficient instruction tuning under a fixed local compute budget."
+      "condition parameters interact during",
+      "constrained model adaptation under a fixed local compute budget."
     ].join(" " );
     const readinessResidue = ["paper-readiness", "inspect"].join(" " );
     const remoteDomainResidue = ["bearing", "fault setting"].join("-" );
@@ -1889,8 +1889,8 @@ describe("paper submission sanitization", () => {
         {
           heading: "Related Work",
           paragraphs: [
-            `One practical but remote adaptation contrast in the cited material is a lightweight LoRA-based model in a ${remoteDomainResidue}, which shares an interest in practical adaptation under constraints but differs in domain.`,
-            `The closest prior framing ${identifiedBriefResidue} is a lightweight LoRA-based model in a ${remoteDomainResidue}, whereas other nearby papers emphasize resource-constrained adaptation.`,
+            `One practical but remote adaptation contrast in the cited material is a lightweight adapter-based model in a ${remoteDomainResidue}, which shares an interest in practical adaptation under constraints but differs in domain.`,
+            `The closest prior framing ${identifiedBriefResidue} is a lightweight adapter-based model in a ${remoteDomainResidue}, whereas other nearby papers emphasize resource-constrained adaptation.`,
             `The ${suppliedBriefResidue} organizes nearby work along three broad axes: adapter-method development, survey or synthesis of fine-tuning practice, and evaluation-oriented benchmarking.`
           ]
         },

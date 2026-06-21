@@ -802,13 +802,13 @@ describe("scientificWriting", () => {
   it("does not restore prompt or cache residue while enforcing the final page floor", () => {
     const cachedRecoveryResidue = [
       ["Recovered", "cached", "full", "text"].join(" "),
-      "describing a compact P",
-      "EFT recipe."
+      "describing a compact",
+      "adaptation recipe."
     ].join(" " );
     const promptTopicResidue = [
       "Study how",
-      "LoRA rank and dropout interact during",
-      "parameter-efficient instruction tuning under a fixed local compute budget."
+      "condition parameters interact during",
+      "constrained model adaptation under a fixed local compute budget."
     ].join(" " );
     const readinessResidue = ["paper-readiness", "inspect"].join(" " );
     const awkwardMetricResidue = ["Parameter-computationally", "practical within the reported setup"].join(" " );

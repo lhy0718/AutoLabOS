@@ -2561,10 +2561,10 @@ describe("writePaper PDF build", () => {
   it("uses reader-facing axis and task labels when manuscript context names them", () => {
     const manuscript: PaperManuscript = {
       title: "Adapter Condition Study",
-      abstract: "The run varies low-rank adapter rank and adapter dropout under a fixed budget.",
+      abstract: "The run varies condition parameter x and condition parameter y under a fixed budget.",
       keywords: ["condition comparison"],
       sections: [
-        { heading: "Method", paragraphs: ["The method varies low-rank adapter rank and adapter dropout. Evaluation uses Task Alpha and Task Beta."] },
+        { heading: "Method", paragraphs: ["The method varies condition parameter x and condition parameter y. Evaluation uses Task Alpha and Task Beta."] },
         { heading: "Results", paragraphs: ["Table 1 anchors the comparison and Figure 1 decomposes the task-level change."] }
       ],
       tables: [],
@@ -2576,25 +2576,25 @@ describe("writePaper PDF build", () => {
         metrics: {
           baseline_condition_marker: "8 parameter 0 0",
           condition_results: [
-            { label: "4 parameter 0 0", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.44 } } },
-            { label: "8 parameter 0 0", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.44 } } },
-            { label: "12 parameter 0 05", average_accuracy: 0.48, accuracy_delta_vs_baseline: 0.03, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.50 } } }
+            { label: "4 parameter 0 0", condition_axis_x_label: "condition parameter x", condition_axis_y_label: "condition parameter y", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.44 } } },
+            { label: "8 parameter 0 0", condition_axis_x_label: "condition parameter x", condition_axis_y_label: "condition parameter y", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.44 } } },
+            { label: "12 parameter 0 05", condition_axis_x_label: "condition parameter x", condition_axis_y_label: "condition parameter y", average_accuracy: 0.48, accuracy_delta_vs_baseline: 0.03, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.50 } } }
           ]
         }
       } as any
     });
 
     const rows = stabilized.tables?.[0]?.rows || [];
-    expect(rows[0]?.label).toContain("LoRA rank=4");
-    expect(rows[0]?.label).toContain("adapter dropout=0");
-    expect(stabilized.tables?.[0]?.condition_axis_x_label).toBe("LoRA rank");
-    expect(stabilized.tables?.[0]?.condition_axis_y_label).toBe("adapter dropout");
+    expect(rows[0]?.label).toContain("condition parameter x=4");
+    expect(rows[0]?.label).toContain("condition parameter y=0");
+    expect(stabilized.tables?.[0]?.condition_axis_x_label).toBe("condition parameter x");
+    expect(stabilized.tables?.[0]?.condition_axis_y_label).toBe("condition parameter y");
     expect(rows.map((row) => row.label).join(" ")).not.toContain("factor x");
     expect(stabilized.figures?.[0]?.bars.map((bar) => bar.label)).toEqual([
       "Task Alpha task difference",
       "Task Beta task difference"
     ]);
-    expect(stabilized.figures?.[0]?.caption).toContain("LoRA rank=12");
+    expect(stabilized.figures?.[0]?.caption).toContain("condition parameter x=12");
   });
 
   it("keeps registered baseline separate from the archived reference condition", () => {

@@ -3409,7 +3409,7 @@ function sanitizeFinalPaperParagraph(heading: string, paragraph: string, index: 
     .replace(/\bcost-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "cost-efficient")
     .replace(/\bcompute-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "compute-efficient")
     .replace(/\bpaper-readiness\s+inspect\b/giu, "submission-quality inspection")
-    .replace(/\bStudy\s+how\s+LoRA\s+rank\s+and\s+dropout\s+interact\s+during\s+parameter-efficient\s+instruction\s+tuning\s+under\s+a\s+fixed\s+local\s+compute\s+budget\.?/giu, "LoRA rank and dropout choices under a fixed local instruction-tuning budget")
+    .replace(/\bStudy\s+how\s+[^.]{10,180}\s+under\s+a\s+fixed\s+local\s+compute\s+budget\.?/giu, "condition choices under a fixed local compute budget")
     .replace(/\bhigher-rank zero-dropout\b/giu, "high-rank zero-dropout")
     .replace(/\bmachine-readable result reporting\b/giu, "transparent result reporting")
     .replace(/\s+/gu, " ")
