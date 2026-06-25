@@ -1,7 +1,7 @@
 {
   "name": "autolabos",
   "version": "0.1.0",
-  "description": "Governed local TUI and web UI for audit-first AI research-agent workflows, evidence gates, and paper-readiness review.",
+  "description": "Codex-native governance harness for audit-first AI research workflows, evidence gates, and paper-readiness review.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -23,7 +23,11 @@
     "semantic-scholar",
     "pdf-analysis",
     "typescript",
-    "nodejs"
+    "nodejs",
+    "codex-plugin",
+    "research-governance",
+    "paper-readiness",
+    "evidence-gates"
   ],
   "bin": {
     "autolabos": "dist/cli/main.js"
@@ -31,6 +35,7 @@
   "files": [
     "dist",
     "web/dist",
+    "plugins",
     "README.md",
     "README.ko.md",
     "LICENSE",

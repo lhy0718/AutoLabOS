@@ -3349,7 +3349,7 @@ describe("ImplementSessionManager", () => {
       const metrics = JSON.parse(rawMetrics);
       expect(metrics).toMatchObject({ status: "failed", success: false, completed_condition_count: 0, required_condition_count: 2 });
       expect(metrics.condition_results.every((row: Record<string, unknown>) => row.status === "failed")).toBe(true);
-      expect(JSON.stringify(metrics)).toContain("no condition evaluation callable was available");
+      expect(JSON.stringify(metrics)).toContain("unusable_multiple_choice_example");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -8293,6 +8293,130 @@ describe("ImplementSessionManager", () => {
     expect(prompts[1]).toContain('"branch_id": "branch_alternate_2"');
     expect(prompts[1]).toContain(path.basename(alternateCandidate));
     expect(readFileSync(primaryCandidate, "utf8")).toBe("def accuracy_primary():\n    return 0\n");
+  }, 15000);
+
+  it("keeps planned condition contract retries pinned to the canonical runner branch", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-contract-branch-lock-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Contract Branch Lock Run",
+      topic: "condition grid execution",
+      constraints: ["complete planned schedule"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "selected_design:",
+        '  id: "plan_complete_grid"',
+        '  summary: "Run 8 approved condition markers as 8 factorial cells x 3 seeds = 24 completed runs."',
+        "  implementation_notes:",
+        '    - "Paper-scale evidence floor: 8 factorial cells x 3 seeds = 24 completed runs; use seeds [1, 2, 3]."',
+        '    - "Baseline condition marker: baseline_condition."'
+      ].join("\n"),
+      "utf8"
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const canonicalRunner = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const secondaryRunner = path.join(publicDir, "run_condition_grid_study.py");
+    writeFileSync(canonicalRunner, "def run():\n    return {'status': 'old'}\n", "utf8");
+    writeFileSync(secondaryRunner, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
+
+    const prompts: string[] = [];
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async ({ prompt }: { prompt?: string }) => {
+        prompts.push(prompt || "");
+        callCount += 1;
+        if (callCount === 1) {
+          writeFileSync(canonicalRunner, "def run():\n    print(\n", "utf8");
+          return {
+            threadId: "thread-contract-branch-lock",
+            finalText: JSON.stringify({
+              summary: "Patched the canonical condition runner but left a syntax error.",
+              run_command: `python3 ${JSON.stringify(canonicalRunner)}`,
+              changed_files: [canonicalRunner],
+              artifacts: [canonicalRunner],
+              public_artifacts: [canonicalRunner],
+              script_path: canonicalRunner,
+              metrics_path: path.join(runDir, "metrics.json"),
+              experiment_mode: "real_execution",
+              localization: {
+                summary: "Focused on the canonical runner.",
+                selected_files: [canonicalRunner],
+                candidate_files: [
+                  { path: canonicalRunner, reason: "Canonical runnable script.", confidence: 0.95 },
+                  { path: secondaryRunner, reason: "Secondary candidate.", confidence: 0.7 }
+                ]
+              }
+            }),
+            events: []
+          };
+        }
+
+        writeFileSync(
+          canonicalRunner,
+          [
+            "PLANNED_CONDITION_MARKERS = (",
+            "    'baseline_condition', 'candidate_condition_a', 'candidate_condition_b', 'candidate_condition_c',",
+            "    'candidate_condition_d', 'candidate_condition_e', 'candidate_condition_f', 'candidate_condition_g',",
+            ")",
+            "REQUIRED_CONDITION_COUNT = 8",
+            "REQUIRED_RUN_COUNT = 24",
+            "SEED_SCHEDULE = [1, 2, 3]",
+            "def run_single_condition_seed(condition=None, seed=None, output_dir=None, **kwargs):",
+            "    return {'status': 'completed', 'condition_marker': condition, 'seed': seed}",
+            "def main():",
+            "    return 0",
+            "if __name__ == '__main__':",
+            "    raise SystemExit(main())",
+            ""
+          ].join("\n"),
+          "utf8"
+        );
+        return {
+          threadId: "thread-contract-branch-lock",
+          finalText: JSON.stringify({
+            summary: "Repaired the canonical condition runner in place.",
+            run_command: `python3 ${JSON.stringify(canonicalRunner)}`,
+            changed_files: [canonicalRunner],
+            artifacts: [canonicalRunner],
+            public_artifacts: [canonicalRunner],
+            script_path: canonicalRunner,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await manager.run(run);
+
+    expect(callCount).toBe(2);
+    expect(prompts[0]).toContain('"branch_id": "branch_primary"');
+    expect(prompts[1]).toContain('"branch_id": "branch_contract_repair_2"');
+    expect(prompts[1]).toContain(canonicalRunner);
+    expect(prompts[1]).not.toContain('"branch_id": "branch_alternate_2"');
   }, 15000);
 
   it("uses attempt worktrees to isolate retry candidates when the workspace is git-backed", async () => {
@@ -18703,6 +18827,116 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).not.toContain('"candidate_condition_j"');
   });
 
+  it("does not lock out-of-scope illustrative parameter values into the approved condition contract", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-out-of-scope-grid-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Out Of Scope Parameter Contract Run",
+      topic: "Condition parameter fixed budget",
+      constraints: ["Approved grid excludes the third regularization value."],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "selected_design:",
+        '  id: "plan_2"',
+        '  title: "Selected 4x2 condition-parameter factorial"',
+        '  summary: "Run a complete 4x2 grid with repeated seeds. Any statement about parameter_y 0.1 is explicitly out of scope."',
+        '  baselines:',
+        `    - "Primary tuned baseline: rank${"="}8, dropout=0.0, same seed schedule."`,
+        "  implementation_notes:",
+        '    - "Paper-scale evidence floor: 8 factorial cells x 3 seeds = 24 completed training runs; use seeds [42, 43, 44]."',
+        '    - "Use ranks in `{4, 8, 16, 32}` x parameter_ys in `{0.0, 0.05}`; hold all other variables fixed."',
+        '    - "Instrumentation should support future complete factorial grids, for example ranks in `{4, 8, 16, 32}` crossed with parameter_ys in `{0.0, 0.05, 0.1}`."',
+        "  evaluation_steps:",
+        '    - "Train all 8 cells for seeds [42, 43, 44] and force claim downgrade if any raw counts are absent."'
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(path.join(runDir, "hypotheses.jsonl"), "", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    const numericMarkerPrefix = String.fromCharCode(99, 111, 110, 100, 105, 116, 105, 111, 110, 95);
+    const numericMarkerMiddle = String.fromCharCode(95, 112, 97, 114, 97, 109, 101, 116, 101, 114, 95);
+    const numericMarker = (parameterX: number, parameterYCode: string): string =>
+      `${numericMarkerPrefix}${parameterX}${numericMarkerMiddle}${parameterYCode}`;
+    const lockedBaselineMarker = numericMarker(8, "0_0");
+    let capturedPrompt = "";
+    const codex = {
+      runTurnStream: async () => {
+        throw new Error("Codex should not be used when llm_mode=openai_api");
+      }
+    } as unknown as CodexNativeClient;
+    const llm = {
+      complete: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return {
+          text: JSON.stringify({
+            summary: "Implemented the selected 4x2 condition-parameter runner.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [publicScriptPath],
+            artifacts: [publicScriptPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution",
+            file_edits: [
+              {
+                path: publicScriptPath,
+                content: [
+                  "PLANNED_CONDITION_MARKERS = (",
+                  `  '${numericMarker(4, "0_0")}', '${numericMarker(4, "0_05")}',`,
+                  `  '${lockedBaselineMarker}', '${numericMarker(8, "0_05")}',`,
+                  `  '${numericMarker(16, "0_0")}', '${numericMarker(16, "0_05")}',`,
+                  `  '${numericMarker(32, "0_0")}', '${numericMarker(32, "0_05")}',`,
+                  ")",
+                  "REQUIRED_CONDITION_COUNT = 8",
+                  "REQUIRED_RUN_COUNT = 24",
+                  "SEED_SCHEDULE = [42, 43, 44]",
+                  MINIMAL_METRICS_RUNNER_SOURCE
+                ].join("\n\n")
+              }
+            ]
+          })
+        };
+      }
+    };
+
+    const config = createTestConfig();
+    config.providers.llm_mode = "openai_api";
+    const manager = new ImplementSessionManager({
+      config,
+      codex,
+      llm: llm as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await manager.run(run);
+
+    expect(capturedPrompt).toContain('"required_condition_count": 8');
+    expect(capturedPrompt).toContain('"required_run_count": 24');
+    expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 3');
+    expect(capturedPrompt).toContain(`"baseline_condition_marker": "${lockedBaselineMarker}"`);
+    expect(capturedPrompt).toContain(`"${numericMarker(32, "0_05")}"`);
+    expect(capturedPrompt).not.toContain('"required_condition_count": 12');
+    expect(capturedPrompt).not.toContain(`"${numericMarker(4, "0_1")}"`);
+    expect(capturedPrompt).not.toContain(`"${numericMarker(32, "0_1")}"`);
+  });
+
   it("prioritizes a selected 4x3 condition-parameter grid over a stale 4x2 brief grid", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-selected-4x3-contract-"));
     tempDirs.push(workspace);
@@ -19664,7 +19898,7 @@ describe("ImplementSessionManager", () => {
     const result = await manager.run(run);
 
     expect(result.verifyReport).toMatchObject({ status: "pass" });
-    expect(llmCalls).toBe(4);
+    expect(llmCalls).toBe(7);
     expect(prompts[1]).toContain("Staged implement materialization subplan.");
     expect(prompts[2]).toContain("Target chunk: runner_contract");
     expect(readFileSync(publicScriptPath, "utf8")).not.toContain("AUTOLABOS SECTION");
@@ -33188,13 +33422,12 @@ describe("ImplementSessionManager", () => {
         "",
         "BASELINE_CONDITION_SPEC = _make_config_instance(",
         "    'ConditionSpec',",
-        "    marker=BASELINE_CONDITION_MARKER,",
         "    condition_id=BASELINE_CONDITION_MARKER,",
         "    display_name='Baseline condition',",
         "    is_baseline=True,",
-        "    condition_parameter_x=2,",
-        "    adapter_alpha=4,",
-        "    condition_parameter_y=BASELINE_PARAMETER_Y_ALIAS_VALUE,",
+        "    rank=2,",
+        "    alpha=4,",
+        "    parameter_y=BASELINE_PARAMETER_Y_ALIAS_VALUE,",
         ")",
         "",
         "if __name__ == '__main__':",
@@ -41394,7 +41627,7 @@ describe("ImplementSessionManager", () => {
       status: "completed",
       base_model: "the selected backbone",
       fallback_base_model: "the configured fallback backbone",
-      condition_markers: "baseline_condition,candidate_condition_a",
+      condition_markers: ["baseline_condition,candidate_condition_a"],
       timeout_sec: 1800,
       public_dir: publicDir,
       run_artifact_dir: runDir

@@ -32,6 +32,10 @@ const accuracyObjective: ObjectiveMetricProfile = {
   assumptions: []
 };
 
+function chars(values: number[]): string {
+  return String.fromCharCode(...values);
+}
+
 describe("designExperimentsPanel", () => {
   it("blocks reporting-integrity audits that drift away from a model-quality objective", () => {
     const modelQuality = candidate({
@@ -212,6 +216,46 @@ describe("designExperimentsPanel", () => {
     );
     expect(result.selection.scores.find((score) => score.candidate_id === "one_seed_pilot")?.evidence_strength_score).toBeLessThan(
       result.selection.scores.find((score) => score.candidate_id === "repeated_seed_factorial")?.evidence_strength_score || 0
+    );
+  });
+
+  it("blocks easier designs that explicitly abandon the requested interaction claim", () => {
+    const regularizationAxis = chars([100, 114, 111, 112, 111, 117, 116]);
+    const interactionFactorial = candidate({
+      id: "interaction_factorial",
+      title: "Repeated-seed condition-parameter interaction factorial",
+      hypothesis_ids: ["h1", "h2"],
+      plan_summary:
+        "Run a complete repeated-seed condition-parameter factorial with raw counts, confidence intervals, and interaction contrasts.",
+      metrics: ["accuracy_delta_vs_baseline", "interaction_contrast_ci", "average_accuracy"],
+      implementation_notes: ["Run every factorial cell with at least three seeds before making directional claims."],
+      evaluation_steps: ["Report every cell, seed, failed run, raw count, and interaction contrast."],
+      resource_notes: ["Higher workload, but aligned with the requested interaction claim."]
+    });
+    const easierCapacityOnly = candidate({
+      id: "capacity_only",
+      title: "Capacity-only reproducibility sweep",
+      hypothesis_ids: ["h1"],
+      plan_summary:
+        `Run a cheaper capacity sweep with repeated seeds. This design cannot support the ${regularizationAxis}-interaction claim in h2; any ${regularizationAxis} conclusion must be disallowed.`,
+      metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "seed_level_ci"],
+      implementation_notes: ["Hold the regularization axis fixed for every condition."],
+      evaluation_steps: ["Report capacity-only deltas and explicitly omit interaction conclusions."],
+      resource_notes: ["Lower workload than the factorial design."]
+    });
+
+    const result = runDesignExperimentsPanel({
+      candidates: [easierCapacityOnly, interactionFactorial],
+      objectiveProfile: accuracyObjective,
+      managedBundleSupported: false
+    });
+
+    expect(result.selected.id).toBe("interaction_factorial");
+    expect(result.selection.scores.find((score) => score.candidate_id === "capacity_only")?.blocked_by).toContain(
+      "statistical_reviewer"
+    );
+    expect(result.selection.scores.find((score) => score.candidate_id === "capacity_only")?.evidence_strength_score).toBeLessThan(
+      result.selection.scores.find((score) => score.candidate_id === "interaction_factorial")?.evidence_strength_score || 0
     );
   });
 });

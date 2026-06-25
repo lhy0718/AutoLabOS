@@ -2,6 +2,12 @@
 
 This document captures the runtime contracts that must remain stable while improving quality enforcement.
 
+## 0) Product surface decision
+
+AutoLabOS is plugin-first at the public product boundary: Codex and external research agents may execute the work, while AutoLabOS owns the artifact, gate, review, downgrade, and paper-readiness contract. The fixed TUI/web workflow remains the reference implementation, compatibility shell, and live-validation environment.
+
+This product-surface decision does not weaken the governed workflow contract below. The public contract should be expressed through traceable artifacts and gates, not through hardcoded one-off experiments or claims that a completed workflow is automatically paper-ready.
+
 ## 1) Governed workflow contract
 
 AutoLabOS operates around a governed fixed research workflow:

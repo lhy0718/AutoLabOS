@@ -22190,7 +22190,7 @@ The resolved entries below are kept as recent validation history and regression 
   - HF-compatible dataset access had network-address warnings but used cached datasets for `instruction-dataset-fixture` and `benchmark_task_a_dataset`.
   - Benchmark preparation then failed with:
     - `TypeError: deterministic_sample_records() got an unexpected keyword argument 'salt'`
-  - The generated helper signature is `deterministic_sample_records(records, limit, *, seed=SEED, namespace="records")`, while generated call sites use `salt=ARC_CHALLENGE_BENCHMARK_KEY` and `salt=benchmark_key`.
+  - The generated helper signature is `deterministic_sample_records(records, limit, *, seed=SEED, namespace="records")`, while generated call sites use `salt=BENCHMARK_TASK_A_KEY` and `salt=benchmark_key`.
 
 - Fresh vs existing session comparison:
   - Fresh session: not separately run from `/new`; this was observed in the active validation workspace after the rebuilt Web API was restarted.

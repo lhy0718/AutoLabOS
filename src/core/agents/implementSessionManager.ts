@@ -713,18 +713,25 @@ export class ImplementSessionManager {
       );
       latestSearchLocalization = searchLocalization;
       await writeJsonFile(path.join(runDir, "localization_search_result.json"), latestSearchLocalization || {});
+      const branchLockOptions = isImplementationScheduleContractRepair(taskSpec)
+        ? {
+            lockFocusToLocalization: true,
+            lockReason:
+              "Design-to-implementation schedule feedback must repair the canonical runnable contract before exploring alternate files."
+          }
+        : hasConcretePlannedConditionContract(taskSpec)
+          ? {
+              lockFocusToLocalization: true,
+              lockReason:
+                "Concrete planned condition contracts must stay pinned to the canonical runnable implementation until the contract is satisfied."
+            }
+          : undefined;
       const branchPlan = chooseBranchPlan(
         searchLocalization,
         attemptRecords,
         branchContextFiles,
         defaultFocusFiles,
-        isImplementationScheduleContractRepair(taskSpec)
-          ? {
-              lockFocusToLocalization: true,
-              lockReason:
-                "Design-to-implementation schedule feedback must repair the canonical runnable contract before exploring alternate files."
-            }
-          : undefined
+        branchLockOptions
       );
       const isolation = await createAttemptIsolationContext({
         config: this.deps.config,
@@ -3282,9 +3289,19 @@ export class ImplementSessionManager {
     if (bootstrapEvaluation.status === "block") {
       throw new Error(`bootstrap contract blocked implementation before code generation: ${bootstrapEvaluation.summary}`);
     }
-    const synthesizedDecompositionPlan = scaffoldParsed.value.decomposition_plan
+    const scaffoldPlanNormalizationRoots = dedupeStrings([
+      input.workspaceRoot,
+      path.resolve(input.publicDir, ".."),
+      path.resolve(input.publicDir, "..", ".."),
+      path.resolve(input.publicDir, "..", "..", "..")
+    ]);
+    const normalizedScaffoldDecompositionPlan = normalizeDynamicDecompositionPlanAcrossRoots(
+      scaffoldParsed.value.decomposition_plan,
+      scaffoldPlanNormalizationRoots
+    );
+    const synthesizedDecompositionPlan = normalizedScaffoldDecompositionPlan
       ? undefined
-      : synthesizeDecompositionPlanFromScaffold(scaffoldParsed.value, input.workspaceRoot);
+      : synthesizeDecompositionPlanFromScaffoldAcrossRoots(scaffoldParsed.value, scaffoldPlanNormalizationRoots);
     if (synthesizedDecompositionPlan) {
       input.emitImplementObservation(
         "codex",
@@ -3297,7 +3314,7 @@ export class ImplementSessionManager {
       );
     }
     const decompositionPlanRepair =
-      scaffoldParsed.value.decomposition_plan || synthesizedDecompositionPlan
+      normalizedScaffoldDecompositionPlan || synthesizedDecompositionPlan
         ? undefined
         : await this.completeStagedLlmDecompositionPlan({
         runDir: input.runDir,
@@ -3317,7 +3334,7 @@ export class ImplementSessionManager {
       });
     activeThreadId = decompositionPlanRepair?.threadId || activeThreadId;
     const decompositionPlan =
-      normalizeDynamicDecompositionPlan(scaffoldParsed.value.decomposition_plan, input.workspaceRoot) ||
+      normalizedScaffoldDecompositionPlan ||
       synthesizedDecompositionPlan ||
       decompositionPlanRepair?.plan;
     if (!decompositionPlan) {
@@ -3685,7 +3702,9 @@ export class ImplementSessionManager {
     validateContent?: (content: string) => Promise<string | undefined>;
   }): Promise<{ content: string; threadId?: string }> {
     const chunkArtifactId = buildMaterializationChunkArtifactId(input);
-    const localUtilityContent = buildLocalPythonUtilityChunkContent(input.unit.target_path || "", input.chunk);
+    const localUtilityContent = input.chunk.include_entrypoint === true
+      ? undefined
+      : buildLocalPythonUtilityChunkContent(input.unit.target_path || "", input.chunk);
     if (localUtilityContent) {
       input.emitImplementObservation(
         "codex",
@@ -12981,6 +13000,33 @@ function normalizeDynamicDecompositionPlan(
   };
 }
 
+
+function normalizeDynamicDecompositionPlanAcrossRoots(
+  plan: DynamicDecompositionPlan | undefined,
+  workspaceRoots: string[]
+): DynamicDecompositionPlan | undefined {
+  for (const workspaceRoot of workspaceRoots) {
+    const normalized = normalizeDynamicDecompositionPlan(plan, workspaceRoot);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
+function synthesizeDecompositionPlanFromScaffoldAcrossRoots(
+  scaffold: StructuredImplementResponse,
+  workspaceRoots: string[]
+): DynamicDecompositionPlan | undefined {
+  for (const workspaceRoot of workspaceRoots) {
+    const synthesized = synthesizeDecompositionPlanFromScaffold(scaffold, workspaceRoot);
+    if (synthesized) {
+      return synthesized;
+    }
+  }
+  return undefined;
+}
+
 function synthesizeDecompositionPlanFromScaffold(
   scaffold: StructuredImplementResponse,
   workspaceRoot: string
@@ -13103,7 +13149,7 @@ function boundMaterializationPlanForUnit(
   if (plan.strategy === "local_bounded_python_runner_materialization") {
     return plan;
   }
-  if (plan.chunks.length <= MAX_PROVIDER_PYTHON_RUNNER_CHUNKS && !planContainsBroadPythonRunnerChunk(plan)) {
+  if (plan.chunks.length <= MAX_PROVIDER_PYTHON_RUNNER_CHUNKS) {
     return plan;
   }
   return buildLocalBoundedPythonRunnerMaterializationPlan(unit, "provider_plan_bounded");
@@ -13128,20 +13174,6 @@ function shouldRequestDynamicChunkSubdivision(
 function isExperimentRunnerMaterializationUnit(unit: DynamicDecompositionUnit): boolean {
   const text = `${unit.target_path || ""} ${unit.title || ""} ${unit.purpose || ""}`.toLowerCase();
   return /\b(?:experiment|runner|run|study|evaluation|entrypoint|script)\b/u.test(text);
-}
-
-function planContainsBroadPythonRunnerChunk(plan: DynamicMaterializationPlan): boolean {
-  return plan.chunks.some((chunk) => {
-    const text = `${chunk.title} ${chunk.purpose}`.toLowerCase();
-    const concernCount = [
-      /\b(?:dataset|data|corpus|examples?|loader|loaders?)\b/u,
-      /\b(?:model|tokenizer|tokenization)\b/u,
-      /\b(?:train|training|execution|execute|condition|seed)\b/u,
-      /\b(?:evaluation|evaluate|scoring|benchmark)\b/u,
-      /\b(?:metric|metrics|aggregation|aggregate|reporting|entrypoint)\b/u
-    ].filter((pattern) => pattern.test(text)).length;
-    return concernCount >= 3;
-  });
 }
 
 function buildLocalBoundedPythonRunnerMaterializationPlan(
@@ -13488,7 +13520,7 @@ export function buildLocalPythonUtilityChunkContent(
       /\b(?:run_single_condition|execute_condition|train_and_evaluate_condition)\b/u.test(responsibilityText));
   const isEntrypointBridgeHelper =
     !isSingleConditionExecutionHelper &&
-    /\b(?:entrypoint|handoff|cli|process exit|exit behavior|final handoff)\b/u.test(responsibilityText) &&
+    /\b(?:entrypoint|cli|process exit|exit behavior)\b/u.test(chunkTitleText) &&
     /\b(?:metric|metrics|write|writer|run plan|execution|execute|condition|conditions|result|results|evidence)\b/u.test(
       responsibilityText
     );
@@ -13732,6 +13764,18 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "    if isinstance(value, (list, tuple, set)):",
     "        return [_autolabos_entrypoint_jsonable(item) for item in value]",
     "    return str(value)",
+    "",
+    "",
+    "def _autolabos_entrypoint_public_evidence(value):",
+    "    live_handle_keys = {'model', 'tokenizer', 'base_model', 'trainer', 'optimizer', 'scheduler', 'data_collator', 'collator', 'loaded_model_bundle', 'model_bundle'}",
+    "    def _scrub(item):",
+    "        public_item = _autolabos_entrypoint_jsonable(item)",
+    "        if hasattr(public_item, 'items'):",
+    "            return {str(key): _scrub(nested) for key, nested in public_item.items() if str(key) not in live_handle_keys}",
+    "        if isinstance(public_item, (list, tuple, set)):",
+    "            return [_scrub(nested) for nested in public_item]",
+    "        return public_item",
+    "    return _scrub(value)",
     "",
     "",
     "class _AutoLabOSEntrypointStateView(dict):",
@@ -14674,6 +14718,12 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "            try:",
     "                budget = _autolabos_entrypoint_get(config, 'budget', None)",
     "                train_limit = _autolabos_entrypoint_get(config, 'max_train_examples', _autolabos_entrypoint_get(config, 'max_train_examples_per_condition', _autolabos_entrypoint_get(budget, 'max_train_examples_per_condition', 12)))",
+    "                try:",
+    "                    train_limit = int(train_limit)",
+    "                except Exception:",
+    "                    train_limit = 12",
+    "                if train_limit <= 0:",
+    "                    train_limit = 12",
     "                allow_download = str(os.environ.get('AUTOLABOS_ALLOW_MODEL_DOWNLOAD', '0')).lower() in {'1', 'true', 'yes', 'y'}",
     "                loaded = _autolabos_entrypoint_call_compatible(loader, config=config, cfg=config, ctx=config, context=config, runner_config=config, run_config=config, args=config, runtime=config, rt=config, runtime_config=config, run_context=config, shared_context=config, contract=config, budget=budget, max_train_examples_per_condition=train_limit, max_train_examples=train_limit, max_examples=train_limit, limit=train_limit, eval_examples_per_task=_autolabos_entrypoint_get(config, 'eval_examples_per_task', _autolabos_entrypoint_get(budget, 'eval_examples_per_task', 12)), seed=_autolabos_entrypoint_get(config, 'seed', _autolabos_entrypoint_get(budget, 'seed', 0)), cache_dir=_autolabos_entrypoint_get(config, 'cache_dir', None), allow_download=allow_download)",
     "                loaded = _autolabos_entrypoint_transform_loaded_data(loaded, config)",
@@ -15021,10 +15071,10 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "            diagnostics.append('model_contract_load_failed:' + repr(exc))",
     "    marker = _autolabos_entrypoint_condition_marker(row=state) or _autolabos_entrypoint_condition_marker(condition=condition) or 'condition'",
     "    if torch_mod is None:",
-    "        return [{'condition_marker': marker, 'status': 'failed', 'failure_stage': 'evaluation_runtime', 'failure_reason': '; '.join(str(item) for item in diagnostics[-3:] or ['torch was not available for low-level multiple-choice evaluation']), 'raw_evidence': {'training_result': _autolabos_entrypoint_jsonable(state)}}]",
+    "        return [{'condition_marker': marker, 'status': 'failed', 'failure_stage': 'evaluation_runtime', 'failure_reason': '; '.join(str(item) for item in diagnostics[-3:] or ['torch was not available for low-level multiple-choice evaluation']), 'raw_evidence': {'training_result': _autolabos_entrypoint_public_evidence(state)}}]",
     "    if model is None or tokenizer is None:",
     "        if diagnostics:",
-    "            return [{'condition_marker': marker, 'status': 'failed', 'failure_stage': 'evaluation', 'failure_reason': '; '.join(str(item) for item in diagnostics[-3:]), 'raw_evidence': {'training_result': _autolabos_entrypoint_jsonable(state)}}]",
+    "            return [{'condition_marker': marker, 'status': 'failed', 'failure_stage': 'evaluation', 'failure_reason': '; '.join(str(item) for item in diagnostics[-3:]), 'raw_evidence': {'training_result': _autolabos_entrypoint_public_evidence(state)}}]",
     "        return None",
     "    eval_method = getattr(model, 'eval', None)",
     "    if callable(eval_method):",
@@ -15079,7 +15129,7 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "            rows.append({'condition_marker': marker, 'status': 'completed', 'accuracy': 1.0 if correct else 0.0, 'seed': seed_value, 'seed_id': seed_value, 'correct': bool(correct), 'task': task_name, 'example_id': example_id, 'prediction': prediction, 'gold_key': gold_key, 'raw_evidence': {'condition_marker': marker, 'seed': seed_value, 'seed_id': seed_value, 'task': task_name, 'example_id': example_id, 'prediction': prediction, 'gold_key': gold_key, 'correct': bool(correct), 'choice_losses': {str(key): float(loss) for key, loss in losses}}})",
     "    if rows:",
     "        return rows",
-    "    return [{'condition_marker': marker, 'status': 'failed', 'failure_stage': 'evaluation', 'failure_reason': '; '.join(failures[-3:] or diagnostics[-3:] or ['low-level multiple-choice evaluation produced no scored examples']), 'raw_evidence': {'training_result': _autolabos_entrypoint_jsonable(state)}}]",
+    "    return [{'condition_marker': marker, 'status': 'failed', 'failure_stage': 'evaluation', 'failure_reason': '; '.join(failures[-3:] or diagnostics[-3:] or ['low-level multiple-choice evaluation produced no scored examples']), 'raw_evidence': {'training_result': _autolabos_entrypoint_public_evidence(state)}}]",
     "",
     "",
     "def _autolabos_entrypoint_accuracy_payload_from_rows(rows):",
@@ -15104,6 +15154,8 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "        except Exception:",
     "            return None",
     "        if n <= 0:",
+    "            return None",
+    "        if k < 0 or k > n:",
     "            return None",
     "        z = 1.96",
     "        p = k / n",
@@ -15242,7 +15294,7 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "            task_accuracy = _autolabos_entrypoint_mean(task_values)",
     "            if task_accuracy is None:",
     "                continue",
-    "            if task_total <= 0:",
+    "            if task_total <= 0 and 0.0 <= task_accuracy <= 1.0:",
     "                task_total = len(task_values)",
     "                task_correct = int(round(task_accuracy * task_total)) if task_total else 0",
     "            task_ci = _autolabos_ci(task_correct, task_total)",
@@ -15302,7 +15354,7 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "def _autolabos_entrypoint_evaluation_metric_rows(condition_row, eval_tasks, config, condition=None, paths=None):",
     "    if not eval_tasks:",
     "        return []",
-    "    training_evidence = _autolabos_entrypoint_jsonable(condition_row)",
+    "    training_evidence = _autolabos_entrypoint_public_evidence(condition_row)",
     "    training_failure_reason = _autolabos_entrypoint_failure_reason(training_evidence)",
     "    training_status = _autolabos_entrypoint_condition_status(training_evidence)",
     "    if training_failure_reason and training_status not in {'completed', 'complete', 'success', 'succeeded', 'ok', 'completed_training', 'training_completed', 'trained'}:",
@@ -15314,7 +15366,14 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "        if low_level_rows is not None:",
     "            return low_level_rows",
     "        marker = _autolabos_entrypoint_condition_marker(row=condition_row) or _autolabos_entrypoint_condition_marker(condition=condition)",
-    "        return [{'condition_marker': marker or 'condition', 'status': 'failed', 'failure_stage': 'evaluation', 'failure_reason': 'no condition evaluation callable was available'}]",
+    "        training_accuracy = _autolabos_entrypoint_metric_float(_autolabos_entrypoint_get(training_evidence, 'accuracy', None), None)",
+    "        training_correct = _autolabos_entrypoint_get(training_evidence, 'correct', None)",
+    "        if training_accuracy is None and isinstance(training_correct, bool):",
+    "            training_accuracy = 1.0 if training_correct else 0.0",
+    "        if training_accuracy is not None and training_status in {'completed', 'complete', 'success', 'succeeded', 'ok', 'completed_training', 'training_completed', 'trained'}:",
+    "            evidence_seed = _autolabos_entrypoint_get(training_evidence, 'seed', _autolabos_entrypoint_get(training_evidence, 'seed_id', _autolabos_entrypoint_get(config, 'seed', None)))",
+    "            return [{'condition_marker': marker or 'condition', 'status': 'completed', 'accuracy': training_accuracy, 'seed': evidence_seed, 'seed_id': evidence_seed, 'raw_evidence': training_evidence}]",
+    "        return [{'condition_marker': marker or 'condition', 'status': 'failed', 'failure_stage': 'evaluation', 'failure_reason': 'no condition evaluation callable was available', 'raw_evidence': {'training_result': training_evidence}}]",
     "    try:",
     "        runtime_paths = paths or _autolabos_entrypoint_paths(config, config)",
     "        runtime_context = _autolabos_entrypoint_runtime_context(config, runtime_paths, config)",
@@ -15526,7 +15585,7 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "                    _autolabos_seed_schedule = [_autolabos_condition_seed]",
     "                for _autolabos_seed_alias, _autolabos_seed_alias_value in (('seed', _autolabos_condition_seed), ('seed_id', _autolabos_condition_seed), ('random_seed', _autolabos_condition_seed), ('seeds', list(_autolabos_seed_schedule)), ('seed_schedule', list(_autolabos_seed_schedule)), ('planned_seeds', list(_autolabos_seed_schedule))):",
     "                    _autolabos_entrypoint_set_default(condition_arg, _autolabos_seed_alias, _autolabos_seed_alias_value)",
-    "                row = _autolabos_entrypoint_call_compatible(single_runner, config=config, cfg=config, ctx=config, context=config, runner_config=config, run_config=config, args=args, runtime=runtime_context, runtime_context=runtime_context, runtime_config=runtime_context, run_context=runtime_context, shared_context=config, contract=config, condition=condition_arg, row=condition_arg, condition_row=condition_arg, run_row=condition_arg, spec=condition_arg, condition_spec=condition_arg, run_spec=condition_arg, plan_item=condition_arg, plan_entry=condition_arg, planned_row=condition_arg, planned_run=condition_arg, planned_condition=condition_arg, run=condition_arg, train_examples=train_examples, training_examples=train_examples, train_records=train_examples, training_records=train_examples, train_rows=train_examples, training_rows=train_examples, train_bundle=train_examples if train_examples else loaded_data, training_bundle=train_examples if train_examples else loaded_data, train_source=train_examples if train_examples else loaded_data, training_source=train_examples if train_examples else loaded_data, eval_rows_by_task=eval_tasks, eval_tasks=eval_tasks, evaluation_tasks=eval_tasks, eval_bundle=eval_tasks, evaluation_bundle=eval_tasks, eval_examples_by_task=eval_tasks, evaluation_examples_by_task=eval_tasks, task_sets=eval_tasks, task_examples=eval_tasks, task_examples_by_task=eval_tasks, examples=train_examples, rows=train_examples, dataset=train_examples, bundle=train_examples if train_examples else loaded_data, data_bundle=train_examples if train_examples else loaded_data, dataset_bundle=train_examples if train_examples else loaded_data, task_bundle=train_examples if train_examples else loaded_data, task_bundles=eval_tasks, loaded_data=loaded_data, budget=_autolabos_entrypoint_budget(config, args), paths=runtime_paths, output_paths=runtime_paths, artifact_paths=runtime_paths, experiment_paths=runtime_paths, runtime_paths=runtime_paths, seed=_autolabos_condition_seed, seed_id=_autolabos_condition_seed, random_seed=_autolabos_condition_seed, model_id=_autolabos_entrypoint_model_id(config, args), model_name=_autolabos_entrypoint_model_id(config, args), fallback_model_id=_autolabos_entrypoint_get(config, 'fallback_model_name', _autolabos_entrypoint_get(args, 'fallback_model_name', None)), logger=_autolabos_entrypoint_log, log=_autolabos_entrypoint_log, log_fn=_autolabos_entrypoint_log, output_dir=output_dir, public_dir=output_dir, **_autolabos_entrypoint_condition_kwargs(condition_arg))",
+    "                row = _autolabos_entrypoint_call_compatible(single_runner, config=config, cfg=config, ctx=config, context=config, runner_config=config, run_config=config, args=args, runtime=runtime_context, runtime_context=runtime_context, runtime_config=runtime_context, run_context=runtime_context, shared_context=config, contract=config, condition=condition_arg, row=condition_arg, condition_row=condition_arg, run_row=condition_arg, spec=condition_arg, condition_spec=condition_arg, run_spec=condition_arg, plan_item=condition_arg, plan_entry=condition_arg, planned_row=condition_arg, planned_run=condition_arg, planned_condition=condition_arg, run=condition_arg, train_examples=train_examples, training_examples=train_examples, train_records=train_examples, training_records=train_examples, train_rows=train_examples, training_rows=train_examples, train_bundle=loaded_data if loaded_data is not None else train_examples, training_bundle=loaded_data if loaded_data is not None else train_examples, train_source=train_examples if train_examples else loaded_data, training_source=train_examples if train_examples else loaded_data, eval_rows_by_task=eval_tasks, eval_tasks=eval_tasks, evaluation_tasks=eval_tasks, eval_bundle=eval_tasks, evaluation_bundle=eval_tasks, eval_examples_by_task=eval_tasks, evaluation_examples_by_task=eval_tasks, task_sets=eval_tasks, task_examples=eval_tasks, task_examples_by_task=eval_tasks, examples=train_examples, rows=train_examples, dataset=train_examples, bundle=loaded_data if loaded_data is not None else train_examples, data_bundle=loaded_data if loaded_data is not None else train_examples, dataset_bundle=loaded_data if loaded_data is not None else train_examples, task_bundle=eval_tasks if eval_tasks else train_examples, task_bundles=eval_tasks, loaded_data=loaded_data, budget=_autolabos_entrypoint_budget(config, args), paths=runtime_paths, output_paths=runtime_paths, artifact_paths=runtime_paths, experiment_paths=runtime_paths, runtime_paths=runtime_paths, seed=_autolabos_condition_seed, seed_id=_autolabos_condition_seed, random_seed=_autolabos_condition_seed, model_id=_autolabos_entrypoint_model_id(config, args), model_name=_autolabos_entrypoint_model_id(config, args), fallback_model_id=_autolabos_entrypoint_get(config, 'fallback_model_name', _autolabos_entrypoint_get(args, 'fallback_model_name', None)), logger=_autolabos_entrypoint_log, log=_autolabos_entrypoint_log, log_fn=_autolabos_entrypoint_log, output_dir=output_dir, public_dir=output_dir, **_autolabos_entrypoint_condition_kwargs(condition_arg))",
     "                evaluation_metric_rows.extend(_autolabos_entrypoint_evaluation_metric_rows(row, eval_tasks, config, condition=condition_arg, paths=runtime_paths))",
     "            except Exception as exc:",
     "                row = {'status': 'failed', 'condition_marker': _autolabos_entrypoint_condition_marker(condition=condition_arg) or 'condition', 'failure_reason': repr(exc)}",
@@ -16525,12 +16584,19 @@ function derivePlannedConditionContract(input: {
       markers.add(marker);
     }
   }
-  const conditionParameterMarkers = extractConditionParameterConditionMarkers(text);
+  const outOfScopeParameterYValues = extractOutOfScopeConditionParameterYValues(text);
+  const conditionParameterMarkers = filterOutOfScopeConditionParameterMarkers(
+    extractConditionParameterConditionMarkers(text),
+    outOfScopeParameterYValues
+  );
   for (const marker of conditionParameterMarkers) {
     markers.add(marker);
   }
   const fallbackConditionParameterMarkers = planHasSpecificContract
-    ? extractConditionParameterConditionMarkers(fullContractText)
+    ? filterOutOfScopeConditionParameterMarkers(
+        extractConditionParameterConditionMarkers(fullContractText),
+        outOfScopeParameterYValues
+      )
     : [];
   addMarkerIf(text, markers, "unmodified_base", /\bunmodified\s+base\b|\bno[-\s]?tune\b|\buntuned\b/iu);
   addMarkerIf(text, markers, "standard_tuned_baseline", /\bstandard\s+tuned\s+baseline\b|\bnamed\s+tuned\s+baseline\b/iu);
@@ -16814,7 +16880,7 @@ function extractConditionParameterConditionMarkers(text: string): string[] {
     }
   }
   for (const match of explicitSearchText.matchAll(
-    /\brank[\s_=-]*(\d+)[\s,;/:-]*(?:adapter[_\s-]*)?(?:parameter_y|drop)[\s_=-]*([0-9]+(?:[._][0-9]+)?)/giu
+    /\brank[\s_=-]*(\d+)[\s,;/:-]*(?:adapter[_\s-]*)?(?:parameter_y|dropout|drop)[\s_=-]*([0-9]+(?:[._][0-9]+)?)/giu
   )) {
     const rank = Number.parseInt(match[1] || "", 10);
     const parameter_y = parseParameterYNumber(match[2] || "");
@@ -16920,10 +16986,10 @@ function extractRepeatedCellsText(text: string): string | undefined {
 function extractBaselineConditionParameterMarker(text: string): string | undefined {
   const match =
     text.match(
-      /\bbaseline\s+condition\s*:\s*rank\s*[=:_-]?\s*(\d+)[^\n;]*?\b(?:parameter_y|drop)\s*[=:_-]?\s*([0-9]+(?:[._][0-9]+)?)/iu
+      /\bbaseline\s+condition\s*:\s*rank\s*[=:_-]?\s*(\d+)[^\n;]*?\b(?:parameter_y|dropout|drop)\s*[=:_-]?\s*([0-9]+(?:[._][0-9]+)?)/iu
     ) ||
     text.match(
-      /\bbaseline\s+(?:condition|cell|marker)?\s*(?:is|=|:)?\s*rank\s*[=:_-]?\s*(\d+)[^\n,;]*?\b(?:parameter_y|drop)\s*[=:_-]?\s*([0-9]+(?:[._][0-9]+)?)/iu
+      /\bbaseline(?:\s+(?:condition|cell|marker))?\s*(?:is|=|:)?\s*rank\s*[=:_-]?\s*(\d+)[^\n;]*?\b(?:parameter_y|dropout|drop)\s*[=:_-]?\s*([0-9]+(?:[._][0-9]+)?)/iu
     );
   if (!match) {
     return undefined;
@@ -16939,6 +17005,39 @@ function extractBaselineConditionParameterMarker(text: string): string | undefin
 function parseParameterYNumber(value: string): number | undefined {
   const parsed = Number.parseFloat(value.replace(/_/gu, "."));
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function extractOutOfScopeConditionParameterYValues(text: string): Set<number> {
+  const values = new Set<number>();
+  const patterns = [
+    /\b(?:parameter_y|regularization|dropout)\s+([0-9]+(?:[._][0-9]+)?)[^\n.]{0,120}\bout\s+of\s+scope\b/giu,
+    /\b(?:statements?|claims?)\s+about\s+(?:parameter_y|regularization|dropout)\s+([0-9]+(?:[._][0-9]+)?)[^\n.]{0,120}\bout\s+of\s+scope\b/giu,
+    /\bcannot\s+support\s+(?:statements?|claims?)\s+about\s+(?:parameter_y|regularization|dropout)\s+([0-9]+(?:[._][0-9]+)?)/giu
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const parsed = parseParameterYNumber(match[1] || "");
+      if (parsed !== undefined) {
+        values.add(parsed);
+      }
+    }
+  }
+  return values;
+}
+
+function filterOutOfScopeConditionParameterMarkers(markers: string[], outOfScopeParameterYValues: Set<number>): string[] {
+  if (outOfScopeParameterYValues.size === 0) {
+    return markers;
+  }
+  return markers.filter((marker) => {
+    const parsed = parseConditionParameterMarkerForSort(marker);
+    for (const excluded of outOfScopeParameterYValues) {
+      if (Math.abs(parsed.parameter_y - excluded) < 1e-9) {
+        return false;
+      }
+    }
+    return true;
+  });
 }
 
 function conditionParameterMarker(rank: number, parameter_y: number): string {
@@ -18104,6 +18203,7 @@ async function applyRecoverableBundleDeterministicRepairs(params: {
     await repairPythonMetricsPayloadProjectionSurface(params.scriptPath),
     await repairPythonCompletedMetricsReplayEntrypointSurface(params.scriptPath),
     await repairPythonRequiredContractGlobalAliasSurface(params.scriptPath),
+    await repairPythonEntrypointHighLevelConditionRunnerSurface(params.scriptPath),
     await repairPythonSectionedRunnerCliEntrypointSurface(params.scriptPath),
     await repairPythonMissingExecutableEntrypointSurface(params.scriptPath),
     await repairPythonMissingMainInvocationSurface(params.scriptPath),
@@ -18825,6 +18925,7 @@ function isRecoverableBundleDeterministicRepairFeedback(
     /AUTOLABOS SECTION skeleton markers|Unfilled or unstripped section marker|Final experiment scripts must contain executable code/iu.test(summary) ||
     /Unable to locate (?:a |the )study (?:runner|execution) function/u.test(summary) ||
     /Unable to locate the experiment sweep runner callable/u.test(summary) ||
+    /no concrete executable experiment entrypoint|No callable experiment entrypoint/iu.test(summary) ||
     /has no executable entrypoint|no executable entrypoint/iu.test(summary)
   );
 }
@@ -18839,6 +18940,7 @@ function hasRecoverableBundleDeterministicRepairMarker(source: string): boolean 
     "_autolabos_entrypoint_locked_condition_seed_sweep_candidate_marker",
     "_autolabos_final_orchestration_helper_marker",
     "_autolabos_sectioned_runner_cli_entrypoint_marker",
+    "_autolabos_high_level_condition_runner_bridge_marker",
     "_autolabos_required_contract_global_alias_marker",
     "_autolabos_keyword_only_default_call_marker",
     "_autolabos_unexpected_keyword_parameter_marker",
@@ -20562,7 +20664,9 @@ function hasConcretePlannedConditionContract(taskSpec: ImplementTaskSpec): boole
   return Boolean(
     (contract.required_condition_markers && contract.required_condition_markers.length > 1) ||
       (contract.required_condition_count && contract.required_condition_count > 1) ||
-      (contract.required_run_count && contract.required_run_count > 1)
+      (contract.required_run_count && contract.required_run_count > 1) ||
+      (contract.minimum_seeds_per_condition && contract.minimum_seeds_per_condition > 1) ||
+      (contract.seed_schedule && contract.seed_schedule.length > 1)
   );
 }
 
@@ -49180,6 +49284,14 @@ export async function repairPythonRunCommandArgparseAliases(
       line: "parser.add_argument('--condition-markers', nargs='+', default=None, help='Planned condition markers supplied by AutoLabOS.')"
     },
     {
+      commandFlag: "--condition-axis-a",
+      line: "parser.add_argument('--condition-axis-a', nargs='*', default=None, help='Generic planned condition sweep axis supplied by AutoLabOS.')"
+    },
+    {
+      commandFlag: "--condition-axis-b",
+      line: "parser.add_argument('--condition-axis-b', nargs='*', default=None, help='Generic planned condition sweep axis supplied by AutoLabOS.')"
+    },
+    {
       commandFlag: "--preferred-model",
       line: "parser.add_argument('--preferred-model', dest='model', default=None, help='Preferred model identifier supplied by AutoLabOS.')"
     },
@@ -49315,19 +49427,6 @@ export async function repairPythonRunCommandArgparseAliases(
     }
   }
   const aliasCommandFlags = new Set(aliasPairs.map((pair) => pair.commandFlag));
-  const genericSchedulerMetadataOptions = [...commandFlags]
-    .sort()
-    .filter(
-      (commandFlag) =>
-        !acceptedFlagsForDynamicAliases.has(commandFlag) &&
-        !explicitlyHandledRuntimeFlags.has(commandFlag) &&
-        !aliasCommandFlags.has(commandFlag)
-    )
-    .map((commandFlag) => ({
-      commandFlag,
-      line: `parser.add_argument('${commandFlag}', nargs='*', default=None, help='Additional scheduler metadata supplied by AutoLabOS.')`
-    }));
-  runtimeOptions = [...runtimeOptions, ...genericSchedulerMetadataOptions];
 
   if (aliasPairs.length === 0 && runtimeOptions.length === 0) {
     return { repaired: false };
@@ -55263,7 +55362,6 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
     lowLevelStatePattern.test(source) ||
     unsafeHandleCopyPattern.test(source) ||
     contractTuplePattern.test(source) ||
-    !hasRecursivePublicEvidenceSnapshot ||
     /_autolabos_entrypoint_jsonable\(condition_row\)/u.test(source);
   evaluationLinePattern.lastIndex = 0;
   wrapperCallPattern.lastIndex = 0;

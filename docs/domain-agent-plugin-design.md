@@ -6,6 +6,13 @@ This note defines the contract for future domain-specific research-agent plugins
 
 Domain agents may add specialized knowledge, tools, prompts, or validators for a research domain. They must not replace the governed workflow or bypass evidence gates.
 
+
+## Research Governor Plugin Boundary
+
+`plugins/autolabos-research-governor/` is the Codex-facing governance plugin. It is not a domain plugin and should not encode a single scientific field, model family, dataset, benchmark, or experiment condition. Its job is to expose AutoLabOS governance intents: brief creation, artifact audit, paper-readiness review, node strengthening, and bundle packaging.
+
+Domain plugins may extend this layer with field-specific validators or rubrics, but they remain subordinate to the same artifact gates and claim ceilings.
+
 ## Plugin Boundary
 
 A domain plugin may provide:

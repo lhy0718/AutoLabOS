@@ -210,6 +210,7 @@ function isInsufficientPaperScaleEvidence(
     /\b(?:pilot|preflight|audit)\s+ceiling\b/u.test(text) ||
     /\b(?:pilot|preflight)\s+(?:only|stage|record|evidence)\b/u.test(text) ||
     /\b(?:cannot|can\s+not)\s+support\s+(?:paper[- ]ready|paper[- ]scale|rank|dropout|interaction|model[- ]quality|directional)\s+(?:claim|claims|evidence|conclusion|recommendation)s?\b/u.test(text) ||
+    /\b(?:cannot|can\s+not)\s+support\s+(?:the\s+)?(?:dropout[- ]interaction|rank[- ]dropout|condition[- ]parameter\s+interaction|interaction)\s+(?:claim|claims|evidence|conclusion)s?\b/u.test(text) ||
     /\b(?:no|not)\s+(?:paper[- ]ready|paper[- ]scale|statistical significance|rank recommendation|interaction claim)\b/u.test(text);
   const oneSeedOnly =
     /\bone[- ]seed\b/u.test(text) ||

@@ -309,7 +309,7 @@ describe("figure_audit node integration", () => {
     expect(summary.issues).toEqual([]);
   });
 
-  it("escalates review accept to revise when figure audit requires a block", async () => {
+  it("escalates review accept to an upstream backtrack when figure audit requires a block", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-figure-audit-"));
     process.chdir(root);
 
@@ -401,7 +401,7 @@ describe("figure_audit node integration", () => {
     expect(result.status).toBe("success");
     expect(decision.figure_audit_block_required).toBe(true);
     expect(decision.figure_audit_severe_count).toBe(1);
-    expect(decision.outcome).toBe("revise_in_place");
+    expect(decision.outcome).toBe("backtrack_to_implement");
   });
 
   it("registers analyze_results -> figure_audit -> review in graph order", () => {

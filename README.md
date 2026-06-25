@@ -4,10 +4,10 @@
 
   <img alt="AutoLabOS" src="https://img.shields.io/badge/AutoLabOS-0F766E?style=for-the-badge&logoColor=white&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Ik0xMiAyTDIgN2wxMCA1IDEwLTV6Ii8%2BPHBhdGggZD0iTTIgMTdsMTAgNSAxMC01Ii8%2BPHBhdGggZD0iTTIgMTJsMTAgNSAxMC01Ii8%2BPC9zdmc%2B" />
 
-  <h1>An Operating System for Autonomous Research</h1>
+  <h1>Codex-Native Research Governance Layer</h1>
 
-  <p><strong>Autonomous research execution, not just research generation.</strong><br/>
-  Governed, checkpointed, inspectable research runs from brief to manuscript.</p>
+  <p><strong>Evidence gates for Codex and external research agents.</strong><br/>
+  Governed, checkpointed, inspectable research work from brief to paper-readiness review.</p>
 
   <p>
     <a href="./README.md"><strong>English</strong></a>
@@ -60,13 +60,25 @@
 
 ---
 
-AutoLabOS is a governed operating system for research execution. It treats a run as checkpointed research state rather than a one-shot generation step.
+AutoLabOS is a Codex-native governance harness for research execution. It treats Codex and external research agents as execution engines, while AutoLabOS owns the artifact, gate, review, downgrade, and paper-readiness contract.
 
-The core loop is inspectable end to end: literature collection, hypothesis formation, experiment design, execution, analysis, figure audit, review, and manuscript drafting all produce auditable artifacts. Claims stay evidence-bounded through a claim ceiling. Review is a structural gate, not a polish pass.
+The reference TUI/web workflow remains inspectable end to end: literature collection, hypothesis formation, experiment design, execution, analysis, figure audit, review, and manuscript drafting all produce auditable artifacts. Claims stay evidence-bounded through a claim ceiling. Review is a structural gate, not a polish pass.
 
 Quality assumptions are turned into explicit checks. Real behavior matters more than prompt-level appearance. Reproducibility is enforced through artifacts, checkpoints, and inspectable transitions.
 
 ---
+
+## Codex Plugin Direction
+
+AutoLabOS is moving to a plugin-first public surface. The repo-local plugin bundle lives at `plugins/autolabos-research-governor/` and exposes the governance layer as Codex skills rather than as a monolithic autonomous scientist.
+
+The plugin contract is artifact-first:
+
+`ResearchBrief` -> `EvidenceBundle` -> `GateReport` -> `ReviewReport` -> `MetaHarnessPatchPlan` -> `PaperReadinessBundle`
+
+The existing standalone TUI and web app stay important as a reference workflow, compatibility shell, and validation environment. They are no longer the only product shape: external agents can execute work, then AutoLabOS audits the resulting artifacts before any paper-readiness claim is allowed.
+
+See `docs/codex-plugin-governance.md` for the plugin architecture and adapter strategy.
 
 ## Why AutoLabOS Exists
 
@@ -85,9 +97,9 @@ AutoLabOS is for teams that want autonomous help without giving up auditability,
 
 ---
 
-## What Happens In One Run
+## What Happens In The Reference Workflow
 
-One governed run follows the same research arc every time:
+The reference workflow follows the same research arc every time:
 
 `Brief.md` → literature → hypothesis → experiment design → implementation → execution → analysis → figure audit → review → manuscript
 
