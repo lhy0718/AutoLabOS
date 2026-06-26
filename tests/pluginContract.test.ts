@@ -21,6 +21,22 @@ describe("AutoLabOS Codex plugin contract", () => {
     expect(manifest.interface.longDescription).toContain("evidence gates");
   });
 
+
+  it("ships a repo-local marketplace entry for installation", () => {
+    const marketplacePath = path.join(ROOT, ".agents", "plugins", "marketplace.json");
+    const marketplace = JSON.parse(fs.readFileSync(marketplacePath, "utf8"));
+
+    expect(marketplace.name).toBe("autolabos-local");
+    expect(marketplace.plugins).toContainEqual(
+      expect.objectContaining({
+        name: "autolabos-research-governor",
+        source: { source: "local", path: "./plugins/autolabos-research-governor" },
+        policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+        category: "Productivity"
+      })
+    );
+  });
+
   it("documents every plugin command intent in the skill", () => {
     const skillPath = path.join(PLUGIN_ROOT, "skills", "autolabos", "SKILL.md");
     const text = fs.readFileSync(skillPath, "utf8");
