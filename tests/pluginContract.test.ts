@@ -22,8 +22,10 @@ describe("AutoLabOS Codex plugin contract", () => {
   });
 
   it("documents every plugin command intent in the skill", () => {
-    const skillPath = path.join(PLUGIN_ROOT, "skills", "research-governance-harness", "SKILL.md");
+    const skillPath = path.join(PLUGIN_ROOT, "skills", "autolabos", "SKILL.md");
     const text = fs.readFileSync(skillPath, "utf8");
+
+    expect(text).toContain("name: autolabos");
 
     for (const command of RESEARCH_GOVERNANCE_COMMANDS) {
       expect(text).toContain(command.id);

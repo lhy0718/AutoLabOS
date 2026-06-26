@@ -1,9 +1,9 @@
 ---
-name: research-governance-harness
+name: autolabos
 description: "Use when Codex should operate AutoLabOS as a research governance layer: create governed briefs, audit run artifacts, review paper readiness, strengthen weak nodes, or package traceable research bundles."
 ---
 
-# Research Governance Harness
+# AutoLabOS
 
 ## When to use
 
