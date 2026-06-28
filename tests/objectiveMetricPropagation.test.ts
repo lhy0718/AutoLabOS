@@ -5343,11 +5343,11 @@ describe("objective metric propagation", () => {
     });
   });
 
-  it("derives legacy quick_check and confirmatory profiles for local python runners without a managed manifest", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-legacy-supplemental-"));
+  it("derives fallback quick_check and confirmatory profiles for local python runners without a managed manifest", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-fallback-supplemental-"));
     process.chdir(root);
 
-    const runId = "run-legacy-supplemental";
+    const runId = "run-fallback-supplemental";
     const run = makeRun(runId);
     const runDir = path.join(root, ".autolabos", "runs", runId);
     const memoryDir = path.join(runDir, "memory");
@@ -5355,7 +5355,7 @@ describe("objective metric propagation", () => {
     const scriptPath = path.join(publicDir, "run_experiment.py");
     await mkdir(memoryDir, { recursive: true });
     await mkdir(publicDir, { recursive: true });
-    await writeFile(scriptPath, "print('legacy runner')\n", "utf8");
+    await writeFile(scriptPath, "print('fallback runner')\n", "utf8");
     await writeFile(
       path.join(memoryDir, "run_context.json"),
       JSON.stringify({
@@ -5478,19 +5478,19 @@ describe("objective metric propagation", () => {
     const experimentPortfolio = JSON.parse(await readFile(path.join(runDir, "experiment_portfolio.json"), "utf8")) as {
       execution_model: string;
     };
-    expect(runManifest.execution_model).toBe("legacy_python_runner");
-    expect(runManifest.portfolio?.execution_model).toBe("legacy_python_runner");
-    expect(experimentPortfolio.execution_model).toBe("legacy_python_runner");
+    expect(runManifest.execution_model).toBe("compatibility_python_runner");
+    expect(runManifest.portfolio?.execution_model).toBe("compatibility_python_runner");
+    expect(experimentPortfolio.execution_model).toBe("compatibility_python_runner");
     const triageRaw = await readFile(path.join(runDir, "run_experiments_panel", "triage.json"), "utf8");
     expect(triageRaw).toContain('"profile": "quick_check"');
     expect(triageRaw).toContain('"profile": "confirmatory"');
   });
 
-  it("treats unsupported legacy supplemental flags as not applicable instead of a blocker", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-legacy-supplemental-unsupported-"));
+  it("treats unsupported fallback supplemental flags as not applicable instead of a blocker", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-fallback-supplemental-unsupported-"));
     process.chdir(root);
 
-    const runId = "run-legacy-supplemental-unsupported";
+    const runId = "run-fallback-supplemental-unsupported";
     const run = makeRun(runId);
     const runDir = path.join(root, ".autolabos", "runs", runId);
     const memoryDir = path.join(runDir, "memory");
@@ -5498,7 +5498,7 @@ describe("objective metric propagation", () => {
     const scriptPath = path.join(publicDir, "run_experiment.py");
     await mkdir(memoryDir, { recursive: true });
     await mkdir(publicDir, { recursive: true });
-    await writeFile(scriptPath, "print('legacy runner')\n", "utf8");
+    await writeFile(scriptPath, "print('fallback runner')\n", "utf8");
     await writeFile(
       path.join(memoryDir, "run_context.json"),
       JSON.stringify({
@@ -5590,7 +5590,7 @@ describe("objective metric propagation", () => {
     const result = await runNode.execute({ run, graph: run.graph });
     expect(result.status).toBe("success");
     expect(commands).toHaveLength(2);
-    expect(result.summary).toContain("not supported by this legacy experiment runner");
+    expect(result.summary).toContain("not supported by this compatibility experiment runner");
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("run_experiments.supplemental_runs")).toMatchObject([
@@ -5617,9 +5617,9 @@ describe("objective metric propagation", () => {
     const experimentPortfolio = JSON.parse(await readFile(path.join(runDir, "experiment_portfolio.json"), "utf8")) as {
       execution_model: string;
     };
-    expect(runManifest.execution_model).toBe("legacy_python_runner");
-    expect(runManifest.portfolio?.execution_model).toBe("legacy_python_runner");
-    expect(experimentPortfolio.execution_model).toBe("legacy_python_runner");
+    expect(runManifest.execution_model).toBe("compatibility_python_runner");
+    expect(runManifest.portfolio?.execution_model).toBe("compatibility_python_runner");
+    expect(experimentPortfolio.execution_model).toBe("compatibility_python_runner");
     expect(runManifest.trial_groups).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ profile: "quick_check", status: "skipped" }),

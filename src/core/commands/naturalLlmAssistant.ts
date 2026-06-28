@@ -186,7 +186,7 @@ function buildPrompt(
     "Other slash commands still exist, but recommend them only when the user explicitly asks for an advanced operation.",
     "For model settings, recommend '/model' only (no subcommands).",
     "When user asks to collect papers, prefer '/agent collect [query] [options]' and set should_offer_execute=true.",
-    "For additional paper collection, prefer '/agent collect --additional <count> --run <run-id>' (legacy '/agent recollect <count> [run-id]' is also valid).",
+    "For additional paper collection, prefer '/agent collect --additional <count> --run <run-id>'. The older '/agent recollect <count> [run-id]' alias is also accepted.",
     "Collect options include --limit, --additional, --last-years, --year, --date-range, --sort, --order, --field, --venue, --type, --min-citations, --open-access, --bibtex, --dry-run.",
     "For additional paper collection requests, do NOT recommend /approve.",
     "When user asks to move back to an earlier stage/node, prefer '/agent jump <node> [run-id]'.",

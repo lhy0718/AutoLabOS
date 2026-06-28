@@ -466,7 +466,7 @@ describe("RunStore", () => {
       action: "advance",
       sourceNode: "analyze_results",
       targetNode: "write_paper",
-      reason: "legacy target",
+      reason: "previous target",
       confidence: 0.88,
       autoExecutable: true,
       evidence: ["ok"],
@@ -482,8 +482,8 @@ describe("RunStore", () => {
           {
             version: 3,
             workflowVersion: 3,
-            id: "legacy-run",
-            title: "Legacy",
+            id: "previous-run",
+            title: "Previous",
             topic: "topic",
             constraints: [],
             objectiveMetric: "acc",
@@ -494,9 +494,9 @@ describe("RunStore", () => {
             nodeThreads: {},
             graph,
             memoryRefs: {
-              runContextPath: ".autolabos/runs/legacy-run/memory/run_context.json",
-              longTermPath: ".autolabos/runs/legacy-run/memory/long_term.jsonl",
-              episodePath: ".autolabos/runs/legacy-run/memory/episodes.jsonl"
+              runContextPath: ".autolabos/runs/previous-run/memory/run_context.json",
+              longTermPath: ".autolabos/runs/previous-run/memory/long_term.jsonl",
+              episodePath: ".autolabos/runs/previous-run/memory/episodes.jsonl"
             }
           }
         ]
@@ -505,7 +505,7 @@ describe("RunStore", () => {
     );
 
     const store = new RunStore(paths);
-    const run = await store.getRun("legacy-run");
+    const run = await store.getRun("previous-run");
 
     expect(run?.graph.nodeStates.review.status).toBe("pending");
     expect(run?.graph.pendingTransition?.targetNode).toBe("review");

@@ -2510,7 +2510,7 @@ describe("writePaper PDF build", () => {
         {
           caption: "Condition-level mean accuracy for the executed comparison grid.",
           rows: [
-            { label: "Legacy comparison row", value: 0.45, average_accuracy: 0.45, is_comparator: true },
+            { label: "Compatibility comparison row", value: 0.45, average_accuracy: 0.45, is_comparator: true },
             { label: "4 parameter 0 05", value: 0.455, average_accuracy: 0.455 },
             { label: "8 parameter 0 0", value: 0.45, average_accuracy: 0.45 }
           ]
@@ -2521,7 +2521,7 @@ describe("writePaper PDF build", () => {
 
     const stabilized = stabilizePaperManuscriptForSubmission(manuscript, {
       conditionSummaries: [
-        { label: "Legacy comparison row", average_accuracy_mean: 0.45, accuracy_delta_vs_baseline_mean: 0, is_comparator: true },
+        { label: "Compatibility comparison row", average_accuracy_mean: 0.45, accuracy_delta_vs_baseline_mean: 0, is_comparator: true },
         { label: "4 parameter 0 05", average_accuracy_mean: 0.455, accuracy_delta_vs_baseline_mean: 0.005 },
         { label: "8 parameter 0 0", average_accuracy_mean: 0.45, accuracy_delta_vs_baseline_mean: 0, is_baseline: true }
       ],

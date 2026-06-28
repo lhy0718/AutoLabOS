@@ -463,19 +463,19 @@ export function resolvePaperProfile(
     : DEFAULT_PAPER_PROFILE.prefer_appendix_for;
   const inferredColumnCount = profile?.column_count === 1 ? 1 : DEFAULT_PAPER_PROFILE.column_count;
   const lengthHint = cleanString(constraintProfile?.writing?.lengthHint);
-  const legacyMainPageLimit =
+  const compatibilityMainPageLimit =
     typeof profile?.main_page_limit === "number" && Number.isFinite(profile.main_page_limit)
       ? Math.max(1, Math.round(profile.main_page_limit))
       : undefined;
   const inferredTargetMainPages =
     typeof profile?.target_main_pages === "number" && Number.isFinite(profile.target_main_pages)
       ? Math.max(1, Math.round(profile.target_main_pages))
-      : legacyMainPageLimit
+      : compatibilityMainPageLimit
         ?? (/\bshort\b/iu.test(lengthHint) ? 4 : (DEFAULT_PAPER_PROFILE.target_main_pages || 8));
   const inferredMinimumMainPages =
     typeof profile?.minimum_main_pages === "number" && Number.isFinite(profile.minimum_main_pages)
       ? Math.max(1, Math.round(profile.minimum_main_pages))
-      : legacyMainPageLimit
+      : compatibilityMainPageLimit
         ?? inferredTargetMainPages;
   const inferredAppendixFormat =
     profile?.appendix_format
@@ -491,7 +491,7 @@ export function resolvePaperProfile(
     column_count: inferredColumnCount,
     target_main_pages: inferredTargetMainPages,
     minimum_main_pages: inferredMinimumMainPages,
-    main_page_limit: legacyMainPageLimit ?? inferredMinimumMainPages,
+    main_page_limit: compatibilityMainPageLimit ?? inferredMinimumMainPages,
     references_counted:
       typeof profile?.references_counted === "boolean"
         ? profile.references_counted
@@ -7443,9 +7443,9 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
   if (!withoutDraftInstructions) {
     return "";
   }
-  const legacyBackboneCitationLabel = String.fromCharCode(81, 119, 101, 110);
+  const compatibilityBackboneCitationLabel = String.fromCharCode(81, 119, 101, 110);
   const manuscriptCitationNoisePattern = new RegExp(
-    String.raw`\s*\[(?:${legacyBackboneCitationLabel}2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:${legacyBackboneCitationLabel}2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B))*\]`,
+    String.raw`\s*\[(?:${compatibilityBackboneCitationLabel}2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:${compatibilityBackboneCitationLabel}2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B))*\]`,
     "giu"
   );
   if (/^\s*\[(?:warning|error|fail|failed|pass|passed)\]\s*[^:]{0,80}:/iu.test(withoutDraftInstructions)) {

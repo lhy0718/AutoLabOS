@@ -653,7 +653,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           existingManifest && existingManifest.selectionFingerprint !== selection.selectionFingerprint
             ? "selection_changed"
             : existingManifest && !existingManifest.analysisFingerprint
-              ? "legacy_manifest"
+              ? "compatibility_manifest"
               : existingManifest && existingManifest.analysisFingerprint !== analysisFingerprint
                 ? "analysis_config_changed"
                 : undefined;
@@ -743,7 +743,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         if (!manifest) {
           if (resetReason === "selection_changed") {
             emitLog("Analysis selection changed since the previous run. Resetting summaries/evidence for the new paper set.");
-          } else if (resetReason === "legacy_manifest") {
+          } else if (resetReason === "compatibility_manifest") {
             emitLog("Existing analysis manifest lacks configuration fingerprint metadata. Resetting summaries/evidence to rebuild a consistent analysis state.");
           } else if (resetReason === "analysis_config_changed") {
             emitLog("Analysis settings changed since the previous run. Resetting summaries/evidence and re-analyzing the selected papers.");
@@ -2861,7 +2861,7 @@ function shouldPreservePartialArtifactsOnSelectionRegression(input: {
   runId: string;
   existingManifest?: AnalysisManifest;
   selection: PaperSelectionResult;
-  resetReason?: "selection_changed" | "legacy_manifest" | "analysis_config_changed";
+  resetReason?: "selection_changed" | "compatibility_manifest" | "analysis_config_changed";
   selectionRequestFingerprint: string;
   analysisFingerprint: string;
   corpusFingerprint: string;

@@ -64,7 +64,7 @@ export interface EvalHarnessRunReport {
     run_verifier: "pass" | "fail" | "missing";
     objective: string;
     analysis: "present" | "missing";
-    baseline_comparison: "available" | "missing" | "legacy_missing";
+    baseline_comparison: "available" | "missing" | "compatibility_missing";
     paper: "present" | "missing";
   };
   metrics: {
@@ -416,7 +416,7 @@ async function resolveBaselineComparisonStatus(
   if (await fileExists(path.join(runDir, "baseline_comparison.json"))) {
     return "available";
   }
-  return analysisStatus === "present" ? "legacy_missing" : "missing";
+  return analysisStatus === "present" ? "compatibility_missing" : "missing";
 }
 
 async function collectArtifactPresence(runDir: string): Promise<Record<(typeof EXPECTED_ARTIFACTS)[number], boolean>> {

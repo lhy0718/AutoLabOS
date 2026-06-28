@@ -47,15 +47,15 @@ describe("researchBriefFiles", () => {
     expect(await readFile(filePath, "utf8")).toContain("Keep this content.");
   });
 
-  it("prefers workspace Brief.md over legacy latest-brief files", async () => {
+  it("prefers workspace Brief.md over saved brief files", async () => {
     const workspace = await createWorkspace();
     const workspaceBriefPath = getWorkspaceResearchBriefPath(workspace);
     await writeFile(workspaceBriefPath, "# Research Brief\n\n## Topic\n\nWorkspace brief.", "utf8");
-    const legacyDir = path.join(workspace, ".autolabos", "briefs");
-    await mkdir(legacyDir, { recursive: true });
+    const savedBriefDir = path.join(workspace, ".autolabos", "briefs");
+    await mkdir(savedBriefDir, { recursive: true });
     await writeFile(
-      path.join(legacyDir, "20260325-legacy.md"),
-      "# Research Brief\n\n## Topic\n\nLegacy brief.",
+      path.join(savedBriefDir, "20260325-saved.md"),
+      "# Research Brief\n\n## Topic\n\nSaved brief.",
       "utf8"
     );
 
@@ -64,29 +64,29 @@ describe("researchBriefFiles", () => {
     expect(latest).toBe(workspaceBriefPath);
   });
 
-  it("falls back to the latest legacy brief when workspace Brief.md is absent", async () => {
+  it("falls back to the latest saved brief when workspace Brief.md is absent", async () => {
     const workspace = await createWorkspace();
-    const legacyDir = path.join(workspace, ".autolabos", "briefs");
-    await mkdir(legacyDir, { recursive: true });
+    const savedBriefDir = path.join(workspace, ".autolabos", "briefs");
+    await mkdir(savedBriefDir, { recursive: true });
     await writeFile(
-      path.join(legacyDir, "20260324-older.md"),
+      path.join(savedBriefDir, "20260324-older.md"),
       "# Research Brief\n\n## Topic\n\nOlder brief.",
       "utf8"
     );
-    const latestLegacyPath = path.join(legacyDir, "20260325-newer.md");
-    await writeFile(latestLegacyPath, "# Research Brief\n\n## Topic\n\nNewer brief.", "utf8");
+    const latestSavedPath = path.join(savedBriefDir, "20260325-newer.md");
+    await writeFile(latestSavedPath, "# Research Brief\n\n## Topic\n\nNewer brief.", "utf8");
 
     const latest = await findLatestResearchBrief(workspace);
 
-    expect(latest).toBe(latestLegacyPath);
+    expect(latest).toBe(latestSavedPath);
   });
 
-  it("resolves bare Brief.md to the workspace root while keeping other bare names as legacy brief paths", () => {
+  it("resolves bare Brief.md to the workspace root while keeping other bare names as saved brief paths", () => {
     const workspace = path.join("/tmp", "autolabos-brief-resolution");
 
     expect(resolveResearchBriefPath(workspace, "Brief.md")).toBe(path.join(workspace, "Brief.md"));
-    expect(resolveResearchBriefPath(workspace, "legacy-brief.md")).toBe(
-      path.join(workspace, ".autolabos", "briefs", "legacy-brief.md")
+    expect(resolveResearchBriefPath(workspace, "saved-brief.md")).toBe(
+      path.join(workspace, ".autolabos", "briefs", "saved-brief.md")
     );
   });
 

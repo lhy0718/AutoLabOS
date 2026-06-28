@@ -206,7 +206,7 @@ describe("config .env overrides", () => {
     expect(loaded.workflow.execution_approval_mode).toBe("manual");
   });
 
-  it("maps legacy allow_network=false configs to blocked network metadata", async () => {
+  it("maps compatibility allow_network=false configs to blocked network metadata", async () => {
     const { paths } = await createWorkspace();
     const config = makeConfig();
     delete config.experiments.network_policy;

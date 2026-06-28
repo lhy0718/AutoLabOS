@@ -1,6 +1,6 @@
 ---
 name: autolabos-validation-workspace-hygiene
-description: Use this skill when preparing, cleaning, or rerunning an AutoLabOS live validation workspace, especially when briefs, templates, run outputs, nested validation folders, or legacy artifacts may affect a real paper-readiness run.
+description: Use this skill when preparing, cleaning, or rerunning an AutoLabOS live validation workspace, especially when briefs, templates, run outputs, nested validation folders, or stale artifacts may affect a real paper-readiness run.
 contract_version: 1
 contract_kind: codex_skill
 runtime_contract: true
@@ -23,7 +23,7 @@ Use this skill when the user asks to:
 - clean a validation workspace
 - move a recent brief out of a nested run folder
 - decide where `template.tex`, `.sty`, `.env`, or `.autolabos/config.yaml` should live
-- remove legacy `.tmp`, `outputs`, logs, or nested workspace state before a real run
+- remove stale `.tmp`, `outputs`, logs, or nested workspace state before a real run
 - explain why a run used the wrong brief or failed to find a manuscript template
 
 ## Workspace contract
@@ -45,7 +45,7 @@ Use this skill when the user asks to:
 3. Identify root-owned templates and style files before deciding anything is missing.
 4. Promote required inputs to the workspace root.
 5. Remove nested validation folders only after required inputs are copied.
-6. Remove legacy root artifacts that could pollute the next run.
+6. Remove stale root artifacts that could pollute the next run.
 7. Re-list the workspace root and report the remaining files.
 
 ## Paper template checks

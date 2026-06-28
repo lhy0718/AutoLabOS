@@ -748,7 +748,7 @@ function buildPlanYaml(args: {
     `  summary: "${escapeQuote(args.selected.plan_summary)}"`,
     ...(useManagedExecutableSections
       ? renderManagedExecutableDesignSection(args.selected)
-      : renderLegacySelectedDesignSection(args.selected)),
+      : renderCompatibilitySelectedDesignSection(args.selected)),
     "shortlisted_designs:",
     ...renderShortlistedDesigns(args.candidates),
     "execution:",
@@ -834,7 +834,7 @@ function renderManagedExecutableDesignSection(selected: ExperimentDesignCandidat
   ];
 }
 
-function renderLegacySelectedDesignSection(selected: ExperimentDesignCandidate): string[] {
+function renderCompatibilitySelectedDesignSection(selected: ExperimentDesignCandidate): string[] {
   return [
     "  datasets:",
     ...renderYamlStringList(selected.datasets, 2),

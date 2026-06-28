@@ -21,7 +21,7 @@ Public source and tests must describe general AutoLabOS behavior, not one histor
 - Do not hardcode one-off runner names, model IDs, dataset names, benchmark names, or condition markers as system defaults or test contracts.
 - Use neutral fixture names such as `run_instruction_study`, `benchmark_task_a`, `benchmark_task_b`, `baseline_condition`, and `candidate_condition_a`.
 - Keep real experiment names inside run artifacts or user-provided inputs, not reusable source logic.
-- If legacy compatibility is still needed, express it through generic alias/adapter behavior rather than naming a specific old experiment.
+- If compatibility behavior for older artifacts is still needed, express it through generic alias/adapter behavior rather than naming a specific old experiment.
 - Do not allow paper-writing fallbacks to invent a specific model, benchmark pair, method setting, or condition marker.
 - When a leak is found, extend the public-code sanitization guard with the exact newly discovered identifier family so source, tests, and local skills cannot reintroduce it.
 - Treat reader-visible fixture labels with numeric condition values as leaks too; public tests should use baseline/candidate labels unless the values are supplied by the test input being validated.

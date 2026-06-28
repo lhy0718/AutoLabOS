@@ -44,7 +44,7 @@ describe("buildContextualGuidance", () => {
       },
       {
         label: "start latest brief",
-        description: "Start workspace Brief.md or the latest legacy brief.",
+        description: "Start workspace Brief.md or the latest saved brief.",
         applyValue: "/brief start --latest"
       }
     ]);

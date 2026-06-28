@@ -30,7 +30,7 @@ const KNOWN_CODEX_MODEL_SELECTION_ORDER = [
 const DEFAULT_REASONING_EFFORT_CHOICES: readonly CodexReasoningEffort[] = ["low", "medium", "high"];
 
 // Reasoning-effort support is sourced from the Codex config reference and
-// per-model OpenAI docs where they exist. For preview/legacy models without
+// per-model OpenAI docs where they exist. For preview or compatibility models without
 // an explicit model page, the selector uses a conservative subset.
 const MODEL_REASONING_EFFORTS: Record<string, readonly CodexReasoningEffort[]> = {
   "gpt-5.5": ["low", "medium", "high", "xhigh"],

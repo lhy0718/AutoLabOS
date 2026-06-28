@@ -114,13 +114,13 @@ describe("resultAnalysisPresentation", () => {
     );
   });
 
-  it("falls back safely for partial legacy analysis reports", () => {
+  it("falls back safely for partial previous analysis reports", () => {
     const card = buildAnalyzeResultsInsightCard({
-      primary_findings: ["Legacy analysis artifact without overview fields."]
+      primary_findings: ["Previous analysis artifact without overview fields."]
     } as any);
 
     expect(card.title).toBe("Result analysis");
     expect(card.lines[0]).toContain("Objective: unknown");
-    expect(card.lines[0]).toContain("Legacy analysis artifact without overview fields.");
+    expect(card.lines[0]).toContain("Previous analysis artifact without overview fields.");
   });
 });

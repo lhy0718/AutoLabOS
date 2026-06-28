@@ -56,7 +56,7 @@ Quality checks should be deterministic and file-based whenever possible.
 
 Public-facing outputs must remain traceable to underlying run artifacts.
 
-Because events, checkpoints, background-job recovery, and execution artifacts already live in per-run files, long-lived/full-fidelity run state should stay under the run directory and be projected into index surfaces only as needed for list/search flows. In the current rollout, `runs.sqlite` carries the operational run-index hot path plus sqlite-maintained usage/checkpoint/event/artifact indexes, while `runs.json` remains a compatibility mirror for inspection, doctor/harness checks, and legacy fixtures. Append-only artifacts should still live in per-run files rather than in sqlite or `runs.json`; sqlite should mirror their query-heavy metadata, not replace the files themselves.
+Because events, checkpoints, background-job recovery, and execution artifacts already live in per-run files, long-lived/full-fidelity run state should stay under the run directory and be projected into index surfaces only as needed for list/search flows. In the current rollout, `runs.sqlite` carries the operational run-index hot path plus sqlite-maintained usage/checkpoint/event/artifact indexes, while `runs.json` remains a compatibility mirror for inspection, doctor/harness checks, and migration fixtures. Append-only artifacts should still live in per-run files rather than in sqlite or `runs.json`; sqlite should mirror their query-heavy metadata, not replace the files themselves.
 
 ## 4) Node-internal loops are bounded
 

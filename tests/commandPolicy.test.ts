@@ -42,17 +42,17 @@ describe("command policy", () => {
   });
 
   it("does not block network install commands via the old allowNetwork gate", () => {
-    const legacyFalse = evaluateCommandPolicy("pip install requests", {
+    const compatibilityFalse = evaluateCommandPolicy("pip install requests", {
       scope: "command",
       allowNetwork: false
     });
-    const legacyTrue = evaluateCommandPolicy("pip install requests", {
+    const compatibilityTrue = evaluateCommandPolicy("pip install requests", {
       scope: "command",
       allowNetwork: true
     });
 
-    expect(legacyFalse.allowed).toBe(true);
-    expect(legacyFalse.rule_id).toBeUndefined();
-    expect(legacyTrue.allowed).toBe(true);
+    expect(compatibilityFalse.allowed).toBe(true);
+    expect(compatibilityFalse.rule_id).toBeUndefined();
+    expect(compatibilityTrue.allowed).toBe(true);
   });
 });

@@ -165,7 +165,7 @@ import {
   repairPythonFinalMetricAggregationEntrypointSurface,
   repairPythonLockedRecipeCatalogAliasSurface,
   repairPythonLockedStandardTunedBaselineIdSurface,
-  repairPythonLegacyBaseModelRecipeIdSurface,
+  repairPythonBaseModelRecipeIdCompatibilitySurface,
   repairPythonLoggingHelperAlias,
   repairPythonCleanupModelArtifactsAliasSurface,
   repairPythonLockedRecipeWorkflowInputMaterializationSurface,
@@ -23918,7 +23918,7 @@ describe("ImplementSessionManager", () => {
     expect(result.testCommand).toContain("py_compile");
   });
 
-  it("aliases parse_args to parse_cli_args when the generated entrypoint calls the legacy helper name", async () => {
+  it("aliases parse_args to parse_cli_args when the generated entrypoint calls the compatibility helper name", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-parse-cli-args-alias-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "runner.py");
@@ -29659,7 +29659,7 @@ describe("ImplementSessionManager", () => {
     expect(output).toBe("ok");
   });
 
-  it("repairs a python runner that calls the legacy runtime dependency helper before handoff", async () => {
+  it("repairs a python runner that calls the compatibility runtime dependency helper before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runtime-deps-alias-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
@@ -42662,9 +42662,9 @@ describe("ImplementSessionManager", () => {
     expect(evidenceSource).toContain("_autolabos_entrypoint_condition_public_evidence_surface");
     execFileSync("python3", [evidenceScriptPath], { cwd: workspace });
 
-    const legacyEvidenceScriptPath = path.join(workspace, "legacy_evidence_experiment.py");
+    const compatibilityEvidenceScriptPath = path.join(workspace, "compatibility_evidence_experiment.py");
     writeFileSync(
-      legacyEvidenceScriptPath,
+      compatibilityEvidenceScriptPath,
       [
         "from dataclasses import dataclass, asdict",
         "",
@@ -42699,11 +42699,11 @@ describe("ImplementSessionManager", () => {
       ].join("\n"),
       "utf8"
     );
-    expect(() => execFileSync("python3", [legacyEvidenceScriptPath], { cwd: workspace })).toThrow(/copied live handle/);
-    const legacyEvidenceRepair = await repairPythonEntrypointConditionRuntimeCleanupSurface(legacyEvidenceScriptPath);
-    expect(legacyEvidenceRepair.repaired).toBe(true);
-    const legacyEvidenceSource = readFileSync(legacyEvidenceScriptPath, "utf8");
-    expect(legacyEvidenceSource).toContain("_autolabos_entrypoint_condition_public_evidence_surface");
+    expect(() => execFileSync("python3", [compatibilityEvidenceScriptPath], { cwd: workspace })).toThrow(/copied live handle/);
+    const compatibilityEvidenceRepair = await repairPythonEntrypointConditionRuntimeCleanupSurface(compatibilityEvidenceScriptPath);
+    expect(compatibilityEvidenceRepair.repaired).toBe(true);
+    const compatibilityEvidenceSource = readFileSync(compatibilityEvidenceScriptPath, "utf8");
+    expect(compatibilityEvidenceSource).toContain("_autolabos_entrypoint_condition_public_evidence_surface");
 
     const duplicatedEvidenceScriptPath = path.join(workspace, "duplicated_evidence_experiment.py");
     writeFileSync(
@@ -42850,9 +42850,9 @@ describe("ImplementSessionManager", () => {
     const secondRepair = await repairPythonSavePretrainedDtypeSerializationSurface(scriptPath);
     expect(secondRepair.repaired).toBe(false);
 
-    const legacyScriptPath = path.join(workspace, "legacy_experiment.py");
+    const compatibilityScriptPath = path.join(workspace, "compatibility_experiment.py");
     writeFileSync(
-      legacyScriptPath,
+      compatibilityScriptPath,
       [
         "import json",
         "from pathlib import Path",
@@ -42873,8 +42873,8 @@ describe("ImplementSessionManager", () => {
         "def main():",
         "    model = GeneratedModel()",
         "    _autolabos_sanitize_dtype_for_save_pretrained(model)",
-        "    model.save_pretrained('legacy_model_artifact')",
-        "    payload = json.loads(Path('legacy_model_artifact', 'config.json').read_text(encoding='utf8'))",
+        "    model.save_pretrained('compatibility_model_artifact')",
+        "    payload = json.loads(Path('compatibility_model_artifact', 'config.json').read_text(encoding='utf8'))",
         "    assert payload['torch_dtype'] == 'float16'",
         "",
         "if __name__ == '__main__':",
@@ -42884,12 +42884,12 @@ describe("ImplementSessionManager", () => {
       "utf8"
     );
 
-    expect(() => execFileSync("python3", [legacyScriptPath], { cwd: workspace })).toThrow(/JSON serializable/);
-    const legacyRepair = await repairPythonSavePretrainedDtypeSerializationSurface(legacyScriptPath);
-    expect(legacyRepair.repaired).toBe(true);
-    const legacySource = readFileSync(legacyScriptPath, "utf8");
-    expect(legacySource).toContain("_autolabos_json_dumps_dtype_safe");
-    execFileSync("python3", [legacyScriptPath], { cwd: workspace });
+    expect(() => execFileSync("python3", [compatibilityScriptPath], { cwd: workspace })).toThrow(/JSON serializable/);
+    const compatibilityRepair = await repairPythonSavePretrainedDtypeSerializationSurface(compatibilityScriptPath);
+    expect(compatibilityRepair.repaired).toBe(true);
+    const compatibilitySource = readFileSync(compatibilityScriptPath, "utf8");
+    expect(compatibilitySource).toContain("_autolabos_json_dumps_dtype_safe");
+    execFileSync("python3", [compatibilityScriptPath], { cwd: workspace });
   });
 
   it("passes condition-row seeds into generated evaluation metric calls", async () => {
@@ -56530,7 +56530,7 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("repairs legacy base_model recipe defaults when the generated registry uses another baseline id", async () => {
+  it("repairs compatibility base_model recipe defaults when the generated registry uses another baseline id", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-base-model-id-repair-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
@@ -56596,7 +56596,7 @@ describe("ImplementSessionManager", () => {
 
     expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/Unknown recipe ID/);
 
-    const repair = await repairPythonLegacyBaseModelRecipeIdSurface(scriptPath);
+    const repair = await repairPythonBaseModelRecipeIdCompatibilitySurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);

@@ -1,7 +1,7 @@
 import { ExperimentDesignCandidate } from "../analysis/researchPlanning.js";
 import { ObjectiveMetricEvaluation } from "../objectiveMetric.js";
 
-export type ExperimentPortfolioExecutionModel = "single_run" | "managed_bundle" | "legacy_python_runner";
+export type ExperimentPortfolioExecutionModel = "single_run" | "managed_bundle" | "compatibility_python_runner";
 export type ExperimentPortfolioTrialGroupKind = "aggregate" | "matrix_slice";
 
 export interface ExperimentPortfolioTrialGroup {

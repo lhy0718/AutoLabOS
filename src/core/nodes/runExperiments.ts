@@ -136,7 +136,7 @@ interface ManagedSupplementalProfile {
 }
 
 interface ManagedSupplementalPlan {
-  kind: "managed_bundle" | "legacy_python_runner";
+  kind: "managed_bundle" | "compatibility_python_runner";
   publicDir: string;
   profiles: [ManagedSupplementalProfile, ManagedSupplementalProfile];
 }
@@ -3165,28 +3165,28 @@ async function resolveManagedSupplementalPlan(
 
   const quickCheckMetricsPath = path.join(publicDir, "quick_check_metrics.json");
   const confirmatoryMetricsPath = path.join(publicDir, "confirmatory_metrics.json");
-  const quickCheckCommand = deriveLegacySupplementalCommand({
+  const quickCheckCommand = deriveCompatibilitySupplementalCommand({
     primaryCommand: explicitCommand,
     metricsPath: quickCheckMetricsPath,
     profile: "quick_check",
     primaryWorkingDir,
     scriptPath,
-    seedOnly: supportsSeedOnlyLegacySupplemental(scriptText)
+    seedOnly: supportsSeedOnlyCompatibilitySupplemental(scriptText)
   });
-  const confirmatoryCommand = deriveLegacySupplementalCommand({
+  const confirmatoryCommand = deriveCompatibilitySupplementalCommand({
     primaryCommand: explicitCommand,
     metricsPath: confirmatoryMetricsPath,
     profile: "confirmatory",
     primaryWorkingDir,
     scriptPath,
-    seedOnly: supportsSeedOnlyLegacySupplemental(scriptText)
+    seedOnly: supportsSeedOnlyCompatibilitySupplemental(scriptText)
   });
   if (!quickCheckCommand || !confirmatoryCommand) {
     return undefined;
   }
 
   return {
-    kind: "legacy_python_runner",
+    kind: "compatibility_python_runner",
     publicDir,
     profiles: [
       {
@@ -3205,7 +3205,7 @@ async function resolveManagedSupplementalPlan(
   };
 }
 
-function deriveLegacySupplementalCommand(input: {
+function deriveCompatibilitySupplementalCommand(input: {
   primaryCommand: string;
   metricsPath: string;
   profile: SupplementalProfileName;
@@ -3242,10 +3242,10 @@ function deriveLegacySupplementalCommand(input: {
     command = rewriteFlagValue(command, "--repeats", repeats, true);
     command = rewriteFlagValue(command, "--seed-base", seedBase, true);
   }
-  return absolutizeLegacySupplementalCommand(command, input.primaryWorkingDir, input.scriptPath);
+  return absolutizeCompatibilitySupplementalCommand(command, input.primaryWorkingDir, input.scriptPath);
 }
 
-function supportsSeedOnlyLegacySupplemental(scriptText: string): boolean {
+function supportsSeedOnlyCompatibilitySupplemental(scriptText: string): boolean {
   return scriptText.includes("--seed") && scriptText.includes("--metrics-path");
 }
 
@@ -3279,7 +3279,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function absolutizeLegacySupplementalCommand(
+function absolutizeCompatibilitySupplementalCommand(
   command: string,
   primaryWorkingDir: string,
   scriptPath: string
@@ -3396,9 +3396,9 @@ async function maybeRunManagedSupplementalProfiles(input: {
     profile: input.plan.profiles[0]
   });
   toolCallsUsed += 1;
-  if (input.plan.kind === "legacy_python_runner" && isLegacySupplementalUnsupported(quickCheck.summary)) {
+  if (input.plan.kind === "compatibility_python_runner" && isCompatibilitySupplementalUnsupported(quickCheck.summary)) {
     const summary =
-      "Supplemental quick_check and confirmatory profiles are not supported by this legacy experiment runner; the repeated standard run is the complete executed design.";
+      "Supplemental quick_check and confirmatory profiles are not supported by this compatibility experiment runner; the repeated standard run is the complete executed design.";
     const records: SupplementalRunRecord[] = input.plan.profiles.map((profile) => ({
       profile: profile.profile,
       status: "skipped",
@@ -3568,7 +3568,7 @@ function summarizeSupplementalRuns(records: SupplementalRunRecord[]): string | u
     .join(", ")}.`;
 }
 
-function isLegacySupplementalUnsupported(summary: string | undefined): boolean {
+function isCompatibilitySupplementalUnsupported(summary: string | undefined): boolean {
   const normalized = (summary || "").toLowerCase();
   return (
     normalized.includes("unrecognized arguments:") &&

@@ -533,17 +533,17 @@ export async function ensureScaffold(paths: AppPaths): Promise<void> {
 }
 
 function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
-  const legacyConfig = config as PersistedAppConfig & {
+  const compatibilityConfig = config as PersistedAppConfig & {
     analysis?: unknown;
     providers: {
       codex?: AppConfig["providers"]["codex"] & { pdf_model?: unknown; pdf_fast_mode?: unknown };
       openai?: AppConfig["providers"]["openai"] & { pdf_model?: unknown };
     };
   };
-  delete legacyConfig.analysis;
-  delete legacyConfig.providers?.codex?.pdf_model;
-  delete legacyConfig.providers?.codex?.pdf_fast_mode;
-  delete legacyConfig.providers?.openai?.pdf_model;
+  delete compatibilityConfig.analysis;
+  delete compatibilityConfig.providers?.codex?.pdf_model;
+  delete compatibilityConfig.providers?.codex?.pdf_fast_mode;
+  delete compatibilityConfig.providers?.openai?.pdf_model;
   if (!config.providers) {
     throw new Error("Invalid config: providers is missing");
   }
@@ -853,15 +853,15 @@ function parseDotEnv(raw: string): Record<string, string> {
 
 function normalizeExperimentNetworkPolicy(
   value: unknown,
-  legacyAllowNetwork?: boolean
+  compatibilityAllowNetwork?: boolean
 ): ExperimentNetworkPolicy | undefined {
   if (value === "blocked" || value === "declared" || value === "required") {
     return value;
   }
-  if (legacyAllowNetwork === true) {
+  if (compatibilityAllowNetwork === true) {
     return "declared";
   }
-  if (legacyAllowNetwork === false) {
+  if (compatibilityAllowNetwork === false) {
     return "blocked";
   }
   return undefined;

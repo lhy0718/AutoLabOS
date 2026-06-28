@@ -340,7 +340,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
     expect(response.lines[0]).toContain("20편");
   });
 
-  it("returns the streamed text client output without requiring a legacy runTurnStream path", async () => {
+  it("returns the streamed text client output without requiring the older runTurnStream path", async () => {
     const run = makeRun({ id: "run-stream", status: "running" });
     const progress: string[] = [];
 

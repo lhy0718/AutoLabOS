@@ -41,7 +41,7 @@ The governed workflow remains fixed around:
 
 ## Unified Priority Checklist
 
-This is the canonical checklist. Legacy numeric-only implementation items have been merged into the P0 through P6 sequence below.
+This is the canonical checklist. Earlier numeric-only implementation items have been merged into the P0 through P6 sequence below.
 
 ### P0 — Sprint Queue
 

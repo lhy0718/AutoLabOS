@@ -787,8 +787,8 @@ function normalizeArxivIdForLookup(value: string | undefined): string | undefine
     .replace(/\.pdf$/i, "");
   const normalized = withoutPrefix.replace(/v\d+$/i, "").trim().toLowerCase();
   const modernPattern = /^\d{4}\.\d{4,5}$/;
-  const legacyPattern = /^[a-z-]+(?:\.[a-z-]+)?\/\d{7}$/;
-  if (!modernPattern.test(normalized) && !legacyPattern.test(normalized)) {
+  const compatibilityPattern = /^[a-z-]+(?:\.[a-z-]+)?\/\d{7}$/;
+  if (!modernPattern.test(normalized) && !compatibilityPattern.test(normalized)) {
     return undefined;
   }
   return normalized || undefined;

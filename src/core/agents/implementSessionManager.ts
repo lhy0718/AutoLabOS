@@ -9199,12 +9199,12 @@ export class ImplementSessionManager {
       }
     }
 
-    const legacyBaseModelRecipeIdRepair =
-      await repairPythonLegacyBaseModelRecipeIdSurface(executionScriptPath);
-    if (legacyBaseModelRecipeIdRepair.repaired) {
+    const baseModelRecipeIdCompatibilityRepair =
+      await repairPythonBaseModelRecipeIdCompatibilitySurface(executionScriptPath);
+    if (baseModelRecipeIdCompatibilityRepair.repaired) {
       onProgress?.(
-        legacyBaseModelRecipeIdRepair.message ||
-          "Aligned legacy base_model recipe id with generated baseline recipe id before handoff.",
+        baseModelRecipeIdCompatibilityRepair.message ||
+          "Aligned compatibility base_model recipe id with generated baseline recipe id before handoff.",
         {
           verificationCommand: command
         }
@@ -9216,8 +9216,8 @@ export class ImplementSessionManager {
         agentRole: "implementer",
         payload: {
           text:
-            legacyBaseModelRecipeIdRepair.message ||
-            "Aligned legacy base_model recipe id with generated baseline recipe id before handoff."
+            baseModelRecipeIdCompatibilityRepair.message ||
+            "Aligned compatibility base_model recipe id with generated baseline recipe id before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -30605,14 +30605,7 @@ export async function repairPythonUppercaseAdapterAcronymClassAliasSurface(
     return { repaired: false };
   }
 
-  const legacyAdapterAcronym = ["P", "E", "F", "T"].join("");
-  const titleCaseLegacyAdapterAcronym = legacyAdapterAcronym[0] + legacyAdapterAcronym.slice(1).toLowerCase();
-  const aliasPairs: Array<readonly [string, string]> = [
-    [legacyAdapterAcronym + "ConditionConfig", titleCaseLegacyAdapterAcronym + "ConditionConfig"],
-    [legacyAdapterAcronym + "ExperimentConfig", titleCaseLegacyAdapterAcronym + "ExperimentConfig"],
-    [legacyAdapterAcronym + "ConditionResult", titleCaseLegacyAdapterAcronym + "ConditionResult"],
-    [legacyAdapterAcronym + "Result", titleCaseLegacyAdapterAcronym + "Result"]
-  ];
+  const aliasPairs: Array<readonly [string, string]> = [];
   for (const match of source.matchAll(/\b([A-Z]{2,})(ConditionConfig|ExperimentConfig|ConditionResult|Result)\b/gu)) {
     const acronym = match[1] || "";
     const suffix = match[2] || "";
@@ -37244,11 +37237,11 @@ export async function repairPythonLockedStudyRunsEntrypointAliasSurface(
     return { repaired: false };
   }
 
-  const hasLegacyResolver = source.includes("def _execute_locked_study(") && source.includes("No study execution function was found in the script");
+  const hasCompatibilityResolver = source.includes("def _execute_locked_study(") && source.includes("No study execution function was found in the script");
   const hasFailureCaptureResolver = source.includes("def run_study_with_failure_capture(") && source.includes("Unable to resolve required callable from candidates");
   if (
     !source.includes("def execute_locked_study_runs(") ||
-    (!hasLegacyResolver && !hasFailureCaptureResolver) ||
+    (!hasCompatibilityResolver && !hasFailureCaptureResolver) ||
     source.includes("_autolabos_locked_study_runs_entrypoint_alias_marker")
   ) {
     return { repaired: false };
@@ -50989,7 +50982,7 @@ export async function repairPythonLockedStandardTunedBaselineIdSurface(scriptPat
   };
 }
 
-export async function repairPythonLegacyBaseModelRecipeIdSurface(scriptPath?: string): Promise<{
+export async function repairPythonBaseModelRecipeIdCompatibilitySurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
 }> {
@@ -51033,7 +51026,7 @@ export async function repairPythonLegacyBaseModelRecipeIdSurface(scriptPath?: st
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Aligned legacy base_model recipe id to ${baselineCandidateId} in ${path.basename(scriptPath)} before handoff.`
+    message: `Aligned compatibility base_model recipe id to ${baselineCandidateId} in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -56836,9 +56829,9 @@ export async function repairPythonPublicStudySiblingExperimentBackendSurface(scr
 
     const backendFileLoopPattern = /(\n\s+for\s+filename\s+in\s+BACKEND_FILE_CANDIDATES:\n)/u;
     if (derivedBeforeDeclaredFileLoop) {
-      const legacyDerivedSiblingBlockPattern =
+      const compatibilityDerivedSiblingBlockPattern =
         /\n\s+# _autolabos_sibling_experiment_backend_candidate_marker\n\s+derived_sibling_backend_name = SCRIPT_PATH\.name\.replace\("_study\.py", "_experiment\.py"\)\n\s+if derived_sibling_backend_name != SCRIPT_PATH\.name:\n\s+derived_sibling_backend_path = \(SCRIPT_DIR \/ derived_sibling_backend_name\)\.resolve\(\)\n\s+if derived_sibling_backend_path\.exists\(\) and derived_sibling_backend_path != SCRIPT_PATH:\n\s+try:\n\s+return _load_module_from_path\(derived_sibling_backend_path\), str\(derived_sibling_backend_path\)\n\s+except Exception:\n\s+pass\n/u;
-      nextSource = nextSource.replace(legacyDerivedSiblingBlockPattern, "\n");
+      nextSource = nextSource.replace(compatibilityDerivedSiblingBlockPattern, "\n");
       repaired = true;
     }
 

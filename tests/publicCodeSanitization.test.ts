@@ -223,4 +223,17 @@ describe("public code sanitization", () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it("does not expose retired compatibility terminology in public source, tests, docs, or local skills", () => {
+    const retiredCompatibilityTerm = chars([108, 101, 103, 97, 99, 121]);
+    const scanFiles = [...CODE_DIRS.flatMap(walkCodeFiles), ...ROOT_PUBLIC_TEXT_FILES.filter((file) => fs.existsSync(path.join(ROOT, file)))];
+    const offenders = scanFiles.flatMap((relativePath) => {
+      const text = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+      return text.toLocaleLowerCase().includes(retiredCompatibilityTerm)
+        ? [{ relativePath, pattern: retiredCompatibilityTerm }]
+        : [];
+    });
+
+    expect(offenders).toEqual([]);
+  });
 });

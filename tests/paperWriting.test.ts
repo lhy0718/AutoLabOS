@@ -382,7 +382,7 @@ describe("paperWriting related-work support", () => {
     expect(validation.issues.some((item) => /bibliographic.*spillover/i.test(item.message))).toBe(true);
   });
 
-  it("uses first-citation bibliography ordering in legacy TeX fallback", () => {
+  it("uses first-citation bibliography ordering in TeX compatibility fallback", () => {
     const tex = renderPaperTex({
       runTitle: "Neutral Paper",
       topic: "neutral evaluation",

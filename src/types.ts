@@ -294,7 +294,7 @@ export interface AppConfig {
   experiments: {
     runner: "local_python";
     timeout_sec: number;
-    /** @deprecated Legacy compatibility field. Network access is no longer controlled by a boolean gate. */
+    /** @deprecated Compatibility compatibility field. Network access is no longer controlled by a boolean gate. */
     allow_network?: boolean;
     network_policy?: ExperimentNetworkPolicy;
     network_purpose?: ExperimentNetworkPurpose;

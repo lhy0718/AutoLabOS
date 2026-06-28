@@ -447,13 +447,13 @@ export async function generateHypothesesFromEvidence(args: {
           }
         }
       };
-    } catch (legacyError) {
-      const legacyReason = legacyError instanceof Error ? legacyError.message : String(legacyError);
-      const singlePassPartialTrace = extractTimedLlmPartialTrace(legacyError);
+    } catch (compatibilityError) {
+      const compatibilityReason = compatibilityError instanceof Error ? compatibilityError.message : String(compatibilityError);
+      const singlePassPartialTrace = extractTimedLlmPartialTrace(compatibilityError);
       if (singlePassPartialTrace.single_pass_partial?.completion) {
         args.onProgress?.("Captured partial single-pass hypothesis output before timeout.");
       }
-      args.onProgress?.(`Hypothesis generation fallback: ${legacyReason}`);
+      args.onProgress?.(`Hypothesis generation fallback: ${compatibilityReason}`);
       const fallback = buildFallbackHypotheses(args.evidenceSeeds, branchCount, topK);
       const fallbackSelection = selectHypothesesWithDiversity(
         fallback.candidates,
@@ -468,7 +468,7 @@ export async function generateHypothesesFromEvidence(args: {
         summary: `Fallback generated ${fallback.candidates.length} hypothesis candidate(s).`,
         candidates: fallback.candidates,
         selected: fallbackSelected,
-        fallbackReason: `${stagedReason}; single_pass=${legacyReason}`,
+        fallbackReason: `${stagedReason}; single_pass=${compatibilityReason}`,
         toolCallsUsed: 0,
         artifacts: {
           pipeline: "fallback",

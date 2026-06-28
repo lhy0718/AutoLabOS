@@ -1635,7 +1635,7 @@ describe("InteractionSession", () => {
         {
           overview: {
             objective_status: "not_met",
-            objective_summary: "Legacy analysis from an earlier cycle."
+            objective_summary: "Previous analysis from an earlier cycle."
           }
         },
         null,

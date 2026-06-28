@@ -181,7 +181,7 @@ describe("parseAppendixPreferencesFromBrief", () => {
     expect(parseAppendixPreferencesFromBrief(brief)).toBeUndefined();
   });
 
-  it("treats unlabeled legacy bullets as appendix-preferred items", () => {
+  it("treats unlabeled compatibility-format bullets as appendix-preferred items", () => {
     const brief = [
       "# Research Brief",
       "",

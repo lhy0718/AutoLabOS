@@ -3265,7 +3265,7 @@ describe("analyzePapers node", () => {
       },
       {
         paper_id: "p3",
-        title: "Irrelevant legacy retrieval",
+        title: "Irrelevant prior retrieval",
         abstract: "C",
         authors: ["Carol"],
         citation_count: 5,
@@ -3586,7 +3586,7 @@ describe("analyzePapers node", () => {
       },
       {
         paper_id: "p3",
-        title: "Legacy retrieval",
+        title: "Prior retrieval",
         abstract: "C",
         authors: ["Carol"],
         citation_count: 5,
@@ -3662,7 +3662,7 @@ describe("analyzePapers node", () => {
     await writeCorpus(runId, [
       { paper_id: "p1", title: "Multi-agent collaboration benchmark", abstract: "A", authors: ["Alice"], citation_count: 80, year: 2025 },
       { paper_id: "p2", title: "Multi-agent planning systems", abstract: "B", authors: ["Bob"], citation_count: 60, year: 2024 },
-      { paper_id: "p3", title: "Legacy retrieval", abstract: "C", authors: ["Carol"], citation_count: 5, year: 2018 }
+      { paper_id: "p3", title: "Prior retrieval", abstract: "C", authors: ["Carol"], citation_count: 5, year: 2018 }
     ]);
 
     const runContext = new RunContextMemory(run.memoryRefs.runContextPath);

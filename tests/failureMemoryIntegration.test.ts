@@ -13,7 +13,7 @@ import {
 import type { FailureMemoryEntry } from "../src/core/exploration/types.js";
 
 describe("failureMemoryIntegration", () => {
-  it("ignores legacy failure records without exploration fields", async () => {
+  it("ignores previous failure records without exploration fields", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-failure-memory-"));
     const memoryPath = path.join(root, ".autolabos", "runs", "run-1", "failure_memory.jsonl");
     await mkdir(path.dirname(memoryPath), { recursive: true });
@@ -26,8 +26,8 @@ describe("failureMemoryIntegration", () => {
         attempt: 1,
         timestamp: new Date().toISOString(),
         failure_class: "structural",
-        error_fingerprint: "legacy-failure",
-        error_message: "legacy",
+        error_fingerprint: "previous-failure",
+        error_message: "previous",
         do_not_retry: false
       })}\n`,
       "utf8"

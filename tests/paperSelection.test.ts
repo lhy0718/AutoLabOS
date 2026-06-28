@@ -86,7 +86,7 @@ describe("paperSelection", () => {
         },
         {
           paper_id: "p3",
-          title: "Legacy information retrieval",
+          title: "Classical information retrieval",
           abstract: "C",
           authors: [],
           citation_count: 10,
@@ -128,7 +128,7 @@ describe("paperSelection", () => {
         },
         {
           paper_id: "p3",
-          title: "Legacy retrieval systems",
+          title: "Classical retrieval systems",
           abstract: "C",
           authors: [],
           citation_count: 10,
@@ -214,7 +214,7 @@ describe("paperSelection", () => {
       corpusRows: [
         { paper_id: "p1", title: "Multi-agent collaboration", abstract: "A", authors: [], citation_count: 10, year: 2025 },
         { paper_id: "p2", title: "Other collaboration paper", abstract: "B", authors: [], citation_count: 9, year: 2025 },
-        { paper_id: "p3", title: "Legacy retrieval", abstract: "C", authors: [], citation_count: 8, year: 2024 }
+        { paper_id: "p3", title: "Classical retrieval", abstract: "C", authors: [], citation_count: 8, year: 2024 }
       ],
       onProgress: (message) => logs.push(message)
     });
@@ -240,7 +240,7 @@ describe("paperSelection", () => {
       corpusRows: [
         { paper_id: "p1", title: "Multi-agent collaboration", abstract: "A", authors: [], citation_count: 10, year: 2025 },
         { paper_id: "p2", title: "Other paper", abstract: "B", authors: [], citation_count: 9, year: 2025 },
-        { paper_id: "p3", title: "Legacy retrieval", abstract: "C", authors: [], citation_count: 8, year: 2024 }
+        { paper_id: "p3", title: "Classical retrieval", abstract: "C", authors: [], citation_count: 8, year: 2024 }
       ]
     });
 
@@ -308,7 +308,7 @@ describe("paperSelection", () => {
       corpusRows: [
         { paper_id: "p1", title: "Multi-agent collaboration", abstract: "A", authors: [], citation_count: 10, year: 2025 },
         { paper_id: "p2", title: "Other collaboration paper", abstract: "B", authors: [], citation_count: 9, year: 2025 },
-        { paper_id: "p3", title: "Legacy retrieval", abstract: "C", authors: [], citation_count: 8, year: 2024 }
+        { paper_id: "p3", title: "Classical retrieval", abstract: "C", authors: [], citation_count: 8, year: 2024 }
       ]
     });
 
@@ -1025,7 +1025,7 @@ describe("paperSelection", () => {
       corpusRows: [
         { paper_id: "p1", title: "Multi-agent collaboration", abstract: "A", authors: [], citation_count: 10, year: 2025 },
         { paper_id: "p2", title: "Other paper", abstract: "B", authors: [], citation_count: 9, year: 2025 },
-        { paper_id: "p3", title: "Legacy retrieval", abstract: "C", authors: [], citation_count: 8, year: 2024 }
+        { paper_id: "p3", title: "Classical retrieval", abstract: "C", authors: [], citation_count: 8, year: 2024 }
       ],
       abortSignal: controller.signal
     });

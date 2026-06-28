@@ -130,7 +130,7 @@ Path placeholders:
 ## Issue: LV-492
 
 - Status: reproduced from active generated paper artifacts on 2026-06-16; source repair implemented; focused paper-writing, review-node, harness-validator, public-code guard, and build checks passed; same-flow paper regeneration remains pending.
-- Validation target: paper rendering should preserve submission-template bibliography conventions and avoid legacy fallback reference ordering that can make numeric references appear out of first-citation order.
+- Validation target: paper rendering should preserve submission-template bibliography conventions and avoid compatibility fallback reference ordering that can make numeric references appear out of first-citation order.
 - Environment/session context: active validation run in <validation-workspace>, after the paper artifact preserved the requested template package but the generated bibliography style still used a generic fallback.
 
 - Reproduction steps:
@@ -145,12 +145,12 @@ Path placeholders:
   - The repair must stay method-neutral and must not encode one-off experiment names, benchmark names, model identifiers, or condition markers in public source/tests.
 
 - Actual behavior:
-  - The active generated paper preserved the requested template package, but a legacy TeX fallback path still emitted a generic alphabetical-style bibliography command.
+  - The active generated paper preserved the requested template package, but a compatibility TeX fallback path still emitted a generic alphabetical-style bibliography command.
   - This made the paper vulnerable to numeric references not following first-citation order in rendered output.
   - The same artifact also showed mechanical citation-bundle repetition that review/render validation must continue to catch rather than treating as cosmetic polish.
 
 - Fresh vs existing session comparison:
-  - Fresh session: neutral regression now verifies the legacy TeX fallback uses first-citation-order bibliography style instead of the generic fallback.
+  - Fresh session: neutral regression now verifies the compatibility TeX fallback uses first-citation-order bibliography style instead of the generic fallback.
   - Existing session: the active generated paper bundle is stale and must be regenerated through AutoLabOS before the artifact itself can be reported fixed.
   - Divergence: no UI-only divergence observed; this is a paper-rendering and review-gate artifact-quality defect.
 
@@ -159,11 +159,11 @@ Path placeholders:
   - Hypothesis: the modern template-aware renderer and review gate already knew about template-compatible bibliography expectations, but an older TeX fallback still emitted a generic bibliography style, leaving a stale path that could bypass first-citation-order reference behavior.
 
 - Code/test changes:
-  - Code: <repo-root>/src/core/analysis/paperWriting.ts changes the legacy TeX fallback bibliography style from a generic alphabetical style to a first-citation-order fallback.
-  - Test: <repo-root>/tests/paperWriting.test.ts adds a neutral legacy fallback regression using generic paper/task fixtures.
+  - Code: <repo-root>/src/core/analysis/paperWriting.ts changes the compatibility TeX fallback bibliography style from a generic alphabetical style to a first-citation-order fallback.
+  - Test: <repo-root>/tests/paperWriting.test.ts adds a neutral compatibility fallback regression using generic paper/task fixtures.
 
 - Regression status:
-  - Focused regression passed: npm test -- tests/paperWriting.test.ts -t "legacy TeX fallback".
+  - Focused regression passed: npm test -- tests/paperWriting.test.ts -t "compatibility TeX fallback".
   - Paper-writing tests passed: npm test -- tests/paperWriting.test.ts.
   - Review and harness regressions passed: npm test -- tests/harnessValidators.test.ts tests/reviewNode.test.ts.
   - Public-code guard passed: npm test -- tests/publicCodeSanitization.test.ts.
@@ -1910,7 +1910,7 @@ Path placeholders:
 - Reproduction steps:
   1. Resume or inspect the active P6 validation workspace after the latest design_experiments regeneration.
   2. Run the harness with the validation workspace as root.
-  3. Observe `experiment_portfolio.json` report `execution_model=single_run` while stale `run_manifest.json` reports `execution_model=legacy_python_runner`.
+  3. Observe `experiment_portfolio.json` report `execution_model=single_run` while stale `run_manifest.json` reports `execution_model=compatibility_python_runner`.
   4. Observe the harness fail with `experiment_execution_model_mismatch`.
 
 - Expected behavior:
@@ -8786,7 +8786,7 @@ Path placeholders:
 
 - Expected behavior:
   - Generated runner helper names should be internally consistent before handoff.
-  - If the dependency checker is generated as `validate_runtime_dependencies(...)`, any legacy generated calls to `require_runtime_dependencies(...)` should be rejected or repaired before `run_experiments`.
+  - If the dependency checker is generated as `validate_runtime_dependencies(...)`, any older generated calls to `require_runtime_dependencies(...)` should be rejected or repaired before `run_experiments`.
 
 - Actual behavior:
   - `implement_experiments` completed and passed local `py_compile`.
@@ -8811,7 +8811,7 @@ Path placeholders:
       - normalizes sequence-style calls such as `require_runtime_dependencies(["torch", "transformers"])` into the mapping shape accepted by the generated validator
   - Tests:
     - `tests/implementSessionManager.test.ts`
-      - adds regression coverage for generated runners that call the legacy runtime dependency helper while defining only the validator helper
+      - adds regression coverage for generated runners that call the compatibility runtime dependency helper while defining only the validator helper
 
 - Regression status:
   - Targeted regression: pending.
@@ -16837,7 +16837,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Root cause hypothesis:
   - Type: `in_memory_projection_bug`
-  - Hypothesis: one staged chunk emitted the public dependency helper name while a later orchestration chunk invoked the underscore-prefixed helper variant. The existing repair only aliased the public legacy name.
+  - Hypothesis: one staged chunk emitted the public dependency helper name while a later orchestration chunk invoked the underscore-prefixed helper variant. The existing repair only aliased the public compatibility name.
 
 - Code/test changes:
   - Code:

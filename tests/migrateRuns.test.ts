@@ -10,13 +10,13 @@ describe("migrate runs to v3", () => {
       runs: [
         {
           id: "run-1",
-          title: "Legacy run",
+          title: "Previous run",
           topic: "agents",
           constraints: [],
           objectiveMetric: "f1",
           status: "paused" as const,
           currentStage: "execute" as const,
-          latestSummary: "legacy summary",
+          latestSummary: "previous summary",
           implementThreadId: "thread-xyz",
           createdAt: ts,
           updatedAt: ts,
