@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -14,7 +15,7 @@ describe("AutoLabOS Codex plugin contract", () => {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
     expect(manifest.name).toBe("autolabos-research-governor");
-    expect(manifest.version).toMatch(/^\d+\.\d+\.\d+$/u);
+    expect(manifest.version).toMatch(/^\d+\.\d+\.\d+(?:\+codex\.[a-z0-9._-]+)?$/u);
     expect(manifest.skills).toBe("./skills/");
     expect(manifest.interface.displayName).toBe("AutoLabOS Research Governor");
     expect(manifest.interface.defaultPrompt).toHaveLength(3);
@@ -37,11 +38,25 @@ describe("AutoLabOS Codex plugin contract", () => {
     );
   });
 
+  it("self-dogfood audit passes and emits a repair-oriented report", () => {
+    const output = execFileSync("node", [
+      path.join(PLUGIN_ROOT, "scripts", "dogfood-audit.mjs")
+    ], { cwd: ROOT, encoding: "utf8" });
+    const report = JSON.parse(output);
+
+    expect(report.commandIntent).toBe("research:improve");
+    expect(report.outputArtifact).toBe("MetaHarnessPatchPlan");
+    expect(report.verdict).toBe("pass");
+    expect(report.validationCommand).toBe("npm run plugin:dogfood");
+    expect(report.checks.every((item: { passed: boolean }) => item.passed)).toBe(true);
+  });
+
   it("documents every plugin command intent in the skill", () => {
     const skillPath = path.join(PLUGIN_ROOT, "skills", "autolabos", "SKILL.md");
     const text = fs.readFileSync(skillPath, "utf8");
 
     expect(text).toContain("name: autolabos");
+    expect(text).toContain("plugin:dogfood");
 
     for (const command of RESEARCH_GOVERNANCE_COMMANDS) {
       expect(text).toContain(command.id);

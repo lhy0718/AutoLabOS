@@ -388,14 +388,31 @@ function validatePlannedConditionImplementationSurface(input: {
   const seedSchedule = (input.contract.seed_schedule || [])
     .map((seed) => normalizePositiveInteger(seed))
     .filter((seed): seed is number => seed !== undefined);
+  const implementationSeedScheduleValues = extractDeclaredSeedScheduleValues(implementationExecutionText);
+  const autoLabOSSeedScheduleSignals = extractAutoLabOSSeedScheduleSignalValues(implementationExecutionText);
+  const declaredSeedScheduleValues =
+    implementationSeedScheduleValues.size > 0 ? implementationSeedScheduleValues : autoLabOSSeedScheduleSignals;
+  let seedScheduleBlocked = false;
   if (seedSchedule.length > 1) {
-    const missingSeeds = seedSchedule.filter((seed) => !hasNumberSignal(implementationSignal, seed));
+    const missingSeeds = seedSchedule.filter((seed) => !declaredSeedScheduleValues.has(seed));
     if (missingSeeds.length > 0) {
+      seedScheduleBlocked = true;
       findings.push({
         code: "PLANNED_SEED_SCHEDULE_MISSING",
         severity: "block",
         message: "The implementation surface does not preserve the planned repeated-seed schedule.",
         evidence: `missing=${missingSeeds.join(", ")}; required=${seedSchedule.join(", ")}`
+      });
+    }
+  }
+  const minimumSeedsPerCondition = normalizePositiveInteger(input.contract.minimum_seeds_per_condition);
+  if (minimumSeedsPerCondition !== undefined && minimumSeedsPerCondition > 1 && !seedScheduleBlocked) {
+    if (declaredSeedScheduleValues.size < minimumSeedsPerCondition) {
+      findings.push({
+        code: "PLANNED_SEED_SCHEDULE_MISSING",
+        severity: "block",
+        message: "The implementation surface does not preserve the planned repeated-seed schedule.",
+        evidence: `declared=${declaredSeedScheduleValues.size}; required_minimum=${minimumSeedsPerCondition}`
       });
     }
   }
@@ -1290,6 +1307,33 @@ function normalizeMarkerNumberText(value: string): string {
 
 function hasNumberSignal(text: string, value: number): boolean {
   return new RegExp(`(?:^|[^0-9])${escapeRegExp(String(value))}(?:$|[^0-9])`, "u").test(text);
+}
+
+function extractDeclaredSeedScheduleValues(text: string): Set<number> {
+  return extractSeedScheduleValuesFromAssignments(
+    text,
+    /\b(?:PLANNED_SEEDS|SEED_SCHEDULE|DEFAULT_SEEDS|REQUIRED_SEEDS|REQUIRED_SEED_SCHEDULE|SEEDS|SEED_VALUES|seed_schedule|seeds)\b\s*[:=]\s*([\[\(][\s\S]{0,500}?[\]\)])/gu
+  );
+}
+
+function extractAutoLabOSSeedScheduleSignalValues(text: string): Set<number> {
+  return extractSeedScheduleValuesFromAssignments(
+    text,
+    /\bAUTOLABOS_REQUIRED_SEED_SCHEDULE_SIGNALS\b\s*=\s*([\[\(][\s\S]{0,500}?[\]\)])/gu
+  );
+}
+
+function extractSeedScheduleValuesFromAssignments(text: string, pattern: RegExp): Set<number> {
+  const values = new Set<number>();
+  for (const match of text.matchAll(pattern)) {
+    for (const numberMatch of (match[1] || "").matchAll(/(?<![A-Za-z0-9_])-?\d+(?![A-Za-z0-9_])/gu)) {
+      const parsed = normalizePositiveInteger(Number.parseInt(numberMatch[0], 10));
+      if (parsed !== undefined) {
+        values.add(parsed);
+      }
+    }
+  }
+  return values;
 }
 
 function extractDeclaredConditionCount(text: string, requiredMarkers: string[]): number | undefined {

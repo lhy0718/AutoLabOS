@@ -251,6 +251,235 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("does not count path digits as planned seed schedule evidence", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-seed-path-23-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment-2-3");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-seed-2-3", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = ('condition_alpha', 'condition_beta')",
+        "REQUIRED_CONDITION_COUNT = 2",
+        "REQUIRED_RUN_COUNT = 6",
+        "SEED_SCHEDULE = [1]",
+        "PRIMARY_METRIC_KEY = 'quality_delta_vs_baseline'",
+        "def run_single_condition_seed(condition, seed, output_dir):",
+        "    return {'condition': condition, 'seed': seed}",
+        "def main(argv=None):",
+        "    return 0",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 2,
+        required_run_count: 6,
+        seed_schedule: [1, 2, 3],
+        baseline_condition_marker: "condition_alpha",
+        required_condition_markers: ["condition_alpha", "condition_beta"],
+        primary_metric_key: "quality_delta_vs_baseline"
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_SEED_SCHEDULE_MISSING",
+          severity: "block",
+          evidence: expect.stringContaining("missing=2, 3; required=1, 2, 3")
+        })
+      ])
+    );
+  });
+
+  it("blocks seed schedule contraction when only a minimum seed count is available", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-min-seeds-23-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment-2-3");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-min-seeds-2-3", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = ('condition_alpha', 'condition_beta')",
+        "REQUIRED_CONDITION_COUNT = 2",
+        "REQUIRED_RUN_COUNT = 6",
+        "SEED_SCHEDULE = [1]",
+        "PRIMARY_METRIC_KEY = 'quality_delta_vs_baseline'",
+        "def run_single_condition_seed(condition, seed, output_dir):",
+        "    return {'condition': condition, 'seed': seed}",
+        "def main(argv=None):",
+        "    return 0",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 2,
+        required_run_count: 6,
+        minimum_seeds_per_condition: 3,
+        baseline_condition_marker: "condition_alpha",
+        required_condition_markers: ["condition_alpha", "condition_beta"],
+        primary_metric_key: "quality_delta_vs_baseline"
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_SEED_SCHEDULE_MISSING",
+          severity: "block",
+          evidence: expect.stringContaining("declared=1; required_minimum=3")
+        })
+      ])
+    );
+  });
+
+  it("does not let AutoLabOS repair seed signals override an explicit contracted seed schedule", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-seed-signal-conflict-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-seed-signal-conflict", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "# _autolabos_planned_condition_contract_marker_start",
+        "PLANNED_SEEDS = (1, 2, 3)",
+        "SEED_SCHEDULE = PLANNED_SEEDS",
+        "# _autolabos_planned_condition_contract_marker_end",
+        "# _autolabos_planned_condition_execution_signal_marker_start",
+        "AUTOLABOS_REQUIRED_SEED_SCHEDULE_SIGNALS = (1, 2, 3)",
+        "def autolabos_required_seed_schedule_signals():",
+        "    return tuple(AUTOLABOS_REQUIRED_SEED_SCHEDULE_SIGNALS)",
+        "# _autolabos_planned_condition_execution_signal_marker_end",
+        "PLANNED_CONDITION_MARKERS = ('condition_alpha', 'condition_beta')",
+        "REQUIRED_CONDITION_COUNT = 2",
+        "REQUIRED_RUN_COUNT = 6",
+        "SEED_SCHEDULE = [1]",
+        "def run_single_condition_seed(condition, seed, output_dir):",
+        "    return {'condition': condition, 'seed': seed}",
+        "def main(argv=None):",
+        "    return 0"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 2,
+        required_run_count: 6,
+        seed_schedule: [1, 2, 3],
+        baseline_condition_marker: "condition_alpha",
+        required_condition_markers: ["condition_alpha", "condition_beta"]
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_SEED_SCHEDULE_MISSING",
+          severity: "block",
+          evidence: expect.stringContaining("missing=2, 3; required=1, 2, 3")
+        })
+      ])
+    );
+  });
+
+  it("accepts AutoLabOS repair seed signals when no implementation seed schedule is declared", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-seed-signal-repair-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-seed-signal-repair", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "# _autolabos_planned_condition_execution_signal_marker_start",
+        "AUTOLABOS_REQUIRED_CONDITION_MARKER_SIGNALS = ('condition_alpha', 'condition_beta')",
+        "AUTOLABOS_REQUIRED_SEED_SCHEDULE_SIGNALS = (1, 2, 3)",
+        "PLANNED_CONDITION_COUNT = 2",
+        "PLANNED_RUN_COUNT = 6",
+        "def autolabos_required_condition_marker_signals():",
+        "    return tuple(AUTOLABOS_REQUIRED_CONDITION_MARKER_SIGNALS)",
+        "def autolabos_required_seed_schedule_signals():",
+        "    return tuple(AUTOLABOS_REQUIRED_SEED_SCHEDULE_SIGNALS)",
+        "# _autolabos_planned_condition_execution_signal_marker_end",
+        "def main(argv=None):",
+        "    return 0"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 2,
+        required_run_count: 6,
+        seed_schedule: [1, 2, 3],
+        baseline_condition_marker: "condition_alpha",
+        required_condition_markers: ["condition_alpha", "condition_beta"]
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.findings.filter((finding) => finding.severity === "block")).toEqual([]);
+    expect(report.verdict).toBe("allow");
+  });
+
   it("blocks entrypoint data loaders that run before runtime path aliases are defaulted", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-loader-path-order-"));
     tempDirs.push(workspace);

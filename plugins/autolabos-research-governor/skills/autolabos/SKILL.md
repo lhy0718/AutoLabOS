@@ -52,7 +52,11 @@ The standalone AutoLabOS TUI/web workflow remains a reference implementation and
 6. Keep public code and fixtures domain-neutral.
    - Do not hardcode one historical experiment, model, dataset, benchmark, condition marker, or run id into source, tests, docs, or plugin examples.
    - Keep concrete experiment identifiers inside run artifacts or user-provided inputs.
-7. Validate the smallest honest surface before reporting completion.
+7. For plugin or governance-skill changes, dogfood the plugin against its own artifacts.
+   - Run `npm run plugin:dogfood` from the repository root.
+   - Treat any failed self-dogfood check as a `research:improve` finding and repair the smallest plugin-local artifact first.
+   - Reinstall or restart the Codex thread when changing installed skill behavior.
+8. Validate the smallest honest surface before reporting completion.
    - Public-code hygiene changes should keep `tests/publicCodeSanitization.test.ts` passing.
    - Runtime or harness changes should run the focused tests plus `npm run build` when shipped TypeScript changes.
    - Harness contract changes should include `npm run validate:harness` when applicable.
