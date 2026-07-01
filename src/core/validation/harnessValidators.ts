@@ -207,6 +207,13 @@ export async function validateRunArtifactStructure(
   }
 
   const writePaperCompleted = isNodeCompleted(nodeStates, "write_paper");
+  const writePaperStatus = nodeStatus(nodeStates, "write_paper");
+  const paperArtifactsBelongToCurrentState =
+    writePaperCompleted
+    || writePaperStatus === "failed"
+    || writePaperStatus === "needs_approval"
+    || runStatus === "completed"
+    || (!writePaperStatus && await fileExists(path.join(runDir, "paper", "main.tex")));
   const mainTexPath = path.join(runDir, "paper", "main.tex");
   const mainTexPresent = await fileExists(mainTexPath);
   if (validationScope === "live_fixture") {
@@ -215,7 +222,7 @@ export async function validateRunArtifactStructure(
       runId,
       issues
     });
-  } else if (writePaperCompleted || mainTexPresent || runStatus === "completed") {
+  } else if (paperArtifactsBelongToCurrentState) {
     checked.add("paper_artifacts");
     await requireNonEmptyText({
       filePath: mainTexPath,
@@ -394,8 +401,14 @@ export async function validateRunArtifactStructure(
   }
 
   const analyzeResultsCompleted = isNodeCompleted(nodeStates, "analyze_results");
+  const analyzeResultsStatus = nodeStatus(nodeStates, "analyze_results");
   const resultAnalysisPresent = await fileExists(resultAnalysisPath);
-  if (analyzeResultsCompleted || resultAnalysisPresent) {
+  const resultAnalysisBelongsToCurrentState =
+    analyzeResultsCompleted
+    || analyzeResultsStatus === "failed"
+    || analyzeResultsStatus === "needs_approval"
+    || (!analyzeResultsStatus && resultAnalysisPresent);
+  if (resultAnalysisBelongsToCurrentState) {
     checked.add("analyze_results");
     const resultAnalysis = await requireJsonObject({
       filePath: resultAnalysisPath,
@@ -443,6 +456,7 @@ export async function validateRunArtifactStructure(
     runDir,
     mainTexPresent,
     writePaperCompleted,
+    paperArtifactsBelongToCurrentState,
     issues
   });
 
@@ -540,6 +554,14 @@ function isNodeCompleted(
   node: GraphNodeId
 ): boolean {
   return nodeStates?.[node]?.status === "completed";
+}
+
+function nodeStatus(
+  nodeStates: RunArtifactValidationInput["nodeStates"],
+  node: GraphNodeId
+): string | undefined {
+  const status = nodeStates?.[node]?.status;
+  return typeof status === "string" ? status : undefined;
 }
 
 function hasRunProgress(
@@ -1549,6 +1571,7 @@ function validateRunStatusConsistency(input: {
   runDir: string;
   mainTexPresent: boolean;
   writePaperCompleted: boolean;
+  paperArtifactsBelongToCurrentState: boolean;
   issues: HarnessValidationIssue[];
 }): void {
   if (input.runStatus === "completed" && !input.mainTexPresent) {
@@ -1560,7 +1583,12 @@ function validateRunStatusConsistency(input: {
     });
   }
 
-  if (input.mainTexPresent && !input.writePaperCompleted && input.runStatus !== "completed") {
+  if (
+    input.paperArtifactsBelongToCurrentState
+    && input.mainTexPresent
+    && !input.writePaperCompleted
+    && input.runStatus !== "completed"
+  ) {
     input.issues.push({
       code: "status_artifact_mismatch_write_paper_state",
       message:

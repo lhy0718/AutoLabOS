@@ -15,6 +15,39 @@ Path placeholders:
 
 ---
 
+## Issue: LV-496
+
+- Status: reproduced from live `/doctor` harness validation on 2026-07-01; source fix implemented; focused test, build, and same-flow `/doctor` revalidation passed.
+- Validation target: `/doctor` harness validation should not treat downstream paper/result artifacts left behind after a rollback as current blockers when the active run has backtracked before `analyze_results` or `write_paper`.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, paused at `generate_hypotheses` after rollback from `design_experiments`.
+
+- Reproduction steps:
+  1. Run `AUTOLABOS_P6_WORKSPACE=<validation-workspace> AUTOLABOS_P6_RUN_ID=3bc89107-909f-4315-9340-d75ce02eb0e0 npm run p6:resume-check` after LV-495 helper repair.
+  2. Observe `/doctor` complete and report harness-validation findings from old `paper/main.tex`, `paper/evidence_links.json`, and `result_analysis.json` even though `write_paper` and `analyze_results` are pending after rollback.
+  3. Inspect `run_record.json` and confirm the active node is `generate_hypotheses`, not a terminal paper node.
+
+- Expected behavior: Harness validation should validate downstream artifacts only when their owning node has reached a terminal/current state, or when no node-state information is available. Stale downstream projections should not block an upstream rerun after rollback.
+- Actual behavior: `main.tex` and `result_analysis.json` presence alone enabled deep paper/result validation and produced current blockers from stale downstream artifacts.
+- Fresh vs existing session comparison:
+  - Fresh session: covered by deterministic harness regression with a synthetic backtracked run.
+  - Existing session: reproduced and then revalidated in the persisted validation workspace.
+  - Divergence: no fresh/existing behavior divergence after the fix; both now treat pending downstream artifacts as stale for current harness validation.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: artifact-presence heuristics were stronger than node-state ownership, so stale downstream files survived rollback and were interpreted as current paper/result evidence.
+
+- Code/test changes:
+  - Code: `<repo-root>/src/core/validation/harnessValidators.ts` gates result and paper artifact validation on terminal/current node status instead of artifact presence alone.
+  - Tests: `<repo-root>/tests/harnessValidationService.test.ts` covers backtracked stale paper/result artifacts and verifies terminal `write_paper` artifacts are still validated.
+
+- Regression status:
+  - Automated regression test linked: yes, `npm test -- tests/harnessValidationService.test.ts`.
+  - Re-validation result: pass. `npm run p6:resume-check` now reports `PASS: P6 resumed session and /doctor completed` for the existing validation workspace.
+
+- Follow-up risks: the run itself is still paused before rerunning `generate_hypotheses`; this fix only clears stale downstream harness blockers so the governed flow can resume.
+- Evidence/artifacts: `outputs/p6-preflight/p6-resume-check-output.txt` and `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`.
+
 ## Issue: LV-495
 
 - Status: reproduced from live validation helper execution on 2026-07-01; helper pattern fix implemented and same-flow revalidation reached the real harness-validation boundary.
@@ -45,7 +78,7 @@ Path placeholders:
   - Automated regression test linked: yes, `npm test -- tests/p6ContinueScript.test.ts`.
   - Re-validation result: partial pass. `npm run p6:resume-check` no longer times out on the stale readiness pattern; it reaches `/doctor` and fails on the actual `harness-validation` findings for the current stale paper artifacts.
 
-- Follow-up risks: the run still has real harness-validation findings from stale downstream paper artifacts and remains paused before `generate_hypotheses`; those are separate governed-flow blockers and should not be reported as fixed by this helper repair.
+- Follow-up risks: LV-496 cleared the stale downstream artifact harness blocker; the run remains paused before `generate_hypotheses` and still needs same-flow rerun through AutoLabOS.
 - Evidence/artifacts: `outputs/p6-preflight/p6-resume-check-output.txt` and `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`.
 
 ---

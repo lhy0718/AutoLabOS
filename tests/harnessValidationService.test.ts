@@ -202,6 +202,62 @@ describe("harnessValidationService", () => {
     expect(report.findings.some((f) => f.code === "issues_file_missing")).toBe(false);
   });
 
+
+  it("ignores stale downstream paper artifacts after backtracking before write_paper", async () => {
+    const workspace = createTempWorkspace("autolabos-harness-stale-paper-backtrack-");
+    await writeFile(path.join(workspace, "ISSUES.md"), "## Active issues\nnone\n", "utf8");
+
+    const run = makeBacktrackedPaperRunRecord("backtracked-paper-run", "pending");
+    const runsDir = path.join(workspace, ".autolabos", "runs");
+    const runDir = path.join(runsDir, run.id);
+    await writeJson(path.join(runsDir, "runs.json"), {
+      version: 3,
+      runs: [run]
+    });
+    await writeMinimalEvents(runDir, run.id);
+    await writeBrokenPaperArtifacts(runDir);
+    await writeResultAnalysisArtifact(runDir);
+
+    const report = await runHarnessValidation({
+      workspaceRoot: workspace,
+      includeWorkspaceRuns: true,
+      includeTestRunStores: false
+    });
+
+    const codes = new Set(report.findings.map((finding) => finding.code));
+    expect(codes).not.toContain("paper_acl_bibliography_style_file_missing");
+    expect(codes).not.toContain("paper_claim_source_path_missing");
+    expect(codes).not.toContain("analyze_results_objective_evaluation_missing");
+    expect(codes).not.toContain("status_artifact_mismatch_write_paper_state");
+  });
+
+  it("still validates paper artifacts after write_paper has reached a terminal state", async () => {
+    const workspace = createTempWorkspace("autolabos-harness-current-paper-");
+    await writeFile(path.join(workspace, "ISSUES.md"), "## Active issues\nnone\n", "utf8");
+
+    const run = makeBacktrackedPaperRunRecord("current-paper-run", "completed");
+    const runsDir = path.join(workspace, ".autolabos", "runs");
+    const runDir = path.join(runsDir, run.id);
+    await writeJson(path.join(runsDir, "runs.json"), {
+      version: 3,
+      runs: [run]
+    });
+    await writeMinimalEvents(runDir, run.id);
+    await writeBrokenPaperArtifacts(runDir);
+    await writeResultAnalysisArtifact(runDir);
+
+    const report = await runHarnessValidation({
+      workspaceRoot: workspace,
+      includeWorkspaceRuns: true,
+      includeTestRunStores: false
+    });
+
+    const codes = new Set(report.findings.map((finding) => finding.code));
+    expect(codes).toContain("paper_acl_bibliography_style_file_missing");
+    expect(codes).toContain("paper_claim_source_path_missing");
+    expect(codes).toContain("analyze_results_objective_evaluation_missing");
+  });
+
   it("reports long-run resume drift across runs.json, run_record, and checkpoints", async () => {
     const workspace = createTempWorkspace("autolabos-harness-long-run-resume-");
     await writeFile(path.join(workspace, "ISSUES.md"), "## Active issues\nnone\n", "utf8");
@@ -275,6 +331,101 @@ function createTempWorkspace(prefix: string): string {
 async function writeJson(filePath: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function makeBacktrackedPaperRunRecord(id: string, writePaperStatus: "pending" | "completed"): RunRecord {
+  const graph = createDefaultGraphState();
+  graph.currentNode = writePaperStatus === "completed" ? "write_paper" : "generate_hypotheses";
+  graph.nodeStates.collect_papers = {
+    status: "completed",
+    updatedAt: "2026-07-01T00:00:00.000Z"
+  };
+  graph.nodeStates.analyze_papers = {
+    status: "completed",
+    updatedAt: "2026-07-01T00:01:00.000Z"
+  };
+  graph.nodeStates.generate_hypotheses = {
+    status: writePaperStatus === "completed" ? "completed" : "pending",
+    updatedAt: "2026-07-01T00:02:00.000Z"
+  };
+  graph.nodeStates.analyze_results = {
+    status: writePaperStatus === "completed" ? "completed" : "pending",
+    updatedAt: "2026-07-01T00:02:30.000Z"
+  };
+  graph.nodeStates.write_paper = {
+    status: writePaperStatus,
+    updatedAt: "2026-07-01T00:03:00.000Z"
+  };
+  return {
+    version: 3,
+    workflowVersion: 3,
+    id,
+    title: "Backtracked Paper Run",
+    topic: "Backtracked paper artifact validation",
+    constraints: [],
+    objectiveMetric: "harness correctness",
+    status: writePaperStatus === "completed" ? "completed" : "paused",
+    currentNode: graph.currentNode,
+    latestSummary: "Backtracked before paper regeneration.",
+    nodeThreads: {},
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:03:00.000Z",
+    graph,
+    memoryRefs: {
+      runContextPath: `.autolabos/runs/${id}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${id}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${id}/memory/episodes.jsonl`
+    }
+  };
+}
+
+async function writeMinimalEvents(runDir: string, runId: string): Promise<void> {
+  await mkdir(runDir, { recursive: true });
+  await writeFile(
+    path.join(runDir, "events.jsonl"),
+    `${JSON.stringify({
+      id: `evt-${runId}`,
+      type: "NODE_COMPLETED",
+      timestamp: "2026-07-01T00:01:00.000Z",
+      runId,
+      node: "collect_papers",
+      payload: {}
+    })}\n`,
+    "utf8"
+  );
+}
+
+async function writeResultAnalysisArtifact(runDir: string): Promise<void> {
+  await writeJson(path.join(runDir, "result_analysis.json"), {
+    summary: "Stale or current result analysis projection.",
+    experiment_portfolio: null
+  });
+}
+
+async function writeBrokenPaperArtifacts(runDir: string): Promise<void> {
+  const paperDir = path.join(runDir, "paper");
+  await mkdir(paperDir, { recursive: true });
+  await writeFile(
+    path.join(paperDir, "main.tex"),
+    "\\documentclass{article}\n\\usepackage[review]{ACL2023}\n\\begin{document}\nClaim~\\cite{paper_a,paper_b}.\n\\bibliographystyle{acl_natbib}\n\\bibliography{references}\n\\end{document}\n",
+    "utf8"
+  );
+  await writeFile(
+    path.join(paperDir, "references.bib"),
+    "@article{paper_a,title={A},author={A},year={2026}}\n@article{paper_b,title={B},author={B},year={2026}}\n",
+    "utf8"
+  );
+  await writeJson(path.join(paperDir, "evidence_links.json"), {
+    claims: [
+      {
+        claim_id: "c1",
+        statement: "A grounded claim.",
+        evidence_ids: ["latest_results.json"],
+        citation_paper_ids: ["paper_a"],
+        source_artifacts: ["latest_results.json"]
+      }
+    ]
+  });
 }
 
 function makeRunRecord(id: string, checkpointSeq: number): RunRecord {
