@@ -268,6 +268,13 @@ interface ExecutionObservation {
   log_file?: string;
 }
 
+interface AnalysisEvidenceScope {
+  max_seed_count?: number;
+  max_ci_sample_size?: number;
+  has_condition_correct_totals: boolean;
+  has_task_correct_totals: boolean;
+}
+
 interface BuildAnalysisReportArgs {
   run: Pick<RunRecord, "objectiveMetric">;
   metrics: Record<string, unknown>;
@@ -299,7 +306,7 @@ const DEFAULT_FIGURE_PATH = "figures/performance.svg";
 export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisReport {
   const metricTable = sortMetricTable(flattenNumericMetrics(args.metrics), args.objectiveEvaluation.matchedMetricKey);
   const meanScore = computeMeanScore(args.metrics);
-  const planContext = parseExperimentPlan(args.experimentPlanRaw || "");
+  const rawPlanContext = parseExperimentPlan(args.experimentPlanRaw || "");
   const executionSummary = summarizeObservations(args.observationsRaw || "");
   const conditionComparisons = buildConditionComparisons(
     args.metrics,
@@ -310,16 +317,15 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     objectiveEvaluation: args.objectiveEvaluation,
     metricTable,
     executionSummary,
-    planContext,
+    planContext: rawPlanContext,
     inputWarnings: args.inputWarnings || [],
     verifierFeedback: args.runVerifierReport,
     supplementalRuns: args.supplementalMetrics || [],
     supplementalExpectation: args.supplementalExpectation
   });
-  const limitations = buildLimitations(planContext, warnings);
   const topMetric = metricTable[0];
   const verifierFeedback = normalizeVerifierFeedback(args.runVerifierReport);
-  const experimentPortfolio = buildExperimentPortfolioSummary(
+  const rawExperimentPortfolio = buildExperimentPortfolioSummary(
     args.experimentPortfolio || args.runManifest?.portfolio,
     args.runManifest
   );
@@ -343,6 +349,10 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     supplementalMetrics: args.supplementalMetrics || [],
     supplementalExpectation: args.supplementalExpectation
   });
+  const evidenceScope = buildAnalysisEvidenceScope(args.metrics, statisticalSummary);
+  const planContext = groundPlanContextToAnalysisEvidence(rawPlanContext, evidenceScope);
+  const experimentPortfolio = groundExperimentPortfolioToAnalysisEvidence(rawExperimentPortfolio, evidenceScope);
+  const limitations = buildLimitations(planContext, warnings, evidenceScope);
   const executionRuns =
     typeof experimentPortfolio?.executed_trials === "number"
       ? experimentPortfolio.executed_trials
@@ -357,6 +367,7 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     verifierFeedback,
     supplementalRuns,
     statisticalSummary,
+    evidenceScope,
     supplementalExpectation: args.supplementalExpectation
   });
   const figureSpecs = buildFigureSpecs(
@@ -756,7 +767,11 @@ function isBenignExecutionStderr(excerpt: string): boolean {
   return benignSignals.some((signal) => normalized.includes(signal));
 }
 
-function buildLimitations(planContext: AnalysisPlanContext, warnings: string[]): string[] {
+function buildLimitations(
+  planContext: AnalysisPlanContext,
+  warnings: string[],
+  evidenceScope: AnalysisEvidenceScope
+): string[] {
   const designRisks = planContext.selected_design?.risks || [];
   const resourceNotes = planContext.selected_design?.resource_notes || [];
   return uniqueStrings([
@@ -764,7 +779,188 @@ function buildLimitations(planContext: AnalysisPlanContext, warnings: string[]):
     ...resourceNotes,
     ...planContext.assumptions,
     ...warnings
-  ]).slice(0, 6);
+  ])
+    .filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope))
+    .slice(0, 6);
+}
+
+function groundPlanContextToAnalysisEvidence(
+  planContext: AnalysisPlanContext,
+  evidenceScope: AnalysisEvidenceScope
+): AnalysisPlanContext {
+  const selectedDesign = planContext.selected_design;
+  return {
+    ...planContext,
+    selected_design: selectedDesign
+      ? {
+        ...selectedDesign,
+        title: selectedDesign.title && !contradictsAnalysisEvidenceScope(selectedDesign.title, evidenceScope)
+          ? selectedDesign.title
+          : undefined,
+        summary: selectedDesign.summary && !contradictsAnalysisEvidenceScope(selectedDesign.summary, evidenceScope)
+          ? selectedDesign.summary
+          : undefined,
+        implementation_notes: selectedDesign.implementation_notes.filter(
+          (item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)
+        ),
+        evaluation_steps: selectedDesign.evaluation_steps.filter(
+          (item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)
+        ),
+        risks: selectedDesign.risks.filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)),
+        resource_notes: selectedDesign.resource_notes.filter(
+          (item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)
+        )
+      }
+      : undefined,
+    shortlisted_designs: planContext.shortlisted_designs.map((design) => ({
+      ...design,
+      title: design.title && !contradictsAnalysisEvidenceScope(design.title, evidenceScope)
+        ? design.title
+        : undefined,
+      summary: design.summary && !contradictsAnalysisEvidenceScope(design.summary, evidenceScope)
+        ? design.summary
+        : undefined
+    })).filter((design) => design.id || design.title || design.summary),
+    design_notes: planContext.design_notes.filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)),
+    implementation_notes: planContext.implementation_notes.filter(
+      (item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)
+    ),
+    evaluation_notes: planContext.evaluation_notes.filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)),
+    assumptions: planContext.assumptions.filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope))
+  };
+}
+
+function groundExperimentPortfolioToAnalysisEvidence(
+  portfolio: AnalysisExperimentPortfolio | undefined,
+  evidenceScope: AnalysisEvidenceScope
+): AnalysisExperimentPortfolio | undefined {
+  if (!portfolio) {
+    return undefined;
+  }
+  return {
+    ...portfolio,
+    trial_groups: portfolio.trial_groups.map((group) => ({
+      ...group,
+      notes: group.notes.filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)),
+      summary: group.summary && !contradictsAnalysisEvidenceScope(group.summary, evidenceScope)
+        ? group.summary
+        : undefined
+    }))
+  };
+}
+
+function buildAnalysisEvidenceScope(
+  metrics: Record<string, unknown>,
+  statisticalSummary: AnalysisStatisticalSummary
+): AnalysisEvidenceScope {
+  const rows = collectConditionEvidenceRows(metrics);
+  const maxSeedCount = maxFiniteNumber(rows.flatMap((row) => collectConditionSeedCounts(row)));
+  const maxCiSampleSize = maxFiniteNumber([
+    ...statisticalSummary.confidence_intervals.map((item) => item.sample_size),
+    ...rows.flatMap((row) => collectConditionSampleSizes(row))
+  ]);
+
+  return {
+    max_seed_count: maxSeedCount,
+    max_ci_sample_size: maxCiSampleSize,
+    has_condition_correct_totals: rows.some((row) => hasCorrectTotalPair(row)),
+    has_task_correct_totals: rows.some((row) => hasNestedTaskCorrectTotals(row))
+  };
+}
+
+function collectConditionEvidenceRows(metrics: Record<string, unknown>): Record<string, unknown>[] {
+  const conditionRows = [
+    ...conditionPredictionRows(metrics, "condition_results"),
+    ...conditionPredictionRows(metrics, "conditions")
+  ].map((item) => item.row);
+  const summariesRaw = metrics.condition_summaries;
+  const summaryRows = Array.isArray(summariesRaw)
+    ? summariesRaw.map((item) => asRecord(item))
+    : Object.entries(asRecord(summariesRaw)).map(([name, value]) => ({ name, ...asRecord(value) }));
+  return [...conditionRows, ...summaryRows].filter((row) => Object.keys(row).length > 0);
+}
+
+function collectConditionSeedCounts(row: Record<string, unknown>): number[] {
+  const directCounts = [
+    asNumber(row.seed_count),
+    asNumber(row.completed_seed_count),
+    asNumber(row.planned_seed_count)
+  ];
+  const seeds = asArray(row.seeds).filter((item) => typeof item === "string" || typeof item === "number");
+  const predictionSeeds = new Set(
+    asArray(row.predictions)
+      .map((item) => asRecord(item).seed ?? asRecord(item).seed_id)
+      .filter((item) => typeof item === "string" || typeof item === "number")
+  );
+  return [
+    ...directCounts,
+    seeds.length > 0 ? seeds.length : undefined,
+    predictionSeeds.size > 0 ? predictionSeeds.size : undefined
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+}
+
+function collectConditionSampleSizes(row: Record<string, unknown>): number[] {
+  const directSizes = [asNumber(row.sample_size), asNumber(row.total_count), asNumber(row.total)];
+  const predictions = asArray(row.predictions);
+  const confidenceInterval = asRecord(row.confidence_interval);
+  const nestedSizes = Object.values(asRecord(row.evaluation)).flatMap((value) => {
+    const record = asRecord(value);
+    const interval = asRecord(record.confidence_interval);
+    return [asNumber(record.sample_size), asNumber(record.total_count), asNumber(record.total), asNumber(interval.sample_size)];
+  });
+  return [
+    ...directSizes,
+    predictions.length > 0 ? predictions.length : undefined,
+    asNumber(confidenceInterval.sample_size),
+    ...nestedSizes
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+}
+
+function hasCorrectTotalPair(row: Record<string, unknown>): boolean {
+  const correct = asNumber(row.correct_count) ?? asNumber(row.correct);
+  const total = asNumber(row.total_count) ?? asNumber(row.total);
+  return typeof correct === "number" && typeof total === "number";
+}
+
+function hasNestedTaskCorrectTotals(row: Record<string, unknown>): boolean {
+  return Object.values(asRecord(row.evaluation)).some((value) => hasCorrectTotalPair(asRecord(value)));
+}
+
+function contradictsAnalysisEvidenceScope(text: string, scope: AnalysisEvidenceScope): boolean {
+  const normalized = text.toLowerCase();
+  if (
+    (scope.max_seed_count ?? 0) > 1 &&
+    /\b(?:single[- ]seed|one[- ]seed|only\s+(?:one|1)\s+seed|seed[- ]?\d+\b|seed\s*=\s*\d+\s+only|full\s+grid[\s\S]{0,80}only[\s\S]{0,40}seed|expected\s+training\s+workload[\s\S]{0,160}\bat\s+seed\s*\d+|train\s+\d+\s+(?:primary\s+)?(?:factorial\s+)?cells?\s+at\s+seed\s*\d+|baseline[- ]replicate[\s\S]{0,100}\bseeds?|seed[- ]\d+\s+deltas?)\b/u.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+  if (
+    (scope.max_seed_count ?? 0) >= 3 &&
+    /\b(?:requires?\s+at\s+least\s+3\s+(?:completed\s+)?seeds?|paper[- ]scale\s+floor\s+not\s+met[\s\S]{0,120}3\s+(?:completed\s+)?seeds?)\b/u.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+  if ((scope.max_ci_sample_size ?? 0) > 6 && /\b(?:n\s*=\s*6|6\s+prediction)s?\b/u.test(normalized)) {
+    return true;
+  }
+  if (
+    scope.has_condition_correct_totals &&
+    /\b(?:missing|not provided|lack(?:ing)?|unavailable|without)\b[\s\S]{0,120}\b(?:raw|correct|total|denominator|count)s?\b/u.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function maxFiniteNumber(values: Array<number | undefined>): number | undefined {
+  const numbers = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return numbers.length > 0 ? Math.max(...numbers) : undefined;
 }
 
 function buildPrimaryFindings(args: {
@@ -1237,6 +1433,7 @@ function buildFailureTaxonomy(args: {
   verifierFeedback?: AnalysisVerifierFeedback;
   supplementalRuns: AnalysisSupplementalRun[];
   statisticalSummary: AnalysisStatisticalSummary;
+  evidenceScope: AnalysisEvidenceScope;
   supplementalExpectation?: {
     applicable: boolean;
     profiles: string[];
@@ -1310,10 +1507,11 @@ function buildFailureTaxonomy(args: {
     });
   }
 
-  const scopeRisk =
-    args.planContext.selected_design?.risks[0] ||
-    args.planContext.selected_design?.resource_notes[0] ||
-    args.planContext.assumptions[0];
+  const scopeRisk = [
+    ...(args.planContext.selected_design?.risks || []),
+    ...(args.planContext.selected_design?.resource_notes || []),
+    ...args.planContext.assumptions
+  ].find((item) => !contradictsAnalysisEvidenceScope(item, args.evidenceScope));
   if (scopeRisk) {
     categories.push({
       id: "scope_limit",

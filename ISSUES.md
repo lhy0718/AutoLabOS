@@ -15,6 +15,167 @@ Path placeholders:
 
 ---
 
+## Issue: LV-499
+
+- Status: reproduced from live `analyze_results` validation on 2026-07-01; source repair implemented; deterministic regression, adjacent analyze-results tests, public-code sanitization, build, harness validation, full test suite, diff check, and same-flow live revalidation passed.
+- Validation target: `analyze_results` should block or backtrack when the experiment contract requires runtime or memory resource metrics but the completed run exposes no numeric resource evidence.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, after `implement_experiments` and `run_experiments` completed and `analyze_results` paused at `needs_approval`.
+
+- Reproduction steps:
+  1. Continue the active run through the repaired `implement_experiments` and `run_experiments` nodes.
+  2. Inspect `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json` and `<validation-workspace>/outputs/<topic-slug>/experiment/metrics.json`.
+  3. Confirm that objective/performance metrics are present, while contracted runtime and peak-memory measurements are absent as numeric evidence.
+  4. Inspect `<validation-workspace>/.autolabos/runs/<run-id>/run_record.json` after `analyze_results`.
+
+- Expected behavior:
+  - If the contract or objective asks for runtime, wall-clock, memory, VRAM, or peak-resource metrics, `analyze_results` should require numeric evidence for those categories.
+  - Missing required resource evidence should produce an explicit evidence-gap taxonomy entry and backtrack to `implement_experiments` for runner/metrics repair.
+  - The gate should be generic and should not encode one historical model, benchmark, condition, or study name.
+
+- Actual behavior:
+  - The active run's public/run metrics contain no numeric runtime or memory resource metric keys.
+  - `analyze_results` still produced an `advance` transition toward `figure_audit` with the reason that the objective was met and no blocking runtime issue remained.
+  - This would allow `review` and `write_paper` to inherit an apparently complete result surface despite a previously identified resource-measurement blocker.
+
+- Fresh vs existing session comparison:
+  - Fresh session: pending deterministic regression with neutral fixture names.
+  - Existing session: reproduced in the persisted validation workspace by comparing the metrics artifacts with the pending transition recommendation.
+  - Divergence: no UI-only divergence observed; the defect is an analysis evidence gate gap over persisted run artifacts.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: result-table validation can omit missing contract resource rows once any primary comparison rows exist, and transition selection has no separate required-resource-evidence gate before advancing.
+
+- Code/test changes:
+  - Code: `src/core/nodes/analyzeResults.ts` now detects runtime/memory resource requirements from the objective and experiment contract, collects only finite numeric metric keys as evidence, adds an explicit `missing_required_resource_metrics` evidence-gap failure when required categories are absent, and prevents an otherwise successful `advance` recommendation from proceeding without those metrics.
+  - Tests: `tests/objectiveMetricPropagation.test.ts` adds a neutral fixture where the primary metric is met but required `runtime_seconds` and `peak_memory_mb` evidence is absent, expecting an implementation backtrack and an explicit evidence-gap taxonomy entry.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-01.
+  - Automated regression passed: `npm test -- tests/objectiveMetricPropagation.test.ts -t "required resource metrics"`.
+  - Adjacent analyze-results regression passed: `npm test -- tests/objectiveMetricPropagation.test.ts`.
+  - Public-code sanitization passed: `npm test -- tests/publicCodeSanitization.test.ts`.
+  - Build passed: `npm run build`.
+  - Harness validation passed: `npm run validate:harness`.
+  - Full test suite passed: `npm test`.
+  - Diff whitespace check passed: `git diff --check`.
+  - Targeted public one-off string search passed: no matches for the previously removed experiment-specific runner, condition, benchmark, or cached-recipe phrases in `src`, `tests`, `docs`, `.codex`, `plugins`, `README.md`, or `package.json`.
+  - Same-flow revalidation passed for the original blocker: rerunning `analyze_results` on the persisted run no longer produced an `advance -> figure_audit` transition. `result_analysis.json` now contains `missing_required_resource_metrics` with `category=evidence_gap`, `status=observed`, and the warning `Required resource metrics are missing numeric evidence for: runtime, memory.`
+  - Same-flow note: the final pending transition is currently `backtrack_to_design -> design_experiments` because the brief minimum-evidence gate is also active; the transition evidence includes the missing resource metrics finding.
+
+- Remaining risks:
+  - The fix should reject missing numeric resource evidence only when the run contract or objective explicitly requires it.
+  - Generic metric vocabulary such as accuracy, F1, BLEU, ROUGE, perplexity, runtime, latency, memory, and throughput remains allowed in public code and tests.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/outputs/<topic-slug>/experiment/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/transition_recommendation.json`
+
+---
+
+## Issue: LV-498
+
+- Status: reproduced from live `analyze_results` validation on 2026-07-01; source repair implemented; deterministic regression, focused related tests, public-code sanitization, build, harness validation, and same-flow live revalidation passed.
+- Validation target: `analyze_results` should ground plan-derived limitations, paper claims, selected-design context, and portfolio notes against the actual executed evidence before exposing them to review/write-paper prompts.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, after `run_experiments` completed 36 primary trials with repeated seeds and `analyze_results` paused at `needs_approval`.
+
+- Reproduction steps:
+  1. Continue the active run through `run_experiments` and approve into `analyze_results`.
+  2. Inspect `<validation-workspace>/.autolabos/runs/<run-id>/result_analysis.json` and `transition_recommendation.json`.
+  3. Observe that the same artifact reports 36 executed primary trials and max seed count 3, while structured analysis surfaces still promote stale plan text that frames the evidence as seed-only or only a baseline-replicate design.
+
+- Expected behavior:
+  - Evidence accounting from completed metrics should be authoritative for seed count, CI sample size, and correct/total availability.
+  - Stale plan text that contradicts the executed evidence should not be promoted into `limitations`, `failure_taxonomy`, `paper_claims`, selected-design prompt context, transition evidence, or portfolio notes.
+  - Historical plan content may remain only if it does not become a downstream claim or reviewer-facing limitation.
+
+- Actual behavior:
+  - `analyze_results` initially reported `max seed count per condition=3` and `n=144` evidence, but also surfaced stale seed-only/single-seed plan limitations in top issues, claims, selected design context, and portfolio notes.
+  - This could have caused `review` or `write_paper` to inherit a false evidence ceiling after the run had already executed repeated-condition evidence.
+
+- Fresh vs existing session comparison:
+  - Fresh session: covered by deterministic regression with neutral condition labels and repeated-condition evidence.
+  - Existing session: reproduced and then revalidated on the persisted P6 validation run by rerunning `analyze_results` through the P6 helper.
+  - Divergence: no UI-only divergence observed; the defect was in artifact projection from plan context into analysis surfaces.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: result analysis treated selected design risks, shortlisted design summaries, and portfolio notes as reusable claim material without first checking whether newer executed metrics contradicted their seed-count or evidence-scope assumptions.
+
+- Code/test changes:
+  - Code: `src/core/resultAnalysis.ts` now builds an evidence scope from condition rows, seed counts, CI sample sizes, and correct/total totals, then filters evidence-contradictory plan context, selected-design fields, portfolio notes, limitations, and scope-limit taxonomy entries.
+  - Code: `src/core/resultAnalysisSynthesis.ts` broadens the LLM synthesis evidence-accounting contradiction filter for stale one-seed/full-grid-only wording.
+  - Tests: `tests/objectiveMetricPropagation.test.ts` adds a neutral regression for repeated-condition evidence suppressing stale seed-only plan limits across `limitations`, `paper_claims`, `plan_context`, and transitions.
+
+- Regression status:
+  - Automated regression test linked: yes. `npm test -- tests/objectiveMetricPropagation.test.ts -t "stale single-seed"` passed.
+  - Adjacent regression passed: `npm test -- tests/objectiveMetricPropagation.test.ts -t "hydrates repeated latest_results"` passed.
+  - Additional validation passed: `npm test -- tests/resultAnalysisSynthesis.test.ts tests/publicCodeSanitization.test.ts`, `npm run build`, `npm run validate:harness`, and `git diff --check`.
+  - Same-flow revalidation passed: rerunning `analyze_results` with the rebuilt `dist` produced `NO_STALE_HITS` for the seed-only stale-pattern audit over `result_analysis.json`, and public analysis/transition artifact grep returned no matches.
+
+- Remaining risks:
+  - The live run is still paused at `analyze_results needs_approval`; downstream `figure_audit`, `review`, and `write_paper` must still validate the final paper surface.
+  - The remaining evidence ceiling is still bounded by small observed gains and broad uncertainty, even though the stale seed-only claim has been removed.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/result_analysis.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/transition_recommendation.json`
+  - `<validation-workspace>/outputs/<topic-slug>/analysis/result_analysis.json`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-analyze_results-output.txt`
+
+---
+
+## Issue: LV-497
+
+- Status: reproduced from live `implement_experiments` validation on 2026-07-01; source fix and deterministic regression coverage implemented; focused tests, public-code sanitization, build, harness validation, full `npm test`, and same-flow live revalidation passed.
+- Validation target: `implement_experiments` should hand off a generated Python runner with a concrete executable experiment entrypoint, not only a CLI fallback bridge that can report a missing callable at runtime.
+- Environment/session context: existing validation workspace `<validation-workspace>`, active paper-scale run after review backtracked to `implement_experiments`.
+
+- Reproduction steps:
+  1. Continue the active validation run from `implement_experiments` with the P6 helper.
+  2. Observe staged implementation generation complete and local verification start with `python3 -m py_compile <validation-workspace>/outputs/<topic-slug>/experiment/experiment.py`.
+  3. Observe repeated local verification failures reporting that the generated Python runner has no concrete executable experiment entrypoint and the CLI bridge can only emit a missing-callable failure.
+
+- Expected behavior:
+  - Generated runners should expose a concrete high-level experiment runner or a concrete per-condition worker that the bridge can call.
+  - Local handoff validation should reject fallback-only bridge surfaces before `run_experiments`.
+  - Any deterministic repair should be method-neutral and should not encode one-off model names, benchmark names, or condition labels in public source or tests.
+
+- Actual behavior:
+  - Three consecutive earlier implementation attempts reached the same missing-entrypoint verification failure.
+  - A subsequent live retry reused the existing governed bundle after deterministic runner-entrypoint repair, progressed into `run_experiments`, and completed the generated-runner execution with the objective metric met.
+  - The repaired flow reached `analyze_results`; a separate downstream stale-plan projection defect is tracked as LV-498.
+
+- Fresh vs existing session comparison:
+  - Fresh session: covered by deterministic regression using neutral generated-runner fixtures.
+  - Existing session: reproduced in the persisted validation workspace and then recovered by the live helper next retry path.
+  - Divergence: no UI-only divergence established; current evidence points to generated-runner handoff validation rather than a UI projection issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the local handoff detector recognized only a fixed set of concrete runner names while the CLI bridge can dynamically discover method-neutral generic condition-runner callables. That mismatch can falsely reject a runner surface that the bridge could execute, while still correctly rejecting fallback-only helpers.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now aligns missing-entrypoint detection with the CLI bridge generic condition-runner discovery, limited to top-level non-private functions and excluding metric/payload/loader/status-style helpers.
+  - Tests: `tests/implementSessionManager.test.ts` adds a method-neutral generic condition-runner regression and keeps adjacent entrypoint/fallback-only coverage passing.
+
+- Regression status:
+  - Automated regression test linked: yes. `npm test -- tests/implementSessionManager.test.ts -t "entrypoint bridge|condition-seed executors|fallback-only single-condition|generic condition runners|No callable experiment entrypoint"` passed.
+  - Additional validation passed: `npm test -- tests/publicCodeSanitization.test.ts`, `git diff --check`, `npm run build`, `npm run validate:harness`, and full `npm test`.
+  - Same-flow revalidation result: passed. The live helper retried `implement_experiments`, verified the generated runner, advanced into `run_experiments`, and `run_experiments` completed with `status=completed`, `success=true`, 12 condition results, 36 required runs, and `accuracy_delta_vs_baseline=0.03472222222222221`.
+
+- Remaining risks:
+  - The current run still needs downstream `figure_audit`, `review`, and paper-surface gates before this can be treated as a fully validated research workflow.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/<topic-slug>/experiment/experiment.py`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+---
+
 ## Issue: LV-496
 
 - Status: reproduced from live `/doctor` harness validation on 2026-07-01; source fix implemented; focused test, build, and same-flow `/doctor` revalidation passed.

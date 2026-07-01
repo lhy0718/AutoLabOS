@@ -320,6 +320,43 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           }
         });
       }
+      const resourceEvidenceGate = evaluateRequiredResourceEvidence({
+        summary,
+        experimentContract
+      });
+      if (resourceEvidenceGate.status === "fail") {
+        inputWarnings.push(resourceEvidenceGate.summary);
+        summary.warnings = [...summary.warnings, resourceEvidenceGate.summary];
+        summary.failure_taxonomy = [
+          ...summary.failure_taxonomy,
+          {
+            id: "missing_required_resource_metrics",
+            category: "evidence_gap",
+            severity: "high",
+            status: "observed",
+            summary: resourceEvidenceGate.summary,
+            evidence: [
+              `Required resource categories: ${resourceEvidenceGate.requiredCategories.join(", ")}.`,
+              `Observed numeric resource metric keys: ${
+                resourceEvidenceGate.observedMetricKeys.length > 0
+                  ? resourceEvidenceGate.observedMetricKeys.slice(0, 6).join(", ")
+                  : "none"
+              }.`,
+              `Missing resource categories: ${resourceEvidenceGate.missingCategories.join(", ")}.`
+            ],
+            recommended_action:
+              "Regenerate or repair the experiment runner so numeric runtime and memory metrics are persisted with the completed results."
+          }
+        ];
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_results",
+          payload: {
+            text: `Resource evidence gate: ${resourceEvidenceGate.summary}`
+          }
+        });
+      }
       const evidenceStore = await readJsonlRecords(path.join(".autolabos", "runs", run.id, "evidence_store.jsonl"));
       const riskSignals = [
         detectNaNInf(metrics),
@@ -406,9 +443,13 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         baselineRecommendation: gatedTransitionRecommendation
       });
       const transitionRecommendation = applyRiskSignalTransitionOverride(
-        applyResultsTableTransitionOverride(
-          panelResult.recommendation,
-          resultsTableValidation,
+        applyRequiredResourceEvidenceTransitionOverride(
+          applyResultsTableTransitionOverride(
+            panelResult.recommendation,
+            resultsTableValidation,
+            summary
+          ),
+          resourceEvidenceGate,
           summary
         ),
         riskSignals,
@@ -2027,6 +2068,187 @@ function applyResultsTableTransitionOverride(
       ...validation.incompleteRows.slice(0, 3).map((row) => `${row.metric}: baseline=${row.baseline ?? "null"}, comparator=${row.comparator ?? "null"}`)
     )
   });
+}
+
+type RequiredResourceCategory = "runtime" | "memory";
+
+interface RequiredResourceEvidenceGate {
+  status: "pass" | "fail";
+  requiredCategories: RequiredResourceCategory[];
+  observedMetricKeys: string[];
+  missingCategories: RequiredResourceCategory[];
+  summary: string;
+}
+
+function evaluateRequiredResourceEvidence(input: {
+  summary: AnalysisReport;
+  experimentContract?: ExperimentContract;
+}): RequiredResourceEvidenceGate {
+  const requiredCategories = detectRequiredResourceCategories(input.summary, input.experimentContract);
+  const observedMetricKeys = collectObservedNumericMetricKeys(input.summary).filter(
+    (key) => isRuntimeMetricKey(key) || isMemoryMetricKey(key)
+  );
+  const missingCategories = requiredCategories.filter((category) => {
+    if (category === "runtime") {
+      return !observedMetricKeys.some(isRuntimeMetricKey);
+    }
+    return !observedMetricKeys.some(isMemoryMetricKey);
+  });
+  return {
+    status: missingCategories.length > 0 ? "fail" : "pass",
+    requiredCategories,
+    observedMetricKeys,
+    missingCategories,
+    summary:
+      missingCategories.length > 0
+        ? `Required resource metrics are missing numeric evidence for: ${missingCategories.join(", ")}.`
+        : requiredCategories.length > 0
+          ? "Required resource metrics are present as numeric evidence."
+          : "No required resource metric category was declared."
+  };
+}
+
+function applyRequiredResourceEvidenceTransitionOverride(
+  recommendation: TransitionRecommendation,
+  gate: RequiredResourceEvidenceGate,
+  summary: AnalysisReport
+): TransitionRecommendation {
+  if (gate.status !== "fail" || recommendation.action !== "advance") {
+    return recommendation;
+  }
+  return createRecommendation({
+    action: "backtrack_to_implement",
+    targetNode: "implement_experiments",
+    reason: gate.summary,
+    confidence: 0.92,
+    autoExecutable: true,
+    evidence: collectEvidence(
+      summary,
+      gate.summary,
+      `Required resource categories: ${gate.requiredCategories.join(", ")}.`,
+      `Observed numeric resource metric keys: ${gate.observedMetricKeys.length > 0 ? gate.observedMetricKeys.slice(0, 6).join(", ") : "none"}.`
+    )
+  });
+}
+
+function detectRequiredResourceCategories(
+  summary: AnalysisReport,
+  experimentContract: ExperimentContract | undefined
+): RequiredResourceCategory[] {
+  const requestedText = [
+    summary.objective_metric.raw,
+    summary.objective_metric.profile.primary_metric,
+    summary.overview.matched_metric_key,
+    ...summary.objective_metric.profile.preferred_metric_keys,
+    ...(experimentContract?.metrics ?? []),
+    ...(experimentContract?.results_table_schema ?? []).map((row) => row.metric),
+    experimentContract?.expected_metric_effect,
+    experimentContract?.abort_condition,
+    experimentContract?.keep_or_discard_rule,
+    experimentContract?.evidence_ceiling,
+    experimentContract?.paper_ceiling
+  ]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean)
+    .join("\n");
+  const requiredCategories: RequiredResourceCategory[] = [];
+  if (requiresRuntimeEvidence(requestedText)) {
+    requiredCategories.push("runtime");
+  }
+  if (requiresMemoryEvidence(requestedText)) {
+    requiredCategories.push("memory");
+  }
+  return requiredCategories;
+}
+
+function collectObservedNumericMetricKeys(summary: AnalysisReport): string[] {
+  const keys = new Set<string>();
+  const addKey = (value: unknown) => {
+    if (typeof value === "string" && value.trim()) {
+      keys.add(value.trim());
+    }
+  };
+  for (const metric of summary.metric_table ?? []) {
+    if (asNumber(metric.value) !== undefined) {
+      addKey(metric.key);
+    }
+  }
+  for (const metric of summary.statistical_summary?.stability_metrics ?? []) {
+    if (asNumber(metric.value) !== undefined) {
+      addKey(metric.key);
+    }
+  }
+  for (const comparison of summary.condition_comparisons ?? []) {
+    for (const metric of comparison.metrics ?? []) {
+      if (
+        asNumber(metric.value) !== undefined ||
+        asNumber(metric.primary_value) !== undefined ||
+        asNumber(metric.baseline_value) !== undefined
+      ) {
+        addKey(metric.key);
+      }
+    }
+  }
+  for (const row of summary.results_table ?? []) {
+    if (asNumber(row.baseline) !== undefined || asNumber(row.comparator) !== undefined) {
+      addKey(row.metric);
+    }
+  }
+  for (const supplemental of summary.supplemental_runs ?? []) {
+    for (const metric of supplemental.metric_table ?? []) {
+      if (asNumber(metric.value) !== undefined) {
+        addKey(metric.key);
+      }
+    }
+  }
+  collectNumericMetricKeyPaths(summary.metrics, [], keys);
+  return Array.from(keys).sort((left, right) => left.localeCompare(right));
+}
+
+function collectNumericMetricKeyPaths(value: unknown, pathParts: string[], keys: Set<string>): void {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const leaf = pathParts[pathParts.length - 1];
+    if (leaf) {
+      keys.add(leaf);
+    }
+    if (pathParts.length > 1) {
+      keys.add(pathParts.join("."));
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectNumericMetricKeyPaths(item, [...pathParts, String(index)], keys));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      collectNumericMetricKeyPaths(child, [...pathParts, key], keys);
+    }
+  }
+}
+
+function requiresRuntimeEvidence(value: string): boolean {
+  return /\b(?:runtime|run[ _-]?time|wall[ _-]?(?:clock|time)|elapsed(?:[ _-]?time)?|duration|latency|time[ _-]?(?:sec|secs|seconds|ms)|seconds?)\b/iu.test(
+    normalizeMetricKeyForResourceMatching(value)
+  );
+}
+
+function requiresMemoryEvidence(value: string): boolean {
+  return /\b(?:memory|mem(?:ory)?[ _-]?(?:mb|gb|usage)?|peak[ _-]?(?:memory|mem|vram)|vram|gpu[ _-]?memory|cuda[ _-]?(?:memory|alloc|allocated|max))\b/iu.test(
+    normalizeMetricKeyForResourceMatching(value)
+  );
+}
+
+function isRuntimeMetricKey(value: string): boolean {
+  return requiresRuntimeEvidence(normalizeMetricKeyForResourceMatching(value));
+}
+
+function isMemoryMetricKey(value: string): boolean {
+  return requiresMemoryEvidence(normalizeMetricKeyForResourceMatching(value));
+}
+
+function normalizeMetricKeyForResourceMatching(value: string): string {
+  return value.replace(/[._/\\-]+/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
 function applyRiskSignalTransitionOverride(

@@ -12490,6 +12490,60 @@ function pythonSourceDefinesConcreteCallableCandidate(source: string, name: stri
   return true;
 }
 
+function pythonSourceDefinedTopLevelFunctionNames(source: string): string[] {
+  return Array.from(source.matchAll(/^def\s+([A-Za-z_]\w*)\s*\(/gmu))
+    .map((match) => match[1])
+    .filter((name): name is string => Boolean(name));
+}
+
+function pythonSourceDefinesConcreteBridgeCallableCandidate(source: string): boolean {
+  const skipTerms = [
+    "evaluate",
+    "evaluation",
+    "metric",
+    "metrics",
+    "payload",
+    "marker",
+    "status",
+    "kwargs",
+    "list",
+    "normalize",
+    "normalise",
+    "build",
+    "load",
+    "append",
+    "aggregate",
+    "summary",
+    "result",
+    "record",
+    "schema",
+    "spec",
+    "state"
+  ];
+
+  return pythonSourceDefinedTopLevelFunctionNames(source).some((name) => {
+    if (!pythonSourceDefinesConcreteCallableCandidate(source, name)) {
+      return false;
+    }
+    const lowered = name.toLowerCase();
+    if (lowered.startsWith("_")) {
+      return false;
+    }
+    if (
+      /^(?:run|execute|orchestrate)_[a-z0-9_]*(?:experiment|study|sweep|condition|workflow|suite|grid|loop|trial|plan)[a-z0-9_]*$/iu.test(name)
+    ) {
+      return true;
+    }
+    if (!lowered.includes("condition")) {
+      return false;
+    }
+    if (!/(?:run|execute|train)/u.test(lowered)) {
+      return false;
+    }
+    return !skipTerms.some((term) => lowered.includes(term));
+  });
+}
+
 function ensurePythonDataclassesFieldImport(source: string): string {
   if (!/\bfield\s*\(/u.test(source) || pythonSourceDefinesOrImportsName(source, "field")) {
     return source;
@@ -44655,7 +44709,8 @@ async function detectPythonMissingConcreteConditionWorkerSurface(
     const definedBridgeCandidates = bridgeCandidateNames.filter((name) =>
       pythonSourceDefinesConcreteCallableCandidate(source, name)
     );
-    if (definedBridgeCandidates.length === 0) {
+    const hasGenericBridgeCandidate = pythonSourceDefinesConcreteBridgeCallableCandidate(source);
+    if (definedBridgeCandidates.length === 0 && !hasGenericBridgeCandidate) {
       const bridgeIndex = source.indexOf("No callable experiment entrypoint was available");
       const bridgeLine = bridgeIndex >= 0
         ? source.slice(0, bridgeIndex).split(/\r?\n/u).length

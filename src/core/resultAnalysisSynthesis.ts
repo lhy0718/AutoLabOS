@@ -381,7 +381,7 @@ function contradictsEvidenceAccounting(text: string, accounting: EvidenceAccount
   }
   if (
     (accounting.max_seed_count ?? 0) > 1 &&
-    /\b(?:single[- ]seed|only\s+(?:one|1)\s+seed|seed\s*=\s*\d+\s+only)\b/u.test(normalized)
+    /\b(?:single[- ]seed|one[- ]seed|only\s+(?:one|1)\s+seed|seed\s*=\s*\d+\s+only|full\s+grid[\s\S]{0,80}only[\s\S]{0,40}seed)\b/u.test(normalized)
   ) {
     return true;
   }

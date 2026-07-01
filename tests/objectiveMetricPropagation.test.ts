@@ -1661,6 +1661,192 @@ describe("objective metric propagation", () => {
     expect(packet.readiness.blocking_checks).toBe(0);
   });
 
+  it("does not promote stale single-seed design limits when repeated condition evidence exists", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-evidence-scope-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-evidence-scope";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-bundle");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "selected_hypothesis_ids:",
+        '  - "h_1"',
+        "shortlisted_designs:",
+        '  - id: "plan_old_scope"',
+        '    title: "Seed-101 old scope note"',
+        '    summary: "The full grid runs only at seed 101 and should be downgraded unless later repeated-seed evidence is added."',
+        "selected_design:",
+        '  id: "plan_repeated_condition_grid"',
+        '  title: "Seed-101 repeated condition comparison"',
+        '  summary: "Compare neutral condition variants under a fixed evaluator."',
+        "  metrics:",
+        '    - "accuracy_delta_vs_baseline"',
+        "  baselines:",
+        '    - "baseline_condition"',
+        "  evaluation_steps:",
+        '    - "Run each condition with the same seed schedule."',
+        '    - "Train two additional baseline-replicate runs at seeds 102 and 103 for limited repeated-run stability measurement only."',
+        "  risks:",
+        '    - "Single-seed factorial patterns can be one-seed artifacts and cannot support paper-ready interaction claims."',
+        "  resource_notes:",
+        '    - "Paper-scale floor not met: a paper-ready factorial claim requires at least 3 completed seeds per cell."',
+        "constraints:",
+        "  assumptions:",
+        '    - "Keep claims bounded to observed local evidence."'
+      ].join("\n"),
+      "utf8"
+    );
+    await seedWritePaperInputs(runDir);
+
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          success: true,
+          accuracy_delta_vs_baseline: 0.04,
+          baseline_metric: 0.5,
+          baseline_condition_marker: "baseline_condition",
+          required_condition_count: 2,
+          required_run_count: 6,
+          condition_results: {
+            baseline_condition: {
+              condition_marker: "baseline_condition",
+              status: "completed",
+              average_accuracy: 0.5,
+              correct: 72,
+              total: 144,
+              correct_count: 72,
+              total_count: 144,
+              seed_count: 3,
+              seeds: [101, 102, 103],
+              confidence_interval: { sample_size: 144, correct_count: 72, total_count: 144 },
+              evaluation: {
+                task_alpha: { correct_count: 36, total_count: 72 },
+                task_beta: { correct_count: 36, total_count: 72 }
+              }
+            },
+            candidate_condition_a: {
+              condition_marker: "candidate_condition_a",
+              status: "completed",
+              average_accuracy: 0.54,
+              correct: 78,
+              total: 144,
+              correct_count: 78,
+              total_count: 144,
+              seed_count: 3,
+              seeds: [101, 102, 103],
+              confidence_interval: { sample_size: 144, correct_count: 78, total_count: 144 },
+              evaluation: {
+                task_alpha: { correct_count: 39, total_count: 72 },
+                task_beta: { correct_count: 39, total_count: 72 }
+              }
+            }
+          },
+          statistical_summary: {
+            confidence_intervals: [
+              {
+                metric_key: "condition_results.candidate_condition_a.average_accuracy",
+                confidence_level: 0.95,
+                lower: 0.45,
+                upper: 0.62,
+                sample_size: 144,
+                correct_count: 78,
+                total_count: 144
+              }
+            ]
+          },
+          sampling_profile: {
+            total_trials: 6,
+            executed_trials: 6,
+            cached_trials: 0
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "run_experiments_verify_report.json"),
+      JSON.stringify({ status: "pass", stage: "success", summary: "Verifier passed." }, null, 2),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new StructuredResultAnalysisLLM(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+    const analyzeResult = await analyzeNode.execute({ run, graph: run.graph });
+    expect(analyzeResult.status).toBe("success");
+
+    const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
+      limitations: string[];
+      paper_claims: Array<{ claim: string }>;
+      plan_context: {
+        shortlisted_designs: Array<{ summary?: string }>;
+        selected_design?: {
+          summary?: string;
+          risks: string[];
+          resource_notes: string[];
+        };
+      };
+      failure_taxonomy: Array<{ id: string; summary: string }>;
+      transition_recommendation?: { evidence?: string[] };
+      statistical_summary: { confidence_intervals: Array<{ sample_size?: number }> };
+    };
+    const combined = JSON.stringify({
+      limitations: analysis.limitations,
+      paper_claims: analysis.paper_claims,
+      shortlisted_designs: analysis.plan_context.shortlisted_designs,
+      selected_design: analysis.plan_context.selected_design,
+      failure_taxonomy: analysis.failure_taxonomy,
+      transition: analysis.transition_recommendation
+    });
+    expect(analysis.statistical_summary.confidence_intervals.some((item) => item.sample_size === 144)).toBe(true);
+    expect(combined).not.toMatch(/single[- ]seed|one[- ]seed|full grid[\s\S]{0,80}only[\s\S]{0,40}seed/iu);
+    expect(combined).not.toMatch(/seed[- ]?101/iu);
+    expect(combined).not.toMatch(/paper[- ]scale floor not met[\s\S]{0,120}3 completed seeds/iu);
+    expect(combined).not.toMatch(/expected training workload[\s\S]{0,160}at seed\s*\d+/iu);
+    expect(combined).not.toMatch(/baseline[- ]replicate[\s\S]{0,100}\bseeds?/iu);
+  });
+
   it("hydrates model-centric latest_results detail into analyze_results for repeated tabular runs", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-model-centric-"));
     process.chdir(root);
@@ -2092,6 +2278,132 @@ describe("objective metric propagation", () => {
 
     const transitionRaw = await readFile(path.join(runDir, "transition_recommendation.json"), "utf8");
     expect(transitionRaw).toContain('"action": "backtrack_to_implement"');
+  });
+
+  it("backtracks when required resource metrics are absent despite a met primary metric", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-missing-resource-metrics-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-missing-resource-metrics";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric:
+        "Primary metric: accuracy_delta_vs_baseline >= 0.01. Secondary metrics: runtime_seconds and peak_memory_mb."
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: runId,
+          created_at: new Date().toISOString(),
+          hypothesis: "A candidate condition should improve the primary metric while preserving resource visibility.",
+          causal_mechanism: "The candidate condition changes one controlled setting.",
+          single_change: "condition_parameter",
+          confounded: false,
+          expected_metric_effect:
+            "Compare accuracy_delta_vs_baseline while reporting runtime_seconds and peak_memory_mb.",
+          abort_condition: "Abort if runtime_seconds or peak_memory_mb is missing from completed results.",
+          keep_or_discard_rule: "Keep only if the primary metric improves and resource metrics are present.",
+          baselines: ["baseline_condition"],
+          metrics: ["accuracy_delta_vs_baseline", "runtime_seconds", "peak_memory_mb"],
+          results_table_schema: [
+            {
+              metric: "accuracy_delta_vs_baseline",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            },
+            {
+              metric: "runtime_seconds",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "lower_better"
+            },
+            {
+              metric: "peak_memory_mb",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "lower_better"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          accuracy_delta_vs_baseline: 0.04,
+          baseline_condition_marker: "baseline_condition",
+          best_condition_marker: "candidate_condition_a",
+          completed_condition_count: 2,
+          required_condition_count: 2,
+          condition_results: [
+            {
+              marker: "baseline_condition",
+              task: "benchmark_task_a",
+              status: "completed",
+              average_accuracy: 0.5,
+              accuracy_delta_vs_baseline: 0
+            },
+            {
+              marker: "candidate_condition_a",
+              task: "benchmark_task_a",
+              status: "completed",
+              average_accuracy: 0.54,
+              accuracy_delta_vs_baseline: 0.04
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new StructuredResultAnalysisLLM(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_implement",
+      targetNode: "implement_experiments"
+    });
+    expect(result.transitionRecommendation?.reason).toContain("Required resource metrics are missing");
+
+    const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
+      failure_taxonomy: Array<{ id: string; category: string }>;
+      warnings: string[];
+    };
+    expect(analysis.failure_taxonomy).toContainEqual(
+      expect.objectContaining({
+        id: "missing_required_resource_metrics",
+        category: "evidence_gap"
+      })
+    );
+    expect(analysis.warnings.join("\n")).toContain("Required resource metrics are missing numeric evidence");
   });
 
   it("infers a sole numeric metric for generic objectives before deciding the next step", async () => {

@@ -9236,6 +9236,82 @@ describe("ImplementSessionManager", () => {
     expect(report.summary).not.toContain("No callable experiment entrypoint");
   });
 
+  it("accepts generic condition runners discoverable by the CLI bridge", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-generic-condition-entrypoint-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Generic Condition Entrypoint",
+      topic: "Generic condition execution",
+      constraints: ["neutral fixture"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "generic_condition_runner.py");
+    const bridge = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
+      title: "CLI entrypoint and final handoff",
+      purpose: "Wire the ordered run plan, raw evidence persistence, final metrics writing, and process exit behavior.",
+      content_kind: "code_section"
+    });
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITIONS = [{'condition_marker': 'baseline_condition', 'seed': 1}]",
+        "REQUIRED_CONDITION_COUNT = 1",
+        "def perform_condition_training_run(condition=None, seed=None, **kwargs):",
+        "    return {'status': 'completed', 'success': True, 'condition_marker': 'baseline_condition', 'seed': seed, 'accuracy': 1.0}",
+        "",
+        bridge || "",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("pass");
+    expect(report.summary).not.toContain("No callable experiment entrypoint");
+  });
+
   it("rejects fallback-only single-condition helpers without concrete workers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-fallback-only-condition-helper-"));
     tempDirs.push(workspace);
