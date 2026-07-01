@@ -9,6 +9,9 @@ import sys
 import time
 from pathlib import Path
 
+DOCTOR_CHECK_PATTERN = r"\[(OK|ATTN|WARN|FAIL)\]\s+[A-Za-z0-9-]+:"
+DOCTOR_HARNESS_PATTERN = r"\[(OK|FAIL)\]\s+harness-validation:"
+
 
 def wait_for(fd: int, pattern: str, timeout: float, buffer_text: str) -> str:
     deadline = time.time() + timeout
@@ -37,11 +40,32 @@ def wait_for(fd: int, pattern: str, timeout: float, buffer_text: str) -> str:
     raise SystemExit(1)
 
 
+
+def run_doctor_pattern_selftest() -> int:
+    current = "+ [OK] disk-free-space: Disk space looks healthy.\nx [FAIL] harness-validation: 1 issue(s), 1 run(s) checked\n"
+    previous = "+ [OK] readiness: ok\n+ [OK] harness-validation: 0 issue(s), 0 run(s) checked\n"
+    if not re.search(DOCTOR_CHECK_PATTERN, current):
+        print("FAIL: doctor check pattern did not match current check-row output")
+        return 1
+    if not re.search(DOCTOR_HARNESS_PATTERN, current):
+        print("FAIL: doctor harness pattern did not match current harness output")
+        return 1
+    if not re.search(DOCTOR_CHECK_PATTERN, previous):
+        print("FAIL: doctor check pattern did not preserve older readiness output")
+        return 1
+    if not re.search(DOCTOR_HARNESS_PATTERN, previous):
+        print("FAIL: doctor harness pattern did not preserve older harness output")
+        return 1
+    print("PASS: p6 doctor output pattern self-test")
+    return 0
+
 def send_line(fd: int, text: str) -> None:
     os.write(fd, text.encode("utf-8") + b"\n")
 
 
 def main() -> int:
+    if os.environ.get("AUTOLABOS_P6_DOCTOR_PATTERN_SELFTEST", "") == "1":
+        return run_doctor_pattern_selftest()
     repo_root = Path(__file__).resolve().parents[1]
     default_workspace = repo_root.parent / ".autolabos-validation" / "p6-paper-ready-live"
     workspace = Path(os.environ.get("AUTOLABOS_P6_WORKSPACE", str(default_workspace))).resolve()
@@ -82,8 +106,8 @@ def main() -> int:
             buffer_text,
         )
         send_line(master_fd, "/doctor")
-        buffer_text = wait_for(master_fd, r"\[(OK|ATTN)\] readiness:", 40, buffer_text)
-        buffer_text = wait_for(master_fd, r"\[(OK|FAIL)\] harness-validation:", 40, buffer_text)
+        buffer_text = wait_for(master_fd, DOCTOR_CHECK_PATTERN, 40, buffer_text)
+        buffer_text = wait_for(master_fd, DOCTOR_HARNESS_PATTERN, 40, buffer_text)
         send_line(master_fd, "/quit")
         buffer_text = wait_for(master_fd, r"Bye", 10, buffer_text)
     finally:

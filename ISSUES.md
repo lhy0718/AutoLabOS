@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-06-16
+Last updated: 2026-07-01
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -12,6 +12,41 @@ Usage rules:
 Path placeholders:
 - `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
 - `<repo-root>` means the local AutoLabOS implementation checkout.
+
+---
+
+## Issue: LV-495
+
+- Status: reproduced from live validation helper execution on 2026-07-01; helper pattern fix implemented and same-flow revalidation reached the real harness-validation boundary.
+- Validation target: P6 live-validation helper `/doctor` automation should recognize the current TUI doctor output and fail for real harness findings, not for a stale readiness-label pattern.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, `npm run p6:resume-check` with `AUTOLABOS_P6_WORKSPACE=<validation-workspace>`.
+
+- Reproduction steps:
+  1. Run `AUTOLABOS_P6_WORKSPACE=<validation-workspace> AUTOLABOS_P6_RUN_ID=3bc89107-909f-4315-9340-d75ce02eb0e0 npm run p6:resume-check`.
+  2. Observe the helper send `/doctor` and receive current check-line output such as `+ [OK] disk-free-space`.
+  3. Observe the helper time out waiting for the older `[OK] readiness:` / `[ATTN] readiness:` label before it can classify the actual harness-validation result.
+
+- Expected behavior: P6 helper automation should treat any current doctor check line as a doctor-start boundary, then wait for `harness-validation:` and return pass/fail based on the actual doctor findings.
+- Actual behavior: The helper times out on a stale readiness pattern even though the TUI printed doctor check lines and a concrete harness-validation failure.
+- Fresh vs existing session comparison:
+  - Fresh session: not yet checked.
+  - Existing session: reproduced in the persisted validation workspace.
+  - Divergence: not yet known; this is currently an automation pattern mismatch rather than a node-output claim.
+
+- Root cause hypothesis:
+  - Type: `refresh_render_bug`
+  - Hypothesis: helper scripts still match an older aggregate readiness label while the current TUI renders doctor output as per-check status rows.
+
+- Code/test changes:
+  - Code: `<repo-root>/scripts/p6-resume-check.py`, `<repo-root>/scripts/p6-doctor-pty-smoke.py`, `<repo-root>/scripts/p6-start-live-run.py`, `<repo-root>/scripts/p6-approve-and-run-next.py` update doctor check-row matching.
+  - Tests: `<repo-root>/tests/p6ContinueScript.test.ts` adds a current doctor check-row self-test across P6 helper scripts.
+
+- Regression status:
+  - Automated regression test linked: yes, `npm test -- tests/p6ContinueScript.test.ts`.
+  - Re-validation result: partial pass. `npm run p6:resume-check` no longer times out on the stale readiness pattern; it reaches `/doctor` and fails on the actual `harness-validation` findings for the current stale paper artifacts.
+
+- Follow-up risks: the run still has real harness-validation findings from stale downstream paper artifacts and remains paused before `generate_hypotheses`; those are separate governed-flow blockers and should not be reported as fixed by this helper repair.
+- Evidence/artifacts: `outputs/p6-preflight/p6-resume-check-output.txt` and `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`.
 
 ---
 

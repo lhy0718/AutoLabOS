@@ -37,7 +37,8 @@ READY_PATTERN = (
     r"Add steering, or wait for the next (?:run or )?approval\.|"
     r"Research Brief workflow is ready)"
 )
-DOCTOR_READY_PATTERN = r"(\[(OK|ATTN)\] readiness:|runs-dir-write:|codex-research-backend-model:|workspace-config:)"
+DOCTOR_READY_PATTERN = r"(\[(OK|ATTN|WARN|FAIL)\]\s+[A-Za-z0-9-]+:|runs-dir-write:|codex-research-backend-model:|workspace-config:)"
+DOCTOR_HARNESS_PATTERN = r"\[(OK|FAIL)\]\s+harness-validation:"
 STOP_BOUNDARY_STABLE_SECONDS = 2.0
 HANDOFF_GRACE_SECONDS = 5.0
 MAX_TRANSCRIPT_CHARS = 2_000_000
@@ -1148,9 +1149,19 @@ def run_selftest() -> int:
     if extend_deadline_for_progress(now=10.0, current_deadline=20.0, base_timeout=30.0, max_wall_deadline=15.0) != 20.0:
         print("FAIL: progress extension moved a deadline beyond an already-reached wall cap")
         return 1
-    existing = "+ [OK] readiness: ok\n+ [OK] harness-validation: 0 issue(s), 0 run(s) checked\n"
-    if wait_for(-1, r"harness-validation:", 0.01, existing) != existing:
-        print("FAIL: wait_for did not match an already-buffered doctor line")
+    existing = "+ [OK] disk-free-space: Disk space looks healthy.\nx [FAIL] harness-validation: 1 issue(s), 1 run(s) checked\n"
+    if not re.search(DOCTOR_READY_PATTERN, existing):
+        print("FAIL: doctor ready pattern did not match current check-row output")
+        return 1
+    if wait_for(-1, DOCTOR_HARNESS_PATTERN, 0.01, existing) != existing:
+        print("FAIL: wait_for did not match an already-buffered doctor harness line")
+        return 1
+    previous_doctor = "+ [OK] readiness: ok\n+ [OK] harness-validation: 0 issue(s), 0 run(s) checked\n"
+    if not re.search(DOCTOR_READY_PATTERN, previous_doctor):
+        print("FAIL: doctor ready pattern did not preserve older readiness output")
+        return 1
+    if wait_for(-1, DOCTOR_HARNESS_PATTERN, 0.01, previous_doctor) != previous_doctor:
+        print("FAIL: doctor harness pattern did not preserve older harness output")
         return 1
     if "Node [a-z_]+ finished:" not in STOP_PATTERN:
         print("FAIL: stop pattern does not include expected node-finished boundary")
@@ -1353,7 +1364,7 @@ def main() -> int:
             if not force_run_active:
                 send_line(master_fd, "/doctor")
                 buffer_text = wait_for(master_fd, DOCTOR_READY_PATTERN, 60, buffer_text)
-                buffer_text = wait_for(master_fd, r"\[(OK|FAIL)\] harness-validation:", 60, buffer_text)
+                buffer_text = wait_for(master_fd, DOCTOR_HARNESS_PATTERN, 60, buffer_text)
             record_before_command = load_run_record(workspace, run_id)
             command = (
                 expand_command_override(command_override, run_id, next_node)

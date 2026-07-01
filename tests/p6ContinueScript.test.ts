@@ -23,6 +23,21 @@ describe("p6 continue helper", () => {
     expect(result.stdout).toContain("PASS: p6 continue command selection self-test");
   });
 
+
+  it("matches current doctor check rows across P6 helper scripts", async () => {
+    for (const scriptName of ["p6-resume-check.py", "p6-doctor-pty-smoke.py", "p6-start-live-run.py"]) {
+      const script = path.join(repoRoot, "scripts", scriptName);
+      const result = await execFileAsync("python3", [script], {
+        env: {
+          ...process.env,
+          AUTOLABOS_P6_DOCTOR_PATTERN_SELFTEST: "1",
+        },
+      });
+
+      expect(result.stdout).toContain("PASS: p6 doctor output pattern self-test");
+    }
+  });
+
   it("preserves the real P6 live validation workspace during test cleanup", () => {
     expect(shouldPreserveValidationRootEntry("p6-paper-ready-live")).toBe(true);
   });
