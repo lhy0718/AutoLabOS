@@ -387,7 +387,7 @@ function buildSelectionRationale(
 ): string[] {
   return uniqueStrings([
     mode === "all_blocked_fallback"
-      ? "All candidates were hard-blocked, so the panel selected the least-bad option to preserve a valid plan output."
+      ? "All candidates were hard-blocked, so the panel selected the least-bad option to preserve a reviewable blocked-plan output."
       : "The panel selected the highest-scoring non-blocked candidate.",
     score
       ? `Scores - feasibility ${score.feasibility_score}, statistics ${score.statistical_score}, ops ${score.ops_fit_score}, evidence ${score.evidence_strength_score}.`

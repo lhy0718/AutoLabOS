@@ -129,6 +129,20 @@ interface PlannedMaterializationSection {
   chunkLabel: string;
 }
 
+interface StagedLlmResumeManifest {
+  status?: string;
+  reason?: string;
+  node?: string;
+  completed_sections?: string[];
+  completed_chunk_responses?: string[];
+  incomplete_or_failed_artifacts?: string[];
+  incomplete_or_failed_artifact_count?: number;
+  next_unfinished_artifact?: string;
+  next_unfinished_section_id?: string;
+  next_unfinished_prompt?: string;
+  latest_progress_index?: number;
+}
+
 interface StructuredImplementResponse {
   summary?: string;
   run_command?: string;
@@ -178,6 +192,15 @@ interface ImplementBootstrapContract {
   checks: ImplementBootstrapCheck[];
 }
 
+interface ImplementDependencyRepairContext {
+  failure_code?: string;
+  repair_target?: string;
+  recommended_backtrack_node?: string;
+  upstream_repair_hint?: string;
+  operator_action_required?: boolean;
+  retry_directives: string[];
+}
+
 interface ParsedStructuredImplementResponse {
   value: StructuredImplementResponse;
   isStructured: boolean;
@@ -221,6 +244,7 @@ const IMPLEMENT_UNIT_SECTION_DIR = path.join("implement_experiments", "unit_sect
 const IMPLEMENT_UNIT_SKELETON_DIR = path.join("implement_experiments", "unit_skeletons");
 const IMPLEMENT_UNIT_CHUNK_PROMPT_DIR = path.join("implement_experiments", "unit_chunk_prompts");
 const IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR = path.join("implement_experiments", "unit_chunk_responses");
+const IMPLEMENT_STAGED_LLM_RESUME_MANIFEST_ARTIFACT = path.join("implement_experiments", "staged_llm_resume_manifest.json");
 const MAX_DYNAMIC_CHUNK_SUBDIVISION_DEPTH = 3;
 const NON_RESTORABLE_RUN_DIR_ENTRIES = new Set([
   "analysis_cache",
@@ -289,6 +313,7 @@ interface ImplementTaskSpec {
       summary?: string;
     };
     resolved_constraint_profile?: CachedConstraintProfile["profile"];
+    dependency_repair_context?: ImplementDependencyRepairContext;
     comparison_contract?: {
       plan_id: string;
       comparison_mode: "baseline_first_locked" | "objective_only";
@@ -872,7 +897,8 @@ export class ImplementSessionManager {
           const preflightRunnerRepair = await applyRecoverableBundleDeterministicRepairs({
             scriptPath: previousScriptPath,
             runnerFeedback: bundleRecoveryFeedback,
-            runnerFeedbackDiagnosticText
+            runnerFeedbackDiagnosticText,
+            plannedConditionContract: promptTaskSpec.context.planned_condition_contract
           });
           if (preflightRunnerRepair.repaired) {
             deterministicPreflightScriptPath = previousScriptPath;
@@ -897,7 +923,8 @@ export class ImplementSessionManager {
         scriptPath: deterministicPreflightScriptPath,
         publicDir: isolation.publicDir,
         metricsPath: isolation.metricsPath,
-        errorMessage: buildRecoverableRunnerFeedbackText(bundleRecoveryFeedback, runnerFeedbackDiagnosticText) || "completed metrics replay repair"
+        errorMessage: buildRecoverableRunnerFeedbackText(bundleRecoveryFeedback, runnerFeedbackDiagnosticText) || "completed metrics replay repair",
+        plannedConditionContract: promptTaskSpec.context.planned_condition_contract
       }) ?? await recoverStructuredResultFromPublicBundle({
         publicDir: isolation.publicDir,
         runDir: isolation.runDir,
@@ -912,7 +939,8 @@ export class ImplementSessionManager {
           commandRepairFeedback: commandRepairFeedback || deterministicBundleRepairFeedback
         }),
         runnerFeedback: bundleRecoveryFeedback,
-        runnerFeedbackDiagnosticText
+        runnerFeedbackDiagnosticText,
+        plannedConditionContract: promptTaskSpec.context.planned_condition_contract
       });
       const commandRepairRecovery =
         Boolean(recoveredBeforeTurn) &&
@@ -1129,7 +1157,8 @@ export class ImplementSessionManager {
                 commandRepairFeedback: commandRepairFeedback || deterministicBundleRepairFeedback
               }),
             runnerFeedback: bundleRecoveryFeedback,
-            runnerFeedbackDiagnosticText
+            runnerFeedbackDiagnosticText,
+            plannedConditionContract: promptTaskSpec.context.planned_condition_contract
           });
           if (!recovered) {
             if (isRetryableImplementStagedLlmMaterializationError(error) && attempt < MAX_IMPLEMENT_ATTEMPTS) {
@@ -2465,6 +2494,10 @@ export class ImplementSessionManager {
       preferBriefContract: Boolean(frozenRunBrief),
       objectiveMetric: run.objectiveMetric
     });
+    const dependencyRepairContext = deriveImplementDependencyRepairContext({
+      plan,
+      runnerFeedback
+    });
     const repoListing = await topLevelWorkspaceListing(this.deps.workspaceRoot);
     const sandboxWorkspaceRoot = toSandboxFriendlyWorkspaceRoot(this.deps.workspaceRoot);
     const sandboxRunDir = rewriteWorkspacePathsForSandbox(runDir, this.deps.workspaceRoot);
@@ -2523,6 +2556,7 @@ export class ImplementSessionManager {
           this.deps.workspaceRoot
         ),
         resolved_constraint_profile: rewriteWorkspacePathsForSandbox(cachedConstraintProfile?.profile, this.deps.workspaceRoot),
+        dependency_repair_context: dependencyRepairContext,
         comparison_contract: comparisonContract
           ? rewriteWorkspacePathsForSandbox(
               {
@@ -3201,7 +3235,35 @@ export class ImplementSessionManager {
     ) => void;
     reasoningEffort?: string;
   }): Promise<{ text: string; threadId?: string }> {
-    await clearStagedLlmAttemptArtifacts(input.runDir);
+    const stagedResumeManifest = await loadStagedLlmResumeManifest(input.runDir);
+    await clearStagedLlmAttemptArtifacts(input.runDir, { preserveResumeArtifacts: Boolean(stagedResumeManifest) });
+    if (stagedResumeManifest) {
+      input.emitImplementObservation(
+        "codex",
+        `Loaded staged_llm resume manifest with ${stagedResumeManifest.completed_sections?.length || 0} completed section(s); matching sections will be reused.`,
+        {
+          attempt: input.attempt,
+          threadId: input.threadId,
+          publicDir: input.publicDir
+        }
+      );
+      const nextUnfinishedBoundary = stagedResumeManifest.next_unfinished_section_id || stagedResumeManifest.next_unfinished_artifact;
+      if (nextUnfinishedBoundary) {
+        const incompleteCount =
+          stagedResumeManifest.incomplete_or_failed_artifact_count ??
+          stagedResumeManifest.incomplete_or_failed_artifacts?.length ??
+          0;
+        input.emitImplementObservation(
+          "codex",
+          `Next staged_llm resume boundary is ${nextUnfinishedBoundary}; ${incompleteCount} incomplete artifact(s) remain.`,
+          {
+            attempt: input.attempt,
+            threadId: input.threadId,
+            publicDir: input.publicDir
+          }
+        );
+      }
+    }
     if (!shouldDecomposeStagedImplementLlm(this.deps.config)) {
       return this.completeStagedLlmRequest({
         runDir: input.runDir,
@@ -3217,63 +3279,104 @@ export class ImplementSessionManager {
       });
     }
 
-    input.emitImplementObservation(
-      "codex",
-      "Planning staged_llm implementation scaffold before generating file contents.",
-      {
-        attempt: input.attempt,
-        threadId: input.threadId,
-        publicDir: input.publicDir
-      }
-    );
-    await ensureDir(path.dirname(path.join(input.runDir, IMPLEMENT_SCAFFOLD_PROMPT_ARTIFACT)));
-    await fs.writeFile(path.join(input.runDir, IMPLEMENT_SCAFFOLD_PROMPT_ARTIFACT), input.scaffoldPrompt, "utf8");
-    const scaffoldCompletion = await this.completeStagedLlmRequest({
-      runDir: input.runDir,
-      prompt: input.scaffoldPrompt,
-      systemPrompt: appendStagedImplementScaffoldOverrideToPrompt(input.systemPrompt),
-      timeoutMs: input.timeoutMs,
-      abortSignal: input.abortSignal,
-      attempt: input.attempt,
-      threadId: input.threadId,
-      publicDir: input.publicDir,
-      emitImplementObservation: input.emitImplementObservation,
-      reasoningEffort: input.reasoningEffort
-    });
-    await fs.writeFile(
-      path.join(input.runDir, IMPLEMENT_SCAFFOLD_RAW_RESPONSE_ARTIFACT),
-      scaffoldCompletion.text,
-      "utf8"
-    );
-    const scaffoldParsed = parseStructuredResponse(scaffoldCompletion.text);
-    let activeThreadId = scaffoldCompletion.threadId || input.threadId;
-    const bootstrapPlanningRequired = shouldRequireExplicitBootstrapPlanning(input.taskSpec, scaffoldParsed.value);
-    const bootstrapContractResult = bootstrapPlanningRequired
-      ? await this.completeStagedLlmBootstrapContract({
-          runDir: input.runDir,
-          taskSpec: input.taskSpec,
-          scaffold: scaffoldParsed.value,
-          systemPrompt: input.systemPrompt,
-          timeoutMs: input.timeoutMs,
-          abortSignal: input.abortSignal,
+    const reusableScaffoldParsed = stagedResumeManifest
+      ? await readReusableStagedScaffoldArtifact(input.runDir)
+      : undefined;
+    let scaffoldParsed: ParsedStructuredImplementResponse;
+    let activeThreadId = input.threadId;
+    if (reusableScaffoldParsed) {
+      input.emitImplementObservation(
+        "codex",
+        "Reusing staged_llm scaffold artifact from the resume manifest boundary.",
+        {
           attempt: input.attempt,
           threadId: activeThreadId,
-          publicDir: input.publicDir,
-          emitImplementObservation: input.emitImplementObservation,
-          reasoningEffort: input.reasoningEffort
-        })
-      : {
-          contract: buildDefaultImplementBootstrapContract(input.taskSpec),
+          publicDir: input.publicDir
+        }
+      );
+      scaffoldParsed = reusableScaffoldParsed;
+    } else {
+      input.emitImplementObservation(
+        "codex",
+        "Planning staged_llm implementation scaffold before generating file contents.",
+        {
+          attempt: input.attempt,
+          threadId: input.threadId,
+          publicDir: input.publicDir
+        }
+      );
+      await ensureDir(path.dirname(path.join(input.runDir, IMPLEMENT_SCAFFOLD_PROMPT_ARTIFACT)));
+      await fs.writeFile(path.join(input.runDir, IMPLEMENT_SCAFFOLD_PROMPT_ARTIFACT), input.scaffoldPrompt, "utf8");
+      const scaffoldCompletion = await this.completeStagedLlmRequest({
+        runDir: input.runDir,
+        prompt: input.scaffoldPrompt,
+        systemPrompt: appendStagedImplementScaffoldOverrideToPrompt(input.systemPrompt),
+        timeoutMs: input.timeoutMs,
+        abortSignal: input.abortSignal,
+        attempt: input.attempt,
+        threadId: input.threadId,
+        publicDir: input.publicDir,
+        emitImplementObservation: input.emitImplementObservation,
+        reasoningEffort: input.reasoningEffort
+      });
+      await fs.writeFile(
+        path.join(input.runDir, IMPLEMENT_SCAFFOLD_RAW_RESPONSE_ARTIFACT),
+        scaffoldCompletion.text,
+        "utf8"
+      );
+      scaffoldParsed = parseStructuredResponse(scaffoldCompletion.text);
+      activeThreadId = scaffoldCompletion.threadId || input.threadId;
+    }
+    const reusableBootstrapContract = stagedResumeManifest
+      ? await readReusableStagedBootstrapContract(input.runDir)
+      : undefined;
+    if (reusableBootstrapContract) {
+      input.emitImplementObservation(
+        "codex",
+        "Reusing staged_llm bootstrap contract artifact from the resume manifest boundary.",
+        {
+          attempt: input.attempt,
+          threadId: activeThreadId,
+          publicDir: input.publicDir
+        }
+      );
+    }
+    const bootstrapPlanningRequired = shouldRequireExplicitBootstrapPlanning(input.taskSpec, scaffoldParsed.value);
+    const bootstrapContractResult = reusableBootstrapContract
+      ? {
+          contract: reusableBootstrapContract,
           threadId: activeThreadId
-        };
+        }
+      : bootstrapPlanningRequired
+        ? await this.completeStagedLlmBootstrapContract({
+            runDir: input.runDir,
+            taskSpec: input.taskSpec,
+            scaffold: scaffoldParsed.value,
+            systemPrompt: input.systemPrompt,
+            timeoutMs: input.timeoutMs,
+            abortSignal: input.abortSignal,
+            attempt: input.attempt,
+            threadId: activeThreadId,
+            publicDir: input.publicDir,
+            emitImplementObservation: input.emitImplementObservation,
+            reasoningEffort: input.reasoningEffort
+          })
+        : {
+            contract: buildDefaultImplementBootstrapContract(input.taskSpec),
+            threadId: activeThreadId
+          };
     activeThreadId = bootstrapContractResult.threadId || activeThreadId;
+    const bootstrapContract = applyDependencyRepairContextToBootstrapContract(
+      bootstrapContractResult.contract,
+      input.taskSpec.context.dependency_repair_context
+    );
     await writeJsonFile(
       path.join(input.runDir, IMPLEMENT_BOOTSTRAP_CONTRACT_ARTIFACT),
-      bootstrapContractResult.contract
+      bootstrapContract
     );
     const bootstrapContractPublicPath = path.join(input.publicDir, "bootstrap_contract.json");
     await ensureDir(path.dirname(bootstrapContractPublicPath));
-    await writeJsonFile(bootstrapContractPublicPath, bootstrapContractResult.contract);
+    await writeJsonFile(bootstrapContractPublicPath, bootstrapContract);
     scaffoldParsed.value.artifacts = dedupeStrings([
       ...(scaffoldParsed.value.artifacts || []),
       path.join(input.runDir, IMPLEMENT_BOOTSTRAP_CONTRACT_ARTIFACT)
@@ -3283,7 +3386,7 @@ export class ImplementSessionManager {
       bootstrapContractPublicPath
     ]);
     const bootstrapEvaluation = await evaluateImplementBootstrapContract({
-      contract: bootstrapContractResult.contract,
+      contract: bootstrapContract,
       workspaceRoot: input.workspaceRoot
     });
     if (bootstrapEvaluation.status === "block") {
@@ -3295,11 +3398,27 @@ export class ImplementSessionManager {
       path.resolve(input.publicDir, "..", ".."),
       path.resolve(input.publicDir, "..", "..", "..")
     ]);
-    const normalizedScaffoldDecompositionPlan = normalizeDynamicDecompositionPlanAcrossRoots(
-      scaffoldParsed.value.decomposition_plan,
-      scaffoldPlanNormalizationRoots
-    );
-    const synthesizedDecompositionPlan = normalizedScaffoldDecompositionPlan
+    const reusableDecompositionPlan = stagedResumeManifest
+      ? await readReusableStagedDecompositionPlan(input.runDir, input.workspaceRoot)
+      : undefined;
+    if (reusableDecompositionPlan) {
+      input.emitImplementObservation(
+        "codex",
+        "Reusing staged_llm decomposition plan artifact from the resume manifest boundary.",
+        {
+          attempt: input.attempt,
+          threadId: activeThreadId,
+          publicDir: input.publicDir
+        }
+      );
+    }
+    const normalizedScaffoldDecompositionPlan = reusableDecompositionPlan
+      ? undefined
+      : normalizeDynamicDecompositionPlanAcrossRoots(
+        scaffoldParsed.value.decomposition_plan,
+        scaffoldPlanNormalizationRoots
+      );
+    const synthesizedDecompositionPlan = reusableDecompositionPlan || normalizedScaffoldDecompositionPlan
       ? undefined
       : synthesizeDecompositionPlanFromScaffoldAcrossRoots(scaffoldParsed.value, scaffoldPlanNormalizationRoots);
     if (synthesizedDecompositionPlan) {
@@ -3314,7 +3433,7 @@ export class ImplementSessionManager {
       );
     }
     const decompositionPlanRepair =
-      normalizedScaffoldDecompositionPlan || synthesizedDecompositionPlan
+      reusableDecompositionPlan || normalizedScaffoldDecompositionPlan || synthesizedDecompositionPlan
         ? undefined
         : await this.completeStagedLlmDecompositionPlan({
         runDir: input.runDir,
@@ -3334,6 +3453,7 @@ export class ImplementSessionManager {
       });
     activeThreadId = decompositionPlanRepair?.threadId || activeThreadId;
     const decompositionPlan =
+      reusableDecompositionPlan ||
       normalizedScaffoldDecompositionPlan ||
       synthesizedDecompositionPlan ||
       decompositionPlanRepair?.plan;
@@ -3386,22 +3506,41 @@ export class ImplementSessionManager {
     const fileEdits: StructuredImplementFileEdit[] = [];
     for (const [index, unit] of materializationUnits.entries()) {
       const filePath = unit.target_path!;
-      const materializationPlanResult = await this.completeStagedLlmMaterializationPlan({
-        runDir: input.runDir,
-        taskSpec: input.taskSpec,
-        searchLocalization: input.searchLocalization,
-        branchPlan: input.branchPlan,
-        scaffold: scaffoldParsed.value,
-        decompositionPlan: finalDecompositionPlan,
-        unit,
-        timeoutMs: input.timeoutMs,
-        abortSignal: input.abortSignal,
-        attempt: input.attempt,
-        threadId: activeThreadId,
-        publicDir: input.publicDir,
-        emitImplementObservation: input.emitImplementObservation,
-        reasoningEffort: input.reasoningEffort
-      });
+      const reusableMaterializationPlan = stagedResumeManifest
+        ? await readReusableStagedMaterializationPlan(input.runDir, unit.id)
+        : undefined;
+      if (reusableMaterializationPlan) {
+        input.emitImplementObservation(
+          "codex",
+          `Reusing staged_llm materialization plan artifact for ${unit.id} from the resume manifest boundary.`,
+          {
+            attempt: input.attempt,
+            threadId: activeThreadId,
+            publicDir: input.publicDir
+          }
+        );
+      }
+      const materializationPlanResult = reusableMaterializationPlan
+        ? {
+            plan: reusableMaterializationPlan,
+            threadId: activeThreadId
+          }
+        : await this.completeStagedLlmMaterializationPlan({
+            runDir: input.runDir,
+            taskSpec: input.taskSpec,
+            searchLocalization: input.searchLocalization,
+            branchPlan: input.branchPlan,
+            scaffold: scaffoldParsed.value,
+            decompositionPlan: finalDecompositionPlan,
+            unit,
+            timeoutMs: input.timeoutMs,
+            abortSignal: input.abortSignal,
+            attempt: input.attempt,
+            threadId: activeThreadId,
+            publicDir: input.publicDir,
+            emitImplementObservation: input.emitImplementObservation,
+            reasoningEffort: input.reasoningEffort
+          });
       const materializationPlan = materializationPlanResult.plan;
       activeThreadId = materializationPlanResult.threadId || activeThreadId;
       await ensureDir(path.join(input.runDir, IMPLEMENT_UNIT_PLAN_DIR));
@@ -3455,27 +3594,52 @@ export class ImplementSessionManager {
 
       const plannedSections: PlannedMaterializationSection[] = [];
       for (const [chunkIndex, chunk] of materializationPlan.chunks.entries()) {
+        const proactiveLocalSubdivisionPlan = buildProactiveLocalSubdivisionPlanForChunk(
+          materializationPlan,
+          chunk
+        );
+        if (proactiveLocalSubdivisionPlan) {
+          const baseId = `${sanitizeArtifactId(unit.id)}__${sanitizeArtifactId(chunk.id)}`;
+          await writeJsonFile(
+            path.join(input.runDir, IMPLEMENT_UNIT_PLAN_DIR, `${baseId}.json`),
+            proactiveLocalSubdivisionPlan
+          );
+          input.emitImplementObservation(
+            "codex",
+            `Using local proactive micro-stage subdivision for ${chunk.title} before provider materialization.`,
+            {
+              attempt: input.attempt,
+              threadId: activeThreadId,
+              publicDir: input.publicDir
+            }
+          );
+        }
         const chunkSubdivisionPlanResult =
-          shouldRequestDynamicChunkSubdivision(materializationPlan, chunk)
-            ? await this.completeStagedLlmChunkSubdivisionPlan({
-                runDir: input.runDir,
-                taskSpec: input.taskSpec,
-                searchLocalization: input.searchLocalization,
-                branchPlan: input.branchPlan,
-                scaffold: scaffoldParsed.value,
-                decompositionPlan: finalDecompositionPlan,
-                unit,
-                materializationPlan,
-                chunk,
-                timeoutMs: input.timeoutMs,
-                abortSignal: input.abortSignal,
-                attempt: input.attempt,
-                threadId: activeThreadId,
-                publicDir: input.publicDir,
-                emitImplementObservation: input.emitImplementObservation,
-                reasoningEffort: input.reasoningEffort
-              })
-            : undefined;
+          proactiveLocalSubdivisionPlan
+            ? {
+                plan: proactiveLocalSubdivisionPlan,
+                threadId: activeThreadId
+              }
+            : shouldRequestDynamicChunkSubdivision(materializationPlan, chunk)
+              ? await this.completeStagedLlmChunkSubdivisionPlan({
+                  runDir: input.runDir,
+                  taskSpec: input.taskSpec,
+                  searchLocalization: input.searchLocalization,
+                  branchPlan: input.branchPlan,
+                  scaffold: scaffoldParsed.value,
+                  decompositionPlan: finalDecompositionPlan,
+                  unit,
+                  materializationPlan,
+                  chunk,
+                  timeoutMs: input.timeoutMs,
+                  abortSignal: input.abortSignal,
+                  attempt: input.attempt,
+                  threadId: activeThreadId,
+                  publicDir: input.publicDir,
+                  emitImplementObservation: input.emitImplementObservation,
+                  reasoningEffort: input.reasoningEffort
+                })
+              : undefined;
         activeThreadId = chunkSubdivisionPlanResult?.threadId || activeThreadId;
         const executableChunks =
           chunkSubdivisionPlanResult?.plan?.chunks && chunkSubdivisionPlanResult.plan.chunks.length > 0
@@ -3528,7 +3692,76 @@ export class ImplementSessionManager {
       for (const [sectionIndex, plannedSection] of plannedSections.entries()) {
         const parentDraftKey = plannedSection.parentChunk?.id;
         const chunkDraftSoFar = parentDraftKey ? chunkDraftsByParent.get(parentDraftKey) || "" : "";
-        const chunkCompletion = await this.materializeStagedLlmChunkWithDynamicSubdivision({
+        const validateSectionContent =
+          useSectionedSkeleton && isPythonMaterializationPath(filePath)
+            ? async (sectionContent: string) => {
+                const candidateContent = applySectionContentToCanonicalSkeleton(
+                  currentFileContent,
+                  plannedSection.section.id,
+                  sectionContent,
+                  filePath
+                );
+                const candidatePath = path.join(
+                  input.runDir,
+                  IMPLEMENT_UNIT_SECTION_DIR,
+                  `${sanitizeArtifactId(unit.id)}__${sanitizeArtifactId(plannedSection.section.id)}__candidate.py`
+                );
+                await ensureDir(path.dirname(candidatePath));
+                await fs.writeFile(candidatePath, candidateContent, "utf8");
+                const syntaxObs = await this.deps.aci.runTests(
+                  `python3 -m py_compile ${JSON.stringify(candidatePath)}`,
+                  path.dirname(candidatePath),
+                  input.abortSignal
+                );
+                if (syntaxObs.status === "ok") {
+                  const uppercaseIssue = await detectPythonUndefinedUppercaseReferences(candidatePath);
+                  if (uppercaseIssue) {
+                    return uppercaseIssue;
+                  }
+                  return detectPythonMissingConcreteConditionWorkerSurface(candidatePath);
+                }
+                return trimBlock(syntaxObs.stderr || syntaxObs.stdout || "unknown py_compile failure", 800);
+              }
+            : undefined;
+        let resumedSectionContent = useSectionedSkeleton
+          ? await readResumableStagedSectionContent(input.runDir, unit.id, plannedSection.section.id, stagedResumeManifest)
+          : undefined;
+        if (resumedSectionContent !== undefined && validateSectionContent) {
+          const resumeValidationError = await validateSectionContent(resumedSectionContent);
+          if (resumeValidationError) {
+            const resumeErrorPath = path.join(
+              input.runDir,
+              IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR,
+              `${sanitizeArtifactId(unit.id)}__${sanitizeArtifactId(plannedSection.section.id)}_resume_reuse_error.txt`
+            );
+            await ensureDir(path.dirname(resumeErrorPath));
+            await fs.writeFile(resumeErrorPath, resumeValidationError, "utf8");
+            input.emitImplementObservation(
+              "codex",
+              `Discarding staged_llm resume section ${plannedSection.section.id} because it no longer passes section validation: ${trimBlock(resumeValidationError, 220)}`,
+              {
+                attempt: input.attempt,
+                threadId: activeThreadId,
+                publicDir: input.publicDir
+              }
+            );
+            resumedSectionContent = undefined;
+          }
+        }
+        if (resumedSectionContent !== undefined) {
+          input.emitImplementObservation(
+            "codex",
+            `Reusing staged_llm resume section ${plannedSection.section.id} from prior timed-out materialization.`,
+            {
+              attempt: input.attempt,
+              threadId: activeThreadId,
+              publicDir: input.publicDir
+            }
+          );
+        }
+        const chunkCompletion = resumedSectionContent !== undefined
+          ? { content: resumedSectionContent, threadId: activeThreadId }
+          : await this.materializeStagedLlmChunkWithDynamicSubdivision({
           runDir: input.runDir,
           workspaceRoot: input.workspaceRoot,
           taskSpec: input.taskSpec,
@@ -3559,33 +3792,8 @@ export class ImplementSessionManager {
           systemPrompt: input.systemPrompt,
           completedSectionIds,
           currentFileContent,
-          validateContent:
-            useSectionedSkeleton && isPythonMaterializationPath(filePath)
-              ? async (sectionContent) => {
-                  const candidateContent = applySectionContentToCanonicalSkeleton(
-                    currentFileContent,
-                    plannedSection.section.id,
-                    sectionContent,
-                    filePath
-                  );
-                  const candidatePath = path.join(
-                    input.runDir,
-                    IMPLEMENT_UNIT_SECTION_DIR,
-                    `${sanitizeArtifactId(unit.id)}__${sanitizeArtifactId(plannedSection.section.id)}__candidate.py`
-                  );
-                  await ensureDir(path.dirname(candidatePath));
-                  await fs.writeFile(candidatePath, candidateContent, "utf8");
-                  const syntaxObs = await this.deps.aci.runTests(
-                    `python3 -m py_compile ${JSON.stringify(candidatePath)}`,
-                    path.dirname(candidatePath),
-                    input.abortSignal
-                  );
-                  if (syntaxObs.status === "ok") {
-                    return detectPythonUndefinedUppercaseReferences(candidatePath);
-                  }
-                  return trimBlock(syntaxObs.stderr || syntaxObs.stdout || "unknown py_compile failure", 800);
-                }
-              : undefined
+          allowLocalEntrypointUtility: Boolean(stagedResumeManifest),
+          validateContent: validateSectionContent
         });
         activeThreadId = chunkCompletion.threadId || activeThreadId;
         const sectionContent = chunkCompletion.content;
@@ -3699,12 +3907,17 @@ export class ImplementSessionManager {
     systemPrompt: string;
     completedSectionIds: string[];
     currentFileContent: string;
+    allowLocalEntrypointUtility?: boolean;
     validateContent?: (content: string) => Promise<string | undefined>;
   }): Promise<{ content: string; threadId?: string }> {
     const chunkArtifactId = buildMaterializationChunkArtifactId(input);
+    const candidateLocalUtilityContent = buildLocalPythonUtilityChunkContent(input.unit.target_path || "", input.chunk);
     const localUtilityContent = input.chunk.include_entrypoint === true
-      ? undefined
-      : buildLocalPythonUtilityChunkContent(input.unit.target_path || "", input.chunk);
+      ? input.allowLocalEntrypointUtility === true &&
+          candidateLocalUtilityContent?.includes("_autolabos_local_runner_entrypoint_marker")
+        ? candidateLocalUtilityContent
+        : undefined
+      : candidateLocalUtilityContent;
     if (localUtilityContent) {
       input.emitImplementObservation(
         "codex",
@@ -4285,6 +4498,7 @@ export class ImplementSessionManager {
       "When Hugging Face models/tokenizers or remote datasets are needed, list them explicitly in requirements instead of assuming they are present.",
       "Use blocking_reason only for non-network blockers that would still fail even if remote assets can be fetched, such as missing local paths, unavailable binaries, or missing required Python packages.",
       "Do not add local_path requirements or path_exists checks for artifacts the implementation is expected to create in the public experiment directory, including baseline/result manifests, metrics summaries, generated scripts, result tables, or run outputs.",
+      "If dependency_repair_context is present, the contract must explicitly choose one path: prewarm the dependency, declare a concrete available substitute, or block as dependency-blocked before code generation.",
       "If no concrete non-network blocker is known, set blocking_reason to an empty string and put network/cache uncertainty in remediation instead.",
       "",
       "Compact task spec:",
@@ -9632,6 +9846,141 @@ export class ImplementSessionManager {
       }
     }
 
+    const callFirstSuccessMetricsPayloadAliasRepair =
+      await repairPythonCallFirstSuccessMetricsPayloadAliasSurface(executionScriptPath);
+    if (callFirstSuccessMetricsPayloadAliasRepair.repaired) {
+      onProgress?.(
+        callFirstSuccessMetricsPayloadAliasRepair.message ||
+          "Bridged success metrics payload builder into generic final aggregation aliases before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            callFirstSuccessMetricsPayloadAliasRepair.message ||
+            "Bridged success metrics payload builder into generic final aggregation aliases before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const entrypointPickCallableHelperAliasRepair =
+      await repairPythonEntrypointPickCallableHelperAliasSurface(executionScriptPath);
+    if (entrypointPickCallableHelperAliasRepair.repaired) {
+      onProgress?.(
+        entrypointPickCallableHelperAliasRepair.message ||
+          "Aligned _entrypoint_pick_callable helper aliases before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            entrypointPickCallableHelperAliasRepair.message ||
+            "Aligned _entrypoint_pick_callable helper aliases before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const entrypointRunOneHelperAliasRepair =
+      await repairPythonEntrypointRunOneHelperAliasSurface(executionScriptPath);
+    if (entrypointRunOneHelperAliasRepair.repaired) {
+      onProgress?.(
+        entrypointRunOneHelperAliasRepair.message ||
+          "Aligned _autolabos_entrypoint_run_one helper alias before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            entrypointRunOneHelperAliasRepair.message ||
+            "Aligned _autolabos_entrypoint_run_one helper alias before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const metricsWriterPathRepair =
       await repairPythonMetricsWriterAdapterPathSurface(executionScriptPath);
     if (metricsWriterPathRepair.repaired) {
@@ -10595,6 +10944,14 @@ export class ImplementSessionManager {
       await repairPythonEntrypointConditionDatasetInputMaterializationSurface(executionScriptPath);
     const modelLoaderDeviceInfoRepair =
       await repairPythonModelLoaderDeviceInfoAliasSurface(executionScriptPath);
+    const modelPreflightStatusNormalizationRepair =
+      await repairPythonModelPreflightStatusNormalizationSurface(executionScriptPath);
+    const runPlanItemObjectAccessRepair =
+      await repairPythonRunPlanItemObjectAccessSurface(executionScriptPath);
+    const modelExecutionAggregateAliasRepair =
+      await repairPythonModelExecutionAggregateAliasSurface(executionScriptPath);
+    const modelExecutionSingleConditionDataBundleAliasRepair =
+      await repairPythonModelExecutionSingleConditionDataBundleAliasSurface(executionScriptPath);
     const deviceHelperAliasRepair =
       await repairPythonDeviceHelperAliasSurface(executionScriptPath);
     const neftuneEmbeddingHookRepair =
@@ -10845,6 +11202,8 @@ export class ImplementSessionManager {
       await repairPythonMappingFirstRecordIndexSurface(executionScriptPath);
     const singleRunnerTrainBundleAliasRepair =
       await repairPythonEntrypointSingleRunnerTrainBundleAliasSurface(executionScriptPath);
+    const highLevelRunnerDataBundleAliasRepair =
+      await repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface(executionScriptPath);
     const singleRunnerConditionSeedExecutorBridgeRepair =
       await repairPythonEntrypointConditionSeedExecutorBridgeSurface(executionScriptPath);
     const evaluationTaskBundleAliasRepair =
@@ -10901,6 +11260,12 @@ export class ImplementSessionManager {
       await repairPythonSingleRunExecutorSignatureDispatchSurface(executionScriptPath);
     const entrypointTailInvocationRepair =
       await repairPythonEntrypointTailInvocationSurface(executionScriptPath);
+    const entrypointRuntimePlanBuilderRepair =
+      await repairPythonEntrypointRuntimePlanBuilderSurface(executionScriptPath);
+    const entrypointAggregatePayloadBuilderCandidateRepair =
+      await repairPythonEntrypointAggregatePayloadBuilderCandidateSurface(executionScriptPath);
+    const entrypointOrderedPlanDataBundleRepair =
+      await repairPythonEntrypointOrderedPlanDataBundleSurface(executionScriptPath);
     const unresolvedDataclassDefaultFactoryRepair =
       await repairPythonUnresolvedDataclassDefaultFactorySurface(executionScriptPath);
     const earlyMainGuardScheduleRepair =
@@ -10938,6 +11303,11 @@ export class ImplementSessionManager {
       safeMetricFloatRepair,
       entrypointConditionDatasetInputRepair,
       modelLoaderDeviceInfoRepair,
+      modelPreflightAliasRepair,
+      modelPreflightStatusNormalizationRepair,
+      runPlanItemObjectAccessRepair,
+      modelExecutionAggregateAliasRepair,
+      modelExecutionSingleConditionDataBundleAliasRepair,
       deviceHelperAliasRepair,
       neftuneEmbeddingHookRepair,
       supportedSignatureKwargAliasRepair,
@@ -10968,6 +11338,9 @@ export class ImplementSessionManager {
       entrypointComposableWorkflowAliasRepair,
       entrypointAtomicWriterCallOrderRepair,
       entrypointMetricsAggregationBridgeRepair,
+      entrypointRuntimePlanBuilderRepair,
+      entrypointAggregatePayloadBuilderCandidateRepair,
+      entrypointOrderedPlanDataBundleRepair,
       unresolvedDataclassDefaultFactoryRepair,
       earlyMainGuardScheduleRepair,
       autolabosCliParserBuilderAliasRepair,
@@ -11065,6 +11438,7 @@ export class ImplementSessionManager {
       runtimeNamespaceDeviceAliasesRepair,
       mappingFirstRecordIndexRepair,
         singleRunnerTrainBundleAliasRepair,
+        highLevelRunnerDataBundleAliasRepair,
         evaluationTaskBundleAliasRepair,
         multipleChoiceGoldAliasRepair,
         extractEvalExamplesAliasRepair,
@@ -12521,6 +12895,15 @@ function pythonSourceDefinesConcreteBridgeCallableCandidate(source: string): boo
     "state"
   ];
 
+  const explicitHighLevelNames = new Set([
+    "run_model_execution",
+    "execute_model_execution",
+    "orchestrate_model_execution",
+    "run_model_execution_stage",
+    "execute_model_execution_stage",
+    "orchestrate_model_execution_stage"
+  ]);
+
   return pythonSourceDefinedTopLevelFunctionNames(source).some((name) => {
     if (!pythonSourceDefinesConcreteCallableCandidate(source, name)) {
       return false;
@@ -12529,8 +12912,11 @@ function pythonSourceDefinesConcreteBridgeCallableCandidate(source: string): boo
     if (lowered.startsWith("_")) {
       return false;
     }
+    if (explicitHighLevelNames.has(lowered)) {
+      return true;
+    }
     if (
-      /^(?:run|execute|orchestrate)_[a-z0-9_]*(?:experiment|study|sweep|condition|workflow|suite|grid|loop|trial|plan)[a-z0-9_]*$/iu.test(name)
+      /^(?:run|execute|orchestrate)_[a-z0-9_]*(?:experiment|study|sweep|condition|workflow|suite|grid|loop|trial|plan|model_execution)[a-z0-9_]*$/iu.test(name)
     ) {
       return true;
     }
@@ -12599,13 +12985,51 @@ function isLikelyInsidePythonTripleQuotedString(source: string, offset: number):
 function insertPythonTopLevelHelperAfterImports(source: string, helper: string): string {
   const lines = source.split("\n");
   let offset = 0;
+  let index = 0;
   let lastImportEndOffset = 0;
   let inImportBlock = false;
   let parenDepth = 0;
   let backslashContinued = false;
 
   const lineEndLength = (index: number) => (index < lines.length - 1 ? 1 : 0);
-  for (let index = 0; index < lines.length; index += 1) {
+  const advanceLine = () => {
+    const line = lines[index] || "";
+    offset += line.length + lineEndLength(index);
+    index += 1;
+  };
+
+  if (/^#!/u.test(lines[index] ?? "")) {
+    advanceLine();
+  }
+  if (/coding[:=]\s*[-\w.]+/u.test(lines[index] ?? "")) {
+    advanceLine();
+  }
+  while (index < lines.length && /^\s*(?:#.*)?$/u.test(lines[index] ?? "")) {
+    advanceLine();
+  }
+
+  const firstMeaningfulLine = lines[index] ?? "";
+  const docstringStart = firstMeaningfulLine.match(/^\s*(?:[rRuUbBfF]+)?(["']{3})/u);
+  if (docstringStart) {
+    const delimiter = docstringStart[1] ?? "";
+    const startAt = (docstringStart.index ?? 0) + docstringStart[0].length;
+    const restOfLine = firstMeaningfulLine.slice(startAt);
+    advanceLine();
+    if (!restOfLine.includes(delimiter)) {
+      while (index < lines.length && !(lines[index] ?? "").includes(delimiter)) {
+        advanceLine();
+      }
+      if (index < lines.length) {
+        advanceLine();
+      }
+    }
+    while (index < lines.length && /^\s*(?:#.*)?$/u.test(lines[index] ?? "")) {
+      advanceLine();
+    }
+  }
+
+  const preambleEndOffset = offset;
+  for (; index < lines.length; index += 1) {
     const line = lines[index] || "";
     const trimmed = line.trim();
     const lengthWithNewline = line.length + lineEndLength(index);
@@ -12644,7 +13068,7 @@ function insertPythonTopLevelHelperAfterImports(source: string, helper: string):
   if (lastImportEndOffset > 0) {
     return `${source.slice(0, lastImportEndOffset)}${helper}${source.slice(lastImportEndOffset)}`;
   }
-  return `${helper}${source}`;
+  return `${source.slice(0, preambleEndOffset)}${helper}${source.slice(preambleEndOffset)}`;
 }
 
 function replacePythonTopLevelFunctionSource(
@@ -12897,7 +13321,123 @@ function isImplementStagedLlmOutputSizeError(error: unknown): boolean {
   return error instanceof Error && /implement_experiments staged_llm request exceeded \d+ chars before completion/.test(error.message);
 }
 
-async function clearStagedLlmAttemptArtifacts(runDir: string): Promise<void> {
+async function loadStagedLlmResumeManifest(runDir: string): Promise<StagedLlmResumeManifest | undefined> {
+  const manifestPath = path.join(runDir, IMPLEMENT_STAGED_LLM_RESUME_MANIFEST_ARTIFACT);
+  const manifestText = await safeRead(manifestPath);
+  if (!manifestText.trim()) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(manifestText) as StagedLlmResumeManifest;
+    if (parsed.status !== "resumable" || parsed.node !== "implement_experiments") {
+      return undefined;
+    }
+    return {
+      ...parsed,
+      completed_sections: Array.isArray(parsed.completed_sections) ? parsed.completed_sections : [],
+      completed_chunk_responses: Array.isArray(parsed.completed_chunk_responses) ? parsed.completed_chunk_responses : [],
+      incomplete_or_failed_artifacts: Array.isArray(parsed.incomplete_or_failed_artifacts)
+        ? parsed.incomplete_or_failed_artifacts
+        : []
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function readJsonArtifact(runDir: string, artifactPath: string): Promise<unknown | undefined> {
+  const text = await safeRead(path.join(runDir, artifactPath));
+  if (!text.trim()) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readReusableStagedScaffoldArtifact(runDir: string): Promise<ParsedStructuredImplementResponse | undefined> {
+  const parsed = await readJsonArtifact(runDir, IMPLEMENT_SCAFFOLD_ARTIFACT);
+  if (!parsed || typeof parsed !== "object") {
+    return undefined;
+  }
+  const scaffold = parseStructuredResponse(JSON.stringify(parsed));
+  const hasMaterializableTarget = Boolean(
+    scaffold.value.script_path ||
+    scaffold.value.changed_files?.length ||
+    scaffold.value.file_plan?.length ||
+    scaffold.value.decomposition_plan?.units?.length
+  );
+  return scaffold.isStructured && hasMaterializableTarget ? scaffold : undefined;
+}
+
+async function readReusableStagedBootstrapContract(runDir: string): Promise<ImplementBootstrapContract | undefined> {
+  return parseImplementBootstrapContract(await readJsonArtifact(runDir, IMPLEMENT_BOOTSTRAP_CONTRACT_ARTIFACT));
+}
+
+async function readReusableStagedDecompositionPlan(
+  runDir: string,
+  workspaceRoot: string
+): Promise<DynamicDecompositionPlan | undefined> {
+  const parsed = parseDynamicDecompositionPlan(await readJsonArtifact(runDir, IMPLEMENT_DECOMPOSITION_PLAN_ARTIFACT));
+  return normalizeDynamicDecompositionPlan(parsed, workspaceRoot);
+}
+
+async function readReusableStagedMaterializationPlan(
+  runDir: string,
+  unitId: string
+): Promise<DynamicMaterializationPlan | undefined> {
+  return parseDynamicMaterializationPlan(
+    await readJsonArtifact(
+      runDir,
+      path.join(IMPLEMENT_UNIT_PLAN_DIR, `${sanitizeArtifactId(unitId)}.json`)
+    )
+  );
+}
+
+async function readResumableStagedSectionContent(
+  runDir: string,
+  unitId: string,
+  sectionId: string,
+  manifest?: StagedLlmResumeManifest
+): Promise<string | undefined> {
+  if (!manifest || manifest.status !== "resumable") {
+    return undefined;
+  }
+  const relativeSectionPath = path.join(
+    IMPLEMENT_UNIT_SECTION_DIR.replace(/^implement_experiments[\/]/u, ""),
+    `${sanitizeArtifactId(unitId)}__${sanitizeArtifactId(sectionId)}.txt`
+  );
+  const normalizedManifestPaths = new Set((manifest.completed_sections || []).map((item) => item.replace(/\\/g, "/")));
+  if (!normalizedManifestPaths.has(relativeSectionPath.replace(/\\/g, "/"))) {
+    return undefined;
+  }
+  const sectionPath = path.join(runDir, "implement_experiments", relativeSectionPath);
+  const content = await safeRead(sectionPath);
+  return content.trim().length > 0 ? content : undefined;
+}
+
+async function clearStagedLlmAttemptArtifacts(
+  runDir: string,
+  options: { preserveResumeArtifacts?: boolean } = {}
+): Promise<void> {
+  const preservedResumeTargets = new Set(
+    options.preserveResumeArtifacts
+      ? [
+          IMPLEMENT_STAGED_LLM_RESUME_MANIFEST_ARTIFACT,
+          IMPLEMENT_SCAFFOLD_ARTIFACT,
+          IMPLEMENT_DECOMPOSITION_PLAN_ARTIFACT,
+          IMPLEMENT_BOOTSTRAP_CONTRACT_ARTIFACT,
+          IMPLEMENT_FILE_PLAN_ARTIFACT,
+          IMPLEMENT_UNIT_PLAN_DIR,
+          IMPLEMENT_UNIT_SECTION_DIR,
+          IMPLEMENT_UNIT_SKELETON_DIR,
+          IMPLEMENT_UNIT_CHUNK_PROMPT_DIR,
+          IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR
+        ]
+      : [IMPLEMENT_STAGED_LLM_RESUME_MANIFEST_ARTIFACT]
+  );
   const targets = [
     IMPLEMENT_PARTIAL_RESPONSE_ARTIFACT,
     IMPLEMENT_SCAFFOLD_ARTIFACT,
@@ -12914,7 +13454,7 @@ async function clearStagedLlmAttemptArtifacts(runDir: string): Promise<void> {
     IMPLEMENT_UNIT_SKELETON_DIR,
     IMPLEMENT_UNIT_CHUNK_PROMPT_DIR,
     IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR
-  ];
+  ].filter((target) => !preservedResumeTargets.has(target));
   await Promise.all(
     targets.map(async (target) => {
       try {
@@ -13225,6 +13765,28 @@ function shouldRequestDynamicChunkSubdivision(
   return true;
 }
 
+function buildProactiveLocalSubdivisionPlanForChunk(
+  materializationPlan: DynamicMaterializationPlan,
+  chunk: DynamicMaterializationChunk
+): DynamicMaterializationPlan | undefined {
+  if (materializationPlan.strategy !== "local_bounded_python_runner_materialization") {
+    return undefined;
+  }
+  if (isLocalMicroStageChunk(chunk)) {
+    return undefined;
+  }
+  if (!isLocalBoundedRunnerChunkThatNeedsProactiveSubdivision(chunk)) {
+    return undefined;
+  }
+  const plan = buildLocalChunkSubdivisionPlanForChunk(chunk, { forceSmallerSubdivision: true });
+  return plan.chunks.length > 1 ? plan : undefined;
+}
+
+function isLocalBoundedRunnerChunkThatNeedsProactiveSubdivision(chunk: DynamicMaterializationChunk): boolean {
+  const text = `${chunk.id} ${chunk.title}`.toLowerCase();
+  return /\b(?:runner_model_execution|single condition model execution|model execution)\b/u.test(text);
+}
+
 function isExperimentRunnerMaterializationUnit(unit: DynamicDecompositionUnit): boolean {
   const text = `${unit.target_path || ""} ${unit.title || ""} ${unit.purpose || ""}`.toLowerCase();
   return /\b(?:experiment|runner|run|study|evaluation|entrypoint|script)\b/u.test(text);
@@ -13376,10 +13938,20 @@ export function buildLocalChunkSubdivisionPlanForChunk(
   if (needsExecutionMicroStages) {
     const stageSpecs: Array<{ suffix: string; title: string; purpose: string; includeImports?: boolean; includeEntrypoint?: boolean }> = [
       {
-        suffix: "preflight",
-        title: "Preflight and ordered run-plan setup",
-        purpose: "Resolve runtime context, environment checks, model/data/task availability, and the ordered run-plan contract before executing any condition.",
+        suffix: "runtime_context",
+        title: "Runtime context constants",
+        purpose: "Define only imports, runtime constants, metrics-path resolution, and small dataclasses needed by this execution parent chunk.",
         includeImports: chunk.include_imports
+      },
+      {
+        suffix: "dependency_preflight",
+        title: "Dependency preflight checks",
+        purpose: "Implement only model/data/task availability checks and structured dependency-blocked errors; do not implement training, evaluation, aggregation, or CLI wiring here."
+      },
+      {
+        suffix: "run_plan",
+        title: "Ordered run-plan contract",
+        purpose: "Build only the ordered condition/seed run-plan contract, baseline-first ordering, and validation helpers without executing any condition."
       },
       {
         suffix: "one_run",
@@ -13477,7 +14049,7 @@ export function buildLocalChunkSubdivisionPlanForChunk(
 }
 
 function isLocalMicroStageChunk(chunk: DynamicMaterializationChunk): boolean {
-  return /_(?:preflight|one_run|raw_records|aggregation|wiring|identity|conditions|seeds|validation)$/u.test(chunk.id);
+  return /_(?:runtime_context|dependency_preflight|run_plan|preflight|one_run|raw_records|aggregation|wiring|identity|conditions|seeds|validation)$/u.test(chunk.id);
 }
 
 function buildLocalTwoPartSubdivisionPlanForChunk(chunk: DynamicMaterializationChunk): DynamicMaterializationPlan {
@@ -13579,7 +14151,7 @@ export function buildLocalPythonUtilityChunkContent(
       responsibilityText
     );
   if (isSingleConditionExecutionHelper) {
-    return buildLocalPythonSingleConditionExecutionChunkContent();
+    return undefined;
   }
   if (isEntrypointBridgeHelper) {
     return buildLocalPythonEntrypointBridgeChunkContent();
@@ -15559,12 +16131,21 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "    config_paths = _autolabos_entrypoint_get(config, 'paths', None)",
     "    metrics_path = _autolabos_entrypoint_get(args, 'metrics_path', None) or _autolabos_entrypoint_get(args_paths, 'metrics_path', None) or _autolabos_entrypoint_get(config, 'metrics_path', None) or _autolabos_entrypoint_get(config_paths, 'metrics_path', 'metrics.json')",
     "    output_dir = _autolabos_entrypoint_get(args, 'output_dir', None) or _autolabos_entrypoint_get(args, 'public_dir', None) or _autolabos_entrypoint_get(config, 'output_dir', None) or _autolabos_entrypoint_get(config, 'public_dir', None)",
-    "    high_level_names = ('run_experiment', 'execute_experiment', 'orchestrate_experiment', 'run_study', 'execute_study', 'orchestrate_study', 'run_condition_sweep', 'execute_condition_sweep', 'run_condition_grid_study', 'execute_experiment_loop', 'run_workflow', 'execute_workflow')",
+    "    high_level_names = ('run_experiment', 'execute_experiment', 'orchestrate_experiment', 'run_study', 'execute_study', 'orchestrate_study', 'run_condition_sweep', 'execute_condition_sweep', 'run_condition_grid_study', 'execute_experiment_loop', 'run_workflow', 'execute_workflow', 'run_model_execution', 'execute_model_execution', 'orchestrate_model_execution', 'run_model_execution_stage', 'execute_model_execution_stage', 'orchestrate_model_execution_stage')",
+    "    runtime_paths = None",
+    "    runtime_context = None",
+    "    loaded_data = None",
     "    for name in high_level_names:",
     "        candidate = globals().get(name)",
     "        if not callable(candidate):",
     "            continue",
-    "        result = _autolabos_entrypoint_call_compatible(candidate, args=args, argv=argv, config=config, runtime_config=config, run_config=config, contract=config, metrics_path=metrics_path, output_dir=output_dir, public_dir=output_dir)",
+    "        runtime_paths = _autolabos_entrypoint_paths(config, args, output_dir=output_dir, metrics_path=metrics_path)",
+    "        runtime_context = _autolabos_entrypoint_runtime_context(config, runtime_paths, args)",
+    "        loaded_data = _autolabos_entrypoint_loaded_data(config)",
+    "        for _autolabos_paths_alias in ('paths', 'output_paths', 'artifact_paths', 'experiment_paths', 'runtime_paths'):",
+    "            _autolabos_entrypoint_set_default(config, _autolabos_paths_alias, runtime_paths)",
+    "            _autolabos_entrypoint_set_default(args, _autolabos_paths_alias, runtime_paths)",
+    "        result = _autolabos_entrypoint_call_compatible(candidate, args=args, argv=argv, config=config, cfg=config, ctx=config, context=config, runtime_config=config, run_config=config, runner_config=config, contract=config, metrics_path=metrics_path, output_dir=output_dir, public_dir=output_dir, paths=runtime_paths, output_paths=runtime_paths, artifact_paths=runtime_paths, experiment_paths=runtime_paths, runtime_paths=runtime_paths, runtime=runtime_context, runtime_context=runtime_context, run_context=runtime_context, data_bundle=loaded_data, loaded_data=loaded_data, bundle=loaded_data, dataset_bundle=loaded_data, datasets=loaded_data, train_bundle=loaded_data, training_bundle=loaded_data, train_source=loaded_data, training_source=loaded_data, task_bundle=loaded_data, task_bundles=loaded_data, task_data=loaded_data, eval_bundle=loaded_data, evaluation_bundle=loaded_data, eval_tasks=loaded_data, evaluation_tasks=loaded_data, examples=loaded_data, rows=loaded_data, dataset=loaded_data)",
     "        if Path(metrics_path).exists():",
     "            return 0",
     "        payload = result if isinstance(result, dict) else {'status': 'completed', 'success': True, 'result': result}",
@@ -16024,6 +16605,54 @@ function buildDefaultImplementBootstrapContract(taskSpec: ImplementTaskSpec): Im
     requires_warm_cache: false,
     requirements: [],
     checks: []
+  };
+}
+
+function applyDependencyRepairContextToBootstrapContract(
+  contract: ImplementBootstrapContract,
+  context: ImplementDependencyRepairContext | undefined
+): ImplementBootstrapContract {
+  if (!context) {
+    return contract;
+  }
+  const contractText = JSON.stringify(contract).toLowerCase();
+  const mentionsDependencyRepair =
+    contractText.includes("model") ||
+    contractText.includes("tokenizer") ||
+    contractText.includes("prewarm") ||
+    contractText.includes("dependency-blocked") ||
+    contractText.includes("available substitute");
+  const remediation = dedupeStrings([
+    ...(contract.remediation || []),
+    ...context.retry_directives,
+    context.upstream_repair_hint || ""
+  ]);
+  const requirements = [...contract.requirements];
+  if (!requirements.some((item) => item.kind === "model" || item.kind === "tokenizer")) {
+    requirements.push({
+      id: "experiment_model_tokenizer_dependency",
+      kind: "model",
+      source: "other",
+      required_for: ["experiment_execution"],
+      availability: "unknown",
+      summary: "Model/tokenizer dependency must be prewarmed, substituted with an available local dependency, or marked dependency-blocked.",
+      remediation: context.upstream_repair_hint || context.retry_directives[0]
+    });
+  }
+  const blockingReason = contract.blocking_reason || (
+    context.operator_action_required && !mentionsDependencyRepair
+      ? "Experiment dependency repair remains unresolved: prewarm the required model/tokenizer asset, choose a concrete available substitute, or mark the run dependency-blocked before code generation."
+      : undefined
+  );
+  return {
+    ...contract,
+    strategy: contract.strategy || "dependency_repair_aware",
+    summary: contract.summary || "Dependency repair context must be resolved before implementation can be trusted.",
+    requires_network: contract.requires_network || context.repair_target === "environment_dependency",
+    requires_warm_cache: contract.requires_warm_cache || context.failure_code === "model_dependency_unavailable",
+    blocking_reason: blockingReason,
+    remediation,
+    requirements
   };
 }
 
@@ -16607,6 +17236,68 @@ function trimBlock(text: string, limit: number): string {
   return `${trimmed.slice(0, limit)}\n...<truncated>`;
 }
 
+function deriveImplementDependencyRepairContext(input: {
+  plan?: string;
+  runnerFeedback?: RunVerifierReport;
+}): ImplementDependencyRepairContext | undefined {
+  const text = [input.plan || "", JSON.stringify(input.runnerFeedback || {})].join("\n");
+  const failureCode = extractYamlScalar(text, "run_verifier_failure_code") || input.runnerFeedback?.failure_code;
+  const repairTarget = extractYamlScalar(text, "run_verifier_repair_target") || input.runnerFeedback?.repair_target;
+  if (failureCode !== "model_dependency_unavailable" && repairTarget !== "environment_dependency") {
+    return undefined;
+  }
+  const directives = extractDependencyRepairDirectives(text);
+  return {
+    failure_code: failureCode,
+    repair_target: repairTarget,
+    recommended_backtrack_node:
+      extractYamlScalar(text, "run_verifier_recommended_backtrack_node") || input.runnerFeedback?.recommended_backtrack_node,
+    upstream_repair_hint:
+      extractYamlScalar(text, "run_verifier_upstream_repair_hint") || input.runnerFeedback?.upstream_repair_hint,
+    operator_action_required:
+      extractYamlBoolean(text, "run_verifier_operator_action_required") ?? input.runnerFeedback?.operator_action_required,
+    retry_directives: directives.length > 0
+      ? directives
+      : [
+          "Do not repeat a design that depends on an unavailable model/tokenizer asset; select an explicitly available local dependency or mark the run dependency-blocked before implementation."
+        ]
+  };
+}
+
+function extractDependencyRepairDirectives(text: string): string[] {
+  return dedupeStrings(
+    text
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => /^[-*]\s+/u.test(line))
+      .map((line) => line.replace(/^[-*]\s*/, "").replace(/^['"]|['"]$/gu, ""))
+      .filter((line) =>
+        /(?:unavailable model\/tokenizer|dependency repair|dependency-blocked|prewarm|available local dependency|known available substitute)/iu.test(line)
+      )
+      .map((line) => trimBlock(line, 320))
+  ).slice(0, 6);
+}
+
+function extractYamlScalar(text: string, key: string): string | undefined {
+  const prefix = key + ":";
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(prefix)) {
+      continue;
+    }
+    const raw = trimmed.slice(prefix.length).trim().replace(/,$/u, "");
+    return raw.replace(/^['"]|['"]$/gu, "").trim() || undefined;
+  }
+  return undefined;
+}
+
+function extractYamlBoolean(text: string, key: string): boolean | undefined {
+  const value = extractYamlScalar(text, key)?.toLowerCase();
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
+
 function derivePlannedConditionContract(input: {
   plan?: string;
   brief?: string;
@@ -16675,6 +17366,7 @@ function derivePlannedConditionContract(input: {
   addMarkerIf(text, markers, "prompt_tuning", /\bprompt[-\s]?tuning\b/iu);
 
   const repeatedRunContract = parseRepeatedSeedRunContract(text);
+  const explicitTrainingRunCount = parseExplicitTrainingRunCount(text);
   const seedSchedule = extractSeedSchedule(text);
   const evaluationContract = parseFullEvaluationContract(text);
   const baselineConditionMarker =
@@ -16692,11 +17384,24 @@ function derivePlannedConditionContract(input: {
         : conditionParameterMarkers.length > 0
           ? conditionParameterMarkers
           : undefined;
+  const conditionParameterMarkerCount =
+    exactConditionParameterMarkers && exactConditionParameterMarkers.length >= 2
+      ? exactConditionParameterMarkers.length
+      : undefined;
+  const explicitRunTotalMatchesMarkerSeedProduct = Boolean(
+    explicitTrainingRunCount !== undefined &&
+      conditionParameterMarkerCount !== undefined &&
+      seedSchedule.length > 1 &&
+      explicitTrainingRunCount === conditionParameterMarkerCount * seedSchedule.length
+  );
   const requiredCount =
-    requiredCountFromText ||
-    (exactConditionParameterMarkers && exactConditionParameterMarkers.length >= 2 ? exactConditionParameterMarkers.length : undefined);
+    explicitRunTotalMatchesMarkerSeedProduct
+      ? conditionParameterMarkerCount
+      : requiredCountFromText ||
+        (exactConditionParameterMarkers && exactConditionParameterMarkers.length >= 2 ? exactConditionParameterMarkers.length : undefined);
   const inferredRepeatedRunCount =
     repeatedRunContract?.runCount ||
+    (explicitRunTotalMatchesMarkerSeedProduct ? explicitTrainingRunCount : undefined) ||
     (requiredCount && seedSchedule.length > 1 ? requiredCount * seedSchedule.length : undefined);
   const inferredMinimumSeedsPerCondition =
     repeatedRunContract?.seedsPerCell || (seedSchedule.length > 1 ? seedSchedule.length : undefined);
@@ -16807,7 +17512,7 @@ function addMarkerIf(text: string, markers: Set<string>, marker: string, pattern
 function parsePlannedConditionContractCount(text: string): number | undefined {
   const numericMatch =
     text.match(/\b(\d+)\s+conditions?\s+x\b/iu) ||
-    text.match(/\b(?:exactly\s+)?(\d+)\s+(?:planned\s+)?(?:experimental\s+)?conditions?\b/iu) ||
+    text.match(/\b(?:exactly\s+)?(\d+)\s+(?:planned\s+)?(?:experimental\s+)?conditions\b/iu) ||
     text.match(/\bno\s+more\s+than\s+(\d+)\s+experimental\s+conditions?\b/iu);
   if (numericMatch) {
     const parsed = Number.parseInt(numericMatch[1] || "", 10);
@@ -16859,6 +17564,21 @@ function parseRepeatedSeedRunContract(
     seedsPerCell: normalizedSeedsPerCell,
     runCount: normalizedRunCount
   };
+}
+
+function parseExplicitTrainingRunCount(text: string): number | undefined {
+  const patterns = [
+    /\b(\d+)\s+(?:[A-Za-z][A-Za-z0-9_-]*\s+){0,5}(?:training|train[-\s]?eval|train[-\s]?and[-\s]?eval|fine[-\s]?tune|finetune|execution)\s+runs?\b/iu,
+    /\b(?:required|planned|completed)\s+(?:training|train[-\s]?eval|train[-\s]?and[-\s]?eval|fine[-\s]?tune|finetune|execution)\s+runs?\s*[:=]\s*(\d+)\b/iu
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const parsed = match ? Number.parseInt(match[1] || "", 10) : NaN;
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
 }
 
 function extractSeedSchedule(text: string): number[] {
@@ -17036,6 +17756,25 @@ function extractConditionParameterGridMarkers(text: string): string[] {
       markers.add(conditionParameterMarker(rank, parameter_y));
     }
   }
+  const fixedParameterPatterns = [
+    /\branks?\s+([0-9rR=,\sand]+?)\s+with\s+(?:dropouts?|drop|parameter_y|regularization)\s+(?:fixed\s+)?(?:at|=|to)?\s*`?([0-9]+(?:[._][0-9]+)?)`?/giu,
+    /\b(?:parameter_x|condition_x|factor\s*x)\s+(?:values?\s+)?([0-9,\sand]+?)\s+with\s+(?:parameter_y|condition_y|factor\s*y|regularization|dropouts?)\s+(?:fixed\s+)?(?:at|=|to)?\s*`?([0-9]+(?:[._][0-9]+)?)`?/giu
+  ];
+  for (const pattern of fixedParameterPatterns) {
+    for (const match of text.matchAll(pattern)) {
+      const ranks = parseLooseNumericList(match[1] || "").map((value) => Math.trunc(value));
+      const parameter_y = parseParameterYNumber(match[2] || "");
+      if (parameter_y === undefined) {
+        continue;
+      }
+      for (const rank of ranks) {
+        if (!Number.isFinite(rank) || rank <= 0) {
+          continue;
+        }
+        markers.add(conditionParameterMarker(rank, parameter_y));
+      }
+    }
+  }
   return [...markers].sort(conditionParameterMarkerSort);
 }
 
@@ -17043,6 +17782,12 @@ function parseNumericList(value: string): number[] {
   return value
     .split(/[,;]|\band\b/giu)
     .map((token) => Number.parseFloat(token.trim().replace(/_/gu, ".")))
+    .filter((parsed) => Number.isFinite(parsed));
+}
+
+function parseLooseNumericList(value: string): number[] {
+  return [...value.matchAll(/\b\d+(?:[._]\d+)?\b/gu)]
+    .map((match) => Number.parseFloat((match[0] || "").replace(/_/gu, ".")))
     .filter((parsed) => Number.isFinite(parsed));
 }
 
@@ -17169,6 +17914,7 @@ function compactTaskSpecForStagedLlmPrompt(taskSpec: ImplementTaskSpec): Record<
             )
           }
         : undefined,
+      dependency_repair_context: taskSpec.context.dependency_repair_context,
       comparison_contract: taskSpec.context.comparison_contract
         ? {
             plan_id: taskSpec.context.comparison_contract.plan_id,
@@ -17207,6 +17953,7 @@ function compactTaskSpecForBootstrapPrompt(taskSpec: ImplementTaskSpec): Record<
             blocking_findings: taskSpec.context.implementation_contract_feedback.blocking_findings.slice(0, 4)
           }
         : undefined,
+      dependency_repair_context: taskSpec.context.dependency_repair_context,
       comparison_contract: taskSpec.context.comparison_contract
         ? {
             comparison_mode: taskSpec.context.comparison_contract.comparison_mode,
@@ -17242,6 +17989,7 @@ function compactTaskSpecForChunkPrompt(taskSpec: ImplementTaskSpec): Record<stri
             blocking_findings: taskSpec.context.implementation_contract_feedback.blocking_findings.slice(0, 6)
           }
         : undefined,
+      dependency_repair_context: taskSpec.context.dependency_repair_context,
       comparison_contract: taskSpec.context.comparison_contract
         ? {
             plan_id: taskSpec.context.comparison_contract.plan_id,
@@ -17427,6 +18175,11 @@ function compactRunnerFeedbackForStagedLlmPrompt(
     command: trimBlock(feedback.command || "", 220) || undefined,
     metrics_path: feedback.metrics_path,
     suggested_next_action: trimBlock(feedback.suggested_next_action || "", 220) || undefined,
+    failure_code: feedback.failure_code,
+    repair_target: feedback.repair_target,
+    recommended_backtrack_node: feedback.recommended_backtrack_node,
+    upstream_repair_hint: trimBlock(feedback.upstream_repair_hint || "", 240) || undefined,
+    operator_action_required: feedback.operator_action_required,
     recorded_at: feedback.recorded_at
   };
 }
@@ -17914,6 +18667,7 @@ async function recoverStructuredResultFromPublicBundle(params: {
   requireFreshPlanAlignment?: boolean;
   runnerFeedback?: RunVerifierReport;
   runnerFeedbackDiagnosticText?: string;
+  plannedConditionContract?: PlannedConditionContract;
 }): Promise<RunTurnResult | undefined> {
   if (params.requireFreshPlanAlignment) {
     return undefined;
@@ -17998,7 +18752,8 @@ async function recoverStructuredResultFromPublicBundle(params: {
       const repairResult = await applyRecoverableBundleDeterministicRepairs({
         scriptPath,
         runnerFeedback: params.runnerFeedback,
-        runnerFeedbackDiagnosticText: params.runnerFeedbackDiagnosticText
+        runnerFeedbackDiagnosticText: params.runnerFeedbackDiagnosticText,
+        plannedConditionContract: params.plannedConditionContract
       });
       const repairedSource = await fs.readFile(scriptPath, "utf8").catch(() => "");
       const staleMetricsPayloadFeedback = isStaleMetricsPayloadRepairFeedbackForScript({
@@ -18022,6 +18777,15 @@ async function recoverStructuredResultFromPublicBundle(params: {
       }
     }
     if (await detectPythonUnfilledAutolabosSections(scriptPath)) {
+      continue;
+    }
+    const recoveryScriptContent = await fs.readFile(scriptPath, "utf8").catch(() => "");
+    if (
+      recoveryScriptContent.includes("_autolabos_completed_metrics_replay_entrypoint_marker") &&
+      !(await readCompletedPublicMetricsPayload(params.publicDir, {
+        plannedConditionContract: params.plannedConditionContract
+      }))
+    ) {
       continue;
     }
   const readmePath = path.join(params.publicDir, "README.md");
@@ -18261,6 +19025,7 @@ async function applyRecoverableBundleDeterministicRepairs(params: {
   scriptPath?: string;
   runnerFeedback?: RunVerifierReport;
   runnerFeedbackDiagnosticText?: string;
+  plannedConditionContract?: PlannedConditionContract;
 }): Promise<{ repaired: boolean; messages: string[] }> {
   const repairs = [
     await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(params.scriptPath),
@@ -18269,7 +19034,10 @@ async function applyRecoverableBundleDeterministicRepairs(params: {
     await repairPythonDataclassTrainingExampleCoercionSurface(params.scriptPath),
     await repairPythonConditionSuccessStatusAliasSurface(params.scriptPath),
     await repairPythonMetricsPayloadProjectionSurface(params.scriptPath),
-    await repairPythonCompletedMetricsReplayEntrypointSurface(params.scriptPath),
+    await repairPythonCompletedMetricsReplayEntrypointSurface(
+      params.scriptPath,
+      params.plannedConditionContract
+    ),
     await repairPythonRequiredContractGlobalAliasSurface(params.scriptPath),
     await repairPythonEntrypointHighLevelConditionRunnerSurface(params.scriptPath),
     await repairPythonSectionedRunnerCliEntrypointSurface(params.scriptPath),
@@ -19480,6 +20248,7 @@ function appendStagedImplementBootstrapContractOverrideToPrompt(prompt: string):
     "- This is a pre-code-generation environment/bootstrap contract, not a code scaffold.",
     "- Be explicit about remote assets, Hugging Face dependencies, local cache expectations, and command/module prerequisites.",
     "- Do not add local_path requirements or path_exists checks for artifacts the implementation is expected to create in the public experiment directory, including baseline/result manifests, metrics summaries, generated scripts, result tables, or run outputs.",
+    "- If dependency_repair_context is present, explicitly encode the prewarm, available-substitute, or dependency-blocked decision in requirements, remediation, and blocking_reason.",
     "- If there is no concrete non-network blocker, set blocking_reason to an empty string; do not put conditional network/cache warnings in blocking_reason."
   ].join("\n");
 }
@@ -27721,9 +28490,12 @@ export async function repairPythonModelPreflightAliasSurface(
   const searchedNames = [
     "run_model_preflight",
     "preflight_model_execution",
-    "preflight_model_dependencies"
+    "preflight_model_dependencies",
+    "select_model_dependency",
+    "preflight_model_assets"
   ];
   const generatedNames = [
+    "preflight_model_execution_dependencies",
     "preflight_model_runtime",
     "preflight_model_and_runtime",
     "preflight_and_select_model",
@@ -27770,6 +28542,7 @@ export async function repairPythonModelPreflightAliasSurface(
     "        \"cache_dir\": keyword.get(\"cache_dir\"),",
     "    }",
     "    for _autolabos_preflight_name in (",
+    "        \"preflight_model_execution_dependencies\",",
     "        \"preflight_model_runtime\",",
     "        \"preflight_model_and_runtime\",",
     "        \"preflight_and_select_model\",",
@@ -27811,6 +28584,8 @@ export async function repairPythonModelPreflightAliasSurface(
     "",
     "preflight_model_execution = run_model_preflight",
     "preflight_model_dependencies = run_model_preflight",
+    "select_model_dependency = run_model_preflight",
+    "preflight_model_assets = run_model_preflight",
     ""
   ].join("\n");
 
@@ -27829,6 +28604,362 @@ export async function repairPythonModelPreflightAliasSurface(
   return {
     repaired: true,
     message: `Added model preflight aliases to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+
+export async function repairPythonModelPreflightStatusNormalizationSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_model_preflight_status_normalization_surface";
+  if (
+    source.includes(marker) ||
+    source.includes("def _autolabos_model_preflight_is_available") ||
+    !source.includes("run_model_execution_stage") ||
+    !/if\s+not\s+bool\(\s*preflight\.get\((["'])ok\1,\s*preflight\.get\((["'])available\2,\s*False\)\)\s*\):/u.test(source)
+  ) {
+    return { repaired: false };
+  }
+
+  const stageMatch = source.match(/\ndef\s+run_model_execution_stage\s*\(/u);
+  if (!stageMatch || stageMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_model_preflight_is_available(preflight):",
+    "    if preflight is None:",
+    "        return False",
+    "    if isinstance(preflight, bool):",
+    "        return preflight",
+    "    explicit = None",
+    "    status = ''",
+    "    failure_code = None",
+    "    try:",
+    "        if hasattr(preflight, 'get'):",
+    "            explicit = preflight.get('ok', None)",
+    "            if explicit is None:",
+    "                explicit = preflight.get('available', None)",
+    "            status = str(preflight.get('status', '') or '').strip().lower()",
+    "            failure_code = preflight.get('failure_code', None)",
+    "        else:",
+    "            explicit = getattr(preflight, 'ok', None)",
+    "            if explicit is None:",
+    "                explicit = getattr(preflight, 'available', None)",
+    "            status = str(getattr(preflight, 'status', '') or '').strip().lower()",
+    "            failure_code = getattr(preflight, 'failure_code', None)",
+    "    except Exception:",
+    "        return False",
+    "    if explicit is not None:",
+    "        return bool(explicit)",
+    "    if failure_code not in (None, '', False):",
+    "        failure_text = str(failure_code).strip().lower()",
+    "        if failure_text not in ('none', 'null', 'ok', 'success', 'succeeded', 'passed'):",
+    "            return False",
+    "    return status in ('ok', 'available', 'ready', 'completed', 'success', 'succeeded', 'passed')",
+    ""
+  ].join("\n");
+
+  let nextSource = `${source.slice(0, stageMatch.index)}${helper}${source.slice(stageMatch.index)}`;
+  nextSource = nextSource.replace(
+    /^([ \t]*)if\s+not\s+bool\(\s*preflight\.get\((["'])ok\2,\s*preflight\.get\((["'])available\3,\s*False\)\)\s*\):\s*$/mu,
+    "$1if not _autolabos_model_preflight_is_available(preflight):"
+  );
+
+  if (
+    nextSource === source ||
+    !nextSource.includes(marker) ||
+    /if\s+not\s+bool\(\s*preflight\.get\((["'])ok\1,\s*preflight\.get\((["'])available\2,\s*False\)\)\s*\):/u.test(nextSource)
+  ) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Normalized model preflight success status handling in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+
+export async function repairPythonRunPlanItemObjectAccessSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_run_plan_item_object_access_surface";
+  if (source.includes(marker) || source.includes("def _autolabos_run_plan_condition")) {
+    return { repaired: false };
+  }
+
+  const stageMatch = source.match(/\ndef\s+run_model_execution_stage\s*\(/u);
+  if (!stageMatch || stageMatch.index === undefined) {
+    return { repaired: false };
+  }
+  const stageStart = stageMatch.index;
+  const stageTail = source.slice(stageStart + 1);
+  const nextTopLevelDefOffset = stageTail.search(/\ndef\s+[A-Za-z_]\w*\s*\(/u);
+  const stageEnd =
+    nextTopLevelDefOffset >= 0 ? stageStart + 1 + nextTopLevelDefOffset : source.length;
+  const stageSource = source.slice(stageStart, stageEnd);
+  const conditionFallbackPattern =
+    /condition\s*=\s*item\.get\((["'])condition\1,\s*item\)\s*if\s*isinstance\(item,\s*dict\)\s*else\s*item\[0\]/u;
+  const seedFallbackPattern =
+    /seed\s*=\s*int\(item\.get\((["'])seed\1,\s*SEED_SCHEDULE\[0\]\)\s*if\s*isinstance\(item,\s*dict\)\s*else\s*item\[1\]\)/u;
+  const markerSubscriptPattern = /marker\s*=\s*str\(condition\[(["'])marker\1\]\)/u;
+  if (!conditionFallbackPattern.test(stageSource) || !seedFallbackPattern.test(stageSource)) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_run_plan_get(value, *names, default=None):",
+    "    if value is None:",
+    "        return default",
+    "    for name in names:",
+    "        try:",
+    "            if hasattr(value, 'get'):",
+    "                result = value.get(name, None)",
+    "                if result is not None:",
+    "                    return result",
+    "        except Exception:",
+    "            pass",
+    "        try:",
+    "            result = getattr(value, name)",
+    "            if result is not None:",
+    "                return result",
+    "        except Exception:",
+    "            pass",
+    "    return default",
+    "",
+    "def _autolabos_run_plan_condition(item):",
+    "    condition = _autolabos_run_plan_get(item, 'condition', 'condition_spec', 'spec', 'row', default=None)",
+    "    if condition is not None:",
+    "        return condition",
+    "    if isinstance(item, (list, tuple)) and len(item) > 0:",
+    "        return item[0]",
+    "    return item",
+    "",
+    "def _autolabos_run_plan_seed(item, default_seed):",
+    "    seed = _autolabos_run_plan_get(item, 'seed', 'seed_id', 'random_seed', default=None)",
+    "    if seed is not None:",
+    "        return seed",
+    "    if isinstance(item, (list, tuple)) and len(item) > 1:",
+    "        return item[1]",
+    "    condition = _autolabos_run_plan_condition(item)",
+    "    return _autolabos_run_plan_get(condition, 'seed', 'seed_id', 'random_seed', default=default_seed)",
+    "",
+    "def _autolabos_condition_marker_value(condition):",
+    "    marker = _autolabos_run_plan_get(condition, 'marker', 'condition_marker', 'condition_id', 'id', 'name', default=None)",
+    "    if marker is not None and marker != '':",
+    "        return marker",
+    "    return 'condition'",
+    ""
+  ].join("\n");
+
+  let repairedStageSource = stageSource.replace(
+    /^([ \t]*)condition\s*=\s*item\.get\((["'])condition\2,\s*item\)\s*if\s*isinstance\(item,\s*dict\)\s*else\s*item\[0\]\s*$/gmu,
+    "$1condition = _autolabos_run_plan_condition(item)"
+  );
+  repairedStageSource = repairedStageSource.replace(
+    /^([ \t]*)seed\s*=\s*int\(item\.get\((["'])seed\2,\s*SEED_SCHEDULE\[0\]\)\s*if\s*isinstance\(item,\s*dict\)\s*else\s*item\[1\]\)\s*$/gmu,
+    "$1seed = int(_autolabos_run_plan_seed(item, SEED_SCHEDULE[0]))"
+  );
+  repairedStageSource = repairedStageSource.replace(
+    /^([ \t]*)marker\s*=\s*str\(condition\[(["'])marker\2\]\)\s*$/gmu,
+    "$1marker = str(_autolabos_condition_marker_value(condition))"
+  );
+  const nextSource = `${source.slice(0, stageStart)}${helper}${repairedStageSource}${source.slice(stageEnd)}`;
+
+  if (
+    nextSource === source ||
+    repairedStageSource === stageSource ||
+    !nextSource.includes(marker) ||
+    conditionFallbackPattern.test(repairedStageSource) ||
+    seedFallbackPattern.test(repairedStageSource) ||
+    markerSubscriptPattern.test(repairedStageSource)
+  ) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged run-plan item mapping/object access in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonModelExecutionAggregateAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_model_execution_aggregate_alias_surface";
+  if (
+    source.includes(marker) ||
+    source.includes("def aggregate_model_execution_results") ||
+    !source.includes("aggregate_model_execution_results") ||
+    !source.includes("aggregate_training_records") ||
+    !source.includes("aggregate_condition_training_results") ||
+    !source.includes("def aggregate_execution_rows")
+  ) {
+    return { repaired: false };
+  }
+
+  const stageMatch = source.match(/\ndef\s+run_model_execution_stage\s*\(/u);
+  if (!stageMatch || stageMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_model_execution_row_get(row, name, default=None):",
+    "    if row is None:",
+    "        return default",
+    "    try:",
+    "        if hasattr(row, 'get'):",
+    "            value = row.get(name, default)",
+    "            return default if value is None else value",
+    "    except Exception:",
+    "        pass",
+    "    return getattr(row, name, default)",
+    "",
+    "def _autolabos_model_execution_aggregate_records(records=None, run_records=None, rows=None, runtime=None, **kwargs):",
+    "    active_records = run_records if run_records is not None else records",
+    "    if active_records is None:",
+    "        active_records = rows",
+    "    if active_records is None:",
+    "        active_records = kwargs.get('raw_records', kwargs.get('run_results', []))",
+    "    active_records = list(active_records or [])",
+    "    aggregator = globals().get('aggregate_execution_rows')",
+    "    payload = {}",
+    "    if callable(aggregator):",
+    "        try:",
+    "            payload = aggregator(active_records)",
+    "        except TypeError:",
+    "            payload = aggregator(rows=active_records)",
+    "    if not isinstance(payload, dict):",
+    "        payload = {'condition_states': payload}",
+    "    condition_states = payload.get('condition_states')",
+    "    if condition_states is None:",
+    "        condition_states = payload.get('condition_aggregates', payload.get('condition_results', []))",
+    "    payload.setdefault('condition_states', condition_states)",
+    "    payload.setdefault('condition_results', condition_states)",
+    "    evaluatable = globals().get('EVALUATABLE_STATUSES', {'completed', 'ok', 'success'})",
+    "    failed_statuses = globals().get('FAILED_STATUSES', {'failed', 'error', 'timeout'})",
+    "    completed = [record for record in active_records if str(_autolabos_model_execution_row_get(record, 'status', '')).lower() in {str(s).lower() for s in evaluatable}]",
+    "    failed = [record for record in active_records if str(_autolabos_model_execution_row_get(record, 'status', '')).lower() in {str(s).lower() for s in failed_statuses}]",
+    "    payload.setdefault('completed_run_count', len(completed))",
+    "    payload.setdefault('failed_run_count', len(failed))",
+    "    payload.setdefault('observed_run_count', len(active_records))",
+    "    payload.setdefault('required_run_count', globals().get('REQUIRED_RUN_COUNT', len(active_records)))",
+    "    payload.setdefault('evaluation_ready', bool(completed))",
+    "    return payload",
+    "",
+    "def aggregate_model_execution_results(runtime=None, run_records=None, records=None, **kwargs):",
+    "    return _autolabos_model_execution_aggregate_records(runtime=runtime, run_records=run_records, records=records, **kwargs)",
+    "",
+    "def aggregate_training_records(runtime=None, run_records=None, records=None, **kwargs):",
+    "    return _autolabos_model_execution_aggregate_records(runtime=runtime, run_records=run_records, records=records, **kwargs)",
+    "",
+    "def aggregate_condition_training_results(runtime=None, run_records=None, records=None, **kwargs):",
+    "    return _autolabos_model_execution_aggregate_records(runtime=runtime, run_records=run_records, records=records, **kwargs)",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, stageMatch.index)}${helper}${source.slice(stageMatch.index)}`;
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added model-execution aggregate helper aliases in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonModelExecutionSingleConditionDataBundleAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_model_execution_single_condition_data_bundle_alias_surface";
+  if (
+    source.includes(marker) ||
+    !source.includes("def run_model_execution_stage") ||
+    !source.includes("execute_single_condition_run") ||
+    !source.includes("task_bundle=task_bundle") ||
+    source.includes("data_bundle=task_bundle")
+  ) {
+    return { repaired: false };
+  }
+
+  const targetPattern = /^(\s*)task_bundle=task_bundle,\n\1condition=condition,/mu;
+  if (!targetPattern.test(source)) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(targetPattern, (_match, indent: string) => [
+    `${indent}task_bundle=task_bundle,`,
+    `${indent}# ${marker}`,
+    `${indent}data_bundle=task_bundle,`,
+    `${indent}dataset_bundle=task_bundle,`,
+    `${indent}loaded_data=task_bundle,`,
+    `${indent}train_bundle=task_bundle,`,
+    `${indent}training_bundle=task_bundle,`,
+    `${indent}condition=condition,`
+  ].join("\n"));
+  if (nextSource === source || !nextSource.includes(marker) || !nextSource.includes("data_bundle=task_bundle")) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aliased model-execution single-condition data bundle arguments in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -35987,7 +37118,175 @@ function recordHasFailedExecutionEvidence(record: Record<string, unknown>): bool
   return false;
 }
 
-async function readCompletedPublicMetricsPayload(publicDir: string): Promise<unknown | undefined> {
+function collectCompletedMetricsContractRows(value: unknown, depth = 0): Record<string, unknown>[] {
+  if (depth > 5) {
+    return [];
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return [];
+  }
+  const rows: Record<string, unknown>[] = [];
+  const rowKeys = [
+    "raw_condition_results",
+    "condition_results",
+    "condition_summaries",
+    "rows",
+    "per_seed_results",
+    "per_seed_rows",
+    "run_records",
+    "condition_metrics",
+    "results",
+    "raw_results"
+  ];
+  for (const key of rowKeys) {
+    const value = record[key];
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const itemRecord = asRecord(item);
+        if (itemRecord) {
+          rows.push(itemRecord);
+          rows.push(...collectCompletedMetricsContractRows(itemRecord, depth + 1));
+        }
+      }
+    }
+  }
+  for (const key of ["study", "study_summary", "summary", "aggregate", "metadata"]) {
+    rows.push(...collectCompletedMetricsContractRows(record[key], depth + 1));
+  }
+  return rows;
+}
+
+function completedMetricsContractMarker(row: Record<string, unknown>): string | undefined {
+  for (const key of ["condition_marker", "marker", "condition_id", "condition_key", "condition_label", "name"]) {
+    const value = asString(row[key]);
+    if (value?.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function completedMetricsContractSeed(row: Record<string, unknown>): string | undefined {
+  for (const key of ["seed", "seed_id", "random_seed"]) {
+    const value = row[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+    const stringValue = asString(value);
+    if (stringValue?.trim()) {
+      return stringValue.trim();
+    }
+  }
+  return undefined;
+}
+
+function metricCountValue(payload: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function completedMetricsPayloadMatchesPlannedConditionContract(
+  payload: unknown,
+  contract?: PlannedConditionContract
+): { ok: boolean; reason?: string } {
+  if (!contract) {
+    return { ok: true };
+  }
+  const requiredMarkers = dedupeStrings(contract.required_condition_markers || []);
+  const requiredSeeds = dedupeStrings((contract.seed_schedule || []).map((seed) => String(seed)));
+  const requiredConditionCount = contract.required_condition_count;
+  const requiredRunCount = contract.required_run_count;
+  if (requiredMarkers.length === 0 && !requiredConditionCount && requiredSeeds.length === 0 && !requiredRunCount) {
+    return { ok: true };
+  }
+
+  const payloadRecord = asRecord(payload) || {};
+  const rows = collectCompletedMetricsContractRows(payload);
+  const markers = dedupeStrings(rows.map(completedMetricsContractMarker).filter((value): value is string => Boolean(value)));
+  const seedsByMarker = new Map<string, Set<string>>();
+  const allSeeds = new Set<string>();
+  for (const row of rows) {
+    const marker = completedMetricsContractMarker(row);
+    const seed = completedMetricsContractSeed(row);
+    if (!marker || !seed) {
+      continue;
+    }
+    allSeeds.add(seed);
+    const set = seedsByMarker.get(marker) || new Set<string>();
+    set.add(seed);
+    seedsByMarker.set(marker, set);
+  }
+
+  if (requiredMarkers.length > 0) {
+    if (markers.length === 0) {
+      return { ok: false, reason: "completed metrics do not expose condition markers for contract validation" };
+    }
+    const missingMarkers = requiredMarkers.filter((requiredMarker) => !markers.includes(requiredMarker));
+    const extraMarkers = markers.filter((metricMarker) => !requiredMarkers.includes(metricMarker));
+    if (missingMarkers.length > 0 || extraMarkers.length > 0) {
+      return {
+        ok: false,
+        reason: "completed metrics condition markers drift from approved contract; missing=" + (missingMarkers.join(",") || "none") + "; extra=" + (extraMarkers.join(",") || "none")
+      };
+    }
+  }
+
+  if (typeof requiredConditionCount === "number" && requiredConditionCount > 0) {
+    const completedConditionCount = metricCountValue(payloadRecord, ["completed_condition_count", "required_condition_count"]);
+    if (typeof completedConditionCount === "number" && completedConditionCount !== requiredConditionCount) {
+      return { ok: false, reason: "completed metrics condition count " + completedConditionCount + " does not match approved count " + requiredConditionCount };
+    }
+    if (markers.length > 0 && markers.length !== requiredConditionCount) {
+      return { ok: false, reason: "completed metrics marker count " + markers.length + " does not match approved count " + requiredConditionCount };
+    }
+  }
+
+  if (requiredSeeds.length > 0) {
+    if (allSeeds.size === 0) {
+      return { ok: false, reason: "completed metrics do not expose seed evidence for repeated-seed contract validation" };
+    }
+    const allSeedValues = Array.from(allSeeds);
+    const extraSeeds = allSeedValues.filter((seed) => !requiredSeeds.includes(seed));
+    if (extraSeeds.length > 0) {
+      return { ok: false, reason: "completed metrics include seed(s) outside approved schedule: " + extraSeeds.join(",") };
+    }
+    const markersToCheck = requiredMarkers.length > 0 ? requiredMarkers : markers;
+    for (const marker of markersToCheck) {
+      const markerSeeds = seedsByMarker.get(marker);
+      if (!markerSeeds || markerSeeds.size === 0) {
+        return { ok: false, reason: "completed metrics do not expose seed evidence for " + marker };
+      }
+      const missingSeeds = requiredSeeds.filter((seed) => !markerSeeds.has(seed));
+      if (missingSeeds.length > 0) {
+        return { ok: false, reason: "completed metrics for " + marker + " miss approved seed(s): " + missingSeeds.join(",") };
+      }
+    }
+  }
+
+  if (typeof requiredRunCount === "number" && requiredRunCount > 0) {
+    const completedRunCount = metricCountValue(payloadRecord, ["completed_run_count", "required_run_count"]);
+    if (typeof completedRunCount === "number" && completedRunCount !== requiredRunCount) {
+      return { ok: false, reason: "completed metrics run count " + completedRunCount + " does not match approved run count " + requiredRunCount };
+    }
+    const uniqueRunPairCount = Array.from(seedsByMarker.values()).reduce((sum, set) => sum + set.size, 0);
+    if (uniqueRunPairCount > 0 && uniqueRunPairCount !== requiredRunCount) {
+      return { ok: false, reason: "completed metrics unique marker/seed pairs " + uniqueRunPairCount + " do not match approved run count " + requiredRunCount };
+    }
+  }
+
+  return { ok: true };
+}
+
+async function readCompletedPublicMetricsPayload(
+  publicDir: string,
+  options: { plannedConditionContract?: PlannedConditionContract } = {}
+): Promise<unknown | undefined> {
   const candidates = [
     "metrics.json",
     "latest_metrics.json",
@@ -36000,6 +37299,13 @@ async function readCompletedPublicMetricsPayload(publicDir: string): Promise<unk
     try {
       const parsed = JSON.parse(await fs.readFile(candidatePath, "utf8"));
       if (isCompletedPublicMetricsPayload(parsed)) {
+        const contractValidation = completedMetricsPayloadMatchesPlannedConditionContract(
+          parsed,
+          options.plannedConditionContract
+        );
+        if (!contractValidation.ok) {
+          continue;
+        }
         return parsed;
       }
     } catch {
@@ -36014,6 +37320,7 @@ async function recoverCompletedMetricsReplayTurnResult(params: {
   publicDir: string;
   metricsPath: string;
   errorMessage: string;
+  plannedConditionContract?: PlannedConditionContract;
 }): Promise<RunTurnResult | undefined> {
   if (!params.scriptPath || path.extname(params.scriptPath) !== ".py") {
     return undefined;
@@ -36022,7 +37329,9 @@ async function recoverCompletedMetricsReplayTurnResult(params: {
   if (!source.includes("_autolabos_completed_metrics_replay_entrypoint_marker")) {
     return undefined;
   }
-  if (!(await readCompletedPublicMetricsPayload(params.publicDir))) {
+  if (!(await readCompletedPublicMetricsPayload(params.publicDir, {
+    plannedConditionContract: params.plannedConditionContract
+  }))) {
     return undefined;
   }
   const wrapperPath = path.join(params.publicDir, "run_command.sh");
@@ -36107,7 +37416,8 @@ async function delegateWrapperTargetLacksSupportedEntrypoint(
 }
 
 export async function repairPythonCompletedMetricsReplayEntrypointSurface(
-  scriptPath?: string
+  scriptPath?: string,
+  plannedConditionContract?: PlannedConditionContract
 ): Promise<{ repaired: boolean; message?: string }> {
   if (!scriptPath || path.extname(scriptPath) !== ".py") {
     return { repaired: false };
@@ -36130,7 +37440,7 @@ export async function repairPythonCompletedMetricsReplayEntrypointSurface(
   }
 
   const publicDir = path.dirname(scriptPath);
-  const payload = await readCompletedPublicMetricsPayload(publicDir);
+  const payload = await readCompletedPublicMetricsPayload(publicDir, { plannedConditionContract });
   if (!payload) {
     return { repaired: false };
   }
@@ -44642,6 +45952,47 @@ async function detectPythonMissingConcreteConditionWorkerSurface(
   ];
 
   if (
+    source.includes("_autolabos_single_condition_execution_helper_marker") &&
+    source.includes("No generated single-condition execution worker was available after materialization.")
+  ) {
+    const fallbackDelegateNames = [
+      "execute_single_condition_run",
+      "run_single_condition_model_execution",
+      "execute_single_condition_model_execution",
+      "run_condition_model_execution",
+      "execute_condition_model_execution",
+      "run_single_condition_training",
+      "execute_single_condition_training",
+      "execute_single_condition",
+      "execute_condition_seed",
+      "run_condition_seed",
+      "execute_condition_training",
+      "run_condition_training",
+      "train_single_condition",
+      "train_condition",
+      "execute_condition_run",
+      "run_condition_experiment",
+      "execute_condition",
+      "run_condition",
+      "train_and_evaluate_condition"
+    ];
+    const definedDelegateNames = fallbackDelegateNames.filter((name) =>
+      pythonSourceDefinesConcreteCallableCandidate(source, name)
+    );
+    if (definedDelegateNames.length === 0) {
+      const helperIndex = source.indexOf("def run_single_condition(");
+      const helperLine = helperIndex >= 0
+        ? source.slice(0, helperIndex).split(/\r?\n/u).length
+        : source.slice(0, source.indexOf("No generated single-condition execution worker was available after materialization.")).split(/\r?\n/u).length;
+      return [
+        "Generated Python runner has no concrete per-condition execution worker.",
+        `The single-condition fallback helper at ${path.basename(scriptPath)}:${helperLine} can only record condition_execution failures because none of its delegate candidates are concrete workers.`,
+        "Generate or preserve a real condition-level train/evaluate worker before handoff; do not satisfy local verification with a fallback helper that marks every planned run as failed."
+      ].join(" ");
+    }
+  }
+
+  if (
     source.includes("def execute_locked_condition_plan(") &&
     source.includes("def _find_condition_worker(") &&
     (source.includes("No real per-condition execution worker is registered") ||
@@ -44679,6 +46030,12 @@ async function detectPythonMissingConcreteConditionWorkerSurface(
       "execute_experiment_loop",
       "run_workflow",
       "execute_workflow",
+      "run_model_execution",
+      "execute_model_execution",
+      "orchestrate_model_execution",
+      "run_model_execution_stage",
+      "execute_model_execution_stage",
+      "orchestrate_model_execution_stage",
       "execute_single_condition",
       "run_single_condition",
       "execute_condition_seed",
@@ -45998,6 +47355,494 @@ export async function repairPythonEntrypointLookupHelperAliasSurface(scriptPath?
   };
 }
 
+export async function repairPythonCallFirstSuccessMetricsPayloadAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_call_first_success_metrics_payload_alias_marker";
+  if (
+    source.includes(marker) ||
+    !pythonSourceDefinesName(source, "build_success_metrics_payload") ||
+    pythonSourceDefinesName(source, "build_metrics_payload") ||
+    pythonSourceDefinesName(source, "aggregate_metrics") ||
+    !source.includes("def _call_first(") ||
+    !source.includes("none of the expected functions are defined") ||
+    !/["']aggregate_metrics["']/.test(source) ||
+    !/["']build_metrics_payload["']/.test(source)
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch =
+    source.match(/\ndef\s+run_experiments\s*\(/u) ||
+    source.match(/\nif\s+__name__\s*==\s*["']__main__["']:/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const helperBlock = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_success_metrics_alias_records(positional, keyword):",
+    "    for key in (\"condition_results\", \"rows\", \"raw_records\", \"run_results\", \"records\"):",
+    "        value = keyword.get(key) if hasattr(keyword, \"get\") else None",
+    "        if value is not None:",
+    "            return value",
+    "    if len(positional) >= 2:",
+    "        return positional[1]",
+    "    if positional:",
+    "        return positional[0]",
+    "    return []",
+    "",
+    "def _autolabos_success_metrics_alias_call(builder, records, **keyword):",
+    "    import inspect as _autolabos_metrics_alias_inspect",
+    "    try:",
+    "        signature = _autolabos_metrics_alias_inspect.signature(builder)",
+    "        accepts_kwargs = any(",
+    "            parameter.kind == _autolabos_metrics_alias_inspect.Parameter.VAR_KEYWORD",
+    "            for parameter in signature.parameters.values()",
+    "        )",
+    "        accepted = dict(keyword) if accepts_kwargs else {",
+    "            key: value for key, value in keyword.items() if key in signature.parameters",
+    "        }",
+    "    except (TypeError, ValueError):",
+    "        accepted = dict(keyword)",
+    "    row_aliases = {\"records\", \"rows\", \"condition_results\", \"raw_records\", \"run_results\"}",
+    "    positional_kwargs = {key: value for key, value in accepted.items() if key not in row_aliases}",
+    "    attempts = [",
+    "        ((records,), positional_kwargs),",
+    "        ((), dict(positional_kwargs, records=records)),",
+    "        ((), dict(positional_kwargs, rows=records)),",
+    "        ((), dict(positional_kwargs, condition_results=records)),",
+    "        ((records,), {}),",
+    "    ]",
+    "    last_error = None",
+    "    for args, kwargs in attempts:",
+    "        try:",
+    "            return builder(*args, **kwargs)",
+    "        except TypeError as exc:",
+    "            last_error = exc",
+    "    raise last_error",
+    "",
+    "def build_metrics_payload(*positional, **keyword):",
+    "    builder = globals().get(\"build_success_metrics_payload\")",
+    "    if not callable(builder):",
+    "        raise RuntimeError(\"Generated success metrics payload builder is unavailable\")",
+    "    records = _autolabos_success_metrics_alias_records(positional, keyword)",
+    "    records = list(records or [])",
+    "    metadata = keyword.get(\"metadata\") if hasattr(keyword, \"get\") else None",
+    "    if metadata is None:",
+    "        metadata = {}",
+    "    if hasattr(metadata, \"items\"):",
+    "        metadata = dict(metadata)",
+    "    else:",
+    "        metadata = {\"metadata\": metadata}",
+    "    metadata.setdefault(\"entrypoint_bridge\", \"_autolabos_call_first_success_metrics_payload_alias_marker\")",
+    "    payload = _autolabos_success_metrics_alias_call(",
+    "        builder,",
+    "        records,",
+    "        baseline_marker=keyword.get(\"baseline_marker\") if hasattr(keyword, \"get\") else globals().get(\"BASELINE_CONDITION_MARKER\"),",
+    "        metric_key=keyword.get(\"metric_key\") if hasattr(keyword, \"get\") else globals().get(\"OBJECTIVE_METRIC_KEY\", \"accuracy\"),",
+    "        objective_metric=keyword.get(\"objective_metric\") if hasattr(keyword, \"get\") else globals().get(\"OBJECTIVE_METRIC_KEY\", \"accuracy\"),",
+    "        metadata=metadata,",
+    "    )",
+    "    if not isinstance(payload, dict):",
+    "        payload = {\"raw_payload\": payload}",
+    "    payload.setdefault(\"condition_results\", records)",
+    "    return payload",
+    "",
+    "aggregate_metrics = build_metrics_payload",
+    "summarize_metrics = build_metrics_payload",
+    "finalize_metrics = build_metrics_payload",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${helperBlock}${source.slice(insertionMatch.index)}`;
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged build_success_metrics_payload into generic metrics aggregation aliases in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointPickCallableHelperAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_entrypoint_pick_callable_helper_alias_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _entrypoint_pick_callable(") ||
+    !source.includes("_autolabos_entrypoint_preflight") ||
+    !source.includes("_autolabos_entrypoint_one_run") ||
+    !source.includes("_autolabos_entrypoint_persist_raw_records") ||
+    !source.includes("_autolabos_entrypoint_aggregate")
+  ) {
+    return { repaired: false };
+  }
+
+  const requiredHelpers = [
+    "_autolabos_entrypoint_preflight",
+    "_autolabos_entrypoint_one_run",
+    "_autolabos_entrypoint_persist_raw_records",
+    "_autolabos_entrypoint_aggregate"
+  ];
+  if (requiredHelpers.every((name) => pythonSourceDefinesName(source, name))) {
+    return { repaired: false };
+  }
+
+  const mainMatch = source.match(
+    /\ndef\s+main\s*\([^)]*\)\s*(?:->\s*[^:\n]+)?\s*:\n[\s\S]*?_entrypoint_pick_callable\(\s*\n?\s*["']_autolabos_entrypoint_preflight["']/u
+  );
+  if (!mainMatch || mainMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const helperBlock = [
+    "",
+    `# ${marker}`,
+    "_AUTOLABOS_PICK_BRIDGE_MISSING = object()",
+    "",
+    "def _autolabos_pick_bridge_get(source, *names, default=None):",
+    "    for name in names:",
+    "        if source is None:",
+    "            continue",
+    "        if hasattr(source, 'get'):",
+    "            try:",
+    "                value = source.get(name)",
+    "            except Exception:",
+    "                value = None",
+    "            if value is not None:",
+    "                return value",
+    "        if hasattr(source, name):",
+    "            value = getattr(source, name)",
+    "            if value is not None:",
+    "                return value",
+    "    return default",
+    "",
+    "def _autolabos_pick_bridge_as_list(value):",
+    "    if value is None:",
+    "        return []",
+    "    if isinstance(value, (list, tuple)):",
+    "        return list(value)",
+    "    if isinstance(value, set):",
+    "        return list(value)",
+    "    if isinstance(value, (str, bytes)):",
+    "        return [value]",
+    "    try:",
+    "        return list(value)",
+    "    except TypeError:",
+    "        return [value]",
+    "",
+    "def _autolabos_pick_bridge_call(func, **kwargs):",
+    "    import inspect as _autolabos_inspect",
+    "    signature = _autolabos_inspect.signature(func)",
+    "    accepts_kwargs = any(p.kind == _autolabos_inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values())",
+    "    accepted = dict(kwargs) if accepts_kwargs else {k: v for k, v in kwargs.items() if k in signature.parameters}",
+    "    missing = []",
+    "    for name, parameter in signature.parameters.items():",
+    "        if parameter.kind in (_autolabos_inspect.Parameter.VAR_POSITIONAL, _autolabos_inspect.Parameter.VAR_KEYWORD):",
+    "            continue",
+    "        if parameter.default is _autolabos_inspect.Parameter.empty and name not in accepted:",
+    "            missing.append(name)",
+    "    if missing:",
+    "        raise TypeError('missing required helper argument(s): ' + ', '.join(missing))",
+    "    return func(**accepted)",
+    "",
+    "def _autolabos_pick_bridge_try(name, **kwargs):",
+    "    fn = globals().get(name)",
+    "    if not callable(fn):",
+    "        return _AUTOLABOS_PICK_BRIDGE_MISSING",
+    "    try:",
+    "        return _autolabos_pick_bridge_call(fn, **kwargs)",
+    "    except TypeError:",
+    "        return _AUTOLABOS_PICK_BRIDGE_MISSING",
+    "",
+    "def _autolabos_pick_bridge_set_default(target, name, value):",
+    "    if value is None or target is None:",
+    "        return",
+    "    setter = globals().get('_autolabos_entrypoint_set_default')",
+    "    if callable(setter):",
+    "        try:",
+    "            setter(target, name, value)",
+    "            return",
+    "        except Exception:",
+    "            pass",
+    "    if hasattr(target, 'get') and hasattr(target, '__setitem__'):",
+    "        try:",
+    "            if target.get(name) in (None, ''):",
+    "                target[name] = value",
+    "            return",
+    "        except Exception:",
+    "            pass",
+    "    try:",
+    "        if getattr(target, name, None) in (None, ''):",
+    "            setattr(target, name, value)",
+    "    except Exception:",
+    "        pass",
+    "",
+    "def _autolabos_pick_bridge_condition_marker(condition):",
+    "    marker_fn = globals().get('_autolabos_entrypoint_condition_marker') or globals().get('condition_marker_from_any') or globals().get('condition_marker')",
+    "    if callable(marker_fn):",
+    "        try:",
+    "            return str(marker_fn(condition))",
+    "        except Exception:",
+    "            pass",
+    "    value = _autolabos_pick_bridge_get(condition, 'condition_marker', 'marker', 'condition_id', 'name', default=None)",
+    "    return str(value if value is not None else 'condition')",
+    "",
+    "def _autolabos_pick_bridge_planned_runs(plan):",
+    "    if hasattr(plan, 'get'):",
+    "        planned = _autolabos_pick_bridge_get(plan, 'planned_runs', 'runs', 'pending_cells', default=None)",
+    "        if planned:",
+    "            return _autolabos_pick_bridge_as_list(planned)",
+    "        conditions = _autolabos_pick_bridge_as_list(_autolabos_pick_bridge_get(plan, 'conditions', 'condition_specs', default=None))",
+    "        seeds = _autolabos_pick_bridge_as_list(_autolabos_pick_bridge_get(plan, 'seed_schedule', 'seeds', default=None))",
+    "        if conditions and seeds:",
+    "            return [{'condition': condition, 'condition_marker': _autolabos_pick_bridge_condition_marker(condition), 'seed': seed} for condition in conditions for seed in seeds]",
+    "    if plan:",
+    "        return _autolabos_pick_bridge_as_list(plan)",
+    "    conditions = _autolabos_pick_bridge_as_list(globals().get('LOCKED_CONDITION_SPECS') or globals().get('LOCKED_CONDITIONS') or globals().get('CONDITIONS') or globals().get('PLANNED_CONDITIONS'))",
+    "    seeds = _autolabos_pick_bridge_as_list(globals().get('SEED_SCHEDULE') or globals().get('SEEDS') or globals().get('PLANNED_SEEDS') or [globals().get('DEFAULT_SEED', 0)])",
+    "    return [{'condition': condition, 'condition_marker': _autolabos_pick_bridge_condition_marker(condition), 'seed': seed} for condition in conditions for seed in seeds]",
+    "",
+    "def _autolabos_entrypoint_preflight(args=None, public_dir=None, run_artifact_dir=None, metrics_path=None, device=None, **kwargs):",
+    "    active_args = args",
+    "    if active_args is None:",
+    "        parse_fn = globals().get('parse_args') or globals().get('parse_runtime_args') or globals().get('build_args')",
+    "        active_args = parse_fn(None) if callable(parse_fn) else None",
+    "    config = active_args",
+    "    for builder_name in ('_autolabos_entrypoint_runtime_config', 'build_runtime_config', 'make_runtime_config', 'create_runtime_config'):",
+    "        built = _autolabos_pick_bridge_try(builder_name, args=active_args, argv=None, config=active_args)",
+    "        if built is not _AUTOLABOS_PICK_BRIDGE_MISSING:",
+    "            config = built",
+    "            break",
+    "    for target in (active_args, config):",
+    "        _autolabos_pick_bridge_set_default(target, 'public_dir', public_dir)",
+    "        _autolabos_pick_bridge_set_default(target, 'output_dir', public_dir)",
+    "        _autolabos_pick_bridge_set_default(target, 'run_artifact_dir', run_artifact_dir)",
+    "        _autolabos_pick_bridge_set_default(target, 'metrics_path', metrics_path)",
+    "        _autolabos_pick_bridge_set_default(target, 'device', device)",
+    "    paths = None",
+    "    path_builder = globals().get('_autolabos_entrypoint_paths')",
+    "    if callable(path_builder):",
+    "        try:",
+    "            paths = _autolabos_pick_bridge_call(path_builder, config=config, args=active_args, output_dir=public_dir, public_dir=public_dir, run_artifact_dir=run_artifact_dir, metrics_path=metrics_path)",
+    "        except Exception:",
+    "            paths = None",
+    "    for target in (active_args, config):",
+    "        _autolabos_pick_bridge_set_default(target, 'paths', paths)",
+    "        _autolabos_pick_bridge_set_default(target, 'runtime_paths', paths)",
+    "    runtime_context = None",
+    "    context_builder = globals().get('_autolabos_entrypoint_runtime_context')",
+    "    if callable(context_builder):",
+    "        try:",
+    "            runtime_context = _autolabos_pick_bridge_call(context_builder, config=config, paths=paths, args=active_args)",
+    "        except Exception:",
+    "            runtime_context = None",
+    "    ctx = dict(runtime_context) if hasattr(runtime_context, 'items') else {}",
+    "    ctx.update({'args': active_args, 'config': config, 'runtime': config, 'paths': paths, 'public_dir': public_dir, 'run_artifact_dir': run_artifact_dir, 'metrics_path': metrics_path, 'device': device})",
+    "    plan_value = None",
+    "    for planner_name in ('build_ordered_run_plan', 'build_run_plan', 'build_condition_run_plan', 'build_locked_run_plan_snapshot'):",
+    "        plan_candidate = _autolabos_pick_bridge_try(planner_name, runtime=config, config=config, args=active_args, context=ctx)",
+    "        if plan_candidate is not _AUTOLABOS_PICK_BRIDGE_MISSING and plan_candidate:",
+    "            plan_value = plan_candidate",
+    "            break",
+    "    ctx['run_plan'] = _autolabos_pick_bridge_planned_runs(plan_value)",
+    "    bundle_value = None",
+    "    for loader_name in ('load_task_bundle', 'build_data_bundle', 'load_data_bundle', 'prepare_dataset_bundle'):",
+    "        loaded = _autolabos_pick_bridge_try(loader_name, runtime=config, runtime_context=ctx, run_context=ctx, config=config, args=active_args)",
+    "        if loaded is not _AUTOLABOS_PICK_BRIDGE_MISSING:",
+    "            bundle_value = loaded",
+    "            break",
+    "    if bundle_value is None and callable(globals().get('_autolabos_entrypoint_loaded_data')):",
+    "        try:",
+    "            bundle_value = globals()['_autolabos_entrypoint_loaded_data'](config)",
+    "        except Exception:",
+    "            bundle_value = None",
+    "    ctx['task_bundle'] = bundle_value",
+    "    return ctx",
+    "",
+    "def _autolabos_entrypoint_one_run(plan_item=None, condition=None, args=None, runtime=None, runtime_context=None, task_bundle=None, index=None, **kwargs):",
+    "    item = plan_item if plan_item is not None else condition",
+    "    active_condition = condition if condition is not None else _autolabos_pick_bridge_get(item, 'condition', 'condition_spec', 'spec', default=item)",
+    "    seed = _autolabos_pick_bridge_get(item, 'seed', 'seed_id', 'random_seed', default=_autolabos_pick_bridge_get(active_condition, 'seed', 'seed_id', default=None))",
+    "    context = runtime_context if runtime_context is not None else runtime",
+    "    for runner_name in ('run_single_condition', 'execute_single_condition', 'run_condition_seed', 'execute_condition_seed_run', 'run_single_condition_seed', 'execute_single_condition_seed'):",
+    "        runner = globals().get(runner_name)",
+    "        if not callable(runner) or runner is _autolabos_entrypoint_one_run:",
+    "            continue",
+    "        try:",
+    "            return _autolabos_pick_bridge_call(runner, plan_item=item, planned_run=item, run=item, condition=active_condition, condition_spec=active_condition, spec=active_condition, args=args, config=context, runtime=context, runtime_context=context, run_context=context, paths=_autolabos_pick_bridge_get(context, 'paths', 'runtime_paths', default=None), output_dir=_autolabos_pick_bridge_get(context, 'public_dir', 'output_dir', default=kwargs.get('public_dir')), public_dir=_autolabos_pick_bridge_get(context, 'public_dir', 'output_dir', default=kwargs.get('public_dir')), seed=seed, seed_id=seed, random_seed=seed, task_bundle=task_bundle, index=index)",
+    "        except TypeError:",
+    "            continue",
+    "    raise RuntimeError('No compatible generated condition runner is available for the entrypoint bridge.')",
+    "",
+    "def _autolabos_entrypoint_persist_raw_records(result=None, row=None, plan_item=None, raw_records=None, public_dir=None, run_artifact_dir=None, **kwargs):",
+    "    active_result = result if result is not None else row",
+    "    persister = globals().get('persist_run_evidence') or globals().get('persist_condition_evidence')",
+    "    if callable(persister):",
+    "        try:",
+    "            saved = _autolabos_pick_bridge_call(persister, run_item=plan_item, plan_item=plan_item, run_result=active_result, result=active_result, row=active_result, public_dir=public_dir, output_dir=public_dir, run_artifact_dir=run_artifact_dir)",
+    "            if saved is not None:",
+    "                return saved",
+    "        except Exception:",
+    "            pass",
+    "    jsonable = globals().get('_entrypoint_jsonable') or globals().get('_autolabos_entrypoint_jsonable') or globals().get('_autolabos_json_safe')",
+    "    if callable(jsonable):",
+    "        try:",
+    "            active_result = jsonable(active_result)",
+    "        except Exception:",
+    "            pass",
+    "    return dict(active_result) if hasattr(active_result, 'items') else {'result': active_result}",
+    "",
+    "def _autolabos_entrypoint_aggregate(rows=None, raw_records=None, run_results=None, metrics_path=None, runtime=None, **kwargs):",
+    "    records = list(rows or raw_records or run_results or [])",
+    "    for builder_name in ('build_success_metrics_payload', 'build_metrics_payload', 'aggregate_final_metrics', 'aggregate_metrics'):",
+    "        builder = globals().get(builder_name)",
+    "        if not callable(builder) or builder is _autolabos_entrypoint_aggregate:",
+    "            continue",
+    "        try:",
+    "            payload = _autolabos_pick_bridge_call(builder, records=records, rows=records, raw_records=records, run_results=records, baseline_marker=globals().get('BASELINE_CONDITION_MARKER'), metric_key=globals().get('OBJECTIVE_METRIC_KEY', 'accuracy'), objective_metric=globals().get('OBJECTIVE_METRIC_KEY', 'accuracy'), metadata={'entrypoint_bridge': '_autolabos_entrypoint_pick_callable_helper_alias_marker'})",
+    "            if isinstance(payload, dict):",
+    "                break",
+    "        except TypeError:",
+    "            continue",
+    "    else:",
+    "        payload = {'condition_results': records}",
+    "    failed = [record for record in records if str(_autolabos_pick_bridge_get(record, 'status', default='')).lower() in {'failed', 'failure', 'error'} or _autolabos_pick_bridge_get(record, 'success', default=True) is False]",
+    "    payload.setdefault('condition_results', records)",
+    "    payload.setdefault('completed_run_count', len(records) - len(failed))",
+    "    payload.setdefault('failed_run_count', len(failed))",
+    "    payload.setdefault('required_run_count', len(records))",
+    "    payload['status'] = 'failed' if failed else payload.get('status', 'completed')",
+    "    payload['success'] = False if failed else payload.get('success', True)",
+    "    return payload",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, mainMatch.index)}${helperBlock}${source.slice(mainMatch.index)}`;
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added missing _entrypoint_pick_callable helper aliases in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointRunOneHelperAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_entrypoint_run_one_helper_alias_marker";
+  if (source.includes(marker) || pythonSourceDefinesName(source, "_autolabos_entrypoint_run_one")) {
+    return { repaired: false };
+  }
+  if (
+    !source.includes("_autolabos_entrypoint_run_one") ||
+    !(
+      pythonSourceDefinesName(source, "_autolabos_entrypoint_one_run") ||
+      pythonSourceDefinesName(source, "run_single_condition") ||
+      pythonSourceDefinesName(source, "run_condition") ||
+      pythonSourceDefinesName(source, "execute_condition")
+    )
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch =
+    source.match(/\ndef\s+run_experiment\s*\(/u) ||
+    source.match(/\ndef\s+main\s*\(/u) ||
+    source.match(/\nif\s+__name__\s*==\s*['"]__main__['"]:/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const helperBlock = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_entrypoint_run_one_call(func, **kwargs):",
+    "    import inspect as _autolabos_run_one_inspect",
+    "    signature = _autolabos_run_one_inspect.signature(func)",
+    "    accepts_kwargs = any(p.kind == _autolabos_run_one_inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values())",
+    "    accepted = dict(kwargs) if accepts_kwargs else {k: v for k, v in kwargs.items() if k in signature.parameters}",
+    "    return func(**accepted)",
+    "",
+    "def _autolabos_entrypoint_run_one(condition=None, seed=None, plan_item=None, args=None, runtime=None, runtime_context=None, task_bundle=None, **kwargs):",
+    "    item = plan_item if plan_item is not None else condition",
+    "    active_condition = condition",
+    "    if active_condition is None and hasattr(item, 'get'):",
+    "        active_condition = item.get('condition') or item.get('condition_spec') or item",
+    "    if active_condition is None:",
+    "        active_condition = item",
+    "    active_seed = seed",
+    "    if active_seed is None and hasattr(item, 'get'):",
+    "        active_seed = item.get('seed') or item.get('seed_id') or item.get('random_seed')",
+    "    context = runtime_context if runtime_context is not None else runtime",
+    "    delegate = globals().get('_autolabos_entrypoint_one_run')",
+    "    if callable(delegate) and delegate is not _autolabos_entrypoint_run_one:",
+    "        return _autolabos_entrypoint_run_one_call(delegate, plan_item=item, condition=active_condition, args=args, runtime=context, runtime_context=context, task_bundle=task_bundle, seed=active_seed, seed_id=active_seed, random_seed=active_seed, **kwargs)",
+    "    for runner_name in ('run_single_condition', 'execute_single_condition', 'run_condition', 'execute_condition', 'run_condition_seed', 'execute_condition_seed', 'run_single_condition_seed', 'execute_single_condition_seed'):",
+    "        runner = globals().get(runner_name)",
+    "        if not callable(runner) or runner is _autolabos_entrypoint_run_one:",
+    "            continue",
+    "        return _autolabos_entrypoint_run_one_call(runner, plan_item=item, planned_run=item, run=item, condition=active_condition, condition_spec=active_condition, spec=active_condition, args=args, config=context, runtime=context, runtime_context=context, run_context=context, task_bundle=task_bundle, data_bundle=task_bundle, seed=active_seed, seed_id=active_seed, random_seed=active_seed, **kwargs)",
+    "    raise RuntimeError('No compatible generated condition runner is available for the entrypoint run-one bridge.')",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${helperBlock}${source.slice(insertionMatch.index)}`;
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added _autolabos_entrypoint_run_one single-run helper alias in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonEntrypointParseArgsSingleArgumentSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
@@ -46155,12 +48000,18 @@ export async function repairPythonMissingExecutableEntrypointSurface(scriptPath?
     "execute_experiment_loop",
     "run_experiment_suite",
     "run_workflow",
-    "execute_workflow"
+    "execute_workflow",
+    "run_model_execution",
+    "execute_model_execution",
+    "orchestrate_model_execution",
+    "run_model_execution_stage",
+    "execute_model_execution_stage",
+    "orchestrate_model_execution_stage"
   ];
   const candidateNames = dedupeStrings([
     ...preferredEntrypointNames.filter((name) => definedFunctionNames.includes(name)),
     ...definedFunctionNames.filter((name) =>
-      /^(?:run|execute|orchestrate)_[A-Za-z0-9_]*(?:experiment|study|sweep|condition|workflow|suite|grid|loop|trial|plan)[A-Za-z0-9_]*$/iu.test(name)
+      /^(?:run|execute|orchestrate)_[A-Za-z0-9_]*(?:experiment|study|sweep|condition|workflow|suite|grid|loop|trial|plan|model_execution)[A-Za-z0-9_]*$/iu.test(name)
     )
   ]);
   if (candidateNames.length === 0) {
@@ -46288,6 +48139,15 @@ export async function repairPythonMissingExecutableEntrypointSurface(scriptPath?
     "    parser.add_argument('--run-dir', default=None)",
     "    args, _unknown = parser.parse_known_args(argv)",
     "    config = _autolabos_entrypoint_runtime_config(args)",
+    "    data_bundle = None",
+    "    for _autolabos_loader_name in ('load_data_bundle', 'build_data_bundle', 'prepare_data_bundle', 'load_experiment_data', 'build_experiment_data', 'prepare_experiment_data', 'load_task_bundle', 'build_task_bundle', 'prepare_task_bundle'):",
+    "        _autolabos_loader = globals().get(_autolabos_loader_name)",
+    "        if callable(_autolabos_loader):",
+    "            try:",
+    "                data_bundle = _autolabos_entrypoint_call(_autolabos_loader, args, config=config, run_config=config, runner_config=config, runtime_config=config)",
+    "                break",
+    "            except Exception:",
+    "                continue",
     "    candidate_names = " + JSON.stringify(candidateNames),
     "    try:",
     "        for candidate_name in candidate_names:",
@@ -46301,7 +48161,7 @@ export async function repairPythonMissingExecutableEntrypointSurface(scriptPath?
     "                for condition in conditions:",
     "                    try:",
     "                        condition_seed = _autolabos_entrypoint_get(condition, 'seed', _autolabos_entrypoint_get(condition, 'seed_id', _autolabos_entrypoint_get(config, 'seed', None)))",
-    "                        row = _autolabos_entrypoint_call(candidate, args, config=config, run_config=config, runner_config=config, runtime_config=config, condition=condition, train_examples=[], training_examples=[], paths=_autolabos_entrypoint_get(config, 'paths', None), seed=condition_seed, seed_id=condition_seed, random_seed=condition_seed, output_dir=getattr(args, 'output_dir', None), public_dir=getattr(args, 'output_dir', None))",
+    "                        row = _autolabos_entrypoint_call(candidate, args, config=config, run_config=config, runner_config=config, runtime_config=config, condition=condition, train_examples=[], training_examples=[], data_bundle=data_bundle, loaded_data=data_bundle, bundle=data_bundle, dataset_bundle=data_bundle, datasets=data_bundle, paths=_autolabos_entrypoint_get(config, 'paths', None), seed=condition_seed, seed_id=condition_seed, random_seed=condition_seed, output_dir=getattr(args, 'output_dir', None), public_dir=getattr(args, 'output_dir', None))",
     "                    except Exception as exc:",
     "                        row = {'status': 'failed', 'success': False, 'condition_marker': _autolabos_entrypoint_condition_marker(condition), 'failure_reason': repr(exc)}",
     "                    if isinstance(row, dict):",
@@ -46313,7 +48173,7 @@ export async function repairPythonMissingExecutableEntrypointSurface(scriptPath?
     "                payload = {'status': 'completed' if success else 'failed', 'success': bool(success), 'condition_results': rows, 'completed_condition_count': len(completed), 'required_condition_count': required}",
     "                _autolabos_entrypoint_write_payload(args.metrics_path, payload)",
     "                return 0 if success else 1",
-    "            result = _autolabos_entrypoint_call(candidate, args, config=config, run_config=config, runner_config=config, runtime_config=config)",
+    "            result = _autolabos_entrypoint_call(candidate, args, config=config, run_config=config, runner_config=config, runtime_config=config, data_bundle=data_bundle, loaded_data=data_bundle, bundle=data_bundle, dataset_bundle=data_bundle, datasets=data_bundle)",
     "            destination = _AutoLabOSPath(args.metrics_path)",
     "            if destination.exists():",
     "                return 0",
@@ -46875,6 +48735,344 @@ export async function repairPythonNamespaceParseArgsSurface(scriptPath?: string)
   return {
     repaired: true,
     message: `Made parse_args() calls Namespace-aware in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+
+export async function repairPythonEntrypointRuntimePlanBuilderSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_entrypoint_runtime_plan_builder_surface";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _entrypoint_invoke(fn, *pos, **kw):") ||
+    !source.includes("build_ordered_run_plan") ||
+    !source.includes("plan = _entrypoint_invoke(plan_fn")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const invokePattern = /def _entrypoint_invoke\(fn, \*pos, \*\*kw\):\n(?:    [^\n]*\n)+?    return fn\(\*pos\)\n/u;
+  if (invokePattern.test(nextSource)) {
+    const replacement = [
+      "def _entrypoint_invoke(fn, *pos, **kw):",
+      "    # " + marker,
+      "    try:",
+      "        sig = inspect.signature(fn)",
+      "    except (TypeError, ValueError):",
+      "        return fn(*pos)",
+      "    params = sig.parameters",
+      "    if any(p.kind == p.VAR_KEYWORD for p in params.values()):",
+      "        return fn(**kw)",
+      "    accepted = {k: v for k, v in kw.items() if k in params}",
+      "    if accepted:",
+      "        return fn(**accepted)",
+      "    if not pos:",
+      "        return fn()",
+      "    return fn(*pos)",
+      ""
+    ].join("\n");
+    nextSource = nextSource.replace(invokePattern, replacement);
+    repaired = true;
+  }
+
+  const candidateListRepairs = [
+    {
+      needle:
+        "            \"entrypoint_preflight\", \"run_preflight\", \"preflight\", \"prepare_runtime\",\n            \"prepare_run_context\", \"build_runtime_context\", \"_entrypoint_preflight\",\n",
+      replacement:
+        "            \"resolve_runtime_context\", \"prepare_runtime_context\", \"build_runtime_context\",\n            \"build_runtime_config\", \"build_runtime\", \"make_runtime_context\",\n            \"entrypoint_preflight\", \"run_preflight\", \"preflight\", \"prepare_runtime\",\n            \"prepare_run_context\", \"_entrypoint_preflight\",\n"
+    },
+    {
+      needle:
+        "            'entrypoint_preflight', 'run_preflight', 'preflight', 'prepare_runtime',\n            'prepare_run_context', 'build_runtime_context', '_entrypoint_preflight',\n",
+      replacement:
+        "            'resolve_runtime_context', 'prepare_runtime_context', 'build_runtime_context',\n            'build_runtime_config', 'build_runtime', 'make_runtime_context',\n            'entrypoint_preflight', 'run_preflight', 'preflight', 'prepare_runtime',\n            'prepare_run_context', '_entrypoint_preflight',\n"
+    }
+  ];
+  for (const { needle, replacement } of candidateListRepairs) {
+    if (nextSource.includes(needle)) {
+      nextSource = nextSource.replace(needle, replacement);
+      repaired = true;
+    }
+  }
+
+
+  const runtimeNeedle = "        runtime = {\"args\": vars(args), \"public_dir\": str(public_dir), \"run_artifact_dir\": str(run_dir)}\n";
+  if (nextSource.includes(runtimeNeedle)) {
+    const replacement = [
+      "        runtime = {",
+      "            \"args\": vars(args),",
+      "            \"public_dir\": str(public_dir),",
+      "            \"output_dir\": str(public_dir),",
+      "            \"run_artifact_dir\": str(run_dir),",
+      "            \"metrics_path\": str(metrics_path),",
+      "            \"artifact_paths\": {",
+      "                \"progress\": str(progress_path),",
+      "                \"partial_metrics\": str(partial_path),",
+      "                \"raw_records\": str(raw_path),",
+      "            },",
+      "        }",
+      ""
+    ].join("\n");
+    nextSource = nextSource.replace(runtimeNeedle, replacement);
+    repaired = true;
+  }
+
+  const preparedNeedle = "            if prepared is not None:\n                runtime = prepared\n";
+  if (nextSource.includes(preparedNeedle)) {
+    const replacement = [
+      "            if prepared is not None:",
+      "                if hasattr(runtime, 'items') and hasattr(prepared, 'items'):",
+      "                    merged_runtime = dict(runtime)",
+      "                    merged_runtime.update(dict(prepared))",
+      "                    runtime = merged_runtime",
+      "                else:",
+      "                    runtime = prepared",
+      ""
+    ].join("\n");
+    nextSource = nextSource.replace(preparedNeedle, replacement);
+    repaired = true;
+  }
+
+  const planCallNeedle = "        plan = _entrypoint_invoke(plan_fn, args, args=args, runtime=runtime, conditions=CONDITIONS, seeds=SEEDS) if plan_fn else [\n";
+  if (nextSource.includes(planCallNeedle)) {
+    nextSource = nextSource.replace(
+      planCallNeedle,
+      "        plan = _entrypoint_invoke(plan_fn, args=args, runtime=runtime, runtime_context=runtime, run_context=runtime, conditions=CONDITIONS, seeds=SEEDS) if plan_fn else [\n"
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Materialized runtime context before ordered-plan entrypoint dispatch in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonEntrypointAggregatePayloadBuilderCandidateSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_entrypoint_aggregate_payload_builder_candidate_surface";
+  const payloadBuilderNames = [
+    "build_success_metrics_payload",
+    "build_metrics_payload",
+    "assemble_final_metrics_payload",
+    "compute_metrics_payload"
+  ];
+  if (
+    source.includes(marker) ||
+    !source.includes("aggregate_fn = _entrypoint_find_callable(") ||
+    !payloadBuilderNames.some((name) => pythonSourceDefinesOrImportsName(source, name))
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+  const candidateListRepairs = [
+    {
+      needle:
+        "            \"compute_aggregate_metrics\", \"aggregate_metrics\", \"make_metrics_payload\",\n            \"_aggregate_final_metrics\",\n",
+      replacement:
+        "            \"compute_aggregate_metrics\", \"aggregate_metrics\", \"make_metrics_payload\",\n            \"build_success_metrics_payload\", \"build_metrics_payload\",\n            \"assemble_final_metrics_payload\", \"compute_metrics_payload\",\n            \"_aggregate_final_metrics\",\n            # " + marker + "\n"
+    },
+    {
+      needle:
+        "        \"compute_aggregate_metrics\", \"aggregate_metrics\", \"make_metrics_payload\",\n        \"_aggregate_final_metrics\",\n",
+      replacement:
+        "        \"compute_aggregate_metrics\", \"aggregate_metrics\", \"make_metrics_payload\",\n        \"build_success_metrics_payload\", \"build_metrics_payload\",\n        \"assemble_final_metrics_payload\", \"compute_metrics_payload\",\n        \"_aggregate_final_metrics\",\n        # " + marker + "\n"
+    },
+    {
+      needle:
+        "            'compute_aggregate_metrics', 'aggregate_metrics', 'make_metrics_payload',\n            '_aggregate_final_metrics',\n",
+      replacement:
+        "            'compute_aggregate_metrics', 'aggregate_metrics', 'make_metrics_payload',\n            'build_success_metrics_payload', 'build_metrics_payload',\n            'assemble_final_metrics_payload', 'compute_metrics_payload',\n            '_aggregate_final_metrics',\n            # " + marker + "\n"
+    },
+    {
+      needle:
+        "        'compute_aggregate_metrics', 'aggregate_metrics', 'make_metrics_payload',\n        '_aggregate_final_metrics',\n",
+      replacement:
+        "        'compute_aggregate_metrics', 'aggregate_metrics', 'make_metrics_payload',\n        'build_success_metrics_payload', 'build_metrics_payload',\n        'assemble_final_metrics_payload', 'compute_metrics_payload',\n        '_aggregate_final_metrics',\n        # " + marker + "\n"
+    }
+  ];
+  for (const { needle, replacement } of candidateListRepairs) {
+    if (nextSource.includes(needle)) {
+      nextSource = nextSource.replace(needle, replacement);
+      repaired = true;
+    }
+  }
+
+  const aggregateKwargRepairs = [
+    {
+      needle: "            run_context=runtime, records=records, raw_records=records, plan=plan,\n",
+      replacement:
+        "            run_context=runtime, records=records, raw_records=records,\n            condition_results=records, results=records, raw_condition_results=records, plan=plan,\n"
+    },
+    {
+      needle: "        run_context=runtime, records=records, raw_records=records, plan=plan,\n",
+      replacement:
+        "        run_context=runtime, records=records, raw_records=records,\n        condition_results=records, results=records, raw_condition_results=records, plan=plan,\n"
+    }
+  ];
+  for (const { needle, replacement } of aggregateKwargRepairs) {
+    if (nextSource.includes(needle) && !nextSource.includes("condition_results=records")) {
+      nextSource = nextSource.replace(needle, replacement);
+      repaired = true;
+    }
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Added existing metrics payload builders to final aggregation entrypoint candidates in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonEntrypointOrderedPlanDataBundleSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_entrypoint_ordered_plan_data_bundle_surface";
+  const loaderNames = [
+    "load_experiment_data",
+    "load_experiment_dataset",
+    "load_experiment_datasets",
+    "build_experiment_data",
+    "build_experiment_dataset",
+    "build_experiment_datasets",
+    "prepare_experiment_data",
+    "load_data_bundle",
+    "build_data_bundle",
+    "prepare_data_bundle",
+    "load_task_bundle",
+    "build_task_bundle",
+    "prepare_task_bundle",
+    "_autolabos_entrypoint_loaded_data"
+  ];
+  if (
+    source.includes(marker) ||
+    !source.includes("run_fn, args, condition, seed, runtime,") ||
+    !source.includes("data_bundle") ||
+    !loaderNames.some((name) => pythonSourceDefinesOrImportsName(source, name))
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+  if (!nextSource.includes("data_loader = _entrypoint_find_callable(")) {
+    const dataBlockNeedles = [
+      "        start = time.time()\n",
+      "        start = 0\n",
+      "        for item in plan:\n"
+    ];
+    const dataBlockNeedle = dataBlockNeedles.find((needle) => nextSource.includes(needle));
+    if (dataBlockNeedle) {
+      const dataBlock = [
+        "        # " + marker,
+        "        data_bundle = runtime.get(\"data_bundle\") if hasattr(runtime, \"get\") else None",
+        "        if data_bundle is None:",
+        "            data_loader = _entrypoint_find_callable(",
+        "                \"load_experiment_data\", \"load_experiment_dataset\", \"load_experiment_datasets\",",
+        "                \"build_experiment_data\", \"build_experiment_dataset\", \"build_experiment_datasets\",",
+        "                \"prepare_experiment_data\", \"load_data_bundle\", \"build_data_bundle\",",
+        "                \"prepare_data_bundle\", \"load_task_bundle\", \"build_task_bundle\",",
+        "                \"prepare_task_bundle\", \"_autolabos_entrypoint_loaded_data\",",
+        "            )",
+        "            if data_loader is not None:",
+        "                data_bundle = _entrypoint_invoke(",
+        "                    data_loader, args, args=args, config=args, runtime=runtime,",
+        "                    runtime_context=runtime, run_context=runtime,",
+        "                )",
+        "        if hasattr(runtime, \"setdefault\"):",
+        "            runtime.setdefault(\"data_bundle\", data_bundle)",
+        "            runtime.setdefault(\"loaded_data\", data_bundle)",
+        "            runtime.setdefault(\"dataset_bundle\", data_bundle)",
+        "            runtime.setdefault(\"task_bundle\", data_bundle)",
+        ""
+      ].join("\n");
+      nextSource = nextSource.replace(dataBlockNeedle, dataBlock + dataBlockNeedle);
+      repaired = true;
+    }
+  }
+
+  const runKwargNeedles = [
+    {
+      needle:
+        "                run_context=runtime, condition=condition, condition_spec=condition, seed=seed,\n",
+      replacement:
+        "                run_context=runtime, condition=condition, condition_spec=condition, seed=seed,\n                data_bundle=data_bundle, loaded_data=data_bundle, dataset_bundle=data_bundle,\n                task_bundle=data_bundle, train_bundle=data_bundle, training_bundle=data_bundle,\n"
+    },
+    {
+      needle:
+        "        run_context=runtime, condition=condition, condition_spec=condition, seed=seed,\n",
+      replacement:
+        "        run_context=runtime, condition=condition, condition_spec=condition, seed=seed,\n        data_bundle=data_bundle, loaded_data=data_bundle, dataset_bundle=data_bundle,\n        task_bundle=data_bundle, train_bundle=data_bundle, training_bundle=data_bundle,\n"
+    }
+  ];
+  for (const { needle, replacement } of runKwargNeedles) {
+    if (nextSource.includes(needle) && !nextSource.includes("data_bundle=data_bundle")) {
+      nextSource = nextSource.replace(needle, replacement);
+      repaired = true;
+    }
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Materialized data bundle aliases for ordered-plan condition runners in " + path.basename(scriptPath) + " before handoff."
   };
 }
 
@@ -54402,6 +56600,101 @@ export async function repairPythonEntrypointSingleRunnerTrainBundleAliasSurface(
   };
 }
 
+export async function repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const repairMarker = "_autolabos_entrypoint_high_level_runner_data_bundle_alias_surface";
+  const hasHighLevelCandidateCall = /_autolabos_entrypoint_call_compatible\(candidate,[^\n]*\)/u.test(source);
+  const highLevelCallHasTaskBundle = /_autolabos_entrypoint_call_compatible\(candidate,[^\n]*\btask_bundle=/u.test(source);
+  const highLevelCallHasLoadedDataMaterialization =
+    /runtime_context\s*=\s*_autolabos_entrypoint_runtime_context\(config,\s*runtime_paths,\s*args\)[\s\S]{0,1200}loaded_data\s*=\s*_autolabos_entrypoint_loaded_data\(config\)[\s\S]{0,1200}_autolabos_entrypoint_call_compatible\(candidate,[^\n]*\btask_bundle=loaded_data/u.test(source);
+  if (
+    !source.includes("def _autolabos_entrypoint_run(") ||
+    !source.includes("high_level_names =") ||
+    !hasHighLevelCandidateCall ||
+    (source.includes(repairMarker) && highLevelCallHasTaskBundle && highLevelCallHasLoadedDataMaterialization) ||
+    (highLevelCallHasTaskBundle && highLevelCallHasLoadedDataMaterialization)
+  ) {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  const highLevelRuntimeContextNeedle = [
+    "        runtime_context = _autolabos_entrypoint_runtime_context(config, runtime_paths, args)",
+    "        for _autolabos_paths_alias in ('paths', 'output_paths', 'artifact_paths', 'experiment_paths', 'runtime_paths'):"
+  ].join("\n");
+  const highLevelRuntimeContextReplacement = [
+    "        runtime_context = _autolabos_entrypoint_runtime_context(config, runtime_paths, args)",
+    `        # ${repairMarker}`,
+    "        loaded_data = _autolabos_entrypoint_loaded_data(config)",
+    "        for _autolabos_paths_alias in ('paths', 'output_paths', 'artifact_paths', 'experiment_paths', 'runtime_paths'):"
+  ].join("\n");
+  if (nextSource.includes(highLevelRuntimeContextNeedle)) {
+    nextSource = nextSource.replace(highLevelRuntimeContextNeedle, highLevelRuntimeContextReplacement);
+  }
+  if (!nextSource.includes(repairMarker)) {
+    nextSource = nextSource.replace(
+      /(^\s*runtime_context\s*=\s*_autolabos_entrypoint_runtime_context\(config,\s*runtime_paths,\s*args\)\s*\n)(?=\s*for\s+_autolabos_paths_alias\s+in\s*\([^\n]*runtime_paths[^\n]*\):)/mu,
+      `$1        # ${repairMarker}\n        loaded_data = _autolabos_entrypoint_loaded_data(config)\n`
+    );
+  }
+
+  const aliasSuffix = [
+    "train_source=loaded_data",
+    "training_source=loaded_data",
+    "task_bundle=loaded_data",
+    "task_bundles=loaded_data",
+    "task_data=loaded_data",
+    "eval_bundle=loaded_data",
+    "evaluation_bundle=loaded_data",
+    "eval_tasks=loaded_data",
+    "evaluation_tasks=loaded_data",
+    "examples=loaded_data",
+    "rows=loaded_data",
+    "dataset=loaded_data"
+  ].join(", ");
+  let insertedMarkerBeforeCall = nextSource.includes(repairMarker);
+  nextSource = nextSource
+    .split("\n")
+    .flatMap((line) => {
+      if (!line.includes("_autolabos_entrypoint_call_compatible(candidate,") || line.includes("task_bundle=")) {
+        return [line];
+      }
+      const nextLine = line.includes("training_bundle=loaded_data")
+        ? line.replace("training_bundle=loaded_data", `training_bundle=loaded_data, ${aliasSuffix}`)
+        : line.replace(/\)\s*$/u, `, ${aliasSuffix})`);
+      if (insertedMarkerBeforeCall || nextLine === line) {
+        return [nextLine];
+      }
+      insertedMarkerBeforeCall = true;
+      const indent = line.match(/^\s*/u)?.[0] ?? "";
+      return [`${indent}# ${repairMarker}`, nextLine];
+    })
+    .join("\n");
+
+  if (nextSource === source || !nextSource.includes(repairMarker) || !/_autolabos_entrypoint_call_compatible\(candidate,[^\n]*\btask_bundle=loaded_data/u.test(nextSource)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aliased high-level runner data/task bundle arguments in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonEntrypointConditionSeedExecutorBridgeSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
@@ -54566,7 +56859,10 @@ export async function repairPythonMultipleChoiceGoldAliasSurface(scriptPath?: st
   }
 
   const repairMarker = "_autolabos_multiple_choice_gold_alias_surface";
-  if (source.includes(repairMarker) || !source.includes("def _extract_mc_example(")) {
+  if (
+    source.includes(repairMarker) ||
+    (!source.includes("def _extract_mc_example(") && !source.includes("def normalize_mc_record("))
+  ) {
     return { repaired: false };
   }
 
@@ -54644,6 +56940,78 @@ export async function repairPythonMultipleChoiceGoldAliasSurface(scriptPath?: st
     replacedLabelChain = true;
     return `${indent}label = _autolabos_first_present_label(record, ("answerKey", "gold_index", "label_index", "gold", "label", "answer_index", "correct_index", "answer"))`;
   });
+  const mappingLabelHelper = [
+    `# ${repairMarker}_mapping_helper`,
+    "def _autolabos_first_present_mapping_label(record, keys):",
+    "    for key in keys:",
+    "        try:",
+    "            _autolabos_is_mapping = isinstance(record, Mapping)",
+    "        except NameError:",
+    "            try:",
+    "                from collections.abc import Mapping as _AutolabosMapping",
+    "                _autolabos_is_mapping = isinstance(record, _AutolabosMapping)",
+    "            except Exception:",
+    "                _autolabos_is_mapping = isinstance(record, dict)",
+    "        except Exception:",
+    "            _autolabos_is_mapping = False",
+    "        try:",
+    "            if _autolabos_is_mapping and key in record:",
+    "                return record.get(key)",
+    "        except Exception:",
+    "            pass",
+    "        try:",
+    "            value = record.get(key)",
+    "        except Exception:",
+    "            value = None",
+    "        if value is not None:",
+    "            return value",
+    "        try:",
+    "            value = getattr(record, key)",
+    "        except Exception:",
+    "            value = None",
+    "        if value is not None:",
+    "            return value",
+    "    return None",
+    ""
+  ].join("\n");
+  const directRecordGetReplacements: Array<[string, string]> = [
+    [
+      '        label = _label_to_index(record.get("answerKey") or record.get("answer") or record.get("label"), choices, choice_labels)',
+      '        label = _label_to_index(_autolabos_first_present_mapping_label(record, ("answerKey", "answer", "label", "gold_index", "label_index", "answer_index", "correct_index", "gold")), choices, choice_labels)'
+    ],
+    [
+      '        label = _label_to_index(record.get("label") or record.get("gold") or record.get("answer_index") or record.get("correct_index"), choices)',
+      '        label = _label_to_index(_autolabos_first_present_mapping_label(record, ("label", "gold_index", "label_index", "gold", "answer_index", "correct_index", "answer", "answerKey")), choices)'
+    ],
+    [
+      '        label = _label_to_index(record.get("gold") or record.get("label") or record.get("answer") or record.get("answer_index") or record.get("correct_index") or record.get("answerKey"), choices)',
+      '        label = _label_to_index(_autolabos_first_present_mapping_label(record, ("gold_index", "label_index", "gold", "label", "answer_index", "correct_index", "answer", "answerKey")), choices)'
+    ]
+  ];
+  let replacedDirectRecordLabel = false;
+  for (const [needle, replacement] of directRecordGetReplacements) {
+    if (nextSource.includes(needle)) {
+      nextSource = nextSource.replace(needle, replacement);
+      replacedDirectRecordLabel = true;
+    }
+  }
+  const genericDirectRecordLabelPattern =
+    /^(\s*)label\s*=\s*_label_to_index\((record\.get\(["'][^"']+["']\)(?:\s+or\s+record\.get\(["'][^"']+["']\))+),\s*choices(,\s*choice_labels)?\)\s*$/gmu;
+  nextSource = nextSource.replace(genericDirectRecordLabelPattern, (match: string, indent: string, _chain: string, choiceLabelsSuffix: string | undefined) => {
+    if (!match.includes("answer_index") && !match.includes("correct_index")) {
+      return match;
+    }
+    replacedDirectRecordLabel = true;
+    const suffix = choiceLabelsSuffix ? ", choice_labels" : "";
+    return `${indent}label = _label_to_index(_autolabos_first_present_mapping_label(record, ("gold_index", "label_index", "label", "gold", "answer_index", "correct_index", "answer", "answerKey", "target", "target_index")), choices${suffix})`;
+  });
+  if (replacedDirectRecordLabel && !nextSource.includes("def _autolabos_first_present_mapping_label(")) {
+    const insertionMatch = nextSource.match(/\ndef\s+normalize_mc_record\s*\(/u) || nextSource.match(/\ndef\s+_extract_mc_example\s*\(/u);
+    const insertionIndex = insertionMatch?.index !== undefined ? insertionMatch.index + 1 : 0;
+    nextSource = `${nextSource.slice(0, insertionIndex)}${mappingLabelHelper}${nextSource.slice(insertionIndex)}`;
+    repaired = true;
+  }
+
   if (replacedLabelChain && !nextSource.includes("def _autolabos_first_present_label(")) {
     const insertionMatch = nextSource.match(/\ndef\s+normalize_eval_record\s*\(/u) || nextSource.match(/\ndef\s+_extract_mc_example\s*\(/u);
     const insertionIndex = insertionMatch?.index !== undefined ? insertionMatch.index + 1 : 0;
@@ -55403,12 +57771,16 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   const evaluationContractTupleMarker = "_autolabos_evaluation_contract_tuple_model_tokenizer_surface";
   const cpuOffloadMarker = "_autolabos_entrypoint_condition_runtime_cpu_offload_surface";
   const conditionStateReturnMarker = "_autolabos_condition_state_live_handle_return_cleanup";
+  const runRecordAppendCleanupMarker = "_autolabos_model_execution_run_record_live_handle_cleanup";
+  const trainingRecordArtifactAliasMarker = "_autolabos_model_execution_training_record_artifact_alias_surface";
   const hasRuntimeCleanupHelper = source.includes(repairMarker);
   const hasEvaluationWrapperCleanup = source.includes(evaluationWrapperMarker);
   const hasPublicEvidenceSnapshot = source.includes(publicEvidenceMarker);
   const hasRecursivePublicEvidenceSnapshot = source.includes(recursivePublicEvidenceMarker);
   const hasCpuOffloadCleanup = source.includes(cpuOffloadMarker);
   const hasConditionStateReturnCleanup = source.includes(conditionStateReturnMarker);
+  const hasRunRecordAppendCleanup = source.includes(runRecordAppendCleanupMarker);
+  const hasTrainingRecordArtifactAlias = source.includes(trainingRecordArtifactAliasMarker);
   const evaluationLinePattern = /^(\s*)evaluation_metric_rows\.extend\(_autolabos_entrypoint_evaluation_metric_rows\(row, eval_tasks, config, condition=condition_arg, paths=runtime_paths\)\)\s*$/gmu;
   const wrapperCallPattern = /^(\s*)evidence_rows\s*=\s*_autolabos_entrypoint_call_compatible\(evaluator,[^\n]*condition_row[^\n]*\)\s*$/gmu;
   const trainingEvidencePattern = /^(\s*)training_evidence\s*=\s*_autolabos_entrypoint_jsonable\(condition_row\)\s*$/gmu;
@@ -55416,6 +57788,9 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   const lowLevelStatePattern = /^(\s*)state\s*=\s*_autolabos_entrypoint_jsonable\(condition_row\)\s*$/gmu;
   const unsafeHandleCopyPattern = /^(\s*)for handle_key in \('model', 'tokenizer', 'device'\):\n\1    handle_value = _autolabos_entrypoint_get\(condition_row, handle_key, None\)\n\1    if handle_value is not None:\n\1        state\[handle_key\] = handle_value\s*$/gmu;
   const contractTuplePattern = /^(\s*)if isinstance\(loaded_contract, tuple\):\n\1    contract = loaded_contract\[0\] if len\(loaded_contract\) >= 1 else None\n\1    if len\(loaded_contract\) >= 2 and loaded_contract\[1\]:\n\1        diagnostics\.extend\(list\(loaded_contract\[1\]\)\)\n\1else:\n\1    contract = loaded_contract\s*$/gmu;
+  const runRecordDictAppendPattern = /^(\s*)run_records\.append\(dict\(rec\)\)\s*$/gmu;
+  const trainingReturnArtifactPathPattern = /^(\s*)"adapter_path"\s*:\s*str\(([^)\n]*adapter_dir[^)\n]*)\)\s*,\s*$/gmu;
+  const trainingReturnLiveHandlePattern = /^(\s*)"task_metrics"\s*:\s*\{\}\s*,\n\1"model"\s*:\s*model\s*,\n\1"tokenizer"\s*:\s*tokenizer\s*,?\s*$/gmu;
   const hasPendingRuntimeCleanupRepair =
     evaluationLinePattern.test(source) ||
     wrapperCallPattern.test(source) ||
@@ -55424,6 +57799,9 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
     lowLevelStatePattern.test(source) ||
     unsafeHandleCopyPattern.test(source) ||
     contractTuplePattern.test(source) ||
+    (!hasRunRecordAppendCleanup && runRecordDictAppendPattern.test(source)) ||
+    (!hasTrainingRecordArtifactAlias && trainingReturnArtifactPathPattern.test(source)) ||
+    trainingReturnLiveHandlePattern.test(source) ||
     /_autolabos_entrypoint_jsonable\(condition_row\)/u.test(source);
   evaluationLinePattern.lastIndex = 0;
   wrapperCallPattern.lastIndex = 0;
@@ -55432,6 +57810,9 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   lowLevelStatePattern.lastIndex = 0;
   unsafeHandleCopyPattern.lastIndex = 0;
   contractTuplePattern.lastIndex = 0;
+  runRecordDictAppendPattern.lastIndex = 0;
+  trainingReturnArtifactPathPattern.lastIndex = 0;
+  trainingReturnLiveHandlePattern.lastIndex = 0;
   if (hasRuntimeCleanupHelper && hasEvaluationWrapperCleanup && hasPublicEvidenceSnapshot && hasCpuOffloadCleanup && hasConditionStateReturnCleanup && !hasPendingRuntimeCleanupRepair) {
     return { repaired: false };
   }
@@ -55599,6 +57980,28 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   }
   nextSource = nextSource.replace(trainingEvidencePattern, (_line, indent: string) =>
     `${indent}training_evidence = _autolabos_entrypoint_jsonable(_autolabos_entrypoint_condition_public_evidence(condition_row))  # ${publicEvidenceMarker}`
+  );
+  if (!hasRunRecordAppendCleanup) {
+    nextSource = nextSource.replace(runRecordDictAppendPattern, (_line, indent: string) => [
+      `${indent}_autolabos_public_rec = _autolabos_entrypoint_condition_public_evidence(rec)  # ${runRecordAppendCleanupMarker}`,
+      `${indent}run_records.append(dict(_autolabos_public_rec) if hasattr(_autolabos_public_rec, 'items') else _autolabos_public_rec)`,
+      `${indent}_autolabos_entrypoint_release_condition_runtime(rec)`
+    ].join("\n"));
+    nextSource = nextSource.replace(
+      /(\brecord\s*=\s*)rec\b/gu,
+      `$1_autolabos_public_rec`
+    );
+  }
+  if (!hasTrainingRecordArtifactAlias) {
+    nextSource = nextSource.replace(trainingReturnArtifactPathPattern, (_line, indent: string, adapterExpr: string) => [
+      `${indent}"adapter_path": str(${adapterExpr}),`,
+      `${indent}"adapter_dir": str(${adapterExpr}),  # ${trainingRecordArtifactAliasMarker}`,
+      `${indent}"artifact_dir": str(${adapterExpr}),`,
+      `${indent}"base_model_id": model_id,`
+    ].join("\n"));
+  }
+  nextSource = nextSource.replace(trainingReturnLiveHandlePattern, (_match, indent: string) =>
+    `${indent}"task_metrics": {},\n${indent}"live_handles_released": True,  # ${runRecordAppendCleanupMarker}`
   );
   nextSource = nextSource.replaceAll(
     "state=condition_row, state_obj=condition_row, condition_state=condition_row, completed_condition=condition_row, completed_condition_state=condition_row, condition_output=condition_row, output=condition_row, condition_result=condition_row, result=condition_row, row=condition_row, training_result=condition_row",
@@ -56512,9 +58915,8 @@ export async function repairPythonUnresolvedDataclassDefaultFactorySurface(scrip
       continue;
     }
 
-    const laterSource = source.slice(matchIndex);
-    const laterClassPattern = new RegExp(`(?:^|\\n)class\\s+${escapeRegex(factoryName)}\\s*(?:\\(|:)`, "u");
-    if (!laterClassPattern.test(laterSource)) {
+    const classPattern = new RegExp(`(?:^|\\n)class\\s+${escapeRegex(factoryName)}\\s*(?:\\(|:)`, "u");
+    if (!classPattern.test(source)) {
       continue;
     }
     const helperName = `_autolabos_${factoryName

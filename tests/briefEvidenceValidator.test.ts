@@ -135,6 +135,34 @@ describe("briefEvidenceValidator", () => {
     );
   });
 
+  it("describes flagged evidence gaps as unresolved rather than unflagged", () => {
+    const assessment = evaluateBriefEvidenceAgainstResults({
+      briefSections: makeBriefSections(),
+      report: makeReport({
+        failure_taxonomy: [
+          {
+            id: "missing_resource_metrics",
+            category: "evidence_gap",
+            severity: "high",
+            status: "observed",
+            summary: "Required runtime and memory evidence is missing from the completed metrics payload.",
+            evidence: ["metrics.resource_metrics"],
+            recommended_action: "Repair metrics export before paper-scale review."
+          }
+        ] as AnalysisReport["failure_taxonomy"]
+      })
+    });
+
+    expect(assessment.status).toBe("fail");
+    expect(assessment.actual.evidence_gap_count).toBe(1);
+    expect(assessment.failures).toContain("Unresolved evidence-scale or blocking scope gaps remain");
+    expect(assessment.summary).toContain("Unresolved evidence-scale or blocking scope gaps remain");
+    expect(assessment.summary).not.toContain("did not flag");
+    expect(
+      assessment.checks.find((check) => check.id === "analysis_evidence_gaps_clear")?.detail
+    ).toContain("Analyze-results flagged blocking evidence_gap=1");
+  });
+
   it("passes when results satisfy the brief contract", () => {
     const assessment = evaluateBriefEvidenceAgainstResults({
       briefSections: makeBriefSections(),

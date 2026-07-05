@@ -534,13 +534,17 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       const attemptNumber = (run.graph.retryCounters.analyze_results ?? 0) + 1;
       const objectiveStatus = summary.overview?.objective_status;
       const metricImproved = objectiveStatus === "met";
-      const verdict: AttemptDecisionVerdict =
-        objectiveStatus === "met"
+      const blockingDesignFailures = (summary.failure_taxonomy ?? []).filter(
+        (failure) =>
+          (failure.category === "evidence_gap" || failure.category === "scope_limit") && failure.severity !== "low"
+      );
+      const hasBlockingDesignFailure = blockingDesignFailures.length > 0;
+      const verdict: AttemptDecisionVerdict = hasBlockingDesignFailure
+        ? "needs_design_revision"
+        : objectiveStatus === "met"
           ? "keep"
           : objectiveStatus === "not_met"
-            ? (summary.failure_taxonomy ?? []).some((f) => f.category === "evidence_gap" || f.category === "scope_limit")
-              ? "needs_design_revision"
-              : "discard"
+            ? "discard"
             : "needs_replication";
       const attemptDecision = buildAttemptDecision({
         runId: run.id,
@@ -554,7 +558,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           ? `Objective metric ${run.objectiveMetric} not met: ${summary.overview?.objective_summary || "unknown"}.`
           : undefined,
         designRevisionNote: verdict === "needs_design_revision"
-          ? `Evidence or scope gaps detected: ${(summary.failure_taxonomy ?? []).map((f) => f.category).join(", ")}.`
+          ? `Evidence or scope gaps detected: ${blockingDesignFailures.map((failure) => failure.category).join(", ")}.`
           : undefined,
         replicationNote: verdict === "needs_replication"
           ? "Objective status unknown; replication needed to confirm."

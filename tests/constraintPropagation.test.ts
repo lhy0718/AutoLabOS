@@ -450,7 +450,7 @@ describe("constraint propagation", () => {
     });
   });
 
-  it("falls back deterministically when every design candidate is hard-blocked", async () => {
+  it("fails closed while preserving inspection artifacts when every design candidate is hard-blocked", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-panel-fallback-"));
     process.chdir(root);
 
@@ -509,7 +509,10 @@ describe("constraint propagation", () => {
     });
 
     const result = await node.execute({ run, graph: run.graph });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment design panel blocked progression");
+    expect(result.error).toContain("all 2 candidate(s) were hard-blocked");
+    expect(result.error).toContain("Least-bad blocked plan");
 
     const plan = YAML.parse(await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8")) as {
       selected_design?: { title?: string };
@@ -526,6 +529,16 @@ describe("constraint propagation", () => {
       mode: "all_blocked_fallback",
       selected_candidate_id: "plan_less_bad"
     });
+
+    await expect(readFile(path.join(runDir, "experiment_contract.json"), "utf8")).rejects.toThrow();
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("design_experiments.panel_selection")).toMatchObject({
+      mode: "all_blocked_fallback",
+      selected_candidate_id: "plan_less_bad"
+    });
+    expect(await memory.get("design_experiments.paper_scale_blocked")).toBe(true);
+    expect(await memory.get("design_experiments.blocked_reason")).toContain("all 2 candidate(s) were hard-blocked");
   });
 
   it("preserves prior bounded-run feedback when design retries after analyze_results", async () => {
@@ -665,6 +678,109 @@ describe("constraint propagation", () => {
       previous_repeats: 1,
       transition_action: "backtrack_to_design",
       implementation_failure: "Implementation execution failed before any runnable implementation was produced: terminated"
+    });
+  });
+
+  it("carries run verifier dependency blockers into design retry context", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-dependency-retry-"));
+    process.chdir(root);
+
+    const runId = "run-design-dependency-retry";
+    const run = makeRun(root, runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "hypotheses.jsonl"),
+      `${JSON.stringify({
+        hypothesis_id: "h_1",
+        text: "A compact executable condition sweep can improve the target metric under a fixed local budget.",
+        measurement_hint: "Compare the treatment against a locked baseline with repeated local trials."
+      })}
+`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "transition_recommendation.json"),
+      JSON.stringify(
+        {
+          action: "backtrack_to_design",
+          targetNode: "design_experiments",
+          reason: "Dependency blocker requires design-level repair.",
+          evidence: ["failure_code=model_dependency_unavailable"]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "run_experiments_verify_report.json"),
+      JSON.stringify(
+        {
+          status: "fail",
+          stage: "metrics",
+          summary: "Experiment dependency blocker: required model/tokenizer asset could not be loaded.",
+          failure_code: "model_dependency_unavailable",
+          repair_target: "environment_dependency",
+          recommended_backtrack_node: "design_experiments",
+          upstream_repair_hint: "Select an available local dependency or mark the run dependency-blocked before rerunning.",
+          operator_action_required: true
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const node = createDesignExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new ThrowingLLMClient("design llm unavailable"),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const retryContext = JSON.parse(
+      await readFile(path.join(runDir, "design_experiments_panel", "retry_context.json"), "utf8")
+    ) as {
+      run_verifier_failure_code?: string;
+      run_verifier_repair_target?: string;
+      run_verifier_recommended_backtrack_node?: string;
+      run_verifier_operator_action_required?: boolean;
+      retry_directives?: string[];
+    };
+    expect(retryContext).toMatchObject({
+      transition_action: "backtrack_to_design",
+      run_verifier_failure_code: "model_dependency_unavailable",
+      run_verifier_repair_target: "environment_dependency",
+      run_verifier_recommended_backtrack_node: "design_experiments",
+      run_verifier_operator_action_required: true
+    });
+    expect(retryContext.retry_directives).toContain(
+      "Do not repeat a design that depends on an unavailable model/tokenizer asset; select an explicitly available local dependency or mark the run dependency-blocked before implementation."
+    );
+    expect(retryContext.retry_directives).toContain(
+      "Treat the dependency repair as operator-gated until the required asset is prewarmed or the design selects a known available substitute."
+    );
+
+    const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
+    expect(plan).toContain('run_verifier_failure_code: "model_dependency_unavailable"');
+    expect(plan).toContain('run_verifier_repair_target: "environment_dependency"');
+    expect(plan).toContain("run_verifier_operator_action_required: true");
+    expect(plan).toContain("Do not repeat a design that depends on an unavailable model/tokenizer asset");
+    expect(plan).toContain("Confirm required model/tokenizer assets are locally available");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("design_experiments.retry_context")).toMatchObject({
+      run_verifier_failure_code: "model_dependency_unavailable",
+      run_verifier_repair_target: "environment_dependency",
+      run_verifier_operator_action_required: true
     });
   });
 

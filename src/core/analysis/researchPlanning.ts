@@ -183,6 +183,11 @@ export interface DesignRetryContext {
   transition_action?: string;
   transition_reason?: string;
   transition_evidence?: string[];
+  run_verifier_failure_code?: string;
+  run_verifier_repair_target?: string;
+  run_verifier_recommended_backtrack_node?: string;
+  run_verifier_upstream_repair_hint?: string;
+  run_verifier_operator_action_required?: boolean;
   retry_directives: string[];
 }
 
@@ -2137,6 +2142,14 @@ function buildFallbackRetryImplementationNotes(retryContext: DesignRetryContext 
       "Repair the implementation contract before expanding scope: produce one runnable minimal branch, verify artifacts, then add repeated conditions."
     );
   }
+  if (isRunVerifierDependencyRepairContext(retryContext)) {
+    notes.push(
+      "Do not repeat a design that depends on an unavailable model/tokenizer asset; select an explicitly available local dependency or mark the run dependency-blocked before implementation."
+    );
+    if (retryContext.run_verifier_upstream_repair_hint) {
+      notes.push(`Dependency repair hint: ${truncateText(retryContext.run_verifier_upstream_repair_hint, 220)}`);
+    }
+  }
   return dedupeStrings(notes);
 }
 
@@ -2144,12 +2157,22 @@ function buildRetrySummary(retryContext: DesignRetryContext | undefined, objecti
   if (!retryContext) {
     return "";
   }
+  if (isRunVerifierDependencyRepairContext(retryContext)) {
+    return "The previous execution was blocked by an unavailable experiment dependency, so revise dependency assumptions before rerunning instead of repeating the same implementation.";
+  }
   const metric = retryContext.previous_primary_metric_name || objectiveMetric || "the primary metric";
   const value =
     typeof retryContext.previous_primary_metric_value === "number"
       ? `${retryContext.previous_primary_metric_value}`
       : "unmet";
   return `The previous bounded run did not improve ${metric} (${value}), so revise the design instead of repeating the same tiny pilot.`;
+}
+
+function isRunVerifierDependencyRepairContext(retryContext: DesignRetryContext): boolean {
+  return (
+    retryContext.run_verifier_failure_code === "model_dependency_unavailable" ||
+    retryContext.run_verifier_repair_target === "environment_dependency"
+  );
 }
 
 function buildRetryEvaluationSteps(retryContext: DesignRetryContext | undefined): string[] {
@@ -2166,14 +2189,20 @@ function buildRetryResourceNotes(retryContext: DesignRetryContext | undefined): 
   if (!retryContext) {
     return [];
   }
+  const notes: string[] = [];
+  if (isRunVerifierDependencyRepairContext(retryContext)) {
+    notes.push(
+      "Confirm required model/tokenizer assets are locally available, prewarmed, or explicitly declared dependency-blocked before implementation handoff."
+    );
+  }
   const previousPilot = retryContext.previous_pilot_size;
   const previousRepeats = retryContext.previous_repeats;
   if (typeof previousPilot === "number" || typeof previousRepeats === "number") {
-    return [
+    notes.push(
       `The next bounded local retry must materially exceed the previous scope (pilot_size=${previousPilot ?? "unknown"}, repeats=${previousRepeats ?? "unknown"}) while staying locally runnable.`
-    ];
+    );
   }
-  return [];
+  return dedupeStrings(notes);
 }
 
 interface DesignGuidance {

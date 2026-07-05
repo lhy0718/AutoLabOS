@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-07-01
+Last updated: 2026-07-05
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -12,6 +12,1738 @@ Usage rules:
 Path placeholders:
 - `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
 - `<repo-root>` means the local AutoLabOS implementation checkout.
+
+---
+
+## Issue: LV-533
+
+- Status: reproduced and repaired as the post-LV-532 GPU live-handle retention boundary on 2026-07-05. Same-flow live retry now strips generated training records of live model/tokenizer handles before retaining run records, preserves artifact-directory aliases for later reload, and advances past the previous CUDA OOM boundary into later condition runs.
+- Validation target: generated model-execution stages should retain public, artifact-backed run evidence rather than keeping GPU-resident model/tokenizer objects in `run_records` across condition/seed iterations.
+- Environment/session context: existing validation workspace <validation-workspace>, run <run-id>, downstream of LV-532 high-level loaded-data materialization.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` after LV-532 and allow handoff to `run_experiments`.
+  2. Observe the first condition completing multiple training runs.
+  3. Observe the next condition fail quickly with CUDA OOM while previous run records still retain live model/tokenizer handles.
+
+- Expected behavior:
+  - Completed training records should include adapter/artifact paths and base model metadata.
+  - The long-lived `run_records` list should not retain live model/tokenizer/trainer objects.
+  - Later evaluation should reload from saved artifacts instead of depending on retained GPU handles.
+
+- Actual behavior:
+  - Before repair, the generated worker returned live `model` and `tokenizer` handles in each completed run record.
+  - The orchestration loop appended copied records to `run_records`, preserving those handles across seeds.
+  - After several successful training runs, the next condition failed with CUDA OOM despite only a small additional allocation request.
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused regression verifies generated-style training records gain artifact aliases, live handle return fields are removed, and retained/persisted records are scrubbed.
+  - Existing session: same-flow live retry progressed beyond the previous OOM boundary; the next condition completed all observed training runs and began a later condition before the observation helper was stopped.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: generated training results conflated reusable evidence with process-local GPU handles. Because run records were kept for later aggregation/evaluation, those handles prevented memory release across condition iterations.
+
+- Code/test changes:
+  - Extended `repairPythonEntrypointConditionRuntimeCleanupSurface` to scrub `run_records.append(dict(rec))` paths through public evidence snapshots.
+  - Added artifact-directory/base-model aliases to generated training return records before dropping live handles.
+  - Added focused regression coverage for retaining scrubbed generated model-execution records.
+
+- Regression status:
+  - Focused run-record live-handle cleanup regression: passed.
+  - Existing condition-runtime cleanup regression: passed.
+  - Build: passed.
+  - Public code sanitization: passed.
+  - Harness validation: passed.
+  - Same-flow live retry: passed for the prior OOM boundary; later long-running experiment completion was not awaited.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl
+  - <validation-workspace>/<experiment-output-dir>/experiment/experiment.py
+  - <validation-workspace>/<experiment-output-dir>/artifacts/conditions/<condition>/seed_<seed>/adapter/adapter_config.json
+
+## Issue: LV-532
+
+- Status: reproduced and repaired as the post-LV-531 high-level loaded-data materialization boundary on 2026-07-05. Same-flow live retry now materializes loaded task/data bundles before invoking high-level runner candidates that already pass data/task bundle aliases, removing the all-run `no usable normalized training texts were available` failure.
+- Validation target: generated high-level entrypoint runners should pass an actual loaded task/data bundle, not a placeholder `None`, when calling model-execution stages.
+- Environment/session context: existing validation workspace <validation-workspace>, run <run-id>, downstream of LV-531 single-condition data-bundle aliasing.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` after LV-531.
+  2. Let the high-level generated entrypoint call the model-execution stage.
+  3. Inspect run records and generated entrypoint source.
+
+- Expected behavior:
+  - The high-level entrypoint should call the data loader before invoking high-level runner candidates.
+  - `data_bundle`, `task_bundle`, and related aliases should point to the loaded bundle.
+  - Single-condition workers should receive usable training examples.
+
+- Actual behavior:
+  - Before repair, the high-level loop initialized `loaded_data = None` and passed that value under multiple aliases.
+  - Direct canonical calls with a loaded bundle succeeded, but real CLI entrypoint execution failed every run record at training-text extraction.
+  - After repair, the generated entrypoint materializes `loaded_data` before the candidate call and training runs begin.
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused regression covers high-level runners that already pass task/data bundle aliases but forgot to materialize loaded data.
+  - Existing session: same-flow live retry progressed from all-run training-text extraction failures to real completed training runs, exposing the later GPU live-handle retention boundary tracked as LV-533.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: the alias repair saw `task_bundle=loaded_data` and treated the high-level call as repaired, but did not verify that `loaded_data` had been materialized before the candidate invocation.
+
+- Code/test changes:
+  - Strengthened `repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface` to require loaded-data materialization before high-level candidate calls.
+  - Added fallback insertion for the high-level runtime-context block.
+  - Added focused regression coverage for the already-aliased-but-unmaterialized high-level runner shape.
+
+- Regression status:
+  - Focused high-level loaded-data regression: passed.
+  - Related high-level handoff regressions: passed.
+  - Build: passed.
+  - Same-flow live retry: passed for removing the all-run training-text extraction failure and exposing LV-533.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl
+  - <validation-workspace>/<experiment-output-dir>/experiment/experiment.py
+
+## Issue: LV-531
+
+- Status: reproduced and repaired as the post-LV-530 single-condition data-bundle alias boundary on 2026-07-05. Same-flow live retry now adds `data_bundle=task_bundle` and related aliases to the model-execution single-condition call, removing `execute_single_condition_run() missing 1 required positional argument: 'data_bundle'`. The next observed boundary is that the concrete worker runs but cannot extract usable training text from the loaded task bundle; that follow-up is tracked as LV-532.
+- Validation target: generated model-execution stages should pass generic data/task bundle aliases to concrete single-condition workers, not only `task_bundle`.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-530 stale resume invalidation and concrete worker regeneration.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` after stale fallback-only one-run section invalidation.
+  2. Let `implement_experiments` complete and hand off to `run_experiments`.
+  3. Inspect the generated worker signature and latest run records.
+
+- Expected behavior:
+  - If a concrete worker requires `data_bundle`, the handoff repair should pass the loaded task/data bundle under that alias.
+  - `run_experiments` should no longer fail every run record with a missing `data_bundle` TypeError.
+  - The next boundary, if any, should reflect actual data content/extraction or model execution semantics.
+
+- Actual behavior:
+  - Before repair, every run record failed with `execute_single_condition_run() missing 1 required positional argument: 'data_bundle'`.
+  - After repair, the generated runner contains `_autolabos_model_execution_single_condition_data_bundle_alias_surface` and passes `data_bundle=task_bundle` plus related bundle aliases.
+  - Latest execution reaches `execute_single_condition_run`, loads model/runtime context, and fails later with `no usable normalized training texts were available`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused regression verifies a signature-filtering `_call_named` call passes `data_bundle` after repair.
+  - Existing session: same-flow live retry logs `Aliased model-execution single-condition data bundle arguments in experiment.py before handoff`, and latest metrics advance to the training-text extraction boundary.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: the generated orchestration stage and generated worker used two common but different names for the same loaded data bundle. Because `_call_named` filters kwargs by signature, `task_bundle` was silently dropped for a worker that required `data_bundle`.
+
+- Code/test changes:
+  - Added `repairPythonModelExecutionSingleConditionDataBundleAliasSurface`.
+  - Registered the repair in the late handoff repair pipeline.
+  - Added focused regression coverage for signature-filtered single-condition data-bundle aliasing.
+  - Extended the late handoff wiring regression to include the new repair.
+
+- Regression status:
+  - Focused single-condition data-bundle regression: passed.
+  - Build: passed.
+  - Public code sanitization: passed.
+  - Harness validation: passed.
+  - Diff whitespace check: passed.
+  - Same-flow live retry: passed for removing the missing-`data_bundle` TypeError and exposing the next training-text extraction boundary.
+
+- Evidence/artifacts:
+  - <validation-workspace>/outputs/lv531-p6-retry-single-condition-data-bundle-alias/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/metrics.json
+  - <validation-workspace>/<experiment-output-dir>/experiment/experiment.py
+
+## Issue: LV-530
+
+- Status: reproduced and repaired as the stale staged-resume fallback-worker boundary on 2026-07-05. Same-flow live retry now rejects the cached fallback-only `runner_model_execution_one_run` section, regenerates that section through staged LLM materialization, and advances `implement_experiments` to completion with a concrete `execute_single_condition_run` callable. The next observed boundary is a signature/data alias mismatch: `execute_single_condition_run()` requires `data_bundle`, but the model-execution stage does not pass that alias. That follow-up is tracked as LV-531.
+- Validation target: staged resume reuse must not preserve invalid fallback-only worker sections after the verification gate has learned to reject them.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-529 fallback-only condition-worker gate.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` after LV-529 blocks fallback-only single-condition workers.
+  2. Observe whether `runner_model_execution_one_run` is reused from the timed-out staged materialization cache.
+  3. Inspect whether the regenerated runner has a concrete single-condition callable and whether execution reaches the next boundary.
+
+- Expected behavior:
+  - Cached staged sections should be revalidated before reuse.
+  - A cached fallback-only single-condition section should be discarded and regenerated.
+  - The run should not repeatedly reuse stale fallback-only content after the gate has identified it as invalid.
+
+- Actual behavior:
+  - Before repair, the run repeatedly reused `runner_model_execution_one_run` from the staged resume manifest and failed with the same concrete-worker gate.
+  - After repair, live retry logs `Discarding staged_llm resume section runner_model_execution_one_run`, regenerates that section, completes `implement_experiments`, and starts `run_experiments`.
+  - Latest execution contains a concrete `execute_single_condition_run` but fails because the invocation omits its required `data_bundle` parameter.
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused regressions verify single-condition local fallback removal and fallback-only worker rejection.
+  - Existing session: same-flow live retry discards the stale resume section, streams a new staged LLM section, and advances to the `data_bundle` signature mismatch boundary.
+
+- Root cause hypothesis:
+  - Type: persisted_state_bug
+  - Hypothesis: staged resume artifacts were trusted solely because the manifest marked them complete. Once verification rules became stricter, previously accepted fallback-only sections needed to be revalidated before reuse.
+
+- Code/test changes:
+  - Disabled local utility materialization for single-condition execution helper chunks so AutoLabOS does not synthesize fallback-only workers.
+  - Added section-level validation for resumed staged sections, including the concrete condition-worker detector.
+  - Added/update focused regressions for local single-condition helper materialization and fallback-only worker rejection.
+
+- Regression status:
+  - Focused single-condition/fallback regressions: passed.
+  - Build: passed.
+  - Public code sanitization: passed.
+  - Harness validation: passed.
+  - Diff whitespace check: passed.
+  - Same-flow live retry: passed for invalidating stale fallback-only staged resume content and exposing the next required-data alias boundary.
+
+- Evidence/artifacts:
+  - <validation-workspace>/outputs/lv530-p6-retry-invalidate-resume-fallback-worker/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/metrics.json
+  - <validation-workspace>/<experiment-output-dir>/experiment/experiment.py
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/unit_chunk_responses/artifact_1__runner_model_execution_one_run_resume_reuse_error.txt
+
+## Issue: LV-529
+
+- Status: reproduced and repaired as the post-LV-528 fallback-only single-condition worker boundary on 2026-07-05. Same-flow live retry now blocks `implement_experiments` before handoff when the generated runner only exposes a fallback `run_single_condition` helper that can mark every planned run as failed. This prevents `run_experiments` from producing misleading all-failed run records with `No generated single-condition execution worker was available after materialization.`
+- Validation target: `implement_experiments` local verification should reject fallback-only condition-worker surfaces unless at least one concrete train/evaluate delegate is defined or imported.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-528 aggregate-helper alias repair.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` after the aggregate-helper alias repair.
+  2. Observe whether local verification accepts a runner with `_autolabos_single_condition_execution_helper_marker` and no concrete delegate worker.
+  3. Compare whether execution proceeds to `run_experiments` and produces all-failed condition records.
+
+- Expected behavior:
+  - A fallback-only `run_single_condition` helper should not satisfy implementation verification.
+  - If no concrete delegate exists, the node should fail in `implement_experiments` with an actionable implementation error.
+  - `run_experiments` should not be used to discover that every planned run is only a fallback worker-discovery failure.
+
+- Actual behavior:
+  - Before repair, `implement_experiments` passed py_compile/local handoff and `run_experiments` produced 40 failed records with `No generated single-condition execution worker was available after materialization.`
+  - After repair, live retry fails `implement_experiments` with `Generated Python runner has no concrete per-condition execution worker` and identifies the single-condition fallback helper location.
+  - The previous metrics file still contains the earlier 40 failed records, but no new `run_experiments` handoff occurs after the repaired gate.
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused regressions verify fallback-only single-condition helpers are rejected both for bridge-only CLI and for model-execution stage runners.
+  - Existing session: same-flow live retry logs the concrete-worker gate failure in `implement_experiments` and does not hand off to `run_experiments`.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: the verification gate treated a fallback condition helper as enough executable surface. The detector already handled other missing-worker patterns, but it did not cover the local `_autolabos_single_condition_execution_helper_marker` form whose only behavior is to emit structured condition failures.
+
+- Code/test changes:
+  - Extended `detectPythonMissingConcreteConditionWorkerSurface` to reject fallback-only local single-condition helpers with no concrete delegate candidates.
+  - Added focused regression coverage for fallback-only helpers even when a model-execution stage exists.
+  - Updated the existing fallback-only helper regression to expect the more precise concrete-worker failure.
+
+- Regression status:
+  - Focused fallback-only worker regressions: passed.
+  - Build: passed.
+  - Public code sanitization: passed.
+  - Harness validation: passed.
+  - Diff whitespace check: passed.
+  - Same-flow live retry: passed for moving the all-failed worker-discovery boundary from `run_experiments` back to the `implement_experiments` gate.
+
+- Evidence/artifacts:
+  - <validation-workspace>/outputs/lv529-p6-retry-fallback-only-condition-worker/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/metrics.json
+  - <validation-workspace>/<experiment-output-dir>/experiment/experiment.py
+
+## Issue: LV-528
+
+- Status: reproduced and repaired as the post-LV-527 model-execution aggregate-helper alias boundary on 2026-07-05. Same-flow live retry now applies generic aggregate helper aliases during `implement_experiments` handoff, writes the alias marker into the generated runner, and advances `run_experiments` beyond `RuntimeError("missing required helper; tried ['aggregate_model_execution_results', 'aggregate_training_records', 'aggregate_condition_training_results']")`. The next observed boundary is that no generated single-condition execution worker is available after materialization, leaving `completed_run_count=0`; that follow-up is tracked as LV-529.
+- Validation target: generated model-execution stages should be able to call existing row aggregation logic through generic aggregate helper candidate names.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-527 run-plan object-access repair.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` after the run-plan object-access bridge repair.
+  2. Let the node complete local verification and hand off to `run_experiments`.
+  3. Inspect the generated runner's aggregate helper candidates and latest metrics payload.
+
+- Expected behavior:
+  - If a generated runner already provides a row aggregation helper, late handoff should expose it through generic model-execution aggregate candidate names.
+  - `run_experiments` should no longer stop at a missing aggregate-helper RuntimeError.
+  - If execution workers are still missing, the run should expose that later boundary through run records and metrics rather than helper-name resolution.
+
+- Actual behavior:
+  - Before repair, the model-execution stage called `_call_named` with aggregate helper candidates that were not defined, even though `aggregate_execution_rows` existed.
+  - After repair, the generated runner contains `_autolabos_model_execution_aggregate_alias_surface` plus `aggregate_model_execution_results`, `aggregate_training_records`, and `aggregate_condition_training_results` aliases.
+  - Latest execution no longer reports the missing-helper RuntimeError; it reports `status: failed`, `completed_run_count=0`, and run records fail with `No generated single-condition execution worker was available after materialization.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused regression verifies that a script with `_call_named` aggregate candidates and only `aggregate_execution_rows` is repaired and executes successfully.
+  - Existing session: same-flow live retry logs `Added model-execution aggregate helper aliases in experiment.py before handoff`, and latest metrics advance to the missing single-condition worker boundary.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: generated code split row aggregation and model-execution orchestration across two generic naming conventions. The handoff repair layer needed a small alias bridge from existing row aggregation to the model-execution aggregate candidate names.
+
+- Code/test changes:
+  - Added `repairPythonModelExecutionAggregateAliasSurface`.
+  - Registered the aggregate alias repair in the late handoff repair pipeline.
+  - Added focused regression coverage for aggregate helper candidate name drift.
+  - Extended the late handoff wiring regression to require the aggregate alias repair.
+
+- Regression status:
+  - Focused aggregate/late-handoff regressions: passed.
+  - Build: passed.
+  - Public code sanitization: passed.
+  - Harness validation: passed.
+  - Diff whitespace check: passed.
+  - Same-flow live retry: passed for removing the missing aggregate-helper boundary and exposing the next condition-worker boundary.
+
+- Evidence/artifacts:
+  - <validation-workspace>/outputs/lv528-p6-retry-aggregate-helper-alias/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/metrics.json
+  - <validation-workspace>/<experiment-output-dir>/experiment/experiment.py
+
+## Issue: LV-527
+
+- Status: reproduced and repaired as the post-LV-526 run-plan item object-access boundary on 2026-07-05. Same-flow live retry now applies a generic mapping/object bridge inside `run_model_execution_stage`, writes the bridge marker into the generated runner, and advances `run_experiments` beyond `TypeError("'ConditionRunPlanItem' object is not subscriptable")`. The next observed boundary is a missing aggregate helper for model-execution results, tracked as LV-528.
+- Validation target: generated run-plan loops should accept dict, tuple/list, and dataclass/object plan items without assuming that non-dict items are subscriptable.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-526 model-preflight status normalization.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` after the model-preflight status-normalization repair.
+  2. Let the node complete local verification and hand off to `run_experiments`.
+  3. Inspect the generated runner's run-plan loop and latest metrics payload.
+
+- Expected behavior:
+  - The generated model-execution stage should derive condition, seed, and marker values through a generic access bridge.
+  - `run_experiments` should not subscript dataclass/object run-plan items as tuples.
+  - If another execution problem exists, the run should advance to that next boundary.
+
+- Actual behavior:
+  - Before repair, the loop used `item[0]` and `item[1]` for any non-dict run-plan item and crashed on `ConditionRunPlanItem` objects.
+  - After repair, the generated runner contains `_autolabos_run_plan_item_object_access_surface` and uses `_autolabos_run_plan_condition`, `_autolabos_run_plan_seed`, and `_autolabos_condition_marker_value` inside `run_model_execution_stage`.
+  - Latest execution no longer reports the object-subscriptability boundary; it fails later with `RuntimeError("missing required helper; tried ['aggregate_model_execution_results', 'aggregate_training_records', 'aggregate_condition_training_results']")`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused regression verifies that a generated run-plan loop with a dataclass item is repaired while unrelated `condition["marker"]` access outside the stage does not block the repair.
+  - Existing session: same-flow live retry logs `Bridged run-plan item mapping/object access in experiment.py before handoff`, and latest metrics advance to the aggregate-helper boundary.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: generated run-plan items crossed the handoff as dataclass/object records, but the execution loop only handled dicts and positional tuple/list items. The handoff repair also needed to scope its validation to the affected stage function so unrelated marker access elsewhere in the file would not suppress the repair.
+
+- Code/test changes:
+  - Added `repairPythonRunPlanItemObjectAccessSurface` and registered it in the late handoff repair pipeline.
+  - Scoped the repair to `run_model_execution_stage` so generic marker access elsewhere in generated code does not prevent the stage repair.
+  - Added focused regression coverage for dataclass run-plan items and unrelated marker access outside the stage.
+  - Extended the late handoff wiring regression to require the run-plan object-access repair.
+
+- Regression status:
+  - Focused run-plan/late-handoff regressions: passed.
+  - Build: passed.
+  - Public code sanitization: passed.
+  - Harness validation: passed.
+  - Diff whitespace check: passed.
+  - Same-flow live retry: passed for removing the object-subscriptability boundary and exposing the next aggregate-helper boundary.
+
+- Evidence/artifacts:
+  - <validation-workspace>/outputs/lv527-p6-retry-run-plan-object-access-v2/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/metrics.json
+  - <validation-workspace>/<experiment-output-dir>/experiment/experiment.py
+
+## Issue: LV-526
+
+- Status: reproduced and repaired as the post-LV-525 model-preflight status-normalization boundary on 2026-07-05. Same-flow live retry now normalizes preflight payloads whose success is expressed as `status: ok` without boolean `ok`/`available`, applies the repair during `implement_experiments` handoff, and advances `run_experiments` to the next execution boundary: `TypeError("'ConditionRunPlanItem' object is not subscriptable")`. That follow-up is tracked as LV-527.
+- Validation target: generated model-execution stages should treat generic successful preflight status strings as available when no explicit failure code is present.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-525 model-preflight helper alias repair.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` after the model-preflight alias repair.
+  2. Let the node complete local verification and hand off to `run_experiments`.
+  3. Inspect the generated runner's preflight availability gate and latest metrics payload.
+
+- Expected behavior:
+  - A preflight dict with `status: ok` and no blocking `failure_code` should be treated as available even if it lacks boolean `ok`/`available`.
+  - `run_experiments` should proceed past the preflight gate and expose the next execution issue, if any.
+
+- Actual behavior:
+  - Before repair, the runner returned `status: dependency_failed` even though `preflight.status` was `ok` and a local cached model snapshot was selected.
+  - After repair, the runner contains `_autolabos_model_preflight_status_normalization_surface` and replaces the boolean-only gate with `_autolabos_model_preflight_is_available(preflight)`.
+  - Latest execution no longer reports the dependency-failed boundary; it fails later with a `ConditionRunPlanItem` mapping/object access mismatch.
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused regression verifies that a `status: ok` preflight payload without `ok`/`available` no longer produces `dependency_failed`, and that the normalization repair remains wired into late handoff repairs.
+  - Existing session: same-flow live retry logs `Normalized model preflight success status handling in experiment.py before handoff`, and latest metrics advance to the `ConditionRunPlanItem` subscriptability boundary.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: generated runner code used a boolean-only preflight contract while generated preflight helpers reported success through a common status string contract. The handoff repair layer needed a generic status normalization adapter between those contract variants.
+
+- Code/test changes:
+  - Added `repairPythonModelPreflightStatusNormalizationSurface`.
+  - Registered the normalization repair in the late handoff repair pipeline.
+  - Added focused regression coverage for `status: ok` preflight payloads without boolean `ok`/`available`.
+  - Extended the late handoff wiring regression to require both alias and status-normalization repairs.
+
+- Regression status:
+  - Focused model-preflight/late-handoff regressions: passed.
+  - Build: passed.
+  - Same-flow live retry: passed for removing the dependency-failed preflight-status boundary and exposing the next object-access boundary.
+
+- Evidence/artifacts:
+  - <validation-workspace>/outputs/lv526-p6-retry-preflight-status-normalization/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/metrics.json
+  - <validation-workspace>/<experiment-output-dir>/experiment/experiment.py
+
+## Issue: LV-525
+
+- Status: reproduced and repaired as the post-LV-524 model-preflight helper alias boundary on 2026-07-05. Same-flow live retry now applies generic model-preflight aliases during `implement_experiments` handoff, writes the alias marker into the generated runner, and advances `run_experiments` past the previous missing-helper failure. The next observed boundary is a status-normalization mismatch: the preflight payload reports `status: ok` but lacks boolean `ok`/`available`, so execution records `dependency_failed`. That follow-up is tracked as LV-526.
+- Validation target: generated runner handoff repair should bridge generic model dependency/preflight helper name drift before execution reaches `run_experiments`.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-524 high-level `task_bundle` bridge repair.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` after the missing-`task_bundle` bridge repair.
+  2. Let the node complete local verification and hand off to `run_experiments`.
+  3. Inspect the generated runner for model-preflight alias definitions and inspect the latest run metrics payload.
+
+- Expected behavior:
+  - `implement_experiments` should add generic aliases for generated model-preflight helper names before handoff.
+  - `run_experiments` should no longer fail with `RuntimeError("missing required helper; tried [...]")` for model-preflight helper name drift.
+  - The next execution boundary, if any, should reflect real dependency/result semantics rather than helper-name resolution.
+
+- Actual behavior:
+  - Before repair, `run_experiments` failed with a missing required helper for `preflight_model_dependencies`, `select_model_dependency`, `preflight_model_assets`, and `run_model_preflight`.
+  - After repair, the generated runner contains `_autolabos_model_preflight_alias_surface` plus `preflight_model_dependencies`, `select_model_dependency`, and `preflight_model_assets` aliases.
+  - Latest metrics no longer report the missing-helper error; they report `status: dependency_failed` even though `preflight.status` is `ok`, exposing the LV-526 normalization issue.
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused regressions verify direct model-preflight alias repair, generated model-execution dependency helper aliases, and late handoff wiring for `modelPreflightAliasRepair`.
+  - Existing session: same-flow live retry logs `Added model preflight aliases to experiment.py before handoff`, the generated runner contains the alias marker, and latest run metrics move to the `dependency_failed` status-normalization boundary.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: a generic model-preflight alias repair existed in an early repair path, but it was not included in the always-run late handoff repair collection. Generated runners that passed local py_compile could therefore reach `run_experiments` without the helper aliases required by their own model-execution stage.
+
+- Code/test changes:
+  - Registered `modelPreflightAliasRepair` in the late handoff repair list.
+  - Extended the model-preflight repair surface to include generated `preflight_model_execution_dependencies` and searched aliases for `select_model_dependency`/`preflight_model_assets`.
+  - Added focused regression coverage for generated model-execution dependency preflight aliases.
+  - Added a wiring regression that keeps `modelPreflightAliasRepair` inside `lateHandoffRepairs`.
+
+- Regression status:
+  - Focused model-preflight regressions: passed.
+  - Late handoff wiring regression: passed.
+  - Build: passed.
+  - Same-flow live retry: passed for removing the missing-helper boundary and exposing the next status-normalization boundary.
+
+- Evidence/artifacts:
+  - <validation-workspace>/outputs/lv525-p6-retry-implement-model-preflight-handoff/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/metrics.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/partial_metrics.json
+  - <validation-workspace>/<experiment-output-dir>/experiment/experiment.py
+
+## Issue: LV-524
+
+- Status: reproduced and repaired as the post-LV-523 downstream handoff failure on 2026-07-05. Same-flow live retry now reaches `run_experiments` without the previous missing-`task_bundle` TypeError; execution advances to the next boundary, where the generated runner lacks a model-preflight helper candidate. That follow-up is tracked as LV-525.
+- Validation target: generated local entrypoint and bridge dispatch should pass available data/task bundle aliases into high-level model-execution runner functions, not only into single-condition runner calls.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-523 entrypoint local synthesis and py_compile repair.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` from the manifest-backed entrypoint boundary.
+  2. Let the node complete local verification and hand off to `run_experiments`.
+  3. Observe the runner execution command and metrics payload.
+
+- Expected behavior:
+  - `implement_experiments` should complete with a py_compile-clean runner.
+  - `run_experiments` should call high-level generated runner functions with compatible aliases for loaded data, dataset bundle, task bundle, train bundle, runtime, config, and paths.
+  - Missing required runner-parameter errors should be caught by bridge compatibility tests before handoff.
+
+- Actual behavior:
+  - `implement_experiments` completed and `run_experiments` started.
+  - Before repair, `run_experiments` failed with `TypeError("Cannot call run_model_execution_stage without required argument 'task_bundle'")`.
+  - After repair, `run_experiments` no longer reports the missing `task_bundle`; it fails later with a missing model-preflight helper candidate.
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused regressions cover both newly generated local entrypoint content and existing old-style high-level entrypoint calls where `run_model_execution_stage` requires `task_bundle`.
+  - Existing session: the live run reaches `run_experiments`; the missing-`task_bundle` boundary is gone and the next observed failure is missing model-preflight helper resolution.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: the bridge repair path already forwards neutral training/task aliases to single-condition runner calls, but the high-level model-execution bridge path still omits `task_bundle` for callables such as `run_model_execution_stage`.
+
+- Code/test changes:
+  - Added high-level runner data/task bundle aliases to locally synthesized entrypoint bridge content.
+  - Added a repair surface for existing generated entrypoints whose high-level candidate call omits `task_bundle`.
+  - Registered that repair in the late handoff repair pipeline.
+  - Added focused generator and repair regressions for high-level entrypoint `task_bundle` dispatch.
+
+- Regression status:
+  - Focused high-level entrypoint regressions: passed.
+  - Related focused resume/runtime-path regression bundle: passed.
+  - Build: passed.
+  - Public-code sanitization: passed.
+  - Diff whitespace check: passed.
+  - Harness validation: passed.
+  - Same-flow live retry: passed for removing the missing-`task_bundle` boundary and exposing the next model-preflight helper boundary.
+
+- Evidence/artifacts:
+  - <validation-workspace>/outputs/lv523-p6-retry-entrypoint-future-import/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/outputs/lv524-p6-retry-high-level-task-bundle/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/run_record.json
+  - <validation-workspace>/<experiment-output-dir>/experiment/experiment.py
+
+## Issue: LV-523
+
+- Status: reproduced and repaired as the post-LV-522 final-entrypoint boundary on 2026-07-05. Same-flow live retry confirmed manifest-backed staged_llm resume no longer spends the final helper window on provider entrypoint generation, uses local Python utility materialization for the CLI entrypoint/final handoff, preserves Python module docstring and `from __future__ import annotations` ordering during runtime-path coercion repair, passes local py_compile verification, completes `implement_experiments`, and reaches `run_experiments`.
+- Validation target: final `runner_entrypoint` handoff should be synthesized locally when a resume manifest already proves prior staged_llm sections, and downstream Python repair helpers must preserve module-level future-import ordering.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-522 planning-artifact reuse.
+
+- Reproduction steps:
+  1. Start from a staged_llm resume manifest whose completed sections include planning, execution, aggregation, wiring, evaluation, and metrics, with `runner_entrypoint` as the next unfinished section.
+  2. Retry `implement_experiments` with a bounded P6 helper wall time.
+  3. Observe whether entrypoint materialization uses local synthesis or blocks on another provider call.
+  4. Inspect local verification output and the node transition to `run_experiments`.
+
+- Expected behavior:
+  - The retry should reuse cached planning artifacts and completed section outputs.
+  - The final entrypoint/handoff chunk should not require another long provider request when a local bridge can be synthesized safely.
+  - Python repair helpers should insert generated helpers after module docstrings and future imports.
+  - `implement_experiments` should pass local verification and reach `run_experiments`.
+
+- Actual behavior:
+  - Before repair, the final `runner_entrypoint` chunk repeatedly hit provider/OAuth/abort timeout boundaries.
+  - The first local-entrypoint repair exposed a py_compile failure because a runtime-path helper was inserted before `from __future__ import annotations`.
+  - After repair, the same-flow retry logged local entrypoint utility materialization, py_compile passed, `implement_experiments` completed, and `run_experiments` started.
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused runtime-path coercion regression now verifies docstring + future-import preservation and py_compile success.
+  - Existing session: live retry reached `run_experiments`; the remaining failure is the downstream `task_bundle` bridge issue tracked in LV-524.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: the staged_llm retry path treated the final entrypoint handoff as another provider-authored chunk even when all upstream sections were already materialized, and the downstream repair helper inserted top-level code before Python's legal future-import boundary.
+
+- Code/test changes:
+  - Allowed resume-manifest entrypoint chunks that match the local entrypoint marker to use local Python utility materialization.
+  - Updated top-level Python helper insertion to respect shebang, encoding comments, module docstrings, future imports, and normal imports before adding helper code.
+  - Added a focused regression for runtime-path coercion with a module docstring and `from __future__ import annotations`.
+
+- Regression status:
+  - Focused runtime-path coercion regression: passed.
+  - Focused resume-manifest regression: passed.
+  - Build: passed.
+  - Public-code sanitization: passed.
+  - Diff whitespace check: passed.
+  - Harness validation: passed.
+  - Same-flow live retry: passed for `implement_experiments` completion and `run_experiments` handoff; downstream execution failure tracked separately in LV-524.
+
+- Evidence/artifacts:
+  - <validation-workspace>/outputs/lv523-p6-retry-entrypoint-future-import/p6-continue-implement_experiments-output.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/progress.jsonl
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/staged_llm_resume_manifest.json
+
+## Issue: LV-522
+
+- Status: reproduced and repaired as the post-LV-521 retry-cost boundary on 2026-07-05. Same-flow live retry confirmed staged_llm resume now reuses cached scaffold, bootstrap contract, decomposition plan, and materialization plan artifacts before materialization, reaches the preserved section boundary within seconds, completes the previous wiring section, advances through task-evaluation and metrics utility sections, and times out later at the final `runner_entrypoint` chunk. The next bounded target is therefore the final entrypoint handoff, not scaffold/bootstrap/materialization planning replay.
+- Validation target: when a resumable staged_llm manifest exists, implement_experiments should preserve and reuse valid planning artifacts instead of spending most of the helper wall time regenerating scaffold/bootstrap/decomposition/materialization plans.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-521 aggregation/wiring boundary detection.
+
+- Reproduction steps:
+  1. Start implement_experiments from a run whose manifest has completed sections through aggregation and a prompt-only wiring boundary.
+  2. Ensure existing `scaffold.json`, `bootstrap_contract.json`, `decomposition_plan.json`, `file_plan.json`, and `unit_plans/<unit>.json` are present.
+  3. Retry implement_experiments and inspect progress logs for planning artifact reuse before materialization.
+  4. Observe whether the retry reaches the next unfinished section without replaying scaffold/bootstrap/materialization planning provider turns.
+
+- Expected behavior:
+  - Cleanup should preserve valid planning artifacts when a resume manifest exists.
+  - Runtime should parse and reuse cached scaffold, bootstrap contract, decomposition plan, and materialization plan artifacts only when they are valid.
+  - Progress logs should make planning-artifact reuse observable.
+  - The retry should reach the next unfinished section quickly and preserve a new manifest boundary if a later chunk times out.
+
+- Actual behavior:
+  - Before the repair, manifest-backed retries still deleted or ignored planning artifacts, then replayed scaffold/bootstrap/materialization planning provider calls before reaching the preserved section boundary.
+  - After the repair, the same-flow live retry logged reuse of scaffold, bootstrap contract, decomposition plan, and materialization plan artifacts, reused completed sections through aggregation, generated the wiring section, advanced to chunk 4/6 and chunk 6/6, and persisted a new helper-timeout boundary for `runner_entrypoint`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: focused implementSessionManager regression seeds cached planning artifacts with a resume manifest and verifies scaffold/materialization planning prompts are not sent while the next aggregate section is still generated.
+  - Existing session: live retry reached `runner_model_execution_wiring` almost immediately after reuse logs, completed it, then advanced to `runner_entrypoint` before the helper wall timeout.
+  - Current live manifest: completed sections include `runner_model_execution_wiring`, `runner_evaluation`, and `runner_metrics`; `next_unfinished_section_id` is `runner_entrypoint`.
+
+- Root cause hypothesis:
+  - Type: resume_reload_bug
+  - Hypothesis: staged_llm retry preservation stopped at unit sections and chunk responses, so expensive planning artifacts were treated as disposable even though they were already validated and still matched the regenerated unit ids.
+
+- Code/test changes:
+  - Preserved scaffold, bootstrap contract, decomposition plan, and file plan artifacts during manifest-backed staged_llm cleanup.
+  - Added validated readers for reusable scaffold, bootstrap contract, decomposition plan, and per-unit materialization plan artifacts.
+  - Added runtime progress logs when cached planning artifacts are reused.
+  - Avoided misleading scaffold-synthesis logging when a reusable decomposition plan is already loaded.
+  - Extended the focused resume-manifest regression to prove cached planning artifact reuse and prevent scaffold/materialization plan provider prompts on retry.
+
+- Regression status:
+  - Automated regression: focused implementSessionManager resume-manifest regression passed after planning-artifact reuse and log-condition changes.
+  - Build: passed after the initial planning-artifact reuse implementation; post-log-condition targeted regression passed. Full build/public/harness checks are rerun after this issue entry.
+  - Same-flow live retry: passed for planning-artifact reuse, quick wiring boundary reach, wiring completion, and new `runner_entrypoint` timeout boundary persistence.
+
+- Follow-up risks:
+  - Final `runner_entrypoint` remains provider-bound and can still exceed helper wall time.
+  - The entrypoint chunk may need local synthesis, smaller subdivision, or prompt-only continuation handling analogous to the earlier execution micro-stages.
+  - Planning artifact reuse assumes unit ids still match the cached manifest; materially changed plans still need provider regeneration.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/staged_llm_resume_manifest.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/p6_helper_timeout.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/progress.jsonl
+  - <validation-workspace>/outputs/lv522-p6-retry-plan-reuse-wiring/p6-continue-implement_experiments-output.txt
+
+## Issue: LV-521
+
+- Status: reproduced and repaired as the post-LV-520 live retry boundary on 2026-07-05. Same-flow live retry confirmed the resume manifest reports the next unfinished staged_llm boundary, reuses completed sections through `runner_model_execution_raw_records`, resumes at `runner_model_execution_aggregation`, completes that aggregation section, and then advances the manifest boundary to the prompt-only `runner_model_execution_wiring` section. The node still hit the P6 helper wall timeout during the final wiring request, which is now the next bounded improvement target.
+- Validation target: staged_llm resume diagnostics should distinguish unresolved incomplete artifacts from stale error/partial artifacts whose parent section has since completed, and should expose prompt-only unfinished sections as the next retry boundary.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-520 manifest creation and completed-section reuse.
+
+- Reproduction steps:
+  1. Start implement_experiments from a run whose staged_llm manifest lists completed sections through raw-record persistence and unresolved aggregation artifacts.
+  2. Retry implement_experiments and inspect `implement_experiments/progress.jsonl` for next-boundary and reuse logs.
+  3. Let the helper hit the next wall timeout after aggregation progresses.
+  4. Regenerate or inspect `implement_experiments/staged_llm_resume_manifest.json` and `p6_helper_timeout.json`.
+
+- Expected behavior:
+  - The retry should log the next unfinished staged_llm boundary before materialization starts.
+  - Previously completed sections, including raw-record persistence, should be loaded from disk rather than regenerated.
+  - If a later retry completes a parent section, stale `_error`, `_partial_on_error`, or sub-part error artifacts for that completed section should not remain the next unresolved boundary.
+  - If a provider request was in flight when the helper timed out and no error artifact was written, the corresponding prompt-only unfinished section should become the next boundary.
+
+- Actual behavior:
+  - Before the repair, the manifest could keep pointing at stale aggregation error artifacts even after the aggregation section had completed, because unresolved artifact selection ignored completed section ids and completed parent sections.
+  - After the repair, completed parent sections resolve their stale sub-part errors, derived cache/candidate files stay out of completed sections, and prompt-only unfinished sections are surfaced as the next boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: P6 resume-manifest self-test covers cache/candidate exclusion, stale error filtering for completed sections, completed parent section filtering for stale sub-part errors, and prompt-only unfinished section detection.
+  - Existing session: progress log recorded `Next staged_llm resume boundary is runner_model_execution_aggregation`, reused completed sections through `runner_model_execution_raw_records`, generated `subchunk 6/7` aggregation, then advanced to `subchunk 7/7` wiring before the helper timed out.
+  - Current live manifest: `completed_sections` includes `runner_model_execution_aggregation`, `incomplete_or_failed_artifacts` is empty, and `next_unfinished_section_id` is `runner_model_execution_wiring` with the matching prompt path.
+
+- Root cause hypothesis:
+  - Type: resume_reload_bug
+  - Hypothesis: the manifest treated historical error artifacts as current retry state even after the matching section or parent section had been successfully materialized, and it had no fallback for prompt-only unfinished work when a helper killed the attach process before an error artifact was written.
+
+- Code/test changes:
+  - Added `next_unfinished_section_id`, `next_unfinished_artifact`, `next_unfinished_prompt`, and unresolved artifact count to P6 staged_llm resume manifests and helper-timeout diagnostics.
+  - Filtered derived candidate/cache artifacts out of completed section manifests.
+  - Filtered stale unresolved artifacts when their section id, or completed parent section id, is already present in completed sections.
+  - Added prompt-only unfinished section detection from `unit_chunk_prompts` when no unresolved error artifact remains.
+  - Logged next staged_llm resume boundary when implementSessionManager loads a resumable manifest.
+  - Expanded the focused implementSessionManager regression so completed setup/records sections are reused and only the next aggregate section is generated.
+
+- Regression status:
+  - Automated regression: passed P6 resume-manifest self-test, P6 continue helper test suite, and focused implementSessionManager resume manifest regression.
+  - Same-flow live retry: passed for next-boundary logging, raw-record reuse, aggregation continuation, stale aggregation artifact filtering, and prompt-only wiring boundary detection. The final wiring provider request still exceeded the helper wall timeout.
+
+- Follow-up risks:
+  - Manifest-backed retries still regenerate scaffold/bootstrap/materialization plans before reaching the preserved section boundary, which consumes a large part of the helper wall time.
+  - The final wiring section remains provider-bound and should either be made smaller, locally synthesized when safe, or resumed with a narrower prompt.
+  - `latest_progress_index` reflects the cumulative progress file and is not yet reset to the latest retry-local index.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/staged_llm_resume_manifest.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/p6_helper_timeout.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/progress.jsonl
+  - <validation-workspace>/outputs/lv521-p6-retry-aggregation-boundary/p6-continue-implement_experiments-output.txt
+
+## Issue: LV-520
+
+- Status: reproduced and repaired as the post-LV-519 live retry boundary on 2026-07-05. Same-flow live retry confirmed `staged_llm_resume_manifest.json` is written for an observe-only paused/pending helper-timeout boundary, and the next retry loads the manifest and reuses completed staged_llm sections. The retry still timed out later in `runner_model_execution_aggregation`, which is now the next bounded improvement target rather than a replay/resume-manifest failure.
+- Validation target: a helper timeout after partial implement_experiments materialization should produce a durable resume manifest even when the TUI has already projected the current node as paused/pending, and the next retry should skip previously completed staged_llm sections.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-519 staged_llm resume-manifest repair.
+
+- Reproduction steps:
+  1. Start implement_experiments from the existing paused validation run with completed staged_llm unit sections already present.
+  2. Let the P6 helper attach to the current node and hit its wall timeout while the TUI projection is paused/pending or failed at the target node boundary.
+  3. Inspect `implement_experiments/p6_helper_timeout.json` and `implement_experiments/staged_llm_resume_manifest.json`.
+  4. Retry implement_experiments and inspect progress logs for manifest loading and completed-section reuse.
+
+- Expected behavior:
+  - The helper-timeout diagnostic should be persisted even when the attach session observes the target node as paused/pending rather than running.
+  - `p6_helper_timeout.json` should link to `implement_experiments/staged_llm_resume_manifest.json` when resumable staged_llm artifacts exist.
+  - The manifest should exclude derived cache files such as `__pycache__` and `.pyc`.
+  - The next retry should load the manifest and reuse matching completed section files instead of replaying them through the provider.
+
+- Actual behavior:
+  - Before the repair, helper-timeout persistence only accepted a running record and running node status, so observe-only paused/pending timeout boundaries could fail to write the manifest.
+  - Before the cache-filter repair, generated Python bytecode under `__pycache__` could be listed in the live resume manifest even though it is not a meaningful research or implementation artifact.
+  - After the repair, the live retry loaded the manifest and reused completed sections, then progressed to the next unfinished aggregation subchunk.
+
+- Fresh vs existing session comparison:
+  - Fresh session: P6 self-tests cover running timeout persistence, observe-only paused/pending timeout persistence, staged_llm resume-manifest generation, and cache-file exclusion.
+  - Existing session: same-flow retry wrote `implement_experiments/staged_llm_resume_manifest.json`, linked it from `p6_helper_timeout.json`, loaded it on the next retry, and reused completed sections for `runner_contract`, `runner_data_access`, `runner_model_execution_runtime_context`, `runner_model_execution_dependency_preflight`, `runner_model_execution_run_plan`, and `runner_model_execution_one_run`.
+  - Divergence: the live retry still exceeded the helper wall timeout during `runner_model_execution_aggregation`, leaving aggregation error and partial-on-error artifacts as the next targeted resume/retry problem.
+
+- Root cause hypothesis:
+  - Type: resume_reload_bug
+  - Hypothesis: staged_llm resume state was available on disk, but helper-timeout persistence and retry cleanup had not treated observe-only paused/pending node projections as resumable boundaries.
+
+- Code/test changes:
+  - Added an explicit helper-timeout boundary predicate for current-node paused/pending attach sessions.
+  - Extended P6 self-test coverage for observe-only paused/pending timeout persistence.
+  - Filtered `__pycache__` and `.pyc` entries out of generated staged_llm resume manifests.
+  - Confirmed implementSessionManager preserves manifest-backed staged_llm artifact directories and reuses completed sections on retry.
+
+- Regression status:
+  - Automated regression: passed P6 continue helper test suite after the paused/pending timeout and cache-file exclusion repairs.
+  - Automated regression: passed safe P6 resume-manifest self-test after adding cache-file exclusion.
+  - Same-flow live retry: passed for manifest creation, diagnostic linkage, manifest loading, and completed-section reuse. It remains incomplete for the downstream aggregation subchunk timeout.
+
+- Follow-up risks:
+  - `_partial_on_error` aggregation content is listed as incomplete/failed but is not yet promoted into a safe continuation or smaller deterministic aggregation boundary.
+  - The retry can still consume wall time in unfinished aggregation subchunks even after all earlier sections are reused.
+  - The manifest records completed section reuse but does not yet provide a human-facing concise next unfinished section summary in the P6 diagnostic.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/staged_llm_resume_manifest.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/p6_helper_timeout.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/progress.jsonl
+  - <validation-workspace>/outputs/lv520-p6-retry-implement-resume-consume/p6-continue-implement_experiments-output.txt
+
+## Issue: LV-519
+
+- Status: reproduced as the follow-up failure mode from LV-518 on 2026-07-05; staged_llm helper-timeout resume manifest implemented; deterministic P6 manifest self-test, focused implementSessionManager resume regression, build, public-code sanitization, diff whitespace check, harness validation, and full test suite passed. Same-flow live retry confirmed completed staged_llm chunk/section artifacts accumulate across the subdivided implementation path, and exposed an observe-only helper timeout persistence gap; the paused/pending timeout boundary is now covered by P6 self-test. The full post-fix live manifest-consumption retry is tracked and verified in LV-520.
+- Validation target: a P6 helper timeout during implement_experiments staged_llm materialization should preserve completed chunk responses and unit sections as a durable resume boundary, then reuse matching completed sections on the next retry instead of replaying already-finished subchunks.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, downstream of LV-518 proactive local micro-stage subdivision.
+
+- Reproduction steps:
+  1. Run implement_experiments in staged_llm mode until P6 helper wall timeout occurs after some unit chunk responses or section files have been written.
+  2. Inspect the node directory and P6 timeout diagnostic.
+  3. Retry implement_experiments and observe whether completed section artifacts are preserved and reused.
+
+- Expected behavior:
+  - The helper timeout diagnostic should point to a resumable staged_llm manifest when completed or failed materialization artifacts exist.
+  - The manifest should list completed chunk responses, completed unit sections, chunk prompts, incomplete/error artifacts, and the latest progress index.
+  - implement_experiments should preserve the manifest-backed unit artifact directories across retry initialization.
+  - Matching completed sections should be loaded from disk and skipped during provider materialization.
+
+- Actual behavior:
+  - Before this repair, P6 helper timeout persisted only a generic timeout diagnostic and node failure status.
+  - `clearStagedLlmAttemptArtifacts` cleared the staged unit artifact directories at the start of the next materialization attempt, so completed subchunks were not available as a retry boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic P6 self-test writes `implement_experiments/staged_llm_resume_manifest.json` from completed/error chunk artifacts, and focused implementSessionManager regression verifies that a manifest-backed section is reused without provider materialization.
+  - Existing session: LV-518 live retry created completed chunk/section artifacts and timed out at `subchunk 6/7`, but because that timeout happened before the manifest writer existed, the next same-flow run had to create a new manifest boundary.
+  - Post-repair live retry: implement_experiments regenerated the local micro-stage plan, completed `runner_contract`, `runner_data_access`, `runner_model_execution_runtime_context`, and `runner_model_execution_dependency_preflight`, then the P6 observer hit the helper wall timeout while the TUI had already projected the node as paused/pending. That uncovered a missing timeout-persistence path for observe-only attach sessions.
+
+- Root cause hypothesis:
+  - Type: resume_reload_bug
+  - Hypothesis: staged_llm materialization had finer-grained disk artifacts after subdivision, but the P6 timeout boundary and retry initializer treated the node as a whole-attempt failure instead of preserving completed section files as resumable state.
+
+- Code/test changes:
+  - Added P6 helper resume-manifest construction for implement_experiments helper timeouts.
+  - Extended helper-timeout boundary persistence to handle observe-only attach sessions whose target node is still current but has been projected as paused/pending when the helper times out.
+  - Linked `p6_helper_timeout.json` to `implement_experiments/staged_llm_resume_manifest.json` when resumable artifacts exist.
+  - Added a safe `AUTOLABOS_P6_RESUME_MANIFEST_SELFTEST=1` path and test coverage for manifest generation.
+  - Loaded staged_llm resume manifests inside implementSessionManager and preserved manifest-backed unit plan, prompt, response, skeleton, and section directories across retry initialization.
+  - Reused matching completed unit sections during sectioned skeleton materialization instead of sending them back to the provider.
+
+- Regression status:
+  - Automated regression: passed focused implementSessionManager tests for resume manifest reuse and materialization timeout fallback.
+  - Automated regression: passed P6 continue helper self-test for active-running command selection, running timeout boundary persistence, observe-only paused/pending timeout boundary persistence, and staged_llm resume manifest generation.
+  - Build, public-code sanitization, diff whitespace check, harness validation, and full test suite: passed.
+  - Same-flow live retry: partially passed. It confirmed completed staged_llm artifacts are preserved during the live subdivided path, but the first post-repair timeout exposed the observe-only persistence gap before a manifest could be written. After the fix, full live manifest creation and follow-on manifest consumption were verified in LV-520; the remaining live bottleneck is the downstream aggregation subchunk timeout.
+
+- Follow-up risks:
+  - Resume matching currently reuses completed section files when the regenerated unit/section identifiers match the manifest; if the provider regenerates a materially different plan, the retry still needs to materialize the new sections.
+  - The manifest does not yet trim or re-anchor partially written `_partial_on_error` content into a safe provider continuation prompt.
+  - A long post-fix live retry is still needed to prove the new observe-only timeout persistence path against the real P6 TUI boundary, not only deterministic self-test.
+  - P6 helper wall time can still be exceeded later in the node if too many unfinished sections remain after resume.
+
+- Evidence/artifacts:
+  - <repo-root>/scripts/p6-approve-and-run-next.py
+  - <repo-root>/src/core/agents/implementSessionManager.ts
+  - <repo-root>/tests/p6ContinueScript.test.ts
+  - <repo-root>/tests/implementSessionManager.test.ts
+
+## Issue: LV-518
+
+- Status: reproduced from same-flow implement_experiments validation on 2026-07-05; proactive local execution micro-stage subdivision implemented; focused implementSessionManager regression, public-code sanitization, build, full test suite, diff whitespace check, harness validation, and same-flow live revalidation passed for the subdivision behavior. Live revalidation progressed from the previous broad `chunk 3/6: Single condition model execution` timeout to `chunk 3/6 subchunk 6/7`, then still hit the P6 helper wall timeout.
+- Validation target: implement_experiments should not send a broad local Python runner model-execution chunk to the staged_llm provider as one long-running request when a local bounded runner plan already exposes a high-risk execution section.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, same-flow retry after LV-517 bootstrap-contract dependency repair.
+
+- Reproduction steps:
+  1. Start implement_experiments in staged_llm mode for the existing validation run.
+  2. Let the local bounded Python runner materialization plan replace an over-broad provider plan.
+  3. Observe chunk materialization around the model-execution section.
+
+- Expected behavior:
+  - AutoLabOS should proactively split the broad model-execution chunk into smaller execution micro-stages before provider materialization.
+  - The live artifact should persist a subdivision plan for the model-execution parent chunk.
+  - Progress logs should show `chunk 3/6 subchunk N/7` rather than sending the parent `chunk 3/6` directly.
+
+- Actual behavior:
+  - Before this repair, `runner_model_execution` from the local bounded Python runner plan bypassed dynamic subdivision and was sent as one broad provider request.
+  - The previous same-flow run stalled at `chunk 3/6: Single condition model execution` and P6 timed out without a finer resume boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic implementSessionManager regression verifies proactive subdivision for a local bounded Python runner plan and records a neutral `runner__runner_model_execution.json` micro-stage plan.
+  - Existing session: live retry wrote `artifact_1__runner_model_execution.json` and progressed through subchunks including runtime context, dependency preflight, run-plan, local single-condition helper, raw-record persistence, and aggregate metric computation.
+  - Divergence: the live run still exceeded the P6 helper wall timeout before the whole implement_experiments node completed, so the next issue should focus on resume/checkpoint behavior rather than parent-chunk subdivision.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: the local bounded Python runner plan deliberately skipped provider-driven subdivision, but it did not have a compensating local proactive split for its known broad execution chunk.
+
+- Code/test changes:
+  - Added proactive local subdivision for high-risk model-execution chunks inside `local_bounded_python_runner_materialization` before provider materialization.
+  - Persisted the proactive parent-chunk subdivision plan in `implement_experiments/unit_plans`.
+  - Reused the seven-stage execution micro-stage plan: runtime context, dependency preflight, ordered run-plan, single-condition helper, raw records, aggregation, and wiring.
+  - Added/updated neutral implementSessionManager regressions for proactive local runner subdivision and seven-stage fallback expectations.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-05.
+  - Automated regression: passed focused implementSessionManager regression for materialization timeout fallback, execution micro-stages, and local fallback; public-code sanitization, build, full test suite, diff whitespace check, and harness validation passed.
+  - Same-flow live revalidation: partially passed. The broad parent execution chunk was replaced by subchunks and reached `subchunk 6/7`, but the P6 helper still timed out waiting for the whole node stop boundary.
+
+- Follow-up risks:
+  - Completed subchunks are not yet promoted to a durable resume boundary that lets the next run continue at the unfinished subchunk instead of replaying the earlier chunks.
+  - Provider latency can still exceed the P6 helper wall timeout even when chunk boundaries are smaller.
+  - A failed helper timeout should preserve progress metadata in a way that the runtime can present as resumable work, not only as a generic node failure.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/unit_plans/artifact_1__runner_model_execution.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/unit_chunk_prompts/artifact_1__runner_model_execution_runtime_context__d0__chunk_3_6_subchunk_1_7.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/unit_chunk_responses/artifact_1__runner_model_execution_dependency_preflight__d0__chunk_3_6_subchunk_2_7.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/p6_helper_timeout.json
+  - <validation-workspace>/outputs/lv518-p6-retry-implement-proactive/p6-continue-implement_experiments-output.txt
+
+## Issue: LV-517
+
+- Status: reproduced from same-flow implement_experiments validation on 2026-07-05; dependency repair bootstrap-contract guard implemented; focused bootstrap-contract regression, bootstrap-contract regression group, public-code sanitization, build, full test suite, diff whitespace check, harness validation, and live bootstrap artifact validation passed.
+- Validation target: implement_experiments should consume dependency-gated design/retry context before code generation, so unavailable model/tokenizer dependencies are not silently buried in generated code without a prewarm, available-substitute, or dependency-blocked decision.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, same-flow approval from design_experiments to implement_experiments after LV-516.
+
+- Reproduction steps:
+  1. Run design_experiments after a dependency-blocker backtrack so experiment_plan.yaml contains run_verifier_* retry context.
+  2. Approve design_experiments and start implement_experiments.
+  3. Inspect implement_experiments/bootstrap_contract_prompt.txt and bootstrap_contract.json.
+
+- Expected behavior:
+  - Bootstrap contract planning prompt should expose dependency_repair_context.
+  - If the provider omits the dependency repair decision, AutoLabOS should add an explicit model/tokenizer dependency requirement and block code generation until repair is resolved.
+  - If the provider chooses a prewarm/substitute path, bootstrap_contract.json should record requires_network/requires_warm_cache, requirements, and remediation explicitly.
+
+- Actual behavior:
+  - Before this repair, compact bootstrap prompts omitted plan retry context, so dependency repair metadata could be lost between design_experiments and bootstrap contract planning.
+  - Provider output could proceed without an enforceable dependency repair decision.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic implementSessionManager regression returns a bootstrap contract that ignores dependency repair context and verifies AutoLabOS blocks before code generation.
+  - Existing session: live implement_experiments prompt included dependency_repair_context, and bootstrap_contract.json chose a dependency-repair prewarm path with concrete model/tokenizer requirements.
+  - Divergence: the live run continued into materialization and later hit a P6 timeout/output-size subdivision boundary; that is a downstream implement-progress issue, not a bootstrap-contract omission.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: the task spec retained experiment_plan.yaml, but compact bootstrap prompts and deterministic bootstrap fallback did not lift the dependency repair contract into a structured pre-code-generation decision.
+
+- Code/test changes:
+  - Added ImplementDependencyRepairContext derived from experiment_plan.yaml and runner feedback.
+  - Included dependency_repair_context in staged, bootstrap, and chunk compact task specs.
+  - Added bootstrap prompt instructions requiring a prewarm, available-substitute, or dependency-blocked decision.
+  - Added a bootstrap contract guard that augments missing model/tokenizer dependency requirements and blocks unresolved operator-gated dependency repairs before code generation.
+  - Added a neutral implementSessionManager regression for provider contracts that ignore dependency repair context.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-05.
+  - Automated regression: passed focused bootstrap dependency repair regression, bootstrap-contract regression group, public-code sanitization, build, full test suite, diff whitespace check, and harness validation.
+  - Same-flow live validation: bootstrap context propagation passed. bootstrap_contract_prompt.txt contained dependency_repair_context with failure_code=model_dependency_unavailable, and bootstrap_contract.json chose a dependency-repair prewarm strategy with explicit model/tokenizer requirements. Downstream materialization timed out after output-size subdivision and should be tracked separately.
+
+- Follow-up risks:
+  - implement_experiments still needs a bounded recovery path for long staged_llm materialization subdivisions after the bootstrap contract succeeds.
+  - A prewarm strategy is not proof that the dependency is available; run_experiments must continue to block metrics if the assets are absent.
+  - Dependency-blocked metrics must remain explicit failure/blocked evidence, never synthetic success.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/bootstrap_contract_prompt.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/bootstrap_contract.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/scaffold_prompt.txt
+  - <validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/scaffold_raw_response.txt
+  - <validation-workspace>/outputs/lv517-p6-approve-implement/p6-continue-implement_experiments-output.txt
+
+## Issue: LV-516
+
+- Status: reproduced from same-flow design_experiments backtrack validation on 2026-07-05; design retry-context repair implemented; focused dependency retry-context regression, focused researchPlanning fallback regression, full constraintPropagation suite, full researchPlanning suite, public-code sanitization, build, full test suite, diff whitespace check, harness validation, and same-flow live revalidation passed.
+- Validation target: design_experiments should consume run_experiments dependency-blocker repair metadata after a backtrack so the next design does not repeat the same unavailable dependency without an explicit available substitute or dependency-blocked decision.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, same-flow backtrack after LV-515.
+
+- Reproduction steps:
+  1. Let run_experiments fail with a verifier report carrying failure_code=model_dependency_unavailable and repair_target=environment_dependency.
+  2. Approve the pending backtrack_to_design transition.
+  3. Run design_experiments and inspect design_experiments_panel/retry_context.json and experiment_plan.yaml.
+
+- Expected behavior:
+  - design_experiments retry context should preserve the run verifier failure code, repair target, recommended backtrack node, operator-action flag, and upstream repair hint.
+  - Retry directives should explicitly forbid repeating a design that depends on an unavailable model/tokenizer asset.
+  - The experiment plan should expose the same retry context so implement_experiments receives a design-level dependency repair contract.
+
+- Actual behavior:
+  - Before this repair, stateGraph could route back to design_experiments, but the design retry context only reflected generic transition/retry data.
+  - The verifier repair metadata was not explicitly projected into design_experiments artifacts or fallback design guidance.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic constraint propagation regression writes a neutral run_experiments verifier report and checks retry_context plus plan YAML.
+  - Existing session: reproduced and revalidated in the persisted validation workspace by approving the LV-515 backtrack and rerunning design_experiments.
+  - Divergence: live design used the LLM design path while the regression uses the fallback path; both share the same retry_context artifact contract.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: verifier metadata was persisted for runtime routing but not lifted into DesignRetryContext, so the next design prompt/artifacts could lose the dependency repair instruction.
+
+- Code/test changes:
+  - Extended DesignRetryContext with run_verifier_failure_code, run_verifier_repair_target, run_verifier_recommended_backtrack_node, run_verifier_upstream_repair_hint, and run_verifier_operator_action_required.
+  - Loaded failed run_experiments verifier reports in design_experiments retry context construction.
+  - Added dependency-blocker retry directives and fallback resource/implementation notes.
+  - Added a neutral constraintPropagation regression covering retry_context and experiment_plan.yaml propagation.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-05.
+  - Automated regression: passed focused dependency retry-context regression, focused researchPlanning fallback regression, full constraintPropagation suite, full researchPlanning suite, public-code sanitization, build, full test suite, diff whitespace check, and harness validation.
+  - Same-flow live revalidation: passed. After approving the pending backtrack, design_experiments completed and design_experiments_panel/retry_context.json preserved failure_code=model_dependency_unavailable, repair_target=environment_dependency, recommended_backtrack_node=design_experiments, operator_action_required=true, and dependency repair directives.
+
+- Follow-up risks:
+  - The new design may still choose a dependency-gated strategy; implement_experiments must convert that design into an executable dependency contract rather than assuming the dependency is available.
+  - If no available local dependency exists, the workflow should preserve an explicit dependency-blocked state instead of fabricating metrics.
+  - Public tests must stay generic and avoid encoding the historical experiment identity.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/design_experiments_panel/retry_context.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/experiment_plan.yaml
+  - <validation-workspace>/outputs/lv516-p6-approve-design/p6-continue-design_experiments-output.txt
+  - <validation-workspace>/outputs/lv516-p6-run-design/p6-continue-design_experiments-output.txt
+
+## Issue: LV-515
+
+- Status: reproduced from same-flow run_experiments validation on 2026-07-05; runtime repair-routing implemented; focused dependency-blocker routing regression, full stateGraphRuntime suite, public-code sanitization, build, full test suite, diff whitespace check, harness validation, and same-flow live revalidation passed.
+- Validation target: stateGraph runtime should consume run_experiments verifier metadata for environment dependency blockers and route the run to an explicit upstream repair approval, instead of scheduling another same-node retry or defaulting to implement_experiments rollback.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, same-flow retry after LV-514.
+
+- Reproduction steps:
+  1. Produce or preserve a run_experiments verifier report with failure_code=model_dependency_unavailable, repair_target=environment_dependency, recommended_backtrack_node=design_experiments, and operator_action_required=true.
+  2. Retry run_experiments through the normal runtime path.
+  3. Inspect run_record.json and the terminal output after the verifier failure.
+
+- Expected behavior:
+  - Runtime should pause on a pending backtrack_to_design transition with sourceNode=run_experiments and targetNode=design_experiments.
+  - The failed node should not schedule another same-node retry or silently rollback to implement_experiments.
+  - The pending transition should preserve failure_code, repair_target, operator_action_required, and verifier stage evidence.
+
+- Actual behavior:
+  - Before this repair, the verifier metadata existed in artifacts, but stateGraph failure handling did not consume it.
+  - A dependency blocker could still be treated as an ordinary failed node for retry/rollback purposes.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic runtime regression writes a neutral verifier report and verifies the pending transition.
+  - Existing session: reproduced and revalidated in the persisted validation workspace during same-flow run_experiments retry.
+  - Divergence: no UI-only divergence observed; this was a runtime repair-routing gap.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: LV-514 made dependency-blocker metadata observable, but the stateGraph failure handler still only used the error string, retry counters, and previous-node rollback logic.
+
+- Code/test changes:
+  - Added run_experiments verifier-report routing in stateGraph failure handling for explicit upstream environment-dependency reports.
+  - Added pending backtrack_to_design transitions with operator-aware autoExecutable=false when operator_action_required=true.
+  - Added a neutral stateGraphRuntime regression covering dependency-blocker routing and manual approval to design_experiments.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-05.
+  - Automated regression: passed focused dependency-blocker verifier routing regression, full stateGraphRuntime suite, public-code sanitization, build, and full test suite.
+  - Same-flow live revalidation: passed. The retry still stops honestly at the model/tokenizer dependency blocker, and run_record.json now shows status=paused, run_experiments status=needs_approval, pendingTransition.action=backtrack_to_design, targetNode=design_experiments, and evidence including failure_code=model_dependency_unavailable and repair_target=environment_dependency.
+
+- Follow-up risks:
+  - Backtracking to design_experiments must not silently claim that the unavailable dependency was fixed.
+  - The design retry context should consume verifier repair metadata directly so the next design either selects an available local dependency or explicitly marks the run dependency-blocked.
+  - If an operator prewarms the original dependency, the run should retry only after that external repair is visible.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/run_record.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/run_experiments_verify_report.json
+  - <validation-workspace>/outputs/lv515-p6-retry/p6-continue-run_experiments-output.txt
+
+## Issue: LV-514
+
+- Status: reproduced from same-flow run_experiments validation on 2026-07-05; source metadata/triage repair implemented; focused triage regression, focused raw evidence regression, full run_experiments regression suite, public-code sanitization, build, full test suite, diff whitespace check, harness validation, and same-flow live revalidation passed.
+- Validation target: run_experiments verifier and meta-harness-facing artifacts should classify model/tokenizer dependency blockers as non-retryable dependency blockers with an explicit upstream repair target, not as generic invalid metrics or implementation-only feedback.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, same-flow retry after LV-513.
+
+- Reproduction steps:
+  1. Retry run_experiments for the existing run after LV-513 surfaced the model/tokenizer asset dependency blocker.
+  2. Let the node-owned runner execute without hand-editing experiment.py.
+  3. Inspect run_experiments_verify_report.json, run_experiments_panel/triage.json, and implement_experiments.runner_feedback in run_context.json.
+
+- Expected behavior:
+  - The verifier report should preserve a machine-readable failure code for the missing model/tokenizer dependency.
+  - Triage should classify the failure as a non-retryable dependency blocker rather than generic invalid metrics.
+  - Feedback handed to implement_experiments and the meta harness should name the upstream repair target so the system can prewarm dependencies or backtrack to design_experiments for an available local model, instead of retrying the same implementation unchanged.
+
+- Actual behavior:
+  - LV-513 correctly surfaced the dependency blocker in prose, but the verifier report had no machine-readable failure_code, repair_target, recommended_backtrack_node, or upstream_repair_hint.
+  - run_experiments_panel triage treated the failed metrics artifact as generic invalid_metrics.
+  - Implementer feedback lacked enough structured metadata for later nodes or the meta harness to distinguish environment/model-selection repair from ordinary implementation repair.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regressions use neutral model ids and dependency-blocker summaries.
+  - Existing session: reproduced in the persisted validation workspace during the same-flow run_experiments retry.
+  - Divergence: no UI-only divergence observed; this is a verifier/triage metadata projection gap.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: dependency-blocker detection stopped at human-readable summary text. The run verifier report builder, panel triage classifier, and compact runner-feedback projection did not preserve a structured dependency-blocker contract.
+
+- Code/test changes:
+  - Added optional run-verifier metadata fields: failure_code, repair_target, recommended_backtrack_node, upstream_repair_hint, and operator_action_required.
+  - Added dependency_blocker as a run_experiments triage category and classified explicit Experiment dependency blocker summaries as non-retryable while preserving transient retry behavior for ordinary model cache/download command failures.
+  - Preserved the new metadata in compact runner feedback for implementation repair prompts.
+  - Extended neutral regressions to verify metadata propagation and triage classification.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-05.
+  - Automated regression: passed focused runExperimentsPanel dependency-blocker classification, focused raw_evidence_path model-load metadata regression, existing transient model cache/download retry regression, full runExperimentsExecutionProfile suite, public-code sanitization, build, full test suite, diff whitespace check, and harness validation.
+  - Same-flow live revalidation: passed. The retry still stops honestly at the dependency blocker, and report/triage/feedback artifacts now expose failure_code=model_dependency_unavailable, repair_target=environment_dependency, recommended_backtrack_node=design_experiments, and dependency_blocker triage.
+
+- Follow-up risks:
+  - Structured dependency metadata must not imply that missing model assets are successful evidence.
+  - The next actual run repair still requires dependency prewarm/access or a design-level switch to an available local model.
+  - Keep public tests neutral; do not encode one historical model or benchmark as the public contract.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/run_experiments_verify_report.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/run_experiments_panel/triage.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/memory/run_context.json
+  - <validation-workspace>/outputs/<run-output>/experiment/run_experiments_verify_report.json
+
+## Issue: LV-513
+
+- Status: reproduced from same-flow run_experiments validation on 2026-07-04; source diagnostic repair implemented; focused regression, adjacent run_experiments verifier regression, public-code sanitization, build, full test suite, diff whitespace check, harness validation, and same-flow live revalidation passed.
+- Validation target: run_experiments verifier should surface raw per-seed model-load dependency failures when metrics.json only exposes raw_evidence_path and aggregate condition rows hide the concrete error.
+- Environment/session context: existing validation workspace <validation-workspace>, run 3bc89107-909f-4315-9340-d75ce02eb0e0, same-flow retry after LV-512.
+
+- Reproduction steps:
+  1. Retry run_experiments for the existing run after LV-512 source repair.
+  2. Let the node-owned runner execute without hand-editing experiment.py.
+  3. Inspect metrics.json, run_experiments_verify_report.json, and the raw evidence JSONL named by raw_evidence_path.
+
+- Expected behavior:
+  - The verifier should read bounded local raw evidence files referenced by metrics.json.
+  - Wrapped raw evidence rows shaped as {record, time} should be treated as condition/seed evidence.
+  - model_load_errors should be elevated into condition failure reasons and dependency-blocker feedback.
+
+- Actual behavior:
+  - The previous missing data_bundle entrypoint exception did not recur.
+  - The runner exited 0 and wrote metrics.json, but all 4 required aggregate conditions were failed and accuracy_delta_vs_baseline was null.
+  - The concrete cause only appeared in raw_condition_seed_records.jsonl: 32 per-seed rows failed at stage=model_load, with both candidate model ids reporting ModuleNotFoundError for HiggsAudioV2TokenizerPreTrainedModel.
+  - The verifier summary reported the objective metric gap and failed condition count, but did not surface the raw model-load dependency error.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression added with neutral model ids and raw JSONL rows wrapped as {record, time}.
+  - Existing session: reproduced in the persisted validation workspace during the current same-flow retry.
+  - Divergence: no UI-only divergence observed; this is verifier evidence-ingestion/diagnostic projection gap.
+
+- Root cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: run_experiments reads metrics.json but does not ingest bounded raw_evidence_path JSONL before failed-metrics/dependency-blocker classification. Existing condition-row helpers also do not unwrap record-backed raw rows or summarize model_load_errors.
+
+- Code/test changes:
+  - Added bounded raw condition evidence ingestion from local raw_evidence_path-like metrics fields.
+  - Added condition row unwrapping for record/raw_record/evidence_record wrappers.
+  - Added model_load_errors summarization into condition failure reasons and dependency-blocker classification.
+  - Added a neutral regression proving raw model-load failures are surfaced as dependency-blocker feedback.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-04.
+  - Automated regression: passed focused raw_evidence_path model-load regression, full runExperimentsExecutionProfile suite, public-code sanitization, build, full test suite, diff whitespace check, and harness validation.
+  - Same-flow live revalidation: passed. The retry now reports Experiment dependency blocker with model/tokenizer asset guidance instead of a generic missing-objective metrics contract failure.
+
+- Follow-up risks:
+  - This repair should not convert dependency failures into successful evidence.
+  - Keep raw evidence ingestion bounded and local to avoid reading arbitrary or oversized paths.
+  - The underlying live environment still needs model dependency resolution or model selection repair before any experiment result can count as evidence.
+
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/run_experiments_verify_report.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/metrics.json
+  - <validation-workspace>/outputs/<run-output>/experiment/raw_condition_seed_records.jsonl
+  - <validation-workspace>/outputs/<run-output>/experiment/experiment.py
+
+## Issue: LV-512
+
+- Status: reproduced from live run_experiments validation on 2026-07-04; source repair implemented; focused regression, adjacent entrypoint regressions, public-code sanitization, build, full test suite, and harness validation passed; same-flow live revalidation passed to the next boundary tracked as LV-513.
+- Validation target: generated ordered-plan entrypoints should materialize an existing data bundle and pass it through neutral aliases when the selected condition runner requires `data_bundle`.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, same-flow retry after LV-511.
+
+- Reproduction steps:
+  1. Retry `run_experiments` for the existing run after LV-511 source repair.
+  2. Let the node-owned runner execute without hand-editing `experiment.py`.
+  3. Inspect `metrics.json` and the command-stage verifier report.
+
+- Expected behavior:
+  - Final ordered-plan entrypoints should call existing data loaders such as `load_experiment_data` or `_autolabos_entrypoint_loaded_data` before invoking per-condition runners.
+  - Condition runner dispatch should pass `data_bundle`, `loaded_data`, `dataset_bundle`, `task_bundle`, and training-bundle aliases when required by the runner signature.
+
+- Actual behavior:
+  - The LV-511 missing-aggregator boundary was cleared and the runner selected `execute_condition_seed`.
+  - The command failed at `entrypoint_exception` with `TypeError("execute_condition_seed() missing 1 required positional argument: 'data_bundle'")`.
+  - The generated script already contained `load_experiment_data(args)`, but the final ordered-plan `main()` did not materialize or pass that bundle.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression added with a neutral runner whose `execute_condition_seed(condition, seed, data_bundle, args)` requires a loaded data bundle.
+  - Existing session: reproduced in the persisted validation workspace during the current same-flow retry.
+  - Divergence: no UI-only divergence observed; this is a final entrypoint bridge/data projection gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the final generated ordered-plan entrypoint overwrites an earlier richer entrypoint and forwards condition/seed/runtime aliases, but omits materialized data bundle aliases required by condition runners.
+
+- Code/test changes:
+  - Added a source-level repair that materializes an existing data bundle in final ordered-plan entrypoints.
+  - Added neutral alias forwarding for `data_bundle`, `loaded_data`, `dataset_bundle`, `task_bundle`, `train_bundle`, and `training_bundle`.
+  - Wired the repair into both implement handoff and `run_experiments` pre-run repair paths.
+  - Added a neutral regression proving the old missing-`data_bundle` failure and repaired objective metric output.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-04.
+  - Automated regression: passed focused LV-512 regression, adjacent entrypoint/data-bundle regressions, public-code sanitization, build, full `npm test`, and harness validation.
+  - Same-flow live revalidation: passed. The retry no longer reproduced the missing data_bundle TypeError; run_experiments reached the distinct LV-513 model-load dependency diagnostic boundary.
+
+- Follow-up risks:
+  - Do not manually patch the generated live `experiment.py`; the repair must happen through source-level compatibility repair before node execution.
+  - If real data loading fails next, keep that as a separate data-access boundary rather than masking it with synthetic records.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/<run-output>/experiment/experiment.py`
+
+## Issue: LV-511
+
+- Status: reproduced from live `run_experiments` validation on 2026-07-04; source repair implemented; focused regression, adjacent entrypoint/aggregation regressions, public-code sanitization, build, full test suite, and harness validation passed; same-flow live revalidation pending.
+- Validation target: generated Python runner final entrypoints should reuse existing generic metrics payload builders when selecting final aggregators, so successful condition records produce the configured objective metric instead of a false `missing aggregator` payload.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, same-flow retry after LV-510.
+
+- Reproduction steps:
+  1. Retry `run_experiments` for the existing run after LV-510 source repair.
+  2. Let the node-owned runner execute without hand-editing `experiment.py`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/<run-id>/run_experiments_verify_report.json` and `metrics.json`.
+
+- Expected behavior:
+  - If a generated runner defines a reusable metrics payload builder such as `build_success_metrics_payload`, the final entrypoint should consider it as an aggregation candidate.
+  - Aggregate dispatch should pass generic aliases such as `records`, `condition_results`, `results`, and `raw_condition_results` so compatible builders receive their required inputs.
+  - Completed condition records should produce `primary_metric_key=accuracy_delta_vs_baseline` and a top-level `accuracy_delta_vs_baseline` value before analysis proceeds.
+
+- Actual behavior:
+  - The previous Namespace/runtime-plan failure was gone, and the runner exited with code 0.
+  - Verification failed at the metrics contract stage because `metrics.json` did not contain `accuracy_delta_vs_baseline`.
+  - `metrics.json` recorded `failure_stage=entrypoint_wiring` and `error=missing aggregator` even though the script already contained generic metrics payload builders.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression added with a neutral runner that has `baseline_condition`/`candidate_condition`, successful per-condition rows, and an existing `build_success_metrics_payload` not listed in the final aggregator lookup.
+  - Existing session: reproduced in the persisted validation workspace during the current same-flow retry.
+  - Divergence: no UI-only divergence observed; this is a generated entrypoint alias/dispatch gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the final generated entrypoint overwrites earlier runnable entrypoints and searches only `aggregate_final_metrics`-style names. It omits reusable payload builder names that were materialized earlier, then reports a false missing-aggregator failure.
+
+- Code/test changes:
+  - Added a source-level repair that expands final aggregator lookup to existing generic metrics payload builders without naming a one-off experiment.
+  - Added aggregate-call aliases for `condition_results`, `results`, and `raw_condition_results`.
+  - Wired the repair into both implement handoff and `run_experiments` pre-run repair paths.
+  - Added a neutral regression proving the old false `missing aggregator` payload and repaired objective metric output.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-04.
+  - Automated regression: passed focused LV-511 regression, adjacent entrypoint/aggregation regressions, public-code sanitization, build, full `npm test`, and harness validation.
+  - Same-flow live revalidation: pending.
+
+- Follow-up risks:
+  - Do not manually patch the generated live `experiment.py`; the repair must be applied by source-level compatibility repair before node execution.
+  - Avoid treating missing aggregators as successful metrics; the repair should only activate when a real metrics payload builder is already defined or imported.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/<run-output>/experiment/experiment.py`
+
+## Issue: LV-510
+
+- Status: reproduced from live `run_experiments` validation on 2026-07-04; source repair implemented; focused entrypoint/runtime-plan regressions, adjacent replay/CLI regressions, public-code sanitization, build, full test suite, and harness validation passed; same-flow live revalidation pending.
+- Validation target: generated Python runner entrypoint bridges should pass a materialized runtime context to ordered plan builders and should not hide real helper exceptions by falling back to incompatible positional calls.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, after LV-509 same-flow revalidation let `implement_experiments` complete and auto-handoff into `run_experiments`.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` for the existing run after LV-509.
+  2. Let the generated runner compile and hand off automatically to `run_experiments`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/<run-id>/run_experiments_verify_report.json` and `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`.
+
+- Expected behavior:
+  - The runner should resolve a generated runtime-context helper before building the ordered run plan.
+  - Ordered plan builders that accept `runtime` should receive a mapping/object with artifact paths, model selection, and task/runtime aliases.
+  - If the keyword-compatible helper call raises a real runtime error, the bridge should preserve that error instead of retrying with an incompatible positional `argparse.Namespace`.
+
+- Actual behavior:
+  - `implement_experiments` completed and `run_experiments` executed the node-owned `experiment.py`.
+  - The command failed before metrics were written successfully.
+  - `metrics.json` recorded `failure_stage=entrypoint_exception` with `AttributeError(Namespace object has no attribute get)`.
+  - Traceback showed `build_ordered_run_plan(runtime)` receiving an `argparse.Namespace` after `_entrypoint_invoke(...)` masked the earlier keyword-call failure and fell back to `fn(*pos)`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression to be added with a neutral generated runner whose ordered plan builder expects a dict-style runtime and whose initial runtime must be materialized before planning.
+  - Existing session: reproduced in the persisted validation workspace during the current same-flow retry.
+  - Divergence: no UI-only divergence observed; this is a generated entrypoint bridge/runtime projection mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the final handoff bridge does not consistently include generated runtime-context resolvers in the preflight/helper candidate list, initializes an underspecified runtime mapping, and catches all exceptions from keyword-compatible helper calls. A real runtime-context error is therefore converted into a misleading positional fallback call.
+
+- Code/test changes:
+  - Added a source-level Python entrypoint repair that materializes runtime context before ordered-plan dispatch and adds runtime-context resolver candidates without naming a one-off experiment.
+  - Tightened the generated `_entrypoint_invoke` repair so keyword-compatible helpers are not silently retried with incompatible positional `argparse.Namespace` objects after an internal helper failure.
+  - Wired the repair into both implement handoff and `run_experiments` pre-run repair paths.
+  - Added a neutral regression runner using `baseline_condition`/`candidate_condition` to prove the old Namespace fallback failure and the repaired runtime-context path.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-04.
+  - Automated regression: passed focused LV-510 regression, adjacent entrypoint/replay/CLI regressions, public-code sanitization, build, full `npm test`, and harness validation.
+  - Same-flow live revalidation: pending.
+
+- Follow-up risks:
+  - Do not manually patch the generated live `experiment.py`; repair should happen through source-level bridge generation or pre-run compatibility repair.
+  - Preserve legitimate positional fallback for helpers that truly do not accept keyword arguments, but do not use it after a keyword-compatible call has already entered and failed inside the helper.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/<run-output>/experiment/experiment.py`
+
+## Issue: LV-509
+
+- Status: reproduced from live `implement_experiments` validation on 2026-07-04; source repair implemented; validator regression, public-code sanitization, build, and harness validation passed; same-flow live revalidation pending.
+- Validation target: design-to-implementation validation should flag missing callable resolver targets only when the advertised candidate names are executable helper names, not Python dunder attribute literals used by dataclass/introspection helpers.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, same-flow retry after LV-508.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` for the existing run after stale completed-metrics replay is blocked.
+  2. Let staged implementation materialize a new node-owned Python runner.
+  3. Observe design-to-implementation validation in `<validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/progress.jsonl`.
+
+- Expected behavior:
+  - Validator should require real callable resolver candidates to exist before handoff.
+  - Validator should ignore dunder strings such as dataclass/introspection attributes when they appear in the same resolver analysis window.
+  - The implementation node should be allowed to continue to the next real contract boundary instead of being blocked by attribute-literal false positives.
+
+- Actual behavior:
+  - The first regenerated attempt failed design validation with `PLANNED_RUNTIME_CALLABLE_RESOLVER_TARGET_MISSING`.
+  - Evidence reported `purpose=__dataclass_fields__` and `missing_callable_candidates=__name__, __dataclass_fields__`.
+  - Those strings are Python attribute literals, not advertised experiment callable names.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression to be added with neutral dataclass/introspection strings near a generic callable resolver.
+  - Existing session: reproduced in the persisted validation workspace during the current same-flow retry.
+  - Divergence: no UI-only divergence observed; this is a static validator false positive over the generated Python source.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generic callable resolver validator extracts every string literal from a broad resolver window. When dataclass serialization or introspection code is nearby, Python dunder attribute names can be mistaken for missing callable candidates and even for the resolver purpose.
+
+- Code/test changes:
+  - Excluded Python dunder attribute literals from generic callable resolver candidate extraction and from resolver-purpose reporting.
+  - Added a neutral validator regression proving dataclass/introspection dunder strings do not trigger `PLANNED_RUNTIME_CALLABLE_RESOLVER_TARGET_MISSING`.
+  - Preserved the existing guard for real advertised callable helper names that are missing.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-04.
+  - Automated regression: passed targeted validator tests, full `tests/designImplementationValidator.test.ts`, public-code sanitization, build, diff whitespace check, and harness validation.
+  - Same-flow live revalidation: pending.
+
+- Follow-up risks:
+  - Keep the fix narrow: ignore dunder attribute literals while preserving the guard for real missing helper names.
+  - Do not weaken validation for actual resolver candidates that should have executable definitions.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/outputs/<run-output>/experiment/experiment.py`
+
+## Issue: LV-508
+
+- Status: reproduced from live `run_experiments` validation on 2026-07-04; source repair implemented; focused replay-contract regressions, entrypoint regressions, public-code sanitization, build, and harness validation passed; same-flow live revalidation pending.
+- Validation target: completed-metrics replay recovery must not reuse stale public-bundle metrics when the recovered metrics do not exactly satisfy the current approved planned-condition contract.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, immediately after LV-507 same-flow retry let `implement_experiments` complete and `run_experiments` execute the recovered bundle.
+
+- Reproduction steps:
+  1. Retry `implement_experiments` after the entrypoint bridge repair.
+  2. Let the recovered public bundle advance into `run_experiments`.
+  3. Compare `locked_condition_contract.json` with `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`.
+
+- Expected behavior:
+  - If the approved contract requires a specific marker set and seed schedule, replay recovery should only be allowed when the completed metrics expose exactly those markers and enough seed evidence.
+  - Extra condition markers, missing required markers, missing required seeds, or stale completed-run totals should block recovery and force a fresh implementation attempt.
+  - The top-level metrics contract should match the approved planned condition/run contract before `run_experiments` can pause for approval.
+
+- Actual behavior:
+  - `locked_condition_contract.json` declared 4 condition markers, 8 seeds per condition, and 32 required runs.
+  - The recovered `experiment.py` was a completed-metrics replay entrypoint with the new 4-condition header, but it replayed stale public metrics/raw evidence from a 12-condition grid.
+  - `metrics.json` reported `status=completed`, `success=true`, `completed_condition_count=12`, `required_condition_count=12`, and condition markers outside the approved contract.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression to be added with neutral stale public metrics containing extra candidate markers and an approved two-marker repeated-seed contract.
+  - Existing session: reproduced in the persisted validation workspace after LV-507 same-flow revalidation advanced to `run_experiments needs_approval`.
+  - Divergence: no UI-only divergence observed; the defect is stale public-bundle replay recovery bypassing current contract alignment.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: deterministic completed-metrics replay recovery validates that a public metrics payload is completed, but it does not compare the payload's condition markers and seed evidence against the active `planned_condition_contract`. Later materialization can add the current contract header to the replay script, making static validation pass while runtime replay still emits stale metrics.
+
+- Code/test changes:
+  - Added completed-metrics replay validation against the active planned-condition contract before replay repair or public-bundle recovery can proceed.
+  - Threaded the planned condition contract through deterministic bundle repair and public bundle recovery paths.
+  - Added neutral regressions for matching replay metrics and stale extra-marker replay metrics.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-04.
+  - Automated regression: passed completed-metrics replay contract tests, entrypoint bridge tests, public-code sanitization, build, and harness validation.
+  - Same-flow revalidation: pending.
+
+- Follow-up risks:
+  - Do not filter or hand-edit stale metrics into compliance; recovery should fail-close so the implementation node regenerates or repairs a runner that executes the approved contract.
+  - After repair, rerun the same live boundary and confirm the metrics top-level condition/run counts and marker/seed sets match the approved contract.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/outputs/<run-output>/experiment/locked_condition_contract.json`
+  - `<validation-workspace>/outputs/<run-output>/experiment/experiment.py`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+## Issue: LV-507
+
+- Status: reproduced from live `implement_experiments` validation on 2026-07-04; source repair implemented; focused regressions, public-code sanitization, build, and harness validation passed; same-flow live revalidation pending.
+- Validation target: `implement_experiments` should treat a real high-level model-execution stage as an executable experiment entrypoint and pass the materialized data/runtime bundle through the AutoLabOS CLI bridge before local verification.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, after LV-506 source repairs and a same-node implementation retry.
+
+- Reproduction steps:
+  1. Retry the failed `implement_experiments` node for the existing run.
+  2. Let the node materialize a generated Python runner that includes the AutoLabOS local runner bridge.
+  3. Inspect `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl` and `<validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/status.json`.
+
+- Expected behavior:
+  - If the generated runner defines a concrete high-level model-execution function, the CLI bridge should dispatch to it.
+  - The bridge should pass the loaded data bundle, runtime paths, runtime context, metrics path, and output directory under compatible aliases.
+  - Local verification should fail only when no concrete runner exists or when the concrete runner fails with a focused execution error.
+
+- Actual behavior:
+  - The generated runner defined concrete `run_model_execution_stage` / `run_model_execution` style functions, plus the AutoLabOS local runner bridge.
+  - The bridge's high-level candidate list did not include those functions, and the fallback single-condition helper was intentionally ignored as non-concrete.
+  - Local verification failed with `No callable experiment entrypoint was available`, even though a concrete model-execution stage was present.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression to be added with domain-neutral high-level model-execution fixture names and a required data-bundle argument.
+  - Existing session: reproduced in the persisted validation workspace through the P6 helper while retrying `implement_experiments`.
+  - Divergence: no UI-only divergence observed; the defect is a generated-runner bridge discovery and argument-projection mismatch over persisted artifacts.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated local CLI bridge recognizes generic experiment/study/sweep entrypoint names and condition-level workers, but it does not recognize model-execution stage functions that are concrete orchestration callables. The detection guard mirrors that narrower candidate set, so local verification can reject a runnable script before execution.
+
+- Code/test changes:
+  - Added model-execution stage names to the generated local CLI bridge and concrete-entrypoint detector.
+  - Passed runtime path/context aliases and materialized data-bundle aliases into high-level bridge calls.
+  - Added a neutral regression test covering model-execution stage dispatch through the local CLI bridge without one-off experiment identifiers.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-04.
+  - Automated regression: passed focused entrypoint bridge/detector tests, public-code sanitization, build, and harness validation.
+  - Same-flow revalidation: pending.
+
+- Follow-up risks:
+  - Do not manually patch the generated `experiment.py`; the implementation node must regenerate or repair the runner through source-level behavior.
+  - After repair, rerun the same live node boundary and confirm the generated runner either advances to execution with a contract-shaped metrics payload or fails at a narrower concrete execution/evaluation boundary.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/status.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/outputs/<run-output>/experiment/experiment.py`
+  - `outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+## Issue: LV-506
+
+- Status: reproduced from live `run_experiments` validation on 2026-07-04; source repair in progress.
+- Validation target: `run_experiments` should execute the node-owned generated runner and project completed train/eval evidence into a contract-shaped metrics payload with nonzero evaluated counts before advancing.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, immediately after the LV-505 source repair regenerated the implementation contract as 4 planned conditions x 8 seeds.
+
+- Reproduction steps:
+  1. Approve or retry the live workflow through `implement_experiments` until the generated runner passes local compile/help validation.
+  2. Let the workflow advance into `run_experiments`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl` and `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`.
+
+- Expected behavior:
+  - The generated runner should evaluate the configured benchmark task records after training each planned condition/seed.
+  - Evaluation normalization should produce nonzero `evaluated_count` values for each required task when raw task records are present.
+  - The final metrics payload should expose top-level `status`, `success`, `completed_run_count`, `required_run_count`, `condition_results`, `raw_condition_results`, and the primary metric only when real objective metrics exist.
+  - If evaluation cannot normalize task records, the runner should fail with a focused repair hint rather than projecting all condition summaries as failed with no actionable schema detail.
+
+- Actual behavior:
+  - The runner executed the approved 4-condition x 8-seed training schedule and logged completed training for all 32 planned condition/seed cells.
+  - `metrics.json` recorded `raw_condition_results` for the four planned conditions and all eight seeds, but every task row failed with `evaluation produced no objective metric`.
+  - Nested task metrics reported `raw_count` for the configured task datasets while `evaluated_count=0` and `status=failed_schema_normalization`.
+  - The top-level metrics payload reported `status=failed`, `success=false`, and `completed_condition_count=0`, so the workflow remains unable to trust the executed evidence.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression to be added with domain-neutral task-record fixtures that have raw examples but normalize to zero evaluated rows.
+  - Existing session: reproduced in the persisted validation workspace through the P6 helper after the LV-505 implementation retry advanced into `run_experiments`.
+  - Divergence: no UI-only divergence observed; the defect is a generated-runner evaluation normalization and metrics projection mismatch over persisted artifacts.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated-runner repair path can construct and train repeated condition/seed cells, but its evaluation adapter does not reliably normalize common multiple-choice task record shapes into prompt/options/answer fields before computing objective metrics. The downstream metrics aggregation correctly refuses to promote null objective metrics, but the repair prompt/guard does not yet force the evaluation adapter to expose the schema failure at generation time.
+
+- Code/test changes:
+  - Pending.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-04.
+  - Automated regression: pending.
+  - Same-flow revalidation: pending.
+
+- Follow-up risks:
+  - Do not manually patch the generated `experiment.py` or `metrics.json`; the implementation node must regenerate the runner after source-level repair.
+  - After repair, rerun the same live node boundary and confirm the public/run metrics contract either contains nonzero evaluated counts or blocks with a focused, reviewable schema-normalization failure.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/implement_task_spec.json`
+  - `<validation-workspace>/outputs/<run-output>/experiment/locked_condition_contract.json`
+
+## Issue: LV-505
+
+- Status: reproduced from live `implement_experiments` validation on 2026-07-04; source repair in progress.
+- Validation target: `implement_experiments` should preserve the approved selected-design condition/run contract when a rank-only repeated-seed plan replaces a broader grid.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, after LV-504 same-flow revalidation reached a `design_experiments needs_approval` boundary with `selection.mode=best_non_blocked`.
+
+- Reproduction steps:
+  1. Approve the `design_experiments` boundary and continue the same run with `AUTOLABOS_P6_NEXT_NODE=implement_experiments`.
+  2. Let the implementation node generate the public experiment bundle and reach `needs_approval`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/<run-id>/implement_task_spec.json`, `<validation-workspace>/outputs/<run-output>/experiment/locked_condition_contract.json`, and `<validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/bootstrap_contract.json`.
+
+- Expected behavior:
+  - The selected design is a rank-only four-condition sweep with the fixed regularization/dropout setting and 8 paired seeds.
+  - The planned contract should preserve 4 planned condition cells, 8 seeds per condition, and 32 required train/eval runs.
+  - Design-to-implementation validation should block internally inconsistent contracts where the required condition count is inflated but the required marker list does not enumerate or parameterize the same count.
+
+- Actual behavior:
+  - The selected design text says to train ranks 4, 8, 16, and 32 with the fixed regularization/dropout setting for each of 8 seeds.
+  - `implement_task_spec.context.planned_condition_contract` recorded `required_condition_count=32` and `required_run_count=256`.
+  - `locked_condition_contract.json` listed only two concrete condition markers while also claiming 32 required conditions.
+  - `design_implementation_validation.json` still returned `verdict=allow`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression to be added with domain-neutral condition-parameter prose.
+  - Existing session: reproduced in the persisted validation workspace through the P6 helper after approving the LV-504 design boundary.
+  - Divergence: no UI-only divergence observed; the defect is a plan-contract parser and validation-gate mismatch over persisted run artifacts.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the planned-condition parser treated a repeated-run total as a condition-cell count when the selected design described four fixed-parameter cells and eight seeds, then multiplied by the seed schedule again. The validator checked the generated script/public surface against that already-corrupt contract but did not fail-close on the contract's own marker-count inconsistency.
+
+- Code/test changes:
+  - Pending.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-04.
+  - Automated regression: pending.
+  - Same-flow revalidation: pending.
+
+- Follow-up risks:
+  - After this repair, the same run must be jumped back to the implementation boundary or otherwise regenerated so stale inflated contracts do not advance into `run_experiments`.
+
+- Evidence/artifacts:
+  - `outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/implement_task_spec.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/experiment_governance/design_implementation_validation.json`
+  - `<validation-workspace>/outputs/<run-output>/experiment/locked_condition_contract.json`
+
+## Issue: LV-504
+
+- Status: reproduced from live `design_experiments` validation on 2026-07-04; source repair implemented; focused regressions, public-code sanitization, build, harness validation, and same-flow live revalidation passed.
+- Validation target: `design_experiments` should not treat an all-hard-blocked panel selection as an executable handoff to implementation.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, after LV-503 same-flow revalidation recommended `backtrack_to_design` because executed results lacked required runtime and memory evidence.
+
+- Reproduction steps:
+  1. Continue the active run from the governed `analyze_results` backtrack using the P6 helper with `AUTOLABOS_P6_NEXT_NODE=design_experiments`.
+  2. Let `design_experiments` regenerate candidate experiment designs from the prior evidence-gap context.
+  3. Inspect `<validation-workspace>/.autolabos/runs/<run-id>/design_experiments_panel/selection.json` and `reviews.json`.
+  4. Observe the node completion summary and generated `experiment_contract.json`.
+
+- Expected behavior:
+  - If every candidate is hard-blocked by a panel reviewer, the node should surface a blocked design-revision boundary rather than calling the selected fallback executable.
+  - It may preserve the least-bad candidate for operator inspection, but it must mark the handoff as blocked and avoid implying implementation can safely proceed.
+  - The summary and run-context memory should preserve the hard-block reason so the next design pass can repair the reviewer objection.
+
+- Actual behavior:
+  - `selection.json` recorded `mode=all_blocked_fallback`.
+  - All three candidate scores had `blocked_by=["statistical_reviewer"]`.
+  - The node still wrote a selected design into `experiment_contract.json` and completed with a summary that said it generated executable design candidates.
+  - The selected plan did add runtime/memory telemetry requirements, but the panel hard-block status was not promoted into the node boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression now covers all-hard-blocked design candidates with domain-neutral fixtures.
+  - Existing session: reproduced in the persisted validation workspace through the P6 helper after the LV-503 governed backtrack.
+  - Divergence: no UI-only divergence observed; the defect is a panel-selection gate projection mismatch in persisted design artifacts.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the design panel intentionally keeps a least-bad fallback when all candidates are blocked, but `design_experiments` projects that fallback into the normal selected-design contract and completion summary instead of turning it into a blocked redesign boundary.
+
+- Code/test changes:
+  - Code: `src/core/nodes/designExperiments.ts` now persists the panel selection immediately and fail-closes before experiment contract, portfolio, baseline summary, or public handoff generation when the panel mode is `all_blocked_fallback`.
+  - Code: `src/core/designExperimentsPanel.ts` now describes all-blocked fallback as a reviewable blocked-plan output, not a valid executable plan.
+  - Tests: `tests/constraintPropagation.test.ts` now expects all-hard-blocked design candidates to preserve inspection artifacts while returning `status=failure` and avoiding `experiment_contract.json` generation.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-04.
+  - Deterministic regression passed: `npm test -- tests/constraintPropagation.test.ts -t "hard-blocked"`.
+  - Panel regression passed: `npm test -- tests/designExperimentsPanel.test.ts`.
+  - Public-code sanitization passed: `npm test -- tests/publicCodeSanitization.test.ts`.
+  - Build passed: `npm run build`.
+  - Harness validation passed: `npm run validate:harness`.
+  - Same-flow live revalidation passed after force-jumping the persisted run back to `design_experiments` and rerunning the node: two generated attempts were blocked by the existing experiment-contract confounding gate without implementation handoff, and the third attempt reached `design_experiments needs_approval` with `selection.mode=best_non_blocked`.
+
+- Follow-up risks:
+  - The next approval boundary now contains a non-blocked rank-only design with runtime and memory metrics, but it still explicitly excludes dropout-interaction claims and remains bounded by the evidence ceiling until implementation and execution produce the required telemetry-complete runs.
+
+- Evidence/artifacts:
+  - `outputs/p6-preflight/p6-continue-design_experiments-output.txt`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/design_experiments_panel/selection.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/design_experiments_panel/reviews.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/experiment_contract.json`
+
+## Issue: LV-503
+
+- Status: reproduced from live `analyze_results` validation on 2026-07-03; source repair implemented; focused regressions, public-code sanitization, diff check, build, harness validation, full test suite, and same-flow live revalidation passed.
+- Validation target: `analyze_results` brief evidence gating should distinguish unresolved evidence gaps from a failure to flag those gaps, and should emit an accurate gate summary when analysis already surfaced the blocking evidence gap.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, immediately after LV-502 same-flow revalidation completed `run_experiments` and advanced into `analyze_results`.
+
+- Reproduction steps:
+  1. Continue the active run from the governed `run_experiments` approval boundary using the P6 helper with `AUTOLABOS_P6_NEXT_NODE=analyze_results`.
+  2. Let `analyze_results` load the completed metrics payload and write the analysis artifacts.
+  3. Inspect `outputs/p6-preflight/p6-continue-analyze_results-output.txt` and `<validation-workspace>/outputs/<run-output>/analysis/evidence_scale_assessment.json`.
+  4. Observe the brief evidence gate summary, failure taxonomy counts, transition recommendation, and attempt-decision artifact.
+
+- Expected behavior:
+  - Missing runtime/memory metrics or insufficient evidence scope should remain an explicit blocking evidence gap.
+  - The gate summary should say that unresolved evidence or scope gaps remain and should backtrack to design, or should say that analysis failed to flag gaps only when the raw evidence indicates a gap but the analysis taxonomy is missing it.
+  - The result should not imply that `analyze_results` failed to flag gaps when the analysis synthesis explicitly names the missing runtime/memory metrics as a high-severity evidence gap.
+  - Attempt-decision artifacts should not record `keep` when a numerically met objective still has blocking evidence or scope gaps.
+
+- Actual behavior:
+  - The operator output reported `Brief evidence gate failed — Analyze-results did not flag unresolved evidence-scale or blocking scope gaps.`
+  - `evidence_scale_assessment.actual.evidence_gap_count=1` and `scope_limit_count=0`.
+  - `result_analysis_synthesis.failure_analysis` explicitly identified missing numeric runtime and memory metrics as a high-severity evidence gap and recommended runner/metrics repair.
+  - `transition_recommendation.json` correctly recommended `backtrack_to_design`, but the gate failure label described the wrong failure mode.
+  - The latest `attempt_decisions.jsonl` row recorded `verdict=keep` despite the unresolved evidence gap and design backtrack recommendation.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regressions now cover the brief evidence gate summary and the analyze-results attempt decision using neutral fixtures.
+  - Existing session: reproduced in the persisted validation workspace through the P6 helper after `run_experiments` completed successfully.
+  - Divergence: no UI-only divergence observed; the defect was a brief evidence gate projection/message mismatch plus an attempt-decision projection mismatch over persisted analysis artifacts.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `briefEvidenceValidator` used a check label whose semantics were inverted for the implemented predicate, conflating blocking evidence gaps remain with `analyze_results` did not flag those gaps. `analyze_results` also prioritized `objective_status=met` over blocking evidence/scope findings when writing attempt decisions.
+
+- Code/test changes:
+  - Code: `src/core/analysis/briefEvidenceValidator.ts` now labels the check as unresolved evidence/scope gaps remaining and records that `analyze_results` flagged the blocking counts.
+  - Code: `src/core/nodes/analyzeResults.ts` now writes `needs_design_revision` attempt decisions when non-low evidence/scope blockers remain, even if the objective metric is numerically met.
+  - Tests: `tests/briefEvidenceValidator.test.ts` adds a neutral regression ensuring flagged evidence gaps are not described as unflagged.
+  - Tests: `tests/objectiveMetricPropagation.test.ts` extends the required-resource-metrics regression so the attempt decision records `needs_design_revision` with `metric_improved=true`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-03.
+  - Deterministic regressions passed: `npm test -- tests/briefEvidenceValidator.test.ts` and `npm test -- tests/objectiveMetricPropagation.test.ts -t "required resource metrics"`.
+  - Public-code sanitization passed: `npm test -- tests/publicCodeSanitization.test.ts`.
+  - Diff whitespace check passed: `git diff --check`.
+  - Build passed: `npm run build`.
+  - Harness validation passed: `npm run validate:harness`.
+  - Full test suite passed: `npm test` with 187 root test files / 2,535 root tests and web `src/App.test.tsx` 14 tests.
+  - Same-flow live revalidation passed with `/agent retry analyze_results <run-id>`: the gate now reports `Brief evidence gate failed — Unresolved evidence-scale or blocking scope gaps remain.`, the transition remains `backtrack_to_design -> design_experiments`, and the latest attempt decision records `verdict=needs_design_revision`, `metric_improved=true`, and `design_revision_note=Evidence or scope gaps detected: evidence_gap.`
+
+- Follow-up risks:
+  - No LV-503-specific validation gap remains.
+  - The governed backtrack is still valid because runtime/memory resource evidence is genuinely missing; resolving that belongs to the design/implementation nodes, not to manual artifact editing.
+
+- Evidence/artifacts:
+  - `outputs/p6-preflight/p6-continue-analyze_results-output.txt`
+  - `<validation-workspace>/outputs/<run-output>/analysis/evidence_scale_assessment.json`
+  - `<validation-workspace>/outputs/<run-output>/analysis/result_analysis_synthesis.json`
+  - `<validation-workspace>/outputs/<run-output>/analysis/transition_recommendation.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/attempt_decisions.jsonl`
+
+## Issue: LV-502
+
+- Status: reproduced from live `run_experiments` validation on 2026-07-03; source repair implemented; focused regression, public-code sanitization, diff check, build, harness validation, full test suite, and same-flow live revalidation passed through `run_experiments`.
+- Validation target: `run_experiments` should execute a generated Python runner whose final metrics aggregation dispatcher can call the generated success-payload builder when that is the only metrics builder surface available.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, immediately after LV-501 same-flow revalidation completed `implement_experiments` and advanced to `run_experiments`.
+
+- Reproduction steps:
+  1. Continue the active run from the governed `implement_experiments` approval boundary using the P6 helper with `AUTOLABOS_P6_NEXT_NODE=run_experiments`.
+  2. Let `run_experiments` compile and execute the generated public experiment runner.
+  3. Inspect `outputs/p6-preflight/p6-continue-run_experiments-output.txt` and the run metrics payload.
+  4. Observe the metrics payload report failed status because no expected final aggregation function is defined.
+
+- Expected behavior:
+  - If a generated runner defines a reusable success metrics payload builder, the final entrypoint dispatcher should be able to use it to aggregate rows and write the required metrics payload.
+  - The bridge should remain domain-neutral and should not encode one historical model, benchmark, condition, or study name in public source or tests.
+  - Condition-level failures should be represented as failed rows in the metrics payload rather than as a missing-helper entrypoint failure.
+
+- Actual behavior:
+  - `run_experiments` compiled and launched the generated runner, then failed because the metrics payload reported `RuntimeError("none of the expected functions are defined: [\aggregate_metrics, \build_metrics_payload, \summarize_metrics, \finalize_metrics]")`.
+  - The generated runner defined `build_success_metrics_payload`, but its final dispatcher only searched for generic aggregation names and therefore did not use the available success-payload builder.
+  - The workflow paused after bounded `run_experiments` retry exhaustion.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic regression now covers the final aggregation dispatcher with a neutral generated-runner fixture.
+  - Existing session: reproduced in the persisted validation workspace through the P6 helper immediately after the upstream implementation repair passed.
+  - Divergence: no UI-only divergence observed; the defect was a generated-runner final-entrypoint/helper-alias gap over persisted artifacts.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated-runner repair materializes success metrics payload helpers but does not alias them to the generic aggregation names used by the final `run_experiments` dispatcher.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now bridges available success-payload builders into final aggregation dispatchers without experiment-specific identifiers.
+  - Tests: `tests/implementSessionManager.test.ts` adds a neutral generated-runner regression for the success-payload-to-generic-aggregation bridge.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-03.
+  - Deterministic regression passed with the neutral generated-runner fixture.
+  - Public-code sanitization, diff check, build, harness validation, and full test suite passed after source/test repair.
+  - Same-flow live revalidation passed after forcing a backtrack to `implement_experiments`: the repaired node regenerated and verified the runner, handed off to `run_experiments`, and `run_experiments` completed with `status=completed`, `success=true`, 12 condition results, 1,728 projected per-example rows, and `accuracy_delta_vs_baseline=0.03472222222222221`.
+
+- Remaining risks:
+  - The repair cleared the missing-helper entrypoint boundary; future generated condition execution may still expose independent dataset/collation issues that should remain visible as row-level failures.
+  - No LV-502-specific validation gap remains; broader generated-runner issues should be logged separately if a later node exposes them.
+
+- Evidence/artifacts:
+  - `outputs/p6-preflight/p6-continue-run_experiments-output.txt`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/run_record.json`
+  - `<validation-workspace>/outputs/<run-output>/experiment/experiment.py`
+
+## Issue: LV-501
+
+- Status: reproduced from live `implement_experiments` validation on 2026-07-03; source repair implemented; focused regression, public-code sanitization, diff check, build, harness validation, full test suite, and same-flow live revalidation passed through `implement_experiments`.
+- Validation target: `implement_experiments` should hand off a generated Python runner whose dataclass `field(default_factory=...)` values use resolvable top-level callable factories before the design-to-implementation validator runs.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, after auto rollback retried `implement_experiments` and exhausted its bounded attempts.
+
+- Reproduction steps:
+  1. Continue the active run from `implement_experiments` using the P6 helper.
+  2. Let the node regenerate the experiment runner and run its local implementation validation.
+  3. Inspect `<validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/progress.jsonl`.
+  4. Observe the third attempt fail immediately after entrypoint and schedule materialization.
+
+- Expected behavior:
+  - Generated dataclass default factories should be materialized through top-level helper functions when the validator requires a function surface.
+  - Class-constructor factories that are otherwise valid Python should still be normalized when they would fail the AutoLabOS handoff contract.
+  - The repair should remain method-neutral and should not encode one historical model, benchmark, condition, or study name in public source or tests.
+
+- Actual behavior:
+  - `implement_experiments` repaired several generated-runner surfaces, then failed design validation with `PLANNED_RUNTIME_DEFAULT_FACTORY_UNRESOLVED`.
+  - The unresolved field used `default_factory=RuntimePaths`, where the named class existed in the generated runner but was not exposed through the top-level function shape required by the validator.
+  - The node exhausted its bounded attempts and paused after rollback to `design_experiments`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: pending deterministic regression with neutral generated-runner fixtures.
+  - Existing session: reproduced in the persisted validation workspace through the P6 helper and the run's persisted progress log.
+  - Divergence: no UI-only divergence observed; the defect is a generated-runner repair/contract-validation gap over persisted artifacts.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the dataclass default-factory repair wraps later class constructors but misses class constructors already declared before the dataclass field, while the validator requires a top-level function factory rather than accepting a class object directly.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` extends the generated-runner repair so class constructors used as dataclass `default_factory` values are wrapped through method-neutral top-level helper functions whether the class is declared before or after the field.
+  - Tests: `tests/implementSessionManager.test.ts` adds a neutral generated-runner regression where a predeclared runtime class is used as a dataclass default factory and must be normalized before handoff.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-03.
+  - Deterministic regression passed: `npm test -- tests/implementSessionManager.test.ts -t "default factories|run-one alias|_entrypoint_pick_callable"`.
+  - Public-code sanitization passed: `npm test -- tests/publicCodeSanitization.test.ts`.
+  - Diff whitespace check passed: `git diff --check`.
+  - Build passed: `npm run build`.
+  - Harness validation passed: `npm run validate:harness`.
+  - Full test suite passed: `npm test`.
+  - Same-flow live revalidation passed: P6 continuation completed `implement_experiments`, local runner verification passed, and `PLANNED_RUNTIME_DEFAULT_FACTORY_UNRESOLVED` did not recur.
+
+- Remaining risks:
+  - `py_compile` can still pass runners that violate AutoLabOS handoff contracts.
+  - The generated-runner repair should not mask genuinely invalid constructors that require arguments; those should remain visible as runtime contract failures.
+  - Downstream `run_experiments` remains a separate live boundary and may expose additional generated-runner runtime issues.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/run_record.json`
+  - `outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+---
+
+## Issue: LV-500
+
+- Status: reproduced from live `run_experiments` validation on 2026-07-03; first source repair implemented and verified; same-flow live revalidation narrowed the blocker to a second final-handoff single-run alias drift.
+- Validation target: `implement_experiments` should hand off a generated Python runner whose `main()` can execute the same entrypoint helper contract that `run_experiments` will call, and should reject runners that only pass `py_compile`.
+- Environment/session context: existing validation workspace `<validation-workspace>`, run `3bc89107-909f-4315-9340-d75ce02eb0e0`, after auto rollback regenerated `implement_experiments` attempt 2 and immediately handed off into `run_experiments`.
+
+- Reproduction steps:
+  1. Continue the active run from `implement_experiments` using the P6 helper.
+  2. Observe `implement_experiments` complete local handoff verification with `python3 -m py_compile <validation-workspace>/outputs/<topic-slug>/experiment/experiment.py`.
+  3. Observe the auto handoff into `run_experiments` execute the generated runner with the workflow command.
+  4. Inspect `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt` and the public `run_experiments_verify_report.json`.
+
+- Expected behavior:
+  - The handoff verifier should require a concrete entrypoint preflight/helper surface before `run_experiments`.
+  - If training/evaluation data normalization fails to produce usable training examples, the failure should be caught as a data-access contract error before condition execution.
+  - The repair should remain method-neutral and should not encode one historical model, benchmark, condition, or study name in public source or tests.
+
+- Actual behavior:
+  - `implement_experiments` passed local verification after `py_compile`.
+  - `run_experiments` failed immediately with `RuntimeError('missing required entrypoint helper; tried _autolabos_entrypoint_preflight, entrypoint_preflight, prepare_entrypoint_runtime, prepare_runtime')`.
+  - The failure artifact also reported `train_count=0` and `No usable instruction/training texts normalized from loaded records`, while evaluation rows were present.
+  - After the first repair, the same live retry regenerated the runner, passed `implement_experiments` local verification, and handed off into `run_experiments`.
+  - The second live `run_experiments` attempt no longer failed on the missing preflight helper, but failed with `No single-run helper found for condition execution`.
+  - Static inspection of the regenerated runner showed concrete `run_single_condition`/`run_condition` helpers, while the final public handoff wrapper only searched `_autolabos_entrypoint_run_one`, `run_one_condition_seed`, `run_condition_seed`, and `execute_condition_seed`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: pending deterministic regression with neutral generated-runner fixtures.
+  - Existing session: reproduced in the persisted validation workspace by the P6 helper handoff from `implement_experiments` into `run_experiments`.
+  - Divergence: no UI-only divergence observed; the defect is a generated-runner handoff/contract validation gap over persisted artifacts.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: local implementation verification can patch or acknowledge entrypoint runtime defaults without ensuring that the final generated script exposes the helper names required by its own `main()` bridge and by the `run_experiments` command.
+  - Update after same-flow revalidation: the first helper-alias repair covered the `_entrypoint_pick_callable` bridge, but a later generated high-level `run_experiment(...)` wrapper used a separate single-run vocabulary and shadowed the generic `_autolabos_entrypoint_run(...)` fallback that could have discovered `run_single_condition`.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now repairs generated runners whose final `main()` uses `_entrypoint_pick_callable()` for `_autolabos_entrypoint_preflight`, `_autolabos_entrypoint_one_run`, `_autolabos_entrypoint_persist_raw_records`, and `_autolabos_entrypoint_aggregate` but does not define those helpers. The repair adds method-neutral aliases to the already generated plan, condition-runner, persistence, and metrics helpers before handoff.
+  - Tests: `tests/implementSessionManager.test.ts` adds a neutral regression where a generated runner fails before repair with `missing required entrypoint helper`, then succeeds after the alias repair and writes completed metrics.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-07-03.
+  - Deterministic regression passed: `npm test -- tests/implementSessionManager.test.ts -t "_entrypoint_pick_callable"`.
+  - Adjacent entrypoint regression passed: `npm test -- tests/implementSessionManager.test.ts -t "entrypoint lookup runners|_entrypoint_pick_callable|failure-safe pipeline"`.
+  - Public-code sanitization passed: `npm test -- tests/publicCodeSanitization.test.ts`.
+  - Build passed: `npm run build`.
+  - Harness validation passed: `npm run validate:harness`.
+  - Diff whitespace check passed: `git diff --check`.
+  - Same-flow revalidation pending.
+
+- Remaining risks:
+  - `py_compile` remains necessary but insufficient for generated experiment runners.
+  - Data normalization failures may share the same handoff boundary and need to stay visible after the entrypoint-helper repair.
+  - Final handoff wrappers can shadow more capable generic entrypoint fallback logic unless all generated single-run helper vocabularies are bridged method-neutrally.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/<topic-slug>/experiment/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/<topic-slug>/experiment/data_access_preview.json`
 
 ---
 

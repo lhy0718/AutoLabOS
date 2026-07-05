@@ -6,6 +6,22 @@ import {
 } from "../src/core/runExperimentsPanel.js";
 
 describe("run experiments panel triage", () => {
+  it("classifies model dependency blockers as non-retryable", () => {
+    const triage = classifyRunExperimentsFailure({
+      attempt: 1,
+      stage: "metrics",
+      summary:
+        "Experiment dependency blocker: model asset required model/tokenizer asset could not be loaded. No condition metrics were accepted as evidence.",
+      exitCode: 0
+    });
+
+    expect(triage.category).toBe("dependency_blocker");
+    expect(triage.retryable).toBe(false);
+    expect(decideRunExperimentsRerun({ triage, automaticRerunsUsed: 0 })).toMatchObject({
+      decision: "fail_fast"
+    });
+  });
+
   it("does not treat reusable-output argparse failures as transient", () => {
     const triage = classifyRunExperimentsFailure({
       attempt: 1,

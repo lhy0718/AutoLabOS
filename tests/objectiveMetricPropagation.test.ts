@@ -2404,6 +2404,23 @@ describe("objective metric propagation", () => {
       })
     );
     expect(analysis.warnings.join("\n")).toContain("Required resource metrics are missing numeric evidence");
+
+    const attemptDecisionRaw = await readFile(path.join(runDir, "attempt_decisions.jsonl"), "utf8");
+    const attemptDecisions = attemptDecisionRaw
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as {
+        verdict: string;
+        metric_improved?: boolean;
+        design_revision_note?: string;
+      });
+    const latestAttemptDecision = attemptDecisions[attemptDecisions.length - 1];
+    expect(latestAttemptDecision).toMatchObject({
+      verdict: "needs_design_revision",
+      metric_improved: true
+    });
+    expect(latestAttemptDecision?.design_revision_note).toContain("evidence_gap");
   });
 
   it("infers a sole numeric metric for generic objectives before deciding the next step", async () => {

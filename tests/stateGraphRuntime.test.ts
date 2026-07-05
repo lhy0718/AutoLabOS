@@ -1713,6 +1713,71 @@ describe("StateGraphRuntime", () => {
     expect(updated.graph.nodeStates.run_experiments.note).toContain("Condition summary accuracy");
   });
 
+  it("routes run_experiments dependency-blocker verifier reports to design repair approval", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Dependency Blocker Routing",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 1;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "running";
+    await store.updateRun(run);
+
+    const errorMessage =
+      "Experiment dependency blocker: required model/tokenizer asset could not be loaded.";
+    const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "run_experiments_verify_report.json"),
+      JSON.stringify({
+        status: "fail",
+        stage: "metrics",
+        summary: errorMessage,
+        suggested_next_action: "Select an available local dependency before rerunning.",
+        failure_code: "model_dependency_unavailable",
+        repair_target: "environment_dependency",
+        recommended_backtrack_node: "design_experiments",
+        upstream_repair_hint: "Backtrack to design_experiments and choose an available local dependency before rerunning.",
+        operator_action_required: true
+      }, null, 2),
+      "utf8"
+    );
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(run, "run_experiments", errorMessage);
+
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("run_experiments");
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("needs_approval");
+    expect(updated.graph.retryCounters.run_experiments).toBe(1);
+    expect(updated.graph.rollbackCounters.run_experiments).toBeUndefined();
+    expect(updated.graph.pendingTransition?.action).toBe("backtrack_to_design");
+    expect(updated.graph.pendingTransition?.targetNode).toBe("design_experiments");
+    expect(updated.graph.pendingTransition?.autoExecutable).toBe(false);
+    expect(updated.graph.pendingTransition?.evidence).toContain("failure_code=model_dependency_unavailable");
+    expect(updated.graph.pendingTransition?.evidence).toContain("repair_target=environment_dependency");
+
+    const applied = await runtime.approveCurrent(run.id);
+    expect(applied.currentNode).toBe("design_experiments");
+    expect(applied.graph.currentNode).toBe("design_experiments");
+    expect(applied.graph.transitionHistory.at(-1)?.action).toBe("backtrack_to_design");
+  });
+
   it("skips same-node write_paper retries when strict scientific validation needs upstream evidence", async () => {
     const { store, runtime } = await setup(new Registry({}));
 

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { promises as fs } from "node:fs";
 
 import { EventStream } from "../events.js";
 import { saveReflexion } from "../agents/runtime/reflexion.js";
@@ -806,6 +807,41 @@ export class StateGraphRuntime {
       payload: { error: errorMessage, retryAttempt: nextRetry }
     });
 
+    const verifierRepairTransition = await this.resolveRunVerifierFailureTransition(run, node, errorMessage);
+    if (verifierRepairTransition) {
+      run.graph.pendingTransition = verifierRepairTransition;
+      run.graph.nodeStates[node] = {
+        ...run.graph.nodeStates[node],
+        status: "needs_approval",
+        updatedAt: new Date().toISOString(),
+        lastError: errorMessage,
+        note: verifierRepairTransition.reason
+      };
+      run.status = "paused";
+      this.syncLatestSummary(run, node);
+      const checkpoint = await this.saveCheckpointAndPersist(
+        run,
+        "after",
+        "run verifier requested upstream repair",
+        node
+      );
+      this.eventStream.emit({
+        type: "CHECKPOINT_SAVED",
+        runId: run.id,
+        node,
+        payload: { checkpoint: checkpoint.seq, phase: checkpoint.phase }
+      });
+      this.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node,
+        payload: {
+          text: "Run verifier routed " + node + " failure to " + (verifierRepairTransition.targetNode || "human review") + ": " + verifierRepairTransition.reason
+        }
+      });
+      return this.getRunOrThrow(run.id);
+    }
+
     if (nextRetry < maxAttempts) {
       run.status = "running";
       run.graph.nodeStates[node] = {
@@ -1149,6 +1185,53 @@ export class StateGraphRuntime {
     return checkpoint;
   }
 
+  private async resolveRunVerifierFailureTransition(
+    run: RunRecord,
+    node: GraphNodeId,
+    errorMessage: string
+  ): Promise<TransitionRecommendation | undefined> {
+    if (node !== "run_experiments") {
+      return undefined;
+    }
+
+    const report = await readRunVerifierRoutingReport(run.id);
+    if (!isRunVerifierUpstreamRepairReport(report)) {
+      return undefined;
+    }
+
+    const targetNode = normalizeGraphNodeId(report.recommended_backtrack_node);
+    const action = targetNode ? backtrackActionForTarget(targetNode) : undefined;
+    if (!targetNode || !action || targetNode === node) {
+      return undefined;
+    }
+
+    const hint = stringValue(report.upstream_repair_hint);
+    const suggestedNextAction = stringValue(report.suggested_next_action);
+    const summary = stringValue(report.summary) || errorMessage;
+    const reason = truncateTransitionText(hint || suggestedNextAction || summary, 600);
+    const operatorActionRequired = report.operator_action_required === true;
+    const suggestedCommands = operatorActionRequired
+      ? ["/approve " + run.id, "/agent jump " + targetNode]
+      : ["/approve " + run.id];
+
+    return {
+      action,
+      sourceNode: node,
+      targetNode,
+      reason,
+      confidence: operatorActionRequired ? 0.8 : 0.9,
+      autoExecutable: !operatorActionRequired,
+      evidence: [
+        "failure_code=" + (stringValue(report.failure_code) || "unknown"),
+        "repair_target=" + (stringValue(report.repair_target) || "unknown"),
+        "operator_action_required=" + String(operatorActionRequired),
+        "verifier_stage=" + (stringValue(report.stage) || "unknown")
+      ],
+      suggestedCommands,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
   private async recordFailureStageRoutingArtifactIfNeeded(
     run: RunRecord,
     node: GraphNodeId,
@@ -1405,6 +1488,77 @@ export class StateGraphRuntime {
         recommendation.reason?.startsWith("governance:")
     );
   }
+}
+
+interface RunVerifierRoutingReport {
+  status?: unknown;
+  stage?: unknown;
+  summary?: unknown;
+  suggested_next_action?: unknown;
+  failure_code?: unknown;
+  repair_target?: unknown;
+  recommended_backtrack_node?: unknown;
+  upstream_repair_hint?: unknown;
+  operator_action_required?: unknown;
+}
+
+async function readRunVerifierRoutingReport(runId: string): Promise<RunVerifierRoutingReport | undefined> {
+  const reportPath = path.join(
+    process.cwd(),
+    ".autolabos",
+    "runs",
+    runId,
+    "run_experiments_verify_report.json"
+  );
+  try {
+    const parsed = JSON.parse(await fs.readFile(reportPath, "utf8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as RunVerifierRoutingReport
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isRunVerifierUpstreamRepairReport(report: RunVerifierRoutingReport | undefined): report is RunVerifierRoutingReport {
+  if (!report || stringValue(report.status) !== "fail") {
+    return false;
+  }
+  const failureCode = stringValue(report.failure_code);
+  const repairTarget = stringValue(report.repair_target);
+  return failureCode === "model_dependency_unavailable" || repairTarget === "environment_dependency";
+}
+
+function normalizeGraphNodeId(value: unknown): GraphNodeId | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return (GRAPH_NODE_ORDER as readonly string[]).includes(value) ? value as GraphNodeId : undefined;
+}
+
+function backtrackActionForTarget(targetNode: GraphNodeId): TransitionRecommendation["action"] | undefined {
+  if (targetNode === "implement_experiments") {
+    return "backtrack_to_implement";
+  }
+  if (targetNode === "design_experiments") {
+    return "backtrack_to_design";
+  }
+  if (targetNode === "generate_hypotheses") {
+    return "backtrack_to_hypotheses";
+  }
+  return undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function truncateTransitionText(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/gu, " " ).trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd() + "...";
 }
 
 function shouldSkipAutoRetryForFailure(node: GraphNodeId, errorMessage: string): boolean {

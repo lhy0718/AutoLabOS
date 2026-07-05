@@ -56,6 +56,9 @@ import {
   repairPythonDeterministicSubsetHelperAritySurface,
   repairPythonDirectoryHelperAlias,
   repairPythonEntrypointRuntimeCompatibilitySurface,
+  repairPythonEntrypointRuntimePlanBuilderSurface,
+  repairPythonEntrypointAggregatePayloadBuilderCandidateSurface,
+  repairPythonEntrypointOrderedPlanDataBundleSurface,
   repairPythonEntrypointAtomicWriterCallOrderSurface,
   repairPythonEntrypointConditionExecutionBridgeSurface,
   repairPythonAutolabosConditionContextMaterializationSurface,
@@ -154,6 +157,10 @@ import {
   repairPythonInstructionDatasetHelperAliasSurface,
   repairPythonModelLoaderAliasSurface,
   repairPythonModelPreflightAliasSurface,
+  repairPythonModelPreflightStatusNormalizationSurface,
+  repairPythonRunPlanItemObjectAccessSurface,
+  repairPythonModelExecutionAggregateAliasSurface,
+  repairPythonModelExecutionSingleConditionDataBundleAliasSurface,
   repairPythonEvaluationDatasetHelperAliasSurface,
   repairPythonEvaluationDatasetLoaderArgumentAliasSurface,
   repairPythonSupportedSignatureKwargAliasSurface,
@@ -217,6 +224,9 @@ import {
   repairPythonPathLikeSignatureAliasSurface,
   repairPythonTokenizerHelperAliasSurface,
   repairPythonEntrypointLookupHelperAliasSurface,
+  repairPythonCallFirstSuccessMetricsPayloadAliasSurface,
+  repairPythonEntrypointPickCallableHelperAliasSurface,
+  repairPythonEntrypointRunOneHelperAliasSurface,
   repairPythonEntrypointParseArgsSingleArgumentSurface,
   repairPythonMissingParseArgsSurface,
   repairPythonMissingExecutableEntrypointSurface,
@@ -292,6 +302,7 @@ import {
   repairPythonRuntimeNamespaceDeviceAliasesSurface,
   repairPythonMappingFirstRecordIndexSurface,
   repairPythonEntrypointSingleRunnerTrainBundleAliasSurface,
+  repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface,
   repairPythonEntrypointConditionSeedExecutorBridgeSurface,
   repairPythonEvaluationTaskBundleAliasSurface,
   repairPythonMultipleChoiceGoldAliasSurface,
@@ -512,6 +523,416 @@ describe("ImplementSessionManager", () => {
     expect(source).toContain("builder = globals().get('ordered_conditions')");
     expect(source).toContain("args=config, runtime=config, rt=config, runtime_context=config, runtime_config=config");
     expect(source).toContain("run_context=config, shared_context=config, contract=config");
+  });
+
+
+  it("keeps model preflight alias repair in late handoff repairs", () => {
+    const source = readFileSync(
+      path.join(ORIGINAL_CWD, "src", "core", "agents", "implementSessionManager.ts"),
+      "utf8"
+    );
+    const lateHandoffStart = source.indexOf("const lateHandoffRepairs = [");
+    const lateHandoffEnd = source.indexOf("].filter((repair) => repair.repaired);", lateHandoffStart);
+
+    const lateHandoffSource = source.slice(lateHandoffStart, lateHandoffEnd);
+
+    expect(lateHandoffStart).toBeGreaterThanOrEqual(0);
+    expect(lateHandoffEnd).toBeGreaterThan(lateHandoffStart);
+    expect(lateHandoffSource).toContain("modelPreflightAliasRepair");
+    expect(lateHandoffSource).toContain("modelPreflightStatusNormalizationRepair");
+    expect(lateHandoffSource).toContain("runPlanItemObjectAccessRepair");
+    expect(lateHandoffSource).toContain("modelExecutionAggregateAliasRepair");
+    expect(lateHandoffSource).toContain("modelExecutionSingleConditionDataBundleAliasRepair");
+  });
+
+
+  it("repairs ordered plan entrypoint bridges that pass Namespace as runtime", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-runtime-plan-builder-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    const publicDir = path.join(workspace, "public");
+    const runDir = path.join(workspace, "run");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "import traceback",
+        "from pathlib import Path",
+        "CONDITIONS = [{'marker': 'baseline_condition'}, {'marker': 'candidate_condition'}]",
+        "SEEDS = [1]",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    parser.add_argument('--public-dir', default='public')",
+        "    parser.add_argument('--run-artifact-dir', default='run')",
+        "    args = parser.parse_args(argv)",
+        "    args.artifact_paths = {'progress': str(Path(args.run_artifact_dir) / 'progress.jsonl'), 'partial_metrics': str(Path(args.run_artifact_dir) / 'partial_metrics.json'), 'raw_records': str(Path(args.public_dir) / 'raw.jsonl')}",
+        "    return args",
+        "def resolve_runtime_context(args):",
+        "    return {'args': vars(args), 'artifact_paths': args.artifact_paths, 'model_name': 'fixture-model'}",
+        "def build_ordered_run_plan(runtime):",
+        "    _ = runtime['artifact_paths']['progress']",
+        "    return [{**condition, 'condition': condition, 'seed': seed, 'model_name': runtime.get('model_name')} for condition in CONDITIONS for seed in SEEDS]",
+        "def run_one_condition_seed(condition=None, seed=None, runtime=None, **context):",
+        "    return {'status': 'completed', 'success': True, 'condition_marker': condition['marker'], 'seed': seed, 'accuracy': 0.5, 'model_name': runtime.get('model_name')}",
+        "def aggregate_final_metrics(records, metrics_path=None, **context):",
+        "    return {'status': 'completed', 'success': True, 'completed_run_count': len(records), 'condition_results': records}",
+        "def write_json(path, payload):",
+        "    Path(path).parent.mkdir(parents=True, exist_ok=True)",
+        "    Path(path).write_text(json.dumps(payload, sort_keys=True) + '\\n', encoding='utf-8')",
+        "def append_jsonl(path, payload):",
+        "    Path(path).parent.mkdir(parents=True, exist_ok=True)",
+        "    with Path(path).open('a', encoding='utf-8') as handle:",
+        "        handle.write(json.dumps(payload, sort_keys=True) + '\\n')",
+        "def _entrypoint_find_callable(*names: str):",
+        "    for name in names:",
+        "        obj = globals().get(name)",
+        "        if callable(obj):",
+        "            return obj",
+        "    return None",
+        "def _entrypoint_invoke(fn, *pos, **kw):",
+        "    try:",
+        "        sig = inspect.signature(fn)",
+        "        params = sig.parameters",
+        "        if any(p.kind == p.VAR_KEYWORD for p in params.values()):",
+        "            return fn(**kw)",
+        "        accepted = {k: v for k, v in kw.items() if k in params}",
+        "        if accepted or not pos:",
+        "            return fn(**accepted)",
+        "    except Exception:",
+        "        pass",
+        "    return fn(*pos)",
+        "def main(argv=None):",
+        "    args = parse_args(argv)",
+        "    public_dir = Path(args.public_dir)",
+        "    run_dir = Path(args.run_artifact_dir)",
+        "    metrics_path = Path(args.metrics_path)",
+        "    public_dir.mkdir(parents=True, exist_ok=True)",
+        "    run_dir.mkdir(parents=True, exist_ok=True)",
+        "    progress_path = run_dir / 'progress.jsonl'",
+        "    raw_path = public_dir / 'raw.jsonl'",
+        "    partial_path = run_dir / 'partial_metrics.json'",
+        "    records = []",
+        "    try:",
+        "        preflight_fn = _entrypoint_find_callable(",
+        "            'entrypoint_preflight', 'run_preflight', 'preflight', 'prepare_runtime',",
+        "            'prepare_run_context', 'build_runtime_context', '_entrypoint_preflight',",
+        "        )",
+        "        runtime = {'args': vars(args), 'public_dir': str(public_dir), 'run_artifact_dir': str(run_dir)}",
+        "        if preflight_fn is not None:",
+        "            prepared = _entrypoint_invoke(preflight_fn, args, args=args, config=args, runtime=runtime, runtime_context=runtime, run_context=runtime, progress_path=progress_path)",
+        "            if prepared is not None:",
+        "                runtime = prepared",
+        "        plan_fn = _entrypoint_find_callable('build_ordered_run_plan', 'ordered_run_plan', 'build_run_plan', 'make_run_plan', '_build_ordered_run_plan')",
+        "        plan = _entrypoint_invoke(plan_fn, args, args=args, runtime=runtime, conditions=CONDITIONS, seeds=SEEDS) if plan_fn else [{'condition': c, 'seed': s} for c in CONDITIONS for s in SEEDS]",
+        "        run_fn = _entrypoint_find_callable('run_one_condition_seed')",
+        "        aggregate_fn = _entrypoint_find_callable('aggregate_final_metrics')",
+        "        for item in plan:",
+        "            records.append(_entrypoint_invoke(run_fn, args, item.get('condition', item), item.get('seed'), runtime, args=args, runtime=runtime, condition=item.get('condition', item), seed=item.get('seed'))) ",
+        "        payload = _entrypoint_invoke(aggregate_fn, records, args, records=records, metrics_path=metrics_path)",
+        "        write_json(metrics_path, payload)",
+        "        return 0",
+        "    except Exception as exc:",
+        "        write_json(metrics_path, {'experiment_status': 'failed', 'failure_stage': 'entrypoint_exception', 'error': repr(exc), 'traceback': traceback.format_exc(), 'completed_run_count': len(records), 'condition_results': []})",
+        "        return 1",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    let failedBeforeRepair = false;
+    try {
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--public-dir", publicDir, "--run-artifact-dir", runDir], {
+        cwd: workspace,
+        stdio: "pipe"
+      });
+    } catch {
+      failedBeforeRepair = true;
+    }
+    expect(failedBeforeRepair).toBe(true);
+    const failedMetrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(String(failedMetrics.error)).toMatch(/Namespace/);
+    rmSync(metricsPath, { force: true });
+
+    const repair = await repairPythonEntrypointRuntimePlanBuilderSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_runtime_plan_builder_surface");
+    expect(repairedSource).toContain("resolve_runtime_context");
+    expect(repairedSource).toContain("runtime_context=runtime");
+
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--public-dir", publicDir, "--run-artifact-dir", runDir], {
+      cwd: workspace,
+      stdio: "pipe"
+    });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.completed_run_count).toBe(2);
+    expect(metrics.condition_results.map((row: Record<string, unknown>) => row.model_name)).toEqual([
+      "fixture-model",
+      "fixture-model"
+    ]);
+  });
+
+  it("repairs final entrypoints that omit existing metrics payload builders from aggregation lookup", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-aggregate-builder-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    const publicDir = path.join(workspace, "public");
+    const runDir = path.join(workspace, "run");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "CONDITIONS = [{'marker': 'baseline_condition'}, {'marker': 'candidate_condition'}]",
+        "SEEDS = [1]",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    parser.add_argument('--public-dir', default='public')",
+        "    parser.add_argument('--run-artifact-dir', default='run')",
+        "    parser.add_argument('--timeout-sec', type=float, default=30)",
+        "    return parser.parse_args(argv)",
+        "def build_ordered_run_plan(runtime=None, **context):",
+        "    return [{'condition': condition, 'seed': seed} for condition in CONDITIONS for seed in SEEDS]",
+        "def run_one_condition_seed(condition=None, seed=None, **context):",
+        "    score = 0.5 if condition['marker'] == 'baseline_condition' else 0.75",
+        "    return {'status': 'completed', 'condition_marker': condition['marker'], 'seed': seed, 'accuracy': score}",
+        "def build_success_metrics_payload(records, metrics_path=None):",
+        "    baseline = next(row['accuracy'] for row in records if row['condition_marker'] == 'baseline_condition')",
+        "    condition_results = []",
+        "    for row in records:",
+        "        item = dict(row)",
+        "        item['accuracy_delta_vs_baseline'] = item['accuracy'] - baseline",
+        "        condition_results.append(item)",
+        "    best = max(condition_results, key=lambda row: row['accuracy'])",
+        "    return {'status': 'completed', 'success': True, 'primary_metric_key': 'accuracy_delta_vs_baseline', 'accuracy_delta_vs_baseline': best['accuracy_delta_vs_baseline'], 'completed_run_count': len(records), 'condition_results': condition_results}",
+        "def write_json(path, payload):",
+        "    Path(path).parent.mkdir(parents=True, exist_ok=True)",
+        "    Path(path).write_text(json.dumps(payload, sort_keys=True) + '\\n', encoding='utf-8')",
+        "def append_jsonl(path, payload):",
+        "    Path(path).parent.mkdir(parents=True, exist_ok=True)",
+        "    with Path(path).open('a', encoding='utf-8') as handle:",
+        "        handle.write(json.dumps(payload, sort_keys=True) + '\\n')",
+        "def _entrypoint_find_callable(*names: str):",
+        "    for name in names:",
+        "        obj = globals().get(name)",
+        "        if callable(obj):",
+        "            return obj",
+        "    return None",
+        "def _entrypoint_invoke(fn, *pos, **kw):",
+        "    sig = inspect.signature(fn)",
+        "    params = sig.parameters",
+        "    if any(p.kind == p.VAR_KEYWORD for p in params.values()):",
+        "        return fn(**kw)",
+        "    accepted = {k: v for k, v in kw.items() if k in params}",
+        "    if accepted:",
+        "        return fn(**accepted)",
+        "    return fn(*pos)",
+        "def main(argv=None):",
+        "    args = parse_args(argv)",
+        "    public_dir = Path(args.public_dir)",
+        "    run_dir = Path(args.run_artifact_dir)",
+        "    metrics_path = Path(args.metrics_path)",
+        "    progress_path = run_dir / 'progress.jsonl'",
+        "    raw_path = public_dir / 'raw_condition_seed_records.jsonl'",
+        "    partial_path = run_dir / 'partial_metrics.json'",
+        "    records = []",
+        "    public_dir.mkdir(parents=True, exist_ok=True)",
+        "    run_dir.mkdir(parents=True, exist_ok=True)",
+        "    runtime = {'args': vars(args), 'public_dir': str(public_dir), 'run_artifact_dir': str(run_dir)}",
+        "    plan_fn = _entrypoint_find_callable('build_ordered_run_plan')",
+        "    plan = _entrypoint_invoke(plan_fn, args=args, runtime=runtime, conditions=CONDITIONS, seeds=SEEDS)",
+        "    run_fn = _entrypoint_find_callable('run_one_condition_seed')",
+        "    aggregate_fn = _entrypoint_find_callable(",
+        "        \"aggregate_final_metrics\", \"build_final_metrics\", \"finalize_metrics\",",
+        "        \"compute_aggregate_metrics\", \"aggregate_metrics\", \"make_metrics_payload\",",
+        "        \"_aggregate_final_metrics\",",
+        "    )",
+        "    if run_fn is None or aggregate_fn is None:",
+        "        missing = [n for n, f in ((\"condition runner\", run_fn), (\"aggregator\", aggregate_fn)) if f is None]",
+        "        write_json(metrics_path, {'experiment_status': 'failed', 'failure_stage': 'entrypoint_wiring', 'error': 'missing ' + ', '.join(missing), 'completed_run_count': 0, 'condition_results': []})",
+        "        return 0",
+        "    for item in plan:",
+        "        rec = _entrypoint_invoke(run_fn, args, item.get('condition'), item.get('seed'), runtime, args=args, runtime=runtime, condition=item.get('condition'), seed=item.get('seed'))",
+        "        records.append(rec)",
+        "        append_jsonl(raw_path, {'record': rec})",
+        "        write_json(partial_path, {'completed_or_attempted_run_count': len(records)})",
+        "    payload = _entrypoint_invoke(",
+        "        aggregate_fn, records, args,",
+        "        args=args, config=args, runtime=runtime, runtime_context=runtime,",
+        "        run_context=runtime, records=records, raw_records=records, plan=plan,",
+        "        metrics_path=metrics_path, public_dir=public_dir, run_artifact_dir=run_dir,",
+        "    )",
+        "    payload.setdefault('raw_evidence_path', str(raw_path))",
+        "    write_json(metrics_path, payload)",
+        "    return 0",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--public-dir", publicDir, "--run-artifact-dir", runDir], {
+      cwd: workspace,
+      stdio: "pipe"
+    });
+    const failedMetrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(failedMetrics.error).toBe("missing aggregator");
+    rmSync(metricsPath, { force: true });
+
+    const repair = await repairPythonEntrypointAggregatePayloadBuilderCandidateSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_aggregate_payload_builder_candidate_surface");
+    expect(repairedSource).toContain("build_success_metrics_payload");
+    expect(repairedSource).toContain("condition_results=records");
+
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--public-dir", publicDir, "--run-artifact-dir", runDir], {
+      cwd: workspace,
+      stdio: "pipe"
+    });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.primary_metric_key).toBe("accuracy_delta_vs_baseline");
+    expect(metrics.accuracy_delta_vs_baseline).toBe(0.25);
+    expect(metrics.completed_run_count).toBe(2);
+  });
+
+  it("repairs ordered plan entrypoints that omit data bundles from condition runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-data-bundle-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    const publicDir = path.join(workspace, "public");
+    const runDir = path.join(workspace, "run");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "import traceback",
+        "from pathlib import Path",
+        "CONDITIONS = [{'marker': 'baseline_condition'}, {'marker': 'candidate_condition'}]",
+        "SEEDS = [1]",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    parser.add_argument('--public-dir', default='public')",
+        "    parser.add_argument('--run-artifact-dir', default='run')",
+        "    parser.add_argument('--timeout-sec', type=float, default=30)",
+        "    return parser.parse_args(argv)",
+        "def load_experiment_data(args):",
+        "    return {'train_texts': ['fixture text'], 'eval_examples_by_task': {'benchmark_task_a': [{'prompt': 'q'}]}}",
+        "def build_ordered_run_plan(runtime=None, **context):",
+        "    return [{'condition': condition, 'seed': seed} for condition in CONDITIONS for seed in SEEDS]",
+        "def execute_condition_seed(condition, seed, data_bundle, args):",
+        "    return {'status': 'completed', 'condition_marker': condition['marker'], 'seed': seed, 'accuracy': 0.5 if condition['marker'] == 'baseline_condition' else 0.75, 'train_count': len(data_bundle['train_texts'])}",
+        "def build_success_metrics_payload(records, **context):",
+        "    baseline = next(row['accuracy'] for row in records if row['condition_marker'] == 'baseline_condition')",
+        "    best = max(records, key=lambda row: row['accuracy'])",
+        "    return {'status': 'completed', 'success': True, 'primary_metric_key': 'accuracy_delta_vs_baseline', 'accuracy_delta_vs_baseline': best['accuracy'] - baseline, 'completed_run_count': len(records), 'condition_results': records}",
+        "def write_json(path, payload):",
+        "    Path(path).parent.mkdir(parents=True, exist_ok=True)",
+        "    Path(path).write_text(json.dumps(payload, sort_keys=True) + '\\n', encoding='utf-8')",
+        "def append_jsonl(path, payload):",
+        "    Path(path).parent.mkdir(parents=True, exist_ok=True)",
+        "    with Path(path).open('a', encoding='utf-8') as handle:",
+        "        handle.write(json.dumps(payload, sort_keys=True) + '\\n')",
+        "def _entrypoint_find_callable(*names: str):",
+        "    for name in names:",
+        "        obj = globals().get(name)",
+        "        if callable(obj):",
+        "            return obj",
+        "    return None",
+        "def _entrypoint_invoke(fn, *pos, **kw):",
+        "    sig = inspect.signature(fn)",
+        "    params = sig.parameters",
+        "    if any(p.kind == p.VAR_KEYWORD for p in params.values()):",
+        "        return fn(**kw)",
+        "    accepted = {k: v for k, v in kw.items() if k in params}",
+        "    if accepted:",
+        "        return fn(**accepted)",
+        "    return fn(*pos)",
+        "def main(argv=None):",
+        "    args = parse_args(argv)",
+        "    public_dir = Path(args.public_dir)",
+        "    run_dir = Path(args.run_artifact_dir)",
+        "    metrics_path = Path(args.metrics_path)",
+        "    public_dir.mkdir(parents=True, exist_ok=True)",
+        "    run_dir.mkdir(parents=True, exist_ok=True)",
+        "    progress_path = run_dir / 'progress.jsonl'",
+        "    raw_path = public_dir / 'raw_condition_seed_records.jsonl'",
+        "    partial_path = run_dir / 'partial_metrics.json'",
+        "    records = []",
+        "    try:",
+        "        runtime = {'args': vars(args), 'public_dir': str(public_dir), 'run_artifact_dir': str(run_dir)}",
+        "        plan_fn = _entrypoint_find_callable('build_ordered_run_plan')",
+        "        plan = _entrypoint_invoke(plan_fn, args=args, runtime=runtime, conditions=CONDITIONS, seeds=SEEDS)",
+        "        run_fn = _entrypoint_find_callable('execute_condition_seed')",
+        "        aggregate_fn = _entrypoint_find_callable('build_success_metrics_payload')",
+        "        start = 0",
+        "        for item in plan:",
+        "            condition = item.get('condition', item)",
+        "            seed = item.get('seed')",
+        "            rec = _entrypoint_invoke(",
+        "                run_fn, args, condition, seed, runtime,",
+        "                args=args, config=args, runtime=runtime, runtime_context=runtime,",
+        "                run_context=runtime, condition=condition, condition_spec=condition, seed=seed,",
+        "                public_dir=public_dir, run_artifact_dir=run_dir,",
+        "            )",
+        "            records.append(rec)",
+        "        payload = _entrypoint_invoke(aggregate_fn, records, args, records=records)",
+        "        write_json(metrics_path, payload)",
+        "        return 0",
+        "    except Exception as exc:",
+        "        write_json(metrics_path, {'experiment_status': 'failed', 'failure_stage': 'entrypoint_exception', 'error': repr(exc), 'traceback': traceback.format_exc(), 'completed_run_count': len(records), 'condition_results': []})",
+        "        return 1",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--public-dir", publicDir, "--run-artifact-dir", runDir], {
+        cwd: workspace,
+        stdio: "pipe"
+      })
+    ).toThrow();
+    const failedMetrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(String(failedMetrics.error)).toContain("data_bundle");
+    rmSync(metricsPath, { force: true });
+
+    const repair = await repairPythonEntrypointOrderedPlanDataBundleSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_ordered_plan_data_bundle_surface");
+    expect(repairedSource).toContain("data_bundle=data_bundle");
+
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--public-dir", publicDir, "--run-artifact-dir", runDir], {
+      cwd: workspace,
+      stdio: "pipe"
+    });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.accuracy_delta_vs_baseline).toBe(0.25);
+    expect(metrics.condition_results.every((row: Record<string, unknown>) => row.train_count === 1)).toBe(true);
   });
 
   it("keeps staged_llm chunk materialization bounded and retryable", () => {
@@ -748,6 +1169,253 @@ describe("ImplementSessionManager", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("passes loaded task bundles to high-level entrypoint runners locally", () => {
+    const content = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
+      title: "CLI entrypoint and final handoff",
+      purpose: "Wire the ordered run plan, raw evidence persistence, final metrics writing, and process exit behavior.",
+      content_kind: "code_section"
+    });
+
+    expect(content).toContain("task_bundle=loaded_data");
+
+    const root = mkdtempSync(path.join(os.tmpdir(), "autolabos-local-python-high-level-entrypoint-"));
+    try {
+      const scriptPath = path.join(root, "runner.py");
+      const metricsPath = path.join(root, "metrics.json");
+      writeFileSync(
+        scriptPath,
+        [
+          "import argparse",
+          "import json",
+          "from dataclasses import dataclass",
+          "from pathlib import Path",
+          "",
+          "@dataclass",
+          "class RuntimeConfig:",
+          "    metrics_path: str",
+          "    output_dir: str",
+          "",
+          "def parse_args(argv=None):",
+          "    parser = argparse.ArgumentParser()",
+          "    parser.add_argument('--metrics-path', required=True)",
+          "    parser.add_argument('--output-dir', default='out')",
+          "    return parser.parse_args(argv)",
+          "",
+          "def config_from_args(args):",
+          "    return RuntimeConfig(args.metrics_path, args.output_dir)",
+          "",
+          "def load_task_bundle(config):",
+          "    return {'train_examples': [{'text': 'Reusable train row'}], 'eval_examples_by_task': {'benchmark_task_a': [{'input': 'Eval'}]}}",
+          "",
+          "def run_model_execution_stage(runtime, task_bundle):",
+          "    assert task_bundle['train_examples'][0]['text'] == 'Reusable train row', task_bundle",
+          "    return {'status': 'completed', 'success': True, 'completed_condition_count': 1, 'required_condition_count': 1, 'condition_results': [{'condition_marker': 'baseline_condition', 'status': 'completed', 'accuracy': 1.0}]}",
+          "",
+          content || "",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+
+      execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: root });
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", root], { cwd: root });
+      expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+        status: "completed",
+        success: true,
+        completed_condition_count: 1,
+        required_condition_count: 1
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs existing high-level entrypoint calls to pass loaded task bundles", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-high-level-task-bundle-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def _autolabos_entrypoint_call_compatible(func, **kwargs):",
+        "    signature = inspect.signature(func)",
+        "    supported = {}",
+        "    for name, parameter in signature.parameters.items():",
+        "        if name in kwargs:",
+        "            supported[name] = kwargs[name]",
+        "        elif parameter.default is parameter.empty:",
+        "            raise TypeError(f'Cannot call {func.__name__} without required argument {name!r}')",
+        "    return func(**supported)",
+        "",
+        "def _autolabos_entrypoint_loaded_data(config):",
+        "    return {'train_examples': [{'text': 'Reusable train row'}], 'eval_examples_by_task': {'benchmark_task_a': [{'input': 'Eval'}]}}",
+        "",
+        "def _autolabos_entrypoint_paths(config, args, output_dir=None, metrics_path=None):",
+        "    return {'metrics_path': metrics_path, 'output_dir': output_dir}",
+        "",
+        "def _autolabos_entrypoint_runtime_context(config, runtime_paths, args):",
+        "    return config",
+        "",
+        "def _autolabos_entrypoint_set_default(obj, name, value):",
+        "    if hasattr(obj, name):",
+        "        return obj",
+        "    setattr(obj, name, value)",
+        "    return obj",
+        "",
+        "def run_model_execution_stage(runtime, task_bundle):",
+        "    assert task_bundle['train_examples'][0]['text'] == 'Reusable train row', task_bundle",
+        "    return {'status': 'completed', 'success': True, 'task_count': len(task_bundle['eval_examples_by_task'])}",
+        "",
+        "def _autolabos_entrypoint_run(argv=None):",
+        "    args = argparse.Namespace(metrics_path='metrics.json', output_dir='out')",
+        "    config = args",
+        "    metrics_path = args.metrics_path",
+        "    output_dir = args.output_dir",
+        "    high_level_names = ('run_model_execution_stage',)",
+        "    runtime_paths = None",
+        "    runtime_context = None",
+        "    loaded_data = None",
+        "    for name in high_level_names:",
+        "        candidate = globals().get(name)",
+        "        if not callable(candidate):",
+        "            continue",
+        "        runtime_paths = _autolabos_entrypoint_paths(config, args, output_dir=output_dir, metrics_path=metrics_path)",
+        "        runtime_context = _autolabos_entrypoint_runtime_context(config, runtime_paths, args)",
+        "        for _autolabos_paths_alias in ('paths', 'output_paths', 'artifact_paths', 'experiment_paths', 'runtime_paths'):",
+        "            _autolabos_entrypoint_set_default(config, _autolabos_paths_alias, runtime_paths)",
+        "            _autolabos_entrypoint_set_default(args, _autolabos_paths_alias, runtime_paths)",
+        "        result = _autolabos_entrypoint_call_compatible(candidate, args=args, config=config, runtime=runtime_context, data_bundle=loaded_data, loaded_data=loaded_data, bundle=loaded_data, dataset_bundle=loaded_data, datasets=loaded_data, train_bundle=loaded_data, training_bundle=loaded_data)",
+        "        Path(metrics_path).write_text(json.dumps(result), encoding='utf-8')",
+        "        return 0",
+        "    return 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(_autolabos_entrypoint_run())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(
+      /required argument 'task_bundle'/
+    );
+
+    const repair = await repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_high_level_runner_data_bundle_alias_surface");
+    expect(repairedSource).toContain("task_bundle=loaded_data");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      success: true,
+      task_count: 1
+    });
+  });
+
+  it("materializes loaded data for high-level runners that already pass task bundle aliases", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-high-level-loaded-data-before-call-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def _autolabos_entrypoint_call_compatible(func, **kwargs):",
+        "    signature = inspect.signature(func)",
+        "    supported = {}",
+        "    for name, parameter in signature.parameters.items():",
+        "        if name in kwargs:",
+        "            supported[name] = kwargs[name]",
+        "        elif parameter.default is parameter.empty:",
+        "            raise TypeError(f'Cannot call {func.__name__} without required argument {name!r}')",
+        "    return func(**supported)",
+        "",
+        "def _autolabos_entrypoint_loaded_data(config):",
+        "    return {'train_examples': [{'text': 'Reusable train row'}], 'eval_examples_by_task': {'benchmark_task_a': [{'input': 'Eval'}]}}",
+        "",
+        "def _autolabos_entrypoint_paths(config, args, output_dir=None, metrics_path=None):",
+        "    return {'metrics_path': metrics_path, 'output_dir': output_dir}",
+        "",
+        "def _autolabos_entrypoint_runtime_context(config, runtime_paths, args):",
+        "    return config",
+        "",
+        "def _autolabos_entrypoint_set_default(obj, name, value):",
+        "    if hasattr(obj, name):",
+        "        return obj",
+        "    setattr(obj, name, value)",
+        "    return obj",
+        "",
+        "def run_model_execution_stage(runtime, task_bundle):",
+        "    assert task_bundle['train_examples'][0]['text'] == 'Reusable train row', task_bundle",
+        "    return {'status': 'completed', 'success': True, 'task_count': len(task_bundle['eval_examples_by_task'])}",
+        "",
+        "def _autolabos_entrypoint_run(argv=None):",
+        "    args = argparse.Namespace(metrics_path='metrics.json', output_dir='out')",
+        "    config = args",
+        "    metrics_path = args.metrics_path",
+        "    output_dir = args.output_dir",
+        "    high_level_names = ('run_model_execution_stage',)",
+        "    runtime_paths = None",
+        "    runtime_context = None",
+        "    loaded_data = None",
+        "    for name in high_level_names:",
+        "        candidate = globals().get(name)",
+        "        if not callable(candidate):",
+        "            continue",
+        "        runtime_paths = _autolabos_entrypoint_paths(config, args, output_dir=output_dir, metrics_path=metrics_path)",
+        "        runtime_context = _autolabos_entrypoint_runtime_context(config, runtime_paths, args)",
+        "        for _autolabos_paths_alias in ('paths', 'output_paths', 'artifact_paths', 'experiment_paths', 'runtime_paths'):",
+        "            _autolabos_entrypoint_set_default(config, _autolabos_paths_alias, runtime_paths)",
+        "            _autolabos_entrypoint_set_default(args, _autolabos_paths_alias, runtime_paths)",
+        "        result = _autolabos_entrypoint_call_compatible(candidate, args=args, config=config, runtime=runtime_context, data_bundle=loaded_data, loaded_data=loaded_data, task_bundle=loaded_data)",
+        "        Path(metrics_path).write_text(json.dumps(result), encoding='utf-8')",
+        "        return 0",
+        "    single_runner = None",
+        "    if callable(single_runner):",
+        "        loaded_data = _autolabos_entrypoint_loaded_data(config)",
+        "        return 0",
+        "    return 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(_autolabos_entrypoint_run())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow();
+
+    const repair = await repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_high_level_runner_data_bundle_alias_surface");
+    const highLevelMarker = repairedSource.indexOf("_autolabos_entrypoint_high_level_runner_data_bundle_alias_surface");
+    const highLevelCall = repairedSource.indexOf("_autolabos_entrypoint_call_compatible(candidate");
+    expect(highLevelMarker).toBeGreaterThan(-1);
+    expect(repairedSource.indexOf("loaded_data = _autolabos_entrypoint_loaded_data(config)", highLevelMarker)).toBeLessThan(highLevelCall);
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      success: true,
+      task_count: 1
+    });
   });
 
   it("fills missing runtime task defaults from neutral task constants before data loading", () => {
@@ -9236,6 +9904,104 @@ describe("ImplementSessionManager", () => {
     expect(report.summary).not.toContain("No callable experiment entrypoint");
   });
 
+  it("dispatches model-execution stages through the local CLI bridge with data aliases", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-model-execution-entrypoint-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Model Execution Entrypoint",
+      topic: "Generic model execution",
+      constraints: ["neutral fixture"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "model_execution_runner.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const bridge = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
+      title: "CLI entrypoint and final handoff",
+      purpose: "Wire the ordered run plan, raw evidence persistence, final metrics writing, and process exit behavior.",
+      content_kind: "code_section"
+    });
+    writeFileSync(
+      scriptPath,
+      [
+        "def build_data_bundle(config=None, **kwargs):",
+        "    return {'train_examples': [{'id': 'example_train'}], 'eval_examples_by_task': {'benchmark_task_a': [{'id': 'example_eval'}]}}",
+        "",
+        "def run_model_execution(config, data_bundle, runtime_context=None, paths=None, metrics_path=None, **kwargs):",
+        "    if not data_bundle or not data_bundle.get('train_examples'):",
+        "        raise RuntimeError('missing data bundle')",
+        "    if runtime_context is None:",
+        "        raise RuntimeError('missing runtime context')",
+        "    if paths is None:",
+        "        raise RuntimeError('missing paths')",
+        "    return {'status': 'completed', 'success': True, 'used_train_examples': len(data_bundle['train_examples']), 'saw_metrics_path': str(metrics_path)}",
+        "",
+        bridge || "",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    try {
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", runDir], { cwd: runDir });
+    } catch (error) {
+      const stderr = error && typeof error === "object" && "stderr" in error ? String((error as { stderr?: Buffer }).stderr ?? "") : "";
+      const payload = existsSync(metricsPath) ? readFileSync(metricsPath, "utf8") : "<no metrics payload>";
+      throw new Error(["model-execution bridge script failed", stderr.trim(), payload].filter(Boolean).join("\n"));
+    }
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      status: "completed",
+      success: true,
+      used_train_examples: 1,
+      saw_metrics_path: metricsPath
+    });
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: "python3 -m py_compile " + JSON.stringify(scriptPath),
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("pass");
+    expect(report.summary).not.toContain("No callable experiment entrypoint");
+  });
+
   it("accepts generic condition runners discoverable by the CLI bridge", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-generic-condition-entrypoint-"));
     tempDirs.push(workspace);
@@ -9330,12 +10096,20 @@ describe("ImplementSessionManager", () => {
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     const scriptPath = path.join(runDir, "runner.py");
-    const helper = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
-      title: "Runner imports and execution contract: Single condition execution helper",
-      purpose:
-        "Expose a condition-level callable while preserving structured failure evidence when no generated worker exists.",
-      content_kind: "code_section"
-    });
+    const helper = [
+      "import time",
+      "",
+      "_autolabos_single_condition_execution_helper_marker = True",
+      "",
+      "def run_single_condition(condition=None, seed=None, **context):",
+      "    started_at = time.time()",
+      "    return {'status': 'failed', 'success': False, 'condition_marker': 'generic_condition', 'failure_stage': 'condition_execution', 'failure_reason': 'No generated single-condition execution worker was available after materialization.', 'runtime_sec': time.time() - started_at}",
+      "",
+      "execute_condition = run_single_condition",
+      "run_condition = run_single_condition",
+      "train_and_evaluate_condition = run_single_condition",
+      ""
+    ].join("\n");
     const bridge = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
       title: "CLI entrypoint and final handoff",
       purpose: "Wire the ordered run plan, raw evidence persistence, final metrics writing, and process exit behavior.",
@@ -9390,11 +10164,100 @@ describe("ImplementSessionManager", () => {
 
     expect(report.status).toBe("fail");
     expect(report.failure_type).toBe("implementation");
-    expect(report.summary).toContain("no concrete executable experiment entrypoint");
-    expect(report.summary).toContain("No callable experiment entrypoint");
+    expect(report.summary).toContain("no concrete per-condition execution worker");
+    expect(report.summary).toContain("single-condition fallback helper");
   });
 
-  it("materializes single-condition execution helpers as concrete callables instead of bridge-only CLI", () => {
+  it("rejects fallback-only single-condition helpers even when a model-execution stage exists", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-fallback-only-stage-helper-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Fallback Only Stage Helper",
+      topic: "Generic model execution",
+      constraints: ["neutral fixture"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import time",
+        "",
+        "_autolabos_single_condition_execution_helper_marker = True",
+        "",
+        "def run_single_condition(condition=None, seed=None, **context):",
+        "    started_at = time.time()",
+        "    delegates = ('execute_single_condition_run', 'run_single_condition_model_execution', 'execute_condition', 'run_condition')",
+        "    for delegate_name in delegates:",
+        "        delegate = globals().get(delegate_name)",
+        "        if callable(delegate) and delegate is not run_single_condition:",
+        "            return delegate(condition=condition, seed=seed, **context)",
+        "    return {'status': 'failed', 'success': False, 'condition_marker': 'generic_condition', 'failure_stage': 'condition_execution', 'failure_reason': 'No generated single-condition execution worker was available after materialization.', 'runtime_sec': time.time() - started_at}",
+        "",
+        "execute_condition = run_single_condition",
+        "run_condition = run_single_condition",
+        "train_and_evaluate_condition = run_single_condition",
+        "",
+        "def run_model_execution_stage(runtime=None, task_bundle=None):",
+        "    return run_single_condition(condition={'marker': 'generic_condition'}, seed=1)",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(0)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("fail");
+    expect(report.failure_type).toBe("implementation");
+    expect(report.summary).toContain("no concrete per-condition execution worker");
+    expect(report.summary).toContain("single-condition fallback helper");
+  });
+
+  it("does not locally materialize fallback-only single-condition execution helpers", () => {
     const content = buildLocalPythonUtilityChunkContent("/tmp/public/runner.py", {
       title: "Runner imports and execution contract: Single condition execution helper",
       purpose:
@@ -9402,11 +10265,7 @@ describe("ImplementSessionManager", () => {
       content_kind: "code_section"
     });
 
-    expect(content).toContain("def run_single_condition(");
-    expect(content).toContain("run_single_condition_model_execution");
-    expect(content).toContain("execute_condition = run_single_condition");
-    expect(content).toContain("No generated single-condition execution worker was available after materialization.");
-    expect(content).not.toContain("No callable experiment entrypoint was available");
+    expect(content).toBeUndefined();
   });
 
   it("repairs generated single-condition helpers to delegate to model execution workers", async () => {
@@ -9464,7 +10323,7 @@ describe("ImplementSessionManager", () => {
     expect(after).toMatchObject({ status: "completed", success: true, condition_marker: "candidate_condition" });
   });
 
-  it("delegates single-condition helpers to later generic condition workers", () => {
+  it("does not synthesize single-condition local utility helpers", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-single-condition-delegate-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "runner.py");
@@ -9475,27 +10334,7 @@ describe("ImplementSessionManager", () => {
       content_kind: "code_section"
     });
 
-    writeFileSync(
-      scriptPath,
-      [
-        content,
-        "",
-        "import json",
-        "",
-        "def execute_condition(condition=None, **kwargs):",
-        "    return {'status': 'completed', 'condition_marker': 'later_worker', 'observed_marker': condition.get('marker')}",
-        "",
-        "print(json.dumps(run_single_condition(condition={'marker': 'neutral_condition'}), sort_keys=True))",
-        ""
-      ].join("\n"),
-      "utf8"
-    );
-
-    const output = execFileSync("python3", [scriptPath], { encoding: "utf8" }).trim();
-    const parsed = JSON.parse(output) as Record<string, unknown>;
-    expect(parsed.status).toBe("completed");
-    expect(parsed.condition_marker).toBe("later_worker");
-    expect(parsed.observed_marker).toBe("neutral_condition");
+    expect(content).toBeUndefined();
   });
 
   it("fails local verification when a resolved sweep callable is missing required kwargs", async () => {
@@ -12042,6 +12881,58 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("def run_condition_experiment(");
     expect(repairedSource).toContain("def _autolabos_run_single_planned_condition(");
     expect(repairedSource).toContain("run_single_planned_run = _autolabos_run_single_planned_condition");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("preserves zero labels in generated multiple-choice normalizers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-zero-label-mc-normalizer-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Mapping, Sequence",
+        "",
+        "def _stringify(value: Any) -> str:",
+        "    return str(value or '').strip()",
+        "",
+        "def _label_to_index(label: Any, choices: Sequence[str], choice_labels=None):",
+        "    if label is None:",
+        "        return None",
+        "    if isinstance(label, int):",
+        "        return label if 0 <= label < len(choices) else None",
+        "    text = str(label).strip()",
+        "    if text.isdigit():",
+        "        idx = int(text)",
+        "        return idx if 0 <= idx < len(choices) else None",
+        "    return None",
+        "",
+        "def normalize_mc_record(task: str, record: Mapping[str, Any], idx: int, source: str):",
+        "    prompt = _stringify(record.get('ctx') or record.get('question') or record.get('prompt'))",
+        "    choices = [_stringify(x) for x in (record.get('endings') or record.get('choices') or [])]",
+        "    label = _label_to_index(record.get('label') or record.get('gold') or record.get('answer_index') or record.get('correct_index'), choices)",
+        "    return {'prompt': prompt, 'choices': choices, 'label': label} if label is not None else None",
+        "",
+        "def main():",
+        "    row = {'ctx': 'Pick one', 'endings': ['alpha', 'beta'], 'label': 0}",
+        "    normalized = normalize_mc_record('benchmark_task_a', row, 0, 'fixture')",
+        "    assert normalized is not None and normalized['label'] == 0, normalized",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonMultipleChoiceGoldAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_multiple_choice_gold_alias_surface_mapping_helper");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
@@ -18795,6 +19686,215 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).not.toContain('"required_condition_count": 5');
   });
 
+  it("keeps fixed-parameter repeated-run totals from inflating condition count", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-fixed-parameter-run-count-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Fixed Parameter Repeated Run Contract",
+      topic: "Condition parameter fixed budget",
+      constraints: ["Use the latest selected fixed-parameter repeated-run design."],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "selected_design:",
+        '  id: "plan_2"',
+        '  title: "Fixed-parameter dose response with 8 paired seeds"',
+        '  summary: "Run a tighter condition-parameter ablation that holds parameter_y fixed and increases repeated-run evidence to 8 paired seeds."',
+        "  implementation_notes:",
+        '    - "Use seeds [42, 43, 44, 45, 46, 47, 48, 49] for paired runs."',
+        '    - "Run parameter_x values 4, 8, 16, and 32 with parameter_y fixed at 0.0 for each of 8 seeds."',
+        "  evaluation_steps:",
+        '    - "Train parameter_x values 4, 8, 16, and 32 with parameter_y fixed at 0.0 for each seed, then evaluate every completed condition."',
+        "  resource_notes:",
+        '    - "Main workload: 32 training runs plus repeated unmodified-base evaluations."'
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(path.join(runDir, "hypotheses.jsonl"), "", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    const numericMarkerPrefix = String.fromCharCode(99, 111, 110, 100, 105, 116, 105, 111, 110, 95);
+    const numericMarkerMiddle = String.fromCharCode(95, 112, 97, 114, 97, 109, 101, 116, 101, 114, 95);
+    const numericMarker = (parameterX: number, parameterYCode: string): string =>
+      numericMarkerPrefix + parameterX + numericMarkerMiddle + parameterYCode;
+    let capturedPrompt = "";
+    const codex = {
+      runTurnStream: async () => {
+        throw new Error("Codex should not be used when llm_mode=openai_api");
+      }
+    } as unknown as CodexNativeClient;
+    const llm = {
+      complete: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return {
+          text: JSON.stringify({
+            summary: "Implemented the fixed-parameter repeated-run contract runner.",
+            run_command: "python3 " + JSON.stringify(publicScriptPath),
+            test_command: "python3 -m py_compile " + JSON.stringify(publicScriptPath),
+            changed_files: [publicScriptPath],
+            artifacts: [publicScriptPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution",
+            file_edits: [
+              {
+                path: publicScriptPath,
+                content: [
+                  "PLANNED_CONDITION_MARKERS = (",
+                  "  '" + numericMarker(4, "0_0") + "', '" + numericMarker(8, "0_0") + "',",
+                  "  '" + numericMarker(16, "0_0") + "', '" + numericMarker(32, "0_0") + "',",
+                  ")",
+                  "REQUIRED_CONDITION_COUNT = 4",
+                  "REQUIRED_RUN_COUNT = 32",
+                  "SEED_SCHEDULE = [42, 43, 44, 45, 46, 47, 48, 49]",
+                  MINIMAL_METRICS_RUNNER_SOURCE
+                ].join("\n\n")
+              }
+            ]
+          })
+        };
+      }
+    };
+
+    const config = createTestConfig();
+    config.providers.llm_mode = "openai_api";
+    const manager = new ImplementSessionManager({
+      config,
+      codex,
+      llm: llm as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await manager.run(run);
+
+    expect(capturedPrompt).toContain('"required_condition_count": 4');
+    expect(capturedPrompt).toContain('"required_run_count": 32');
+    expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 8');
+    expect(capturedPrompt).toContain('"' + numericMarker(4, "0_0") + '"');
+    expect(capturedPrompt).toContain('"' + numericMarker(32, "0_0") + '"');
+    expect(capturedPrompt).not.toContain('"required_condition_count": 32');
+    expect(capturedPrompt).not.toContain('"required_run_count": 256');
+  });
+
+  it("does not read scalar condition parameter values as condition-count declarations", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-scalar-condition-count-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Fixed Parameter Scalar Condition Contract",
+      topic: "Condition parameter fixed budget",
+      constraints: ["Use the selected fixed-parameter repeated-seed design."],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "selected_design:",
+        '  id: "plan_2"',
+        '  title: "Fixed-parameter repeated-seed sweep"',
+        '  summary: "Run a rank-neutral condition-parameter ablation with repeated paired seeds."',
+        "  implementation_notes:",
+        '    - "Use seeds [42, 43, 44, 45, 46, 47, 48, 49] for paired runs."',
+        '    - "Choose the common microbatch during preflight using the highest-memory parameter_x=32 condition; apply the same batch construction to all conditions."',
+        "  evaluation_steps:",
+        '    - "Train parameter_x values 4, 8, 16, and 32 with parameter_y fixed at 0.0 for each of 8 seeds."',
+        '    - "Evaluate every completed condition with the same benchmark harness."'
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(path.join(runDir, "hypotheses.jsonl"), "", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    const numericMarkerPrefix = String.fromCharCode(99, 111, 110, 100, 105, 116, 105, 111, 110, 95);
+    const numericMarkerMiddle = String.fromCharCode(95, 112, 97, 114, 97, 109, 101, 116, 101, 114, 95);
+    const numericMarker = (parameterX: number, parameterYCode: string): string =>
+      numericMarkerPrefix + parameterX + numericMarkerMiddle + parameterYCode;
+    let capturedPrompt = "";
+    const codex = {
+      runTurnStream: async () => {
+        throw new Error("Codex should not be used when llm_mode=openai_api");
+      }
+    } as unknown as CodexNativeClient;
+    const llm = {
+      complete: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return {
+          text: JSON.stringify({
+            summary: "Implemented the scalar condition repeated-seed contract runner.",
+            run_command: "python3 " + JSON.stringify(publicScriptPath),
+            test_command: "python3 -m py_compile " + JSON.stringify(publicScriptPath),
+            changed_files: [publicScriptPath],
+            artifacts: [publicScriptPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution",
+            file_edits: [
+              {
+                path: publicScriptPath,
+                content: [
+                  "PLANNED_CONDITION_MARKERS = (",
+                  "  '" + numericMarker(4, "0_0") + "', '" + numericMarker(8, "0_0") + "',",
+                  "  '" + numericMarker(16, "0_0") + "', '" + numericMarker(32, "0_0") + "',",
+                  ")",
+                  "REQUIRED_CONDITION_COUNT = 4",
+                  "REQUIRED_RUN_COUNT = 32",
+                  "SEED_SCHEDULE = [42, 43, 44, 45, 46, 47, 48, 49]",
+                  MINIMAL_METRICS_RUNNER_SOURCE
+                ].join("\n\n")
+              }
+            ]
+          })
+        };
+      }
+    };
+
+    const config = createTestConfig();
+    config.providers.llm_mode = "openai_api";
+    const manager = new ImplementSessionManager({
+      config,
+      codex,
+      llm: llm as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await manager.run(run);
+
+    expect(capturedPrompt).toContain('"required_condition_count": 4');
+    expect(capturedPrompt).toContain('"required_run_count": 32');
+    expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 8');
+    expect(capturedPrompt).toContain('"' + numericMarker(4, "0_0") + '"');
+    expect(capturedPrompt).toContain('"' + numericMarker(32, "0_0") + '"');
+    expect(capturedPrompt).not.toContain('"required_condition_count": 32');
+    expect(capturedPrompt).not.toContain('"required_run_count": 256');
+  });
+
   it("supplements selected-design count contracts with concrete condition-parameter grids from plan constraints", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-p6-grid-constraint-supplement-"));
     tempDirs.push(workspace);
@@ -19974,9 +21074,10 @@ describe("ImplementSessionManager", () => {
     const result = await manager.run(run);
 
     expect(result.verifyReport).toMatchObject({ status: "pass" });
-    expect(llmCalls).toBe(7);
+    expect(llmCalls).toBe(13);
     expect(prompts[1]).toContain("Staged implement materialization subplan.");
     expect(prompts[2]).toContain("Target chunk: runner_contract");
+    expect(prompts.some((entry) => entry.includes("Target chunk: runner_model_execution_runtime_context"))).toBe(true);
     expect(readFileSync(publicScriptPath, "utf8")).not.toContain("AUTOLABOS SECTION");
     const materializationPlan = JSON.parse(
       readFileSync(path.join(runDir, "implement_experiments", "unit_plans", "runner.json"), "utf8")
@@ -19990,6 +21091,274 @@ describe("ImplementSessionManager", () => {
       "runner_metrics",
       "runner_entrypoint"
     ]);
+    const proactiveExecutionPlan = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "unit_plans", "runner__runner_model_execution.json"), "utf8")
+    ) as { strategy?: string; chunks?: Array<{ id?: string }> };
+    expect(proactiveExecutionPlan.strategy).toBe("local_execution_micro_stage_subdivision_fallback");
+    expect(proactiveExecutionPlan.chunks?.map((chunk) => chunk.id)).toEqual([
+      "runner_model_execution_runtime_context",
+      "runner_model_execution_dependency_preflight",
+      "runner_model_execution_run_plan",
+      "runner_model_execution_one_run",
+      "runner_model_execution_raw_records",
+      "runner_model_execution_aggregation",
+      "runner_model_execution_wiring"
+    ]);
+    const progressLog = readFileSync(path.join(runDir, "implement_experiments", "progress.jsonl"), "utf8");
+    expect(progressLog).toContain("Using local proactive micro-stage subdivision for Single condition model execution before provider materialization.");
+  });
+
+  it("reuses completed staged_llm sections from a timeout resume manifest", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-resume-manifest-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Resume Manifest Run",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with sandbox setup errors."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    const implementDir = path.join(runDir, "implement_experiments");
+    const resumedSectionPath = path.join(implementDir, "unit_sections", "runner__resumed_setup.txt");
+    const resumedRecordsPath = path.join(implementDir, "unit_sections", "runner__resumed_records.txt");
+    mkdirSync(path.dirname(resumedSectionPath), { recursive: true });
+    writeFileSync(resumedSectionPath, "import json\nfrom pathlib import Path\n", "utf8");
+    writeFileSync(resumedRecordsPath, "def collect_records():\n    return [{\"value\": 1.0}]\n", "utf8");
+    writeFileSync(
+      path.join(implementDir, "staged_llm_resume_manifest.json"),
+      JSON.stringify({
+        status: "resumable",
+        reason: "p6_helper_timeout",
+        node: "implement_experiments",
+        completed_sections: [
+          "unit_sections/runner__resumed_setup.txt",
+          "unit_sections/runner__resumed_records.txt"
+        ],
+        completed_chunk_responses: [
+          "unit_chunk_responses/runner__resumed_setup.txt",
+          "unit_chunk_responses/runner__resumed_records.txt"
+        ],
+        incomplete_or_failed_artifacts: [
+          "unit_chunk_responses/runner__aggregate_results__d0__chunk_3_3_error.txt"
+        ],
+        incomplete_or_failed_artifact_count: 1,
+        next_unfinished_artifact: "unit_chunk_responses/runner__aggregate_results__d0__chunk_3_3_error.txt",
+        next_unfinished_section_id: "aggregate_results",
+        next_unfinished_prompt: "unit_chunk_prompts/runner__aggregate_results__d0__chunk_3_3.txt"
+      }),
+      "utf8"
+    );
+    const cachedScaffold = {
+      summary: "Runner scaffold with reusable staged_llm planning artifacts.",
+      run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+      test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+      changed_files: [publicScriptPath],
+      artifacts: [publicScriptPath],
+      public_artifacts: [publicScriptPath],
+      script_path: publicScriptPath,
+      metrics_path: path.join(runDir, "metrics.json"),
+      experiment_mode: "real_execution",
+      decomposition_plan: {
+        objective: "Materialize the primary runner only.",
+        strategy: "purpose_adaptive",
+        rationale: "This rerun only needs the main script.",
+        units: [
+          {
+            id: "runner",
+            unit_type: "text_file",
+            title: "Primary experiment runner",
+            purpose: "Provide the main runnable experiment entrypoint.",
+            generation_mode: "materialize_text_file",
+            target_path: publicScriptPath,
+            verification_focus: ["run_command"]
+          }
+        ]
+      },
+      file_plan: [publicScriptPath]
+    };
+    const cachedMaterializationPlan = {
+      strategy: "local_bounded_python_runner_materialization",
+      rationale: "Use bounded sections for resume testing.",
+      chunks: [
+        {
+          id: "resumed_setup",
+          title: "Resumed setup",
+          purpose: "Imports and setup already completed before timeout.",
+          content_kind: "code_section",
+          include_imports: true,
+          include_entrypoint: false
+        },
+        {
+          id: "resumed_records",
+          title: "Resumed records",
+          purpose: "Records were already persisted before timeout.",
+          content_kind: "code_section",
+          include_imports: false,
+          include_entrypoint: false,
+          depends_on: ["resumed_setup"]
+        },
+        {
+          id: "aggregate_results",
+          title: "Aggregate results",
+          purpose: "Write the runnable aggregation and entrypoint.",
+          content_kind: "code_section",
+          include_imports: false,
+          include_entrypoint: true,
+          depends_on: ["resumed_records"]
+        }
+      ]
+    };
+    writeFileSync(path.join(implementDir, "scaffold.json"), JSON.stringify(cachedScaffold), "utf8");
+    writeFileSync(
+      path.join(implementDir, "bootstrap_contract.json"),
+      JSON.stringify({ version: 1, strategy: "cached_resume", summary: "Cached bootstrap contract.", requirements: [], checks: [] }),
+      "utf8"
+    );
+    writeFileSync(path.join(implementDir, "decomposition_plan.json"), JSON.stringify(cachedScaffold.decomposition_plan), "utf8");
+    mkdirSync(path.join(implementDir, "unit_plans"), { recursive: true });
+    writeFileSync(path.join(implementDir, "unit_plans", "runner.json"), JSON.stringify(cachedMaterializationPlan), "utf8");
+
+    const prompts: string[] = [];
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async (prompt: string) => {
+          prompts.push(prompt);
+          if (prompt.includes("scaffold-first contract")) {
+            return {
+              text: JSON.stringify({
+                summary: "Runner scaffold with a resumable setup section.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                decomposition_plan: {
+                  objective: "Materialize the primary runner only.",
+                  strategy: "purpose_adaptive",
+                  rationale: "This rerun only needs the main script.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary experiment runner",
+                      purpose: "Provide the main runnable experiment entrypoint.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath,
+                      verification_focus: ["run_command"]
+                    }
+                  ]
+                },
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-resume-scaffold"
+            };
+          }
+          if (prompt.includes("Staged implement materialization subplan.")) {
+            return {
+              text: JSON.stringify({
+                strategy: "local_bounded_python_runner_materialization",
+                rationale: "Use bounded sections for resume testing.",
+                chunks: [
+                  {
+                    id: "resumed_setup",
+                    title: "Resumed setup",
+                    purpose: "Imports and setup already completed before timeout.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: false
+                  },
+                  {
+                    id: "resumed_records",
+                    title: "Resumed records",
+                    purpose: "Records were already persisted before timeout.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: false,
+                    depends_on: ["resumed_setup"]
+                  },
+                  {
+                    id: "aggregate_results",
+                    title: "Aggregate results",
+                    purpose: "Write the runnable aggregation and entrypoint.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: true,
+                    depends_on: ["resumed_records"]
+                  }
+                ]
+              }),
+              threadId: "thread-resume-plan"
+            };
+          }
+          if (prompt.includes("Target chunk: resumed_setup")) {
+            throw new Error("resumed_setup should be loaded from the resume manifest, not regenerated");
+          }
+          if (prompt.includes("Target chunk: resumed_records")) {
+            throw new Error("resumed_records should be loaded from the resume manifest, not regenerated");
+          }
+          if (prompt.includes("Target chunk: aggregate_results")) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "aggregate_results",
+                content: MINIMAL_METRICS_RUNNER_SOURCE
+              }),
+              threadId: "thread-resume-aggregate"
+            };
+          }
+          throw new Error(`Unexpected staged_llm prompt in resume manifest test: ${prompt.slice(0, 200)}`);
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+    expect(prompts.some((prompt) => prompt.includes("scaffold-first contract"))).toBe(false);
+    expect(prompts.some((prompt) => prompt.includes("Staged implement materialization subplan."))).toBe(false);
+    expect(prompts.some((prompt) => prompt.includes("Target chunk: resumed_setup"))).toBe(false);
+    expect(prompts.some((prompt) => prompt.includes("Target chunk: resumed_records"))).toBe(false);
+    expect(prompts.some((prompt) => prompt.includes("Target chunk: aggregate_results"))).toBe(true);
+    expect(readFileSync(publicScriptPath, "utf8")).toContain("import json");
+    expect(readFileSync(publicScriptPath, "utf8")).toContain("collect_records");
+    const progressLog = readFileSync(path.join(implementDir, "progress.jsonl"), "utf8");
+    expect(progressLog).toContain("Loaded staged_llm resume manifest with 2 completed section");
+    expect(progressLog).toContain("Next staged_llm resume boundary is aggregate_results; 1 incomplete artifact(s) remain.");
+    expect(progressLog).toContain("Reusing staged_llm scaffold artifact from the resume manifest boundary.");
+    expect(progressLog).toContain("Reusing staged_llm bootstrap contract artifact from the resume manifest boundary.");
+    expect(progressLog).toContain("Reusing staged_llm decomposition plan artifact from the resume manifest boundary.");
+    expect(progressLog).toContain("Reusing staged_llm materialization plan artifact for runner from the resume manifest boundary.");
+    expect(progressLog).toContain("Reusing staged_llm resume section resumed_setup");
+    expect(progressLog).toContain("Reusing staged_llm resume section resumed_records");
   });
 
   it("uses the local bootstrap contract when bootstrap planning times out", async () => {
@@ -20243,6 +21612,128 @@ describe("ImplementSessionManager", () => {
       blocking_reason: expect.stringContaining("No known non-network blocker")
     });
     expect(bootstrapContract.summary).toContain("Hugging Face model and tokenizer bootstrap");
+  });
+
+  it("blocks staged implementation when bootstrap contract ignores dependency repair context", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-dependency-repair-bootstrap-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Dependency Repair Bootstrap Run",
+      topic: "dependency-gated local experiment",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    writeFileSync(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "retry_context:",
+        "  present: true",
+        "  run_verifier_failure_code: 'model_dependency_unavailable'",
+        "  run_verifier_repair_target: 'environment_dependency'",
+        "  run_verifier_recommended_backtrack_node: 'design_experiments'",
+        "  run_verifier_operator_action_required: true",
+        "  retry_directives:",
+        "    - 'Do not repeat a design that depends on an unavailable model/tokenizer asset; select an explicitly available local dependency or mark the run dependency-blocked before implementation.'",
+        "selected_design:",
+        "  title: 'Dependency-gated local condition sweep'"
+      ].join("\n"),
+      "utf8"
+    );
+
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in this staged_llm bootstrap test");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async () => {
+          llmCalls += 1;
+          if (llmCalls === 1) {
+            return {
+              text: JSON.stringify({
+                summary: "Scaffold for a dependency-gated local experiment.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-dependency-scaffold"
+            };
+          }
+          return {
+            text: JSON.stringify({
+              version: 1,
+              strategy: "omitted_dependency_context",
+              summary: "No bootstrap risks were identified.",
+              requires_network: false,
+              requires_warm_cache: false,
+              blocking_reason: "",
+              remediation: [],
+              requirements: [],
+              checks: []
+            }),
+            threadId: "thread-dependency-bootstrap"
+          };
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/bootstrap contract blocked implementation before code generation/i);
+    expect(llmCalls).toBe(2);
+
+    const prompt = readFileSync(
+      path.join(runDir, "implement_experiments", "bootstrap_contract_prompt.txt"),
+      "utf8"
+    );
+    expect(prompt).toContain("dependency_repair_context");
+    expect(prompt).toContain("model_dependency_unavailable");
+
+    const bootstrapContract = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "bootstrap_contract.json"), "utf8")
+    ) as {
+      blocking_reason?: string;
+      remediation?: string[];
+      requirements?: Array<{ id?: string; kind?: string; availability?: string }>;
+      requires_network?: boolean;
+      requires_warm_cache?: boolean;
+    };
+    expect(bootstrapContract.requires_network).toBe(true);
+    expect(bootstrapContract.requires_warm_cache).toBe(true);
+    expect(bootstrapContract.blocking_reason).toContain("dependency repair remains unresolved");
+    expect(bootstrapContract.remediation).toContain(
+      "Do not repeat a design that depends on an unavailable model/tokenizer asset; select an explicitly available local dependency or mark the run dependency-blocked before implementation."
+    );
+    expect(bootstrapContract.requirements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "experiment_model_tokenizer_dependency",
+          kind: "model",
+          availability: "unknown"
+        })
+      ])
+    );
   });
 
   it("recovers a staged bootstrap contract when provider output includes a leading tool-like JSON object", async () => {
@@ -20954,14 +22445,17 @@ describe("ImplementSessionManager", () => {
 
     expect(plan.strategy).toBe("local_execution_micro_stage_subdivision_fallback");
     expect(plan.chunks.map((chunk) => chunk.id)).toEqual([
-      "runner_model_execution_preflight",
+      "runner_model_execution_runtime_context",
+      "runner_model_execution_dependency_preflight",
+      "runner_model_execution_run_plan",
       "runner_model_execution_one_run",
       "runner_model_execution_raw_records",
       "runner_model_execution_aggregation",
       "runner_model_execution_wiring"
     ]);
-    expect(plan.chunks[1]?.purpose).toContain("run_single_condition");
-    expect(plan.chunks[1]?.purpose).toContain("bridge-only CLI");
+    expect(plan.chunks[1]?.purpose).toContain("dependency-blocked errors");
+    expect(plan.chunks[3]?.purpose).toContain("run_single_condition");
+    expect(plan.chunks[3]?.purpose).toContain("bridge-only CLI");
   });
 
   it("uses neutral two-part fallback when re-subdividing an existing local micro-stage", () => {
@@ -21206,14 +22700,16 @@ describe("ImplementSessionManager", () => {
     ) as { strategy?: string; chunks?: Array<{ id?: string; include_imports?: boolean; include_entrypoint?: boolean; depends_on?: string[] }> };
     expect(executionFallbackPlan.strategy).toBe("local_execution_micro_stage_subdivision_fallback");
     expect(executionFallbackPlan.chunks?.map((chunk) => chunk.id)).toEqual([
-      "chunk_execution_preflight",
+      "chunk_execution_runtime_context",
+      "chunk_execution_dependency_preflight",
+      "chunk_execution_run_plan",
       "chunk_execution_one_run",
       "chunk_execution_raw_records",
       "chunk_execution_aggregation",
       "chunk_execution_wiring"
     ]);
     expect(executionFallbackPlan.chunks?.[0]?.include_imports).toBe(false);
-    expect(executionFallbackPlan.chunks?.[4]?.depends_on).toEqual(["chunk_execution_aggregation"]);
+    expect(executionFallbackPlan.chunks?.[6]?.depends_on).toEqual(["chunk_execution_aggregation"]);
     const contractFallbackPlan = JSON.parse(
       readFileSync(path.join(runDir, "implement_experiments", "unit_plans", "runner__chunk_contract.json"), "utf8")
     ) as { strategy?: string; chunks?: Array<{ id?: string; depends_on?: string[] }> };
@@ -23783,6 +25279,305 @@ describe("ImplementSessionManager", () => {
     expect(metrics.completed_run_count).toBe(2);
   });
 
+  it("repairs _entrypoint_pick_callable bridges whose helper aliases are missing", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-pick-callable-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "condition_sweep_runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    const outputDir = path.join(workspace, "outputs");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "SCRIPT_PATH = Path(__file__)",
+        "PUBLIC_DIR = Path('outputs')",
+        "RUN_ARTIFACT_DIR = Path('.')",
+        "METRICS_PATH = Path('metrics.json')",
+        "DEVICE = 'cpu'",
+        "INITIAL_DEVICE_INFO = {'device': 'cpu'}",
+        "CONDITIONS = [",
+        "    {'condition_marker': 'baseline_condition'},",
+        "    {'condition_marker': 'candidate_condition'},",
+        "]",
+        "SEED_SCHEDULE = [3]",
+        "",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    parser.add_argument('--output-dir', default='outputs')",
+        "    args = parser.parse_args(argv)",
+        "    globals()['METRICS_PATH'] = Path(args.metrics_path)",
+        "    globals()['PUBLIC_DIR'] = Path(args.output_dir)",
+        "    return args",
+        "",
+        "def build_ordered_run_plan():",
+        "    return [{'condition': condition, 'condition_marker': condition['condition_marker'], 'seed': seed} for condition in CONDITIONS for seed in SEED_SCHEDULE]",
+        "",
+        "def run_single_condition(condition=None, seed=None, **context):",
+        "    marker = condition.get('condition_marker', 'condition') if hasattr(condition, 'get') else 'condition'",
+        "    return {'condition_marker': marker, 'seed': seed, 'status': 'completed', 'success': True, 'accuracy': 0.75 if marker == 'candidate_condition' else 0.5}",
+        "",
+        "def persist_run_evidence(run_item=None, run_result=None, public_dir=None, **context):",
+        "    return dict(run_result or {})",
+        "",
+        "def build_success_metrics_payload(records, **context):",
+        "    return {'status': 'completed', 'success': True, 'condition_results': list(records), 'completed_run_count': len(records)}",
+        "",
+        "def _entrypoint_pick_callable(*names):",
+        "    for name in names:",
+        "        fn = globals().get(name)",
+        "        if callable(fn):",
+        "            return fn",
+        "    raise RuntimeError('missing required entrypoint helper; tried ' + ', '.join(names))",
+        "",
+        "def _entrypoint_call(fn, **kwargs):",
+        "    import inspect",
+        "    sig = inspect.signature(fn)",
+        "    if any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values()):",
+        "        return fn(**kwargs)",
+        "    accepted = {k: v for k, v in kwargs.items() if k in sig.parameters}",
+        "    return fn(**accepted)",
+        "",
+        "def _entrypoint_write_metrics(payload):",
+        "    METRICS_PATH.parent.mkdir(parents=True, exist_ok=True)",
+        "    METRICS_PATH.write_text(json.dumps(payload, sort_keys=True) + '\\n', encoding='utf-8')",
+        "",
+        "def main(argv=None):",
+        "    args = parse_args(argv)",
+        "    preflight = _entrypoint_pick_callable('_autolabos_entrypoint_preflight', 'entrypoint_preflight', 'prepare_entrypoint_runtime', 'prepare_runtime')",
+        "    one_run = _entrypoint_pick_callable('_autolabos_entrypoint_one_run', 'run_one_condition_seed', 'execute_one_run', 'run_condition')",
+        "    persist = _entrypoint_pick_callable('_autolabos_entrypoint_persist_raw_records', 'persist_raw_records', 'record_raw_evidence')",
+        "    aggregate = _entrypoint_pick_callable('_autolabos_entrypoint_aggregate', 'aggregate_final_metrics', 'aggregate_metrics', 'build_metrics_payload')",
+        "    ctx = _entrypoint_call(preflight, args=args, public_dir=PUBLIC_DIR, run_artifact_dir=RUN_ARTIFACT_DIR, metrics_path=METRICS_PATH, device=DEVICE)",
+        "    raw_records = []",
+        "    for index, item in enumerate(ctx.get('run_plan') or []):",
+        "        result = _entrypoint_call(one_run, plan_item=item, condition=item, args=args, runtime=ctx, runtime_context=ctx, task_bundle=ctx.get('task_bundle'), index=index)",
+        "        raw_records.append(_entrypoint_call(persist, result=result, row=result, plan_item=item, raw_records=raw_records, args=args, runtime=ctx, public_dir=PUBLIC_DIR, run_artifact_dir=RUN_ARTIFACT_DIR))",
+        "    payload = _entrypoint_call(aggregate, rows=raw_records, raw_records=raw_records, run_results=raw_records, args=args, runtime=ctx, metrics_path=METRICS_PATH, public_dir=PUBLIC_DIR, run_artifact_dir=RUN_ARTIFACT_DIR)",
+        "    _entrypoint_write_metrics(payload)",
+        "    return 0 if payload.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", outputDir], {
+        cwd: workspace,
+        stdio: "pipe"
+      })
+    ).toThrow(/missing required entrypoint helper/);
+
+    const repair = await repairPythonEntrypointPickCallableHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_pick_callable_helper_alias_marker");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", outputDir], {
+      cwd: workspace,
+      stdio: "pipe"
+    });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.success).toBe(true);
+    expect(metrics.completed_run_count).toBe(2);
+  });
+
+  it("bridges success metrics payload builders into call-first aggregation dispatchers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-success-metrics-call-first-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "condition_sweep_runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "BASELINE_CONDITION_MARKER = 'baseline_condition'",
+        "OBJECTIVE_METRIC_KEY = 'average_score'",
+        "",
+        "def build_success_metrics_payload(records, baseline_marker=None, metric_key='average_score', metadata=None):",
+        "    rows = list(records)",
+        "    failed = [row for row in rows if row.get('status') == 'failed']",
+        "    return {",
+        "        'status': 'failed' if failed else 'completed',",
+        "        'success': not failed,",
+        "        'condition_results': rows,",
+        "        'completed_run_count': len(rows) - len(failed),",
+        "        'failed_run_count': len(failed),",
+        "        'baseline_marker': baseline_marker,",
+        "        'metric_key': metric_key,",
+        "        'metadata': metadata or {},",
+        "    }",
+        "",
+        "def _call_first(names, *args, **kwargs):",
+        "    last_error = None",
+        "    for name in names:",
+        "        fn = globals().get(name)",
+        "        if not callable(fn):",
+        "            continue",
+        "        try:",
+        "            return fn(*args, **kwargs)",
+        "        except TypeError as exc:",
+        "            last_error = exc",
+        "    if last_error is not None:",
+        "        raise last_error",
+        "    raise RuntimeError(f'none of the expected functions are defined: {names}')",
+        "",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    return parser.parse_args(argv)",
+        "",
+        "def run_experiments():",
+        "    args = parse_args()",
+        "    runtime = {'baseline_marker': BASELINE_CONDITION_MARKER}",
+        "    rows = [",
+        "        {'condition_marker': 'baseline_condition', 'seed': 1, 'status': 'completed', 'success': True, 'average_score': 0.5},",
+        "        {'condition_marker': 'candidate_condition', 'seed': 1, 'status': 'completed', 'success': True, 'average_score': 0.7},",
+        "    ]",
+        "    payload = _call_first(",
+        "        ['aggregate_metrics', 'build_metrics_payload', 'summarize_metrics', 'finalize_metrics'],",
+        "        runtime,",
+        "        rows,",
+        "        runtime=runtime,",
+        "        condition_results=rows,",
+        "        rows=rows,",
+        "        raw_records=rows,",
+        "    )",
+        "    Path(args.metrics_path).parent.mkdir(parents=True, exist_ok=True)",
+        "    Path(args.metrics_path).write_text(json.dumps(payload, sort_keys=True) + '\\n', encoding='utf-8')",
+        "    return payload",
+        "",
+        "if __name__ == '__main__':",
+        "    payload = run_experiments()",
+        "    raise SystemExit(0 if payload.get('status') == 'completed' else 1)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], {
+        cwd: workspace,
+        stdio: "pipe"
+      })
+    ).toThrow(/none of the expected functions/);
+
+    const repair = await repairPythonCallFirstSuccessMetricsPayloadAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_call_first_success_metrics_payload_alias_marker");
+    expect(repairedSource).toContain("def build_metrics_payload(*positional, **keyword):");
+    expect(repairedSource).toContain("aggregate_metrics = build_metrics_payload");
+
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], {
+      cwd: workspace,
+      stdio: "pipe"
+    });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.success).toBe(true);
+    expect(metrics.completed_run_count).toBe(2);
+    expect(metrics.condition_results.map((item: { condition_marker: string }) => item.condition_marker)).toEqual([
+      "baseline_condition",
+      "candidate_condition"
+    ]);
+    expect(metrics.metadata.entrypoint_bridge).toBe("_autolabos_call_first_success_metrics_payload_alias_marker");
+  });
+
+  it("repairs final handoff wrappers whose run-one alias misses concrete single-condition helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-one-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "CONDITIONS = [",
+        "    {'condition_marker': 'baseline_condition'},",
+        "    {'condition_marker': 'candidate_condition'},",
+        "]",
+        "",
+        "def run_single_condition(condition=None, seed=None, **context):",
+        "    marker = condition.get('condition_marker', 'condition') if hasattr(condition, 'get') else 'condition'",
+        "    return {'condition_marker': marker, 'seed': seed, 'status': 'completed', 'success': True, 'accuracy': 0.75 if marker == 'candidate_condition' else 0.5}",
+        "",
+        "run_condition = run_single_condition",
+        "",
+        "def _autolabos_lookup(*names):",
+        "    for name in names:",
+        "        fn = globals().get(name)",
+        "        if callable(fn):",
+        "            return fn",
+        "    return None",
+        "",
+        "def _autolabos_invoke(func, **kwargs):",
+        "    signature = inspect.signature(func)",
+        "    if any(p.kind == p.VAR_KEYWORD for p in signature.parameters.values()):",
+        "        return func(**kwargs)",
+        "    return func(**{key: value for key, value in kwargs.items() if key in signature.parameters})",
+        "",
+        "def run_experiment(argv=None, args=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    parsed, _ = parser.parse_known_args(argv)",
+        "    run_one = _autolabos_lookup('_autolabos_entrypoint_run_one', 'run_one_condition_seed', 'run_condition_seed', 'execute_condition_seed')",
+        "    if not callable(run_one):",
+        "        raise RuntimeError('No single-run helper found for condition execution')",
+        "    rows = []",
+        "    for condition in CONDITIONS:",
+        "        rows.append(_autolabos_invoke(run_one, condition=condition, seed=7, args=parsed, runtime={'source': 'test'}))",
+        "    payload = {'status': 'completed', 'success': True, 'condition_results': rows, 'completed_run_count': len(rows)}",
+        "    Path(parsed.metrics_path).write_text(json.dumps(payload, sort_keys=True) + '\\n', encoding='utf-8')",
+        "    return payload",
+        "",
+        "def main(argv=None):",
+        "    run_experiment(argv)",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], {
+        cwd: workspace,
+        stdio: "pipe"
+      })
+    ).toThrow(/No single-run helper found/);
+
+    const repair = await repairPythonEntrypointRunOneHelperAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_run_one_helper_alias_marker");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], {
+      cwd: workspace,
+      stdio: "pipe"
+    });
+    const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.success).toBe(true);
+    expect(metrics.completed_run_count).toBe(2);
+  });
+
   it("repairs failure-safe pipeline entrypoints whose pipeline alias is missing", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-pipeline-alias-"));
     tempDirs.push(workspace);
@@ -26083,6 +27878,54 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(path.join(workspace, "logs", "progress.jsonl"), "utf8")).toBe("ok\n");
   });
 
+  it("preserves module docstrings and future imports when adding runtime path coercion", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-path-future-import-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        '"""Generic generated runner."""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "from dataclasses import dataclass",
+        "import json",
+        "",
+        "@dataclass",
+        "class RuntimeContext:",
+        "    public_dir: object",
+        "",
+        "def materialize_dataset_bundle(runtime: RuntimeContext) -> None:",
+        "    summary_path = runtime.public_dir / 'dataset_summary.json'",
+        "    summary_path.parent.mkdir(parents=True, exist_ok=True)",
+        "    summary_path.write_text(json.dumps({'status': 'completed'}), encoding='utf-8')",
+        "",
+        "if __name__ == '__main__':",
+        "    materialize_dataset_bundle(RuntimeContext(public_dir='outputs'))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonRuntimePathAttributeCoercionSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toMatch(
+      /^"""Generic generated runner\."""\n\nfrom __future__ import annotations[\s\S]*_autolabos_runtime_path_attr_marker/u
+    );
+    expect(repairedSource.indexOf("from __future__ import annotations")).toBeLessThan(
+      repairedSource.indexOf("def _autolabos_runtime_path_attr")
+    );
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    const summary = JSON.parse(
+      readFileSync(path.join(workspace, "outputs", "dataset_summary.json"), "utf8")
+    );
+    expect(summary).toMatchObject({ status: "completed" });
+  });
+
   it("repairs command_tokens metadata when main bypasses parse_cli_args", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-command-tokens-repair-"));
     tempDirs.push(workspace);
@@ -26926,6 +28769,104 @@ describe("ImplementSessionManager", () => {
     const repair = await repairPythonCompletedMetricsReplayEntrypointSurface(scriptPath);
 
     expect(repair.repaired).toBe(false);
+    expect(existsSync(outputMetricsPath)).toBe(false);
+  });
+
+  it("replays completed public metrics when they match the approved condition contract", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "autolabos-replay-contract-match-"));
+    tempDirs.push(root);
+    const publicDir = path.join(root, "public");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const outputMetricsPath = path.join(root, "run", "metrics.json");
+    writeFileSync(
+      path.join(publicDir, "metrics.json"),
+      JSON.stringify({
+        status: "completed",
+        success: true,
+        completed_run_count: 4,
+        completed_condition_count: 2,
+        raw_condition_results: [
+          { condition_marker: "baseline_condition", seed: 1, status: "completed", accuracy: 0.5 },
+          { condition_marker: "baseline_condition", seed: 2, status: "completed", accuracy: 0.5 },
+          { condition_marker: "candidate_condition_a", seed: 1, status: "completed", accuracy: 0.6 },
+          { condition_marker: "candidate_condition_a", seed: 2, status: "completed", accuracy: 0.6 }
+        ]
+      }),
+      "utf8"
+    );
+    writeFileSync(
+      scriptPath,
+      ["# BEGIN AUTOLABOS SECTION chunk_1 :: parser only", "def parse_args():", "    return None", ""].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonCompletedMetricsReplayEntrypointSurface(scriptPath, {
+      required_condition_count: 2,
+      required_run_count: 4,
+      seed_schedule: [1, 2],
+      minimum_seeds_per_condition: 2,
+      baseline_condition_marker: "baseline_condition",
+      tuned_only: true,
+      required_condition_markers: ["baseline_condition", "candidate_condition_a"],
+      notes: []
+    });
+
+    expect(repair.repaired).toBe(true);
+    execFileSync("python3", [scriptPath, "--metrics-path", outputMetricsPath, "--public-dir", publicDir], {
+      cwd: publicDir,
+      stdio: "pipe"
+    });
+    const metrics = JSON.parse(readFileSync(outputMetricsPath, "utf8"));
+    expect(metrics.status).toBe("completed");
+    expect(metrics.success).toBe(true);
+    expect(metrics.recovery_mode).toBe("completed_metrics_replay");
+  });
+
+  it("does not replay completed public metrics that drift from the approved condition contract", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "autolabos-replay-contract-drift-"));
+    tempDirs.push(root);
+    const publicDir = path.join(root, "public");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const outputMetricsPath = path.join(root, "run", "metrics.json");
+    writeFileSync(
+      path.join(publicDir, "metrics.json"),
+      JSON.stringify({
+        status: "completed",
+        success: true,
+        completed_run_count: 6,
+        completed_condition_count: 3,
+        raw_condition_results: [
+          { condition_marker: "baseline_condition", seed: 1, status: "completed", accuracy: 0.5 },
+          { condition_marker: "baseline_condition", seed: 2, status: "completed", accuracy: 0.5 },
+          { condition_marker: "candidate_condition_a", seed: 1, status: "completed", accuracy: 0.6 },
+          { condition_marker: "candidate_condition_a", seed: 2, status: "completed", accuracy: 0.6 },
+          { condition_marker: "candidate_condition_b", seed: 1, status: "completed", accuracy: 0.7 },
+          { condition_marker: "candidate_condition_b", seed: 2, status: "completed", accuracy: 0.7 }
+        ]
+      }),
+      "utf8"
+    );
+    writeFileSync(
+      scriptPath,
+      ["# BEGIN AUTOLABOS SECTION chunk_1 :: parser only", "def parse_args():", "    return None", ""].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonCompletedMetricsReplayEntrypointSurface(scriptPath, {
+      required_condition_count: 2,
+      required_run_count: 4,
+      seed_schedule: [1, 2],
+      minimum_seeds_per_condition: 2,
+      baseline_condition_marker: "baseline_condition",
+      tuned_only: true,
+      required_condition_markers: ["baseline_condition", "candidate_condition_a"],
+      notes: []
+    });
+
+    expect(repair.repaired).toBe(false);
+    expect(readFileSync(scriptPath, "utf8")).toContain("AUTOLABOS SECTION");
     expect(existsSync(outputMetricsPath)).toBe(false);
   });
 
@@ -42877,6 +44818,82 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [returnCleanupScriptPath], { cwd: workspace });
   });
 
+  it("scrubs generated model execution records before retaining run records", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-record-live-handle-cleanup-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "",
+        "run_records = []",
+        "persisted_records = []",
+        "",
+        "class LiveHandle:",
+        "    pass",
+        "",
+        "class RunRuntime:",
+        "    def __init__(self):",
+        "        self.adapter_dir = Path('candidate_artifact')",
+        "    def to_record(self):",
+        "        return {'condition_marker': 'candidate_condition_a', 'seed': 7}",
+        "",
+        "def persist_model_run_record(record):",
+        "    assert 'model' not in record",
+        "    assert 'tokenizer' not in record",
+        "    assert record['adapter_dir'].endswith('candidate_artifact')",
+        "    persisted_records.append(dict(record))",
+        "",
+        "def execute_single_condition_run():",
+        "    mrr = RunRuntime()",
+        "    model_id = 'candidate-backbone'",
+        "    model = LiveHandle()",
+        "    tokenizer = LiveHandle()",
+        "    return mrr.to_record() | {",
+        "            \"status\": \"completed_training\",",
+        "            \"selected_model_id\": model_id,",
+        "            \"adapter_path\": str(mrr.adapter_dir),",
+        "            \"train_loss\": 0.1,",
+        "            \"train_metrics\": {},",
+        "            \"wall_time_sec\": 0.1,",
+        "            \"peak_vram_bytes\": 0,",
+        "            \"task_metrics\": {},",
+        "            \"model\": model,",
+        "            \"tokenizer\": tokenizer,",
+        "        }",
+        "",
+        "def run_model_execution_stage():",
+        "    rec = execute_single_condition_run()",
+        "    run_records.append(dict(rec))",
+        "    persist_model_run_record(record=rec)",
+        "",
+        "if __name__ == '__main__':",
+        "    run_model_execution_stage()",
+        "    assert 'model' not in run_records[0]",
+        "    assert 'tokenizer' not in run_records[0]",
+        "    assert run_records[0]['adapter_dir'].endswith('candidate_artifact')",
+        "    assert run_records[0]['artifact_dir'].endswith('candidate_artifact')",
+        "    assert run_records[0]['base_model_id'] == 'candidate-backbone'",
+        "    assert persisted_records[0]['adapter_dir'].endswith('candidate_artifact')",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+    const repair = await repairPythonEntrypointConditionRuntimeCleanupSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_model_execution_run_record_live_handle_cleanup");
+    expect(repairedSource).toContain("_autolabos_model_execution_training_record_artifact_alias_surface");
+    expect(repairedSource).not.toContain("\"model\": model");
+    expect(repairedSource).not.toContain("\"tokenizer\": tokenizer");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+
   it("normalizes generated save_pretrained dtype fields before serialization", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-save-pretrained-dtype-"));
     tempDirs.push(workspace);
@@ -43294,6 +45311,49 @@ describe("ImplementSessionManager", () => {
       repairedSource.indexOf("class RuntimeConfig")
     );
     execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("wraps predeclared class default factories before handoff validation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-predeclared-class-default-factory-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass, field",
+        "from pathlib import Path",
+        "",
+        "@dataclass",
+        "class RuntimePaths:",
+        "    root: Path = Path('outputs')",
+        "",
+        "@dataclass",
+        "class RuntimeConfig:",
+        "    paths: RuntimePaths = field(default_factory=RuntimePaths)",
+        "",
+        "if __name__ == '__main__':",
+        "    assert str(RuntimeConfig().paths.root) == 'outputs'",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    const repair = await repairPythonUnresolvedDataclassDefaultFactorySurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("def _autolabos_runtime_paths_default_factory():");
+    expect(repairedSource).toContain("field(default_factory=_autolabos_runtime_paths_default_factory)");
+    expect(repairedSource).not.toContain("field(default_factory=RuntimePaths)");
+    expect(repairedSource.indexOf("def _autolabos_runtime_paths_default_factory")).toBeLessThan(
+      repairedSource.indexOf("class RuntimeConfig")
+    );
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+
+    const secondRepair = await repairPythonUnresolvedDataclassDefaultFactorySurface(scriptPath);
+    expect(secondRepair.repaired).toBe(false);
   });
 
   it("materializes spaced dataclass default factories before class bodies execute", async () => {
@@ -53756,6 +55816,330 @@ describe("ImplementSessionManager", () => {
     });
     expect(JSON.parse(readFileSync(path.join(workspace, "preflight-called.json"), "utf8"))).toMatchObject({
       model_name: "model-family-small"
+    });
+  });
+
+  it("repairs generated model-execution dependency preflight aliases", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-model-execution-preflight-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "",
+        "class RuntimeConfig:",
+        "    def __init__(self, model_name='model-family-small'):",
+        "        self.model_name = model_name",
+        "",
+        "def _call_named(names, **kwargs):",
+        "    for name in names:",
+        "        fn = globals().get(name)",
+        "        if callable(fn):",
+        "            return fn(**kwargs)",
+        "    raise RuntimeError(f'missing required helper; tried {list(names)}')",
+        "",
+        "def preflight_model_execution_dependencies(runtime):",
+        "    Path('preflight-called.json').write_text(json.dumps({'model_name': runtime.model_name}), encoding='utf-8')",
+        "    return {'ok': True, 'selected_model': runtime.model_name}",
+        "",
+        "def run_model_execution_stage(runtime=None):",
+        "    runtime = runtime or RuntimeConfig()",
+        "    return _call_named(",
+        "        ('preflight_model_dependencies', 'select_model_dependency', 'preflight_model_assets', 'run_model_preflight'),",
+        "        runtime=runtime,",
+        "        runtime_config=runtime,",
+        "    )",
+        "",
+        "def main() -> int:",
+        "    payload = run_model_execution_stage(RuntimeConfig())",
+        "    Path('result.json').write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "    return 0 if payload.get('ok') else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing required helper/
+    );
+
+    const repair = await repairPythonModelPreflightAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_model_preflight_alias_surface");
+    expect(repairedSource).toContain("preflight_model_execution_dependencies");
+    expect(repairedSource).toContain("select_model_dependency = run_model_preflight");
+    expect(repairedSource).toContain("preflight_model_assets = run_model_preflight");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "result.json"), "utf8"))).toMatchObject({
+      ok: true,
+      selected_model: "model-family-small"
+    });
+    expect(JSON.parse(readFileSync(path.join(workspace, "preflight-called.json"), "utf8"))).toMatchObject({
+      model_name: "model-family-small"
+    });
+  });
+
+  it("normalizes successful model preflight status strings before dependency gating", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-model-preflight-status-normalization-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    const resultPath = path.join(workspace, "result.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "",
+        "class RuntimeConfig:",
+        "    def __init__(self, model_name='model-family-small'):",
+        "        self.model_name = model_name",
+        "        self.partial_metrics_path = Path('partial_metrics.json')",
+        "",
+        "def preflight_model_dependencies(runtime):",
+        "    return {'status': 'ok', 'failure_code': None, 'selected_model_id': runtime.model_name}",
+        "",
+        "def run_model_execution_stage(runtime):",
+        "    preflight = preflight_model_dependencies(runtime)",
+        "    if not bool(preflight.get(\"ok\", preflight.get(\"available\", False))):",
+        "        return {'status': 'dependency_failed', 'preflight': preflight, 'completed_run_count': 0}",
+        "    return {'status': 'completed', 'preflight': preflight, 'completed_run_count': 1}",
+        "",
+        "def main() -> int:",
+        "    payload = run_model_execution_stage(RuntimeConfig())",
+        "    Path('result.json').write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "    return 0 if payload.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+    expect(JSON.parse(readFileSync(resultPath, "utf8"))).toMatchObject({
+      status: "dependency_failed",
+      completed_run_count: 0
+    });
+
+    const repair = await repairPythonModelPreflightStatusNormalizationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_model_preflight_status_normalization_surface");
+    expect(repairedSource).toContain("def _autolabos_model_preflight_is_available");
+    expect(repairedSource).toContain("if not _autolabos_model_preflight_is_available(preflight):");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(resultPath, "utf8"))).toMatchObject({
+      status: "completed",
+      completed_run_count: 1,
+      preflight: { status: "ok", selected_model_id: "model-family-small" }
+    });
+  });
+
+  it("bridges generated run plan item object access before condition execution", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-plan-object-access-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    const resultPath = path.join(workspace, "result.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "",
+        "SEED_SCHEDULE = [7]",
+        "EVALUATABLE_STATUSES = {'completed'}",
+        "",
+        "@dataclass",
+        "class ConditionRunPlanItem:",
+        "    condition: dict",
+        "    seed: int",
+        "",
+        "def build_ordered_run_plan():",
+        "    return [ConditionRunPlanItem({'marker': 'candidate_condition'}, 7)]",
+        "",
+        "def summarize_condition(condition):",
+        "    marker = str(condition[\"marker\"])",
+        "    return marker",
+        "",
+        "def run_model_execution_stage():",
+        "    plan = build_ordered_run_plan()",
+        "    run_records = []",
+        "    for item in list(plan):",
+        "        condition = item.get(\"condition\", item) if isinstance(item, dict) else item[0]",
+        "        seed = int(item.get(\"seed\", SEED_SCHEDULE[0]) if isinstance(item, dict) else item[1])",
+        "        marker = str(condition[\"marker\"])",
+        "        run_records.append({'status': 'completed', 'condition_marker': marker, 'seed': seed})",
+        "    completed = [r for r in run_records if str(r.get('status')) in EVALUATABLE_STATUSES]",
+        "    return {'status': 'completed' if completed else 'failed', 'run_records': run_records, 'completed_run_count': len(completed)}",
+        "",
+        "def main() -> int:",
+        "    payload = run_model_execution_stage()",
+        "    Path('result.json').write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "    return 0 if payload.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/not subscriptable/);
+
+    const repair = await repairPythonRunPlanItemObjectAccessSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_run_plan_item_object_access_surface");
+    expect(repairedSource).toContain("condition = _autolabos_run_plan_condition(item)");
+    expect(repairedSource).toContain("seed = int(_autolabos_run_plan_seed(item, SEED_SCHEDULE[0]))");
+    expect(repairedSource).toContain("marker = str(_autolabos_condition_marker_value(condition))");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(resultPath, "utf8"))).toMatchObject({
+      status: "completed",
+      completed_run_count: 1,
+      run_records: [{ condition_marker: "candidate_condition", seed: 7, status: "completed" }]
+    });
+  });
+
+  it("aliases generated model-execution aggregate helper names to existing row aggregation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-aggregate-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    const resultPath = path.join(workspace, "result.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "",
+        "EVALUATABLE_STATUSES = {'completed'}",
+        "FAILED_STATUSES = {'failed'}",
+        "REQUIRED_RUN_COUNT = 1",
+        "",
+        "def _call_named(candidates, **kwargs):",
+        "    for name in candidates:",
+        "        fn = globals().get(name)",
+        "        if callable(fn):",
+        "            return fn(**kwargs)",
+        "    raise RuntimeError(f'missing required helper; tried {list(candidates)}')",
+        "",
+        "def aggregate_execution_rows(rows):",
+        "    rows = list(rows or [])",
+        "    return {'condition_aggregates': [{'condition_marker': 'generic_condition', 'run_count': len(rows)}], 'completed_training_run_count': len(rows)}",
+        "",
+        "def run_model_execution_stage():",
+        "    run_records = [{'status': 'completed', 'condition_marker': 'generic_condition', 'seed': 11}]",
+        "    aggregates = _call_named(",
+        "        ('aggregate_model_execution_results', 'aggregate_training_records', 'aggregate_condition_training_results'),",
+        "        run_records=run_records,",
+        "        records=run_records,",
+        "    )",
+        "    condition_states = list(aggregates.get('condition_states', aggregates.get('condition_results', [])))",
+        "    return {'status': 'completed' if condition_states else 'failed', 'condition_states': condition_states, 'training_aggregates': aggregates, 'completed_run_count': aggregates.get('completed_run_count')}",
+        "",
+        "def main() -> int:",
+        "    payload = run_model_execution_stage()",
+        "    Path('result.json').write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "    return 0 if payload.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/missing required helper/);
+
+    const repair = await repairPythonModelExecutionAggregateAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_model_execution_aggregate_alias_surface");
+    expect(repairedSource).toContain("def aggregate_model_execution_results");
+    expect(repairedSource).toContain("def aggregate_training_records");
+    expect(repairedSource).toContain("def aggregate_condition_training_results");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(resultPath, "utf8"))).toMatchObject({
+      status: "completed",
+      completed_run_count: 1,
+      condition_states: [{ condition_marker: "generic_condition", run_count: 1 }]
+    });
+  });
+
+  it("aliases task bundles into generated model-execution single-condition workers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-single-condition-data-bundle-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
+    const resultPath = path.join(workspace, "result.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def _call_named(candidates, **kwargs):",
+        "    for name in candidates:",
+        "        fn = globals().get(name)",
+        "        if callable(fn):",
+        "            sig = inspect.signature(fn)",
+        "            accepted = {k: v for k, v in kwargs.items() if k in sig.parameters}",
+        "            return fn(**accepted)",
+        "    raise RuntimeError('missing helper')",
+        "",
+        "def execute_single_condition_run(runtime, condition, seed, data_bundle):",
+        "    return {'status': 'completed', 'condition_marker': condition['marker'], 'seed': seed, 'train_count': len(data_bundle['train_examples'])}",
+        "",
+        "def run_model_execution_stage(runtime=None, task_bundle=None):",
+        "    condition = {'marker': 'generic_condition'}",
+        "    seed = 11",
+        "    rec = _call_named(",
+        "        ('execute_single_condition_run', 'run_single_condition', 'execute_one_model_run', 'run_condition_seed'),",
+        "        runtime=runtime,",
+        "        runtime_config=runtime,",
+        "        task_bundle=task_bundle,",
+        "        condition=condition,",
+        "        seed=seed,",
+        "    )",
+        "    return {'status': rec.get('status'), 'run_records': [rec]}",
+        "",
+        "def main() -> int:",
+        "    payload = run_model_execution_stage(task_bundle={'train_examples': ['a', 'b']})",
+        "    Path('result.json').write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "    return 0 if payload.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/data_bundle/);
+
+    const repair = await repairPythonModelExecutionSingleConditionDataBundleAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_model_execution_single_condition_data_bundle_alias_surface");
+    expect(repairedSource).toContain("data_bundle=task_bundle");
+    expect(repairedSource).toContain("dataset_bundle=task_bundle");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(resultPath, "utf8"))).toMatchObject({
+      status: "completed",
+      run_records: [{ condition_marker: "generic_condition", seed: 11, train_count: 2 }]
     });
   });
 

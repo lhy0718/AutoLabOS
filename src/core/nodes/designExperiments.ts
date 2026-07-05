@@ -237,6 +237,26 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         "design_experiments_panel/selection.json",
         `${JSON.stringify(panelResult.selection, null, 2)}\n`
       );
+      await runContextMemory.put("design_experiments.panel_selection", panelResult.selection);
+      if (panelResult.selection.mode === "all_blocked_fallback") {
+        const blockedCandidates = panelResult.selection.scores.filter((score) => score.blocked_by.length > 0);
+        const blockingReviewers = uniqueStrings(
+          blockedCandidates.flatMap((score) => score.blocked_by.map((reviewer) => String(reviewer)))
+        );
+        const message =
+          `Experiment design panel blocked progression: all ${normalizedCandidates.length} candidate(s) were hard-blocked. ` +
+          `Least-bad candidate "${panelResult.selected.title}" was preserved for inspection but is not approved for implementation handoff. ` +
+          `Blocking reviewer(s): ${blockingReviewers.join(", ") || "unknown"}.`;
+        emitLog(message);
+        await runContextMemory.put("design_experiments.paper_scale_blocked", true);
+        await runContextMemory.put("design_experiments.blocked_reason", message);
+        return {
+          status: "failure",
+          error: message,
+          summary: message,
+          toolCallsUsed: 1
+        };
+      }
       const comparisonContract = buildExperimentComparisonContract({
         run,
         selectedDesign: panelResult.selected,
@@ -449,7 +469,6 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       await runContextMemory.put("design_experiments.summary", design.summary);
       await runContextMemory.put("design_experiments.hypothesis_count", filtered.kept.length);
       await runContextMemory.put("design_experiments.filtered_out_count", filtered.dropped.length);
-      await runContextMemory.put("design_experiments.panel_selection", panelResult.selection);
       const publicOutputs = await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
@@ -733,7 +752,12 @@ function buildPlanYaml(args: {
             previous_objective_status: args.retryContext.previous_objective_status,
             implementation_failure: args.retryContext.implementation_failure,
             transition_action: args.retryContext.transition_action,
-            transition_reason: args.retryContext.transition_reason
+            transition_reason: args.retryContext.transition_reason,
+            run_verifier_failure_code: args.retryContext.run_verifier_failure_code,
+            run_verifier_repair_target: args.retryContext.run_verifier_repair_target,
+            run_verifier_recommended_backtrack_node: args.retryContext.run_verifier_recommended_backtrack_node,
+            run_verifier_upstream_repair_hint: args.retryContext.run_verifier_upstream_repair_hint,
+            run_verifier_operator_action_required: args.retryContext.run_verifier_operator_action_required
           },
           1
         )
@@ -868,18 +892,20 @@ function renderShortlistedDesigns(candidates: ExperimentDesignCandidate[]): stri
 
 async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext | undefined> {
   const runDir = path.join(".autolabos", "runs", runId);
-  const [resultRaw, transitionRaw, runRecordRaw] = await Promise.all([
+  const [resultRaw, transitionRaw, runRecordRaw, runVerifierRaw] = await Promise.all([
     safeRead(path.join(runDir, "result_analysis.json")),
     safeRead(path.join(runDir, "transition_recommendation.json")),
-    safeRead(path.join(runDir, "run_record.json"))
+    safeRead(path.join(runDir, "run_record.json")),
+    safeRead(path.join(runDir, "run_experiments_verify_report.json"))
   ]);
-  if (!resultRaw && !transitionRaw && !runRecordRaw) {
+  if (!resultRaw && !transitionRaw && !runRecordRaw && !runVerifierRaw) {
     return undefined;
   }
 
   const resultAnalysis = parseJsonRecord(resultRaw);
   const transition = parseJsonRecord(transitionRaw);
   const runRecord = parseJsonRecord(runRecordRaw);
+  const runVerifier = parseJsonRecord(runVerifierRaw);
   const transitionAction = stringValue(transition?.action);
   const transitionTarget = stringValue(transition?.targetNode);
   if (transitionAction && transitionAction !== "backtrack_to_design" && transitionTarget && transitionTarget !== "design_experiments") {
@@ -896,6 +922,17 @@ async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext
   const nodeStates = recordValue(recordValue(runRecord?.graph)?.nodeStates);
   const implementationNode = recordValue(nodeStates?.implement_experiments);
   const implementationFailure = stringValue(implementationNode?.lastError) || stringValue(implementationNode?.note);
+  const runVerifierStatus = stringValue(runVerifier?.status);
+  const runVerifierFailed = runVerifierStatus === "fail";
+  const runVerifierFailureCode = runVerifierFailed ? stringValue(runVerifier?.failure_code) : undefined;
+  const runVerifierRepairTarget = runVerifierFailed ? stringValue(runVerifier?.repair_target) : undefined;
+  const runVerifierRecommendedBacktrackNode = runVerifierFailed
+    ? stringValue(runVerifier?.recommended_backtrack_node)
+    : undefined;
+  const runVerifierUpstreamRepairHint = runVerifierFailed ? stringValue(runVerifier?.upstream_repair_hint) : undefined;
+  const runVerifierOperatorActionRequired = runVerifierFailed
+    ? booleanValue(runVerifier?.operator_action_required)
+    : undefined;
 
   const context: DesignRetryContext = {
     previous_selected_design_title: stringValue(selectedDesign?.title),
@@ -911,6 +948,11 @@ async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext
     transition_action: transitionAction,
     transition_reason: stringValue(transition?.reason),
     transition_evidence: stringArrayValue(transition?.evidence),
+    run_verifier_failure_code: runVerifierFailureCode,
+    run_verifier_repair_target: runVerifierRepairTarget,
+    run_verifier_recommended_backtrack_node: runVerifierRecommendedBacktrackNode,
+    run_verifier_upstream_repair_hint: runVerifierUpstreamRepairHint,
+    run_verifier_operator_action_required: runVerifierOperatorActionRequired,
     retry_directives: buildRetryDirectives({
       previousPilotSize: numberValue(scope?.pilot_size),
       previousRepeats: numberValue(scope?.repeats),
@@ -919,11 +961,15 @@ async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext
       previousPrimaryMetricName: stringValue(primaryMetric?.name),
       previousPrimaryMetricValue: numberValue(primaryMetric?.value),
       previousBaselineName: stringValue(primaryMetric?.baseline_name),
-      implementationFailure: stringValue(implementationNode?.status) === "failed" ? implementationFailure : undefined
+      implementationFailure: stringValue(implementationNode?.status) === "failed" ? implementationFailure : undefined,
+      runVerifierFailureCode,
+      runVerifierRepairTarget,
+      runVerifierUpstreamRepairHint,
+      runVerifierOperatorActionRequired
     })
   };
 
-  return context.retry_directives.length > 0 || context.transition_reason || context.transition_evidence?.length
+  return context.retry_directives.length > 0 || context.transition_reason || context.transition_evidence?.length || context.run_verifier_failure_code || context.run_verifier_repair_target
     ? context
     : undefined;
 }
@@ -937,6 +983,10 @@ function buildRetryDirectives(args: {
   previousPrimaryMetricValue?: number;
   previousBaselineName?: string;
   implementationFailure?: string;
+  runVerifierFailureCode?: string;
+  runVerifierRepairTarget?: string;
+  runVerifierUpstreamRepairHint?: string;
+  runVerifierOperatorActionRequired?: boolean;
 }): string[] {
   const directives: string[] = [];
   if (
@@ -966,6 +1016,20 @@ function buildRetryDirectives(args: {
   if (args.implementationFailure) {
     directives.push("Repair the failed implementation handoff before broadening the experiment: require a tiny executable entrypoint, helper-module decomposition, and metrics-payload validation before repeated-condition expansion.");
   }
+  if (
+    args.runVerifierFailureCode === "model_dependency_unavailable" ||
+    args.runVerifierRepairTarget === "environment_dependency"
+  ) {
+    directives.push(
+      "Do not repeat a design that depends on an unavailable model/tokenizer asset; select an explicitly available local dependency or mark the run dependency-blocked before implementation."
+    );
+    if (args.runVerifierOperatorActionRequired) {
+      directives.push("Treat the dependency repair as operator-gated until the required asset is prewarmed or the design selects a known available substitute.");
+    }
+    if (args.runVerifierUpstreamRepairHint) {
+      directives.push(`Dependency repair hint: ${truncateRetryDirective(args.runVerifierUpstreamRepairHint)}`);
+    }
+  }
   directives.push("Keep the explicit comparator discipline and preserve the locked baselines unless there is direct evidence to replace them.");
   return uniqueStrings(directives);
 }
@@ -992,6 +1056,18 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function truncateRetryDirective(value: string, maxLength = 220): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
 function stringArrayValue(value: unknown): string[] | undefined {

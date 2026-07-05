@@ -204,10 +204,13 @@ export function evaluateBriefEvidenceAgainstResults(input: {
     },
     {
       id: "analysis_evidence_gaps_clear",
-      label: "Analyze-results did not flag unresolved evidence-scale or blocking scope gaps",
+      label: "Unresolved evidence-scale or blocking scope gaps remain",
       severity: "error",
       passed: evidenceGapCount === 0 && scopeLimitCount === 0,
-      detail: `Observed blocking evidence_gap=${evidenceGapCount}, blocking scope_limit=${scopeLimitCount}.`
+      detail:
+        evidenceGapCount === 0 && scopeLimitCount === 0
+          ? "No blocking evidence_gap or scope_limit findings remain in analyze_results."
+          : `Analyze-results flagged blocking evidence_gap=${evidenceGapCount}, blocking scope_limit=${scopeLimitCount}; resolve or explicitly downgrade before paper-scale progression.`
     }
   ];
 

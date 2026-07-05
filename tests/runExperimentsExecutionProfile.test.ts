@@ -3604,6 +3604,145 @@ describe("run_experiments execution profile behavior", () => {
     expect(verifierReport.suggested_next_action).toContain("Repair data materialization before retrying");
   });
 
+  it('promotes raw evidence path model-load failures into dependency blocker feedback', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'autolabos-run-raw-model-load-evidence-'));
+    process.chdir(root);
+    const run = makeRun('run-raw-model-load-evidence');
+    run.objectiveMetric = 'quality_delta >= 0.1';
+    const runDir = path.join(root, '.autolabos', 'runs', run.id);
+    await mkdir(path.join(runDir, 'memory'), { recursive: true });
+
+    const rawEvidencePath = path.join(root, 'raw_condition_seed_records.jsonl');
+    const rawRows = [
+      { condition: 'baseline_condition', seed: 1, stage: 'model_load', status: 'failed' },
+      { condition: 'baseline_condition', seed: 2, stage: 'model_load', status: 'failed' },
+      { condition: 'candidate_condition_a', seed: 1, stage: 'model_load', status: 'failed' },
+      { condition: 'candidate_condition_a', seed: 2, stage: 'model_load', status: 'failed' }
+    ].map((row) => ({
+      ...row,
+      model_load_errors: {
+        'neutral-model/local-base': 'ModuleNotFoundError: Could not import module ExampleTokenizerDependency. Are this objects requirements defined correctly?'
+      }
+    }));
+
+    const runContext = new RunContextMemory(path.join(runDir, 'memory', 'run_context.json'));
+    await runContext.put('implement_experiments.run_command', 'python3 experiment.py');
+    await runContext.put('implement_experiments.cwd', root);
+    await runContext.put('implement_experiments.metrics_path', '.autolabos/runs/' + run.id + '/metrics.json');
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: 'local',
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            rawEvidencePath,
+            rawRows.map((row) => JSON.stringify({ record: row, time: 1 })).join('\n') + '\n',
+            'utf8'
+          );
+          await writeFile(
+            path.join(runDir, 'metrics.json'),
+            JSON.stringify(
+              {
+                status: 'completed',
+                success: true,
+                primary_metric_key: 'quality_delta',
+                quality_delta: null,
+                completed_condition_count: 0,
+                required_condition_count: 2,
+                completed_run_count: 0,
+                required_run_count: 4,
+                raw_evidence_path: rawEvidencePath,
+                condition_results: [
+                  { condition_marker: 'baseline_condition', status: 'failed' },
+                  { condition_marker: 'candidate_condition_a', status: 'failed' }
+                ]
+              },
+              null,
+              2
+            ),
+            'utf8'
+          );
+          return {
+            status: 'ok' as const,
+            stdout: 'experiment command completed',
+            stderr: '',
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: 'ok' as const,
+          stdout: '',
+          stderr: '',
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe('failure');
+    expect(result.error).toContain('Experiment dependency blocker');
+    expect(result.error).toContain('model asset required model/tokenizer asset could not be loaded');
+    expect(result.error).toContain('No condition metrics were accepted as evidence');
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, 'run_experiments_verify_report.json'), 'utf8')
+    ) as {
+      status: string;
+      stage: string;
+      summary: string;
+      suggested_next_action?: string;
+      failure_code?: string;
+      repair_target?: string;
+      recommended_backtrack_node?: string;
+      upstream_repair_hint?: string;
+      operator_action_required?: boolean;
+    };
+    expect(verifierReport).toMatchObject({
+      status: 'fail',
+      stage: 'metrics',
+      failure_code: 'model_dependency_unavailable',
+      repair_target: 'environment_dependency',
+      recommended_backtrack_node: 'design_experiments',
+      operator_action_required: true
+    });
+    expect(verifierReport.summary).toContain('Experiment dependency blocker');
+    expect(verifierReport.suggested_next_action).toContain('Prewarm or make the required experiment dependency available');
+    expect(verifierReport.upstream_repair_hint).toContain('select an available local model');
+
+    const triage = JSON.parse(
+      await readFile(path.join(runDir, 'run_experiments_panel', 'triage.json'), 'utf8')
+    ) as { final_category?: string };
+    expect(triage.final_category).toBe('dependency_blocker');
+
+    const feedback = await runContext.get<{
+      status: string;
+      stage: string;
+      summary: string;
+      failure_code?: string;
+      repair_target?: string;
+      recommended_backtrack_node?: string;
+    }>('implement_experiments.runner_feedback');
+    expect(feedback?.summary).toContain('Experiment dependency blocker');
+    expect(feedback?.failure_code).toBe('model_dependency_unavailable');
+    expect(feedback?.repair_target).toBe('environment_dependency');
+    expect(feedback?.recommended_backtrack_node).toBe('design_experiments');
+  });
+
   it("blocks canonical skeleton-only Python runners before executing stale metrics", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-skeleton-preflight-"));
     process.chdir(root);

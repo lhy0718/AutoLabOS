@@ -73,6 +73,9 @@ import {
   repairPythonEvaluationArtifactDirReloadSurface,
   repairPythonEntrypointLookupHelperAliasSurface,
   repairPythonEntrypointParseArgsSingleArgumentSurface,
+  repairPythonEntrypointRuntimePlanBuilderSurface,
+  repairPythonEntrypointAggregatePayloadBuilderCandidateSurface,
+  repairPythonEntrypointOrderedPlanDataBundleSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
   repairPythonMainMetricsRawResultsAliasSurface,
   repairPythonMainMetricsPayloadBuilderCallSurface,
@@ -1213,6 +1216,11 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             throw new Error("metrics.json must decode to an object");
           }
           parsedMetrics = parsed as Record<string, unknown>;
+          await enrichMetricsWithRawConditionEvidence({
+            metrics: parsedMetrics,
+            metricsPath: resolved.metricsPath,
+            workspaceRoot: process.cwd()
+          });
           const runtimeMetadataPromotion = await enrichMetricsWithPythonRuntimeDefaults({
             metrics: parsedMetrics,
             command: primaryCommand,
@@ -1804,7 +1812,7 @@ function detectZeroExitRuntimeFailure(stderr: string): string | undefined {
   if (!normalized) {
     return undefined;
   }
-  const fatalPattern = /(?:Experiment execution failed before normal finalization|Traceback \(most recent call last\)|(?:TypeError|RuntimeError|ValueError|AttributeError|ModuleNotFoundError|ImportError):)/u;
+  const fatalPattern = /\b(?:Traceback|Error|Exception|RuntimeError|ValueError|TypeError|ImportError|ModuleNotFoundError|AssertionError)\b/iu;
   if (!fatalPattern.test(normalized)) {
     return undefined;
   }
@@ -2785,6 +2793,9 @@ function isFailedConditionStatus(status: string): boolean {
 
 function conditionResultNestedRecords(row: Record<string, unknown>): Array<Record<string, unknown>> {
   return [
+    asRecord(row.record),
+    asRecord(row.raw_record),
+    asRecord(row.evidence_record),
     asRecord(row.condition),
     asRecord(row.train_result),
     asRecord(row.training_result),
@@ -2920,9 +2931,31 @@ function conditionResultMarker(row: Record<string, unknown>): string | undefined
   );
 }
 
+function conditionResultModelLoadReason(row: Record<string, unknown>): string | undefined {
+  const errors = asRecord(row.model_load_errors);
+  const entries = Object.entries(errors)
+    .map(([modelId, message]) => {
+      const text = asString(message) || JSON.stringify(message);
+      return text ? modelId + ': ' + text : undefined;
+    })
+    .filter((entry): entry is string => Boolean(entry))
+    .slice(0, 2);
+  if (entries.length === 0) {
+    return undefined;
+  }
+  const stage = asString(row.stage) || asString(row.failure_stage) || 'model_load';
+  return stage + ': ' + entries.join(' | ');
+}
+
 function conditionResultReason(row: Record<string, unknown>): string | undefined {
-  const candidates: unknown[] = [row.reason, row.failure_reason, row.error_message, row.message];
-  if (typeof row.error === "string") {
+  const candidates: unknown[] = [
+    row.reason,
+    row.failure_reason,
+    row.error_message,
+    row.message,
+    conditionResultModelLoadReason(row)
+  ];
+  if (typeof row.error === 'string') {
     candidates.push(row.error);
   }
   for (const nested of conditionResultNestedRecords(row)) {
@@ -2933,7 +2966,8 @@ function conditionResultReason(row: Record<string, unknown>): string | undefined
       nested.message,
       nested.error,
       nested.failure,
-      nested.failure_type
+      nested.failure_type,
+      conditionResultModelLoadReason(nested)
     );
   }
   for (const candidate of candidates) {
@@ -2990,7 +3024,8 @@ function summarizeSeedFailureMessages(metrics: Record<string, unknown>): string[
       asString(row.error_message) ||
       asString(row.error) ||
       asString(row.message) ||
-      asString(row.failure_reason);
+      asString(row.failure_reason) ||
+      conditionResultReason(row);
     if (!message) {
       continue;
     }
@@ -3013,8 +3048,12 @@ function detectConditionDependencyBlocker(metrics: Record<string, unknown>): str
   const conditionRows = [
     ...collectConditionRows(metrics.condition_results),
     ...collectConditionRows(metrics.conditions),
+    ...collectConditionRows(metrics.raw_condition_results),
+    ...collectConditionRows(metrics.condition_seed_rows),
     ...collectConditionRows(asRecord(metrics.study).condition_results),
-    ...collectConditionRows(asRecord(metrics.study).conditions)
+    ...collectConditionRows(asRecord(metrics.study).conditions),
+    ...collectConditionRows(asRecord(metrics.study).raw_condition_results),
+    ...collectConditionRows(asRecord(metrics.study).condition_seed_rows)
   ];
   if (conditionRows.length === 0) {
     return null;
@@ -3027,7 +3066,9 @@ function detectConditionDependencyBlocker(metrics: Record<string, unknown>): str
     return null;
   }
 
-  const messages = failedRows.flatMap((row) => collectDiagnosticStrings(row));
+  const messages = failedRows.flatMap((row) =>
+    [...collectDiagnosticStrings(row), conditionResultReason(row)].filter((message): message is string => Boolean(message))
+  );
   const combined = messages.join("\n");
   if (!isModelDependencyFailure(combined)) {
     return null;
@@ -3075,6 +3116,8 @@ function collectDiagnosticStrings(value: unknown, depth = 0): string[] {
 function isModelDependencyFailure(message: string): boolean {
   return (
     /can't\s+load\s+the\s+(?:configuration|config|tokenizer|model)\b/iu.test(message) ||
+    /\bModuleNotFoundError\b[\s\S]{0,220}(?:Tokenizer|AutoTokenizer|AutoModel|transformers|requirements defined corr)/iu.test(message) ||
+    /Could not import module[\s\S]{0,180}(?:Tokenizer|Model|requirements defined corr)/iu.test(message) ||
     /\bfrom_pretrained\b/iu.test(message) ||
     /\b(?:hugging\s*face|transformers)\b[\s\S]{0,160}\b(?:cache|config|tokenizer|model|download|access)\b/iu.test(message) ||
     /\bconfig\.json\b/iu.test(message) ||
@@ -4445,6 +4488,39 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
       ) || `Repaired entrypoint CLI argv dispatch in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
+  const entrypointRuntimePlanBuilderRepair =
+    await repairPythonEntrypointRuntimePlanBuilderSurface(scriptPath);
+  if (entrypointRuntimePlanBuilderRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointRuntimePlanBuilderRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Materialized runtime context before ordered-plan entrypoint dispatch in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const entrypointAggregatePayloadBuilderCandidateRepair =
+    await repairPythonEntrypointAggregatePayloadBuilderCandidateSurface(scriptPath);
+  if (entrypointAggregatePayloadBuilderCandidateRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointAggregatePayloadBuilderCandidateRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Added existing metrics payload builders to final aggregation entrypoint candidates in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const entrypointOrderedPlanDataBundleRepair =
+    await repairPythonEntrypointOrderedPlanDataBundleSurface(scriptPath);
+  if (entrypointOrderedPlanDataBundleRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointOrderedPlanDataBundleRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Materialized data bundle aliases for ordered-plan condition runners in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
   const publicStudyTopLevelRunnerAliasRepair =
     await repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPath);
   if (publicStudyTopLevelRunnerAliasRepair.repaired) {
@@ -5302,6 +5378,102 @@ function extractPythonScriptPathFromCommand(command: string, cwd: string): strin
   return path.isAbsolute(candidate) ? candidate : path.join(cwd, candidate);
 }
 
+async function enrichMetricsWithRawConditionEvidence(input: {
+  metrics: Record<string, unknown>;
+  metricsPath: string;
+  workspaceRoot: string;
+}): Promise<number> {
+  const rawPath = rawConditionEvidencePath(input.metrics);
+  if (!rawPath) {
+    return 0;
+  }
+  const resolved = resolveMaybeRelative(rawPath, path.dirname(input.metricsPath));
+  if (!resolved || !isLocalEvidencePath(resolved, [path.dirname(input.metricsPath), input.workspaceRoot])) {
+    return 0;
+  }
+
+  let raw = '';
+  try {
+    const stat = await fs.stat(resolved);
+    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) {
+      return 0;
+    }
+    raw = await fs.readFile(resolved, 'utf8');
+  } catch {
+    return 0;
+  }
+
+  const rows = parseRawConditionEvidenceJsonl(raw).slice(0, 256);
+  if (rows.length === 0) {
+    return 0;
+  }
+
+  if (!Array.isArray(input.metrics.condition_seed_rows) || input.metrics.condition_seed_rows.length === 0) {
+    input.metrics.condition_seed_rows = rows;
+  }
+
+  let enriched = 0;
+  for (const summary of collectConditionRows(input.metrics.condition_results)) {
+    if (conditionResultReason(summary)) {
+      continue;
+    }
+    const id = conditionResultId(summary);
+    const matchingRaw = rows.find((row) => id && conditionResultId(row) === id) || rows[0];
+    const reason = conditionResultReason(matchingRaw);
+    if (!reason) {
+      continue;
+    }
+    summary.failure_reason = reason;
+    const stage = asString(matchingRaw.stage) || asString(matchingRaw.failure_stage);
+    if (stage && !asString(summary.failure_stage)) {
+      summary.failure_stage = stage;
+    }
+    enriched += 1;
+  }
+
+  if (enriched > 0) {
+    input.metrics.raw_condition_evidence_path = resolved;
+  }
+  return rows.length;
+}
+
+function rawConditionEvidencePath(metrics: Record<string, unknown>): string | undefined {
+  return (
+    asString(metrics.raw_evidence_path) ||
+    asString(metrics.raw_condition_results_path) ||
+    asString(metrics.condition_seed_results_path) ||
+    asString(metrics.per_seed_results_path)
+  );
+}
+
+function parseRawConditionEvidenceJsonl(raw: string): Array<Record<string, unknown>> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (const line of raw.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      const record = asRecord(parsed);
+      const nestedRecord = asRecord(record.record);
+      rows.push(Object.keys(nestedRecord).length > 0 ? nestedRecord : record);
+    } catch {
+      continue;
+    }
+  }
+  return rows;
+}
+
+function isLocalEvidencePath(filePath: string, roots: string[]): boolean {
+  const resolved = path.resolve(filePath);
+  return roots.some((root) => {
+    const resolvedRoot = path.resolve(root);
+    const relative = path.relative(resolvedRoot, resolved);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  });
+}
+
 async function enrichMetricsWithPythonRuntimeDefaults(input: {
   metrics: Record<string, unknown>;
   command: string;
@@ -6139,7 +6311,20 @@ function buildRunVerifierReport(input: {
   stderr?: string;
   logFile?: string;
   suggestedNextAction?: string;
+  failureCode?: RunVerifierReport["failure_code"];
+  repairTarget?: RunVerifierReport["repair_target"];
+  recommendedBacktrackNode?: RunVerifierReport["recommended_backtrack_node"];
+  upstreamRepairHint?: string;
+  operatorActionRequired?: boolean;
 }): RunVerifierReport {
+  const inferredDependencyBlocker = isRunVerifierDependencyBlocker(input.summary, input.stderr, input.suggestedNextAction);
+  const failureCode = input.failureCode || (inferredDependencyBlocker ? "model_dependency_unavailable" : undefined);
+  const repairTarget = input.repairTarget || (inferredDependencyBlocker ? "environment_dependency" : undefined);
+  const recommendedBacktrackNode = input.recommendedBacktrackNode || (inferredDependencyBlocker ? "design_experiments" : undefined);
+  const upstreamRepairHint = input.upstreamRepairHint || (inferredDependencyBlocker
+    ? "If the model/tokenizer assets cannot be made available in this environment, backtrack to design_experiments and select an available local model or explicitly mark the run as dependency-blocked; do not retry the same implementation unchanged."
+    : undefined);
+  const operatorActionRequired = input.operatorActionRequired ?? (inferredDependencyBlocker ? true : undefined);
   return {
     source: "run_experiments",
     status: input.status,
@@ -6156,8 +6341,18 @@ function buildRunVerifierReport(input: {
     stderr_excerpt: trimExcerpt(input.stderr),
     log_file: input.logFile,
     suggested_next_action: input.suggestedNextAction,
+    failure_code: failureCode,
+    repair_target: repairTarget,
+    recommended_backtrack_node: recommendedBacktrackNode,
+    upstream_repair_hint: upstreamRepairHint,
+    operator_action_required: operatorActionRequired,
     recorded_at: new Date().toISOString()
   };
+}
+
+function isRunVerifierDependencyBlocker(...parts: Array<string | undefined>): boolean {
+  const text = parts.filter((part): part is string => Boolean(part)).join("\n");
+  return /Experiment dependency blocker:/iu.test(text);
 }
 
 async function persistRunVerifierReport(

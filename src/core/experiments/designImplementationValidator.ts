@@ -208,6 +208,10 @@ export async function validateDesignImplementationAlignment(input: {
   };
 }
 
+export function isParameterizedConditionFamilyMarker(marker: string): boolean {
+  return /^.+?_in_.+?_x_.+?_in_.+$/u.test(marker);
+}
+
 export function validateVerificationCommandSurface(input: {
   comparisonContract?: ExperimentComparisonContract;
   verificationCommand: string;
@@ -355,6 +359,19 @@ function validatePlannedConditionImplementationSurface(input: {
 
   const requiredConditionCount = normalizePositiveInteger(input.contract.required_condition_count);
   if (requiredConditionCount !== undefined) {
+    const markerCountCanRepresentRequiredCount =
+      requiredMarkers.length === 0 ||
+      requiredMarkers.length >= requiredConditionCount ||
+      requiredMarkers.some((marker) => isParameterizedConditionFamilyMarker(marker));
+    if (!markerCountCanRepresentRequiredCount) {
+      findings.push({
+        code: "PLANNED_CONDITION_MARKER_COUNT_INCOMPLETE",
+        severity: "block",
+        message:
+          "The approved design contract declares more required conditions than its concrete or parameterized marker list can represent.",
+        evidence: `required_markers=${requiredMarkers.length}; required=${requiredConditionCount}`
+      });
+    }
     const declaredConditionCount = extractDeclaredConditionCount(implementationSignal, requiredMarkers);
     if (declaredConditionCount !== undefined && declaredConditionCount < requiredConditionCount) {
       findings.push({
@@ -877,10 +894,13 @@ function findMissingGenericCallableResolverEvidence(scriptText: string, runComma
     const candidates = extractPythonStringLiterals(windowText)
       .filter((literal) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(literal))
       .filter((literal) => literal.includes("_"))
-      .filter((literal) => !/^(?:__main__|args|available|candidate_names|purpose)$/u.test(literal));
+      .filter((literal) => !isPythonDunderAttributeLiteral(literal))
+      .filter((literal) => !/^(?:args|available|candidate_names|purpose|store|store_true|store_false|store_const|append|append_const|count|extend|version)$/u.test(literal));
+    const extractedPurpose = extractGenericCallableResolverPurpose(windowText);
     const purpose =
-      extractGenericCallableResolverPurpose(windowText) ||
-      (/\bruntime\s+context\s+resolution\b/iu.test(windowText) ? "runtime context resolution" : "required callable");
+      extractedPurpose && !isPythonDunderAttributeLiteral(extractedPurpose)
+        ? extractedPurpose
+        : (/\bruntime\s+context\s+resolution\b/iu.test(windowText) ? "runtime context resolution" : "required callable");
     const uniqueCandidates = dedupeStrings(candidates);
     if (uniqueCandidates.length === 0) {
       continue;
@@ -926,6 +946,10 @@ function extractGenericCallableResolverPurpose(windowText: string): string | und
     /purpose\s*=\s*["']([^"']{3,80})["']/iu.exec(windowText) ||
     /,\s*["']([^"']{3,80})["']\s*\)/u.exec(windowText);
   return purposeMatch?.[1]?.replace(/\s+/gu, " ").trim();
+}
+
+function isPythonDunderAttributeLiteral(value: string): boolean {
+  return /^__[A-Za-z_][A-Za-z0-9_]*__$/u.test(value);
 }
 
 function findUnsafeArgparseEmptyNumericDefaultEvidence(scriptText: string, runCommand: string): string | undefined {

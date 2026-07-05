@@ -179,6 +179,191 @@ def helper_timeout_message(node: str, timeout: float, max_wall_seconds: float | 
     return f"P6 helper timed out waiting for {node} stop boundary after {int(effective_timeout)} seconds."
 
 
+def relative_existing_files(root: Path, directory_name: str) -> list[str]:
+    directory = root / directory_name
+    if not directory.exists():
+        return []
+    paths: list[str] = []
+    for item in sorted(directory.rglob("*")):
+        if not item.is_file():
+            continue
+        relative_parts = item.relative_to(directory).parts
+        if "__pycache__" in relative_parts or item.suffix == ".pyc" or item.name.endswith("__candidate.py"):
+            continue
+        paths.append(str(item.relative_to(root)))
+    return paths
+
+
+def split_completed_and_incomplete_artifacts(paths: list[str]) -> tuple[list[str], list[str]]:
+    completed: list[str] = []
+    incomplete: list[str] = []
+    for item in paths:
+        name = Path(item).name
+        if name.endswith("_error.txt") or name.endswith("_partial_on_error.txt") or "_error" in name:
+            incomplete.append(item)
+        else:
+            completed.append(item)
+    return completed, incomplete
+
+
+def strip_staged_artifact_error_suffix(name: str) -> str:
+    for suffix in ("_partial_on_error.txt", "_local_utility_error.txt", "_error.txt", ".txt"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def infer_staged_artifact_section_id(relative_path: str) -> str | None:
+    stem = strip_staged_artifact_error_suffix(Path(relative_path).name)
+    if "__" in stem:
+        stem = stem.split("__", 1)[1]
+    if "__d" in stem:
+        stem = stem.split("__d", 1)[0]
+    return stem or None
+
+
+def prompt_for_incomplete_staged_artifact(relative_path: str, chunk_prompt_paths: list[str]) -> str | None:
+    prompt_candidate = f"unit_chunk_prompts/{strip_staged_artifact_error_suffix(Path(relative_path).name)}.txt"
+    return prompt_candidate if prompt_candidate in set(chunk_prompt_paths) else None
+
+
+def completed_staged_section_ids(completed_sections: list[str]) -> set[str]:
+    ids: set[str] = set()
+    for item in completed_sections:
+        section_id = infer_staged_artifact_section_id(item)
+        if section_id:
+            ids.add(section_id)
+    return ids
+
+
+def staged_section_is_resolved(section_id: str | None, completed_section_ids: set[str]) -> bool:
+    if not section_id:
+        return False
+    if section_id in completed_section_ids:
+        return True
+    return any(section_id.startswith(f"{completed_id}_part_") for completed_id in completed_section_ids)
+
+
+def unresolved_staged_artifacts(incomplete_artifacts: list[str], completed_section_ids: set[str]) -> list[str]:
+    return [
+        item
+        for item in incomplete_artifacts
+        if not staged_section_is_resolved(infer_staged_artifact_section_id(item), completed_section_ids)
+    ]
+
+
+def pending_staged_prompts(chunk_prompt_paths: list[str], completed_section_ids: set[str]) -> list[str]:
+    return [
+        item
+        for item in chunk_prompt_paths
+        if not staged_section_is_resolved(infer_staged_artifact_section_id(item), completed_section_ids)
+    ]
+
+
+def build_staged_llm_resume_boundary(
+    incomplete_artifacts: list[str],
+    chunk_prompt_paths: list[str],
+    completed_section_ids: set[str],
+) -> dict:
+    unresolved_artifacts = unresolved_staged_artifacts(incomplete_artifacts, completed_section_ids)
+    boundary = {"incomplete_or_failed_artifact_count": len(unresolved_artifacts)}
+    if unresolved_artifacts:
+        next_artifact = unresolved_artifacts[0]
+        boundary["next_unfinished_artifact"] = next_artifact
+        section_id = infer_staged_artifact_section_id(next_artifact)
+        if section_id:
+            boundary["next_unfinished_section_id"] = section_id
+        prompt_path = prompt_for_incomplete_staged_artifact(next_artifact, chunk_prompt_paths)
+        if prompt_path:
+            boundary["next_unfinished_prompt"] = prompt_path
+        return boundary
+    pending_prompts = pending_staged_prompts(chunk_prompt_paths, completed_section_ids)
+    if pending_prompts:
+        next_prompt = pending_prompts[0]
+        section_id = infer_staged_artifact_section_id(next_prompt)
+        if section_id:
+            boundary["next_unfinished_section_id"] = section_id
+        boundary["next_unfinished_prompt"] = next_prompt
+    return boundary
+
+
+def latest_progress_index(node_dir: Path) -> int | None:
+    progress_path = node_dir / "progress.jsonl"
+    if not progress_path.exists():
+        return None
+    latest: int | None = None
+    try:
+        for line in progress_path.read_text(encoding="utf-8").splitlines():
+            try:
+                payload = json.loads(line)
+            except Exception:
+                continue
+            index = payload.get("index")
+            if isinstance(index, int):
+                latest = index if latest is None else max(latest, index)
+    except Exception:
+        return latest
+    return latest
+
+
+def build_staged_llm_resume_manifest(run_dir: Path, node: str, message: str, now: str) -> dict | None:
+    if node != "implement_experiments":
+        return None
+    node_dir = run_dir / node
+    if not node_dir.exists():
+        return None
+    chunk_response_paths = relative_existing_files(node_dir, "unit_chunk_responses")
+    section_paths = relative_existing_files(node_dir, "unit_sections")
+    chunk_prompt_paths = relative_existing_files(node_dir, "unit_chunk_prompts")
+    completed_chunk_responses, incomplete_chunk_artifacts = split_completed_and_incomplete_artifacts(chunk_response_paths)
+    completed_sections, incomplete_section_artifacts = split_completed_and_incomplete_artifacts(section_paths)
+    incomplete_artifacts = incomplete_chunk_artifacts + incomplete_section_artifacts
+    completed_section_ids = completed_staged_section_ids(completed_sections)
+    unresolved_incomplete_artifacts = unresolved_staged_artifacts(incomplete_artifacts, completed_section_ids)
+    if not (completed_chunk_responses or completed_sections or unresolved_incomplete_artifacts or pending_staged_prompts(chunk_prompt_paths, completed_section_ids)):
+        return None
+    manifest = {
+        "status": "resumable",
+        "reason": "p6_helper_timeout",
+        "node": node,
+        "message": message,
+        "updatedAt": now,
+        "latest_progress_index": latest_progress_index(node_dir),
+        "completed_chunk_responses": completed_chunk_responses,
+        "completed_sections": completed_sections,
+        "chunk_prompts": chunk_prompt_paths,
+        "incomplete_or_failed_artifacts": unresolved_incomplete_artifacts,
+        "recommended_resume_action": "retry implement_experiments with staged materialization resume support; do not discard completed chunks if the regenerated plan matches this manifest",
+    }
+    manifest.update(build_staged_llm_resume_boundary(incomplete_artifacts, chunk_prompt_paths, completed_section_ids))
+    return manifest
+
+
+def persist_staged_llm_resume_manifest(run_dir: Path, node: str, message: str, now: str) -> Path | None:
+    manifest = build_staged_llm_resume_manifest(run_dir, node, message, now)
+    if not manifest:
+        return None
+    manifest_path = run_dir / node / "staged_llm_resume_manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(manifest_path, manifest)
+    return manifest_path
+
+
+def can_persist_helper_timeout_boundary(record: dict, node: str) -> bool:
+    if current_node(record) != node:
+        return False
+    state = node_state(record, node)
+    record_status = str(record.get("status") or "")
+    node_status = str(state.get("status") or "")
+    if record_status == "running" and node_status == "running":
+        return True
+    # Observe-only helpers can time out and terminate their TUI attach process
+    # just as the runtime rewrites the target node back to a paused/pending
+    # projection. That is still the helper timeout boundary we need to make
+    # durable, provided the target remains the current node.
+    return record_status == "paused" and node_status in {"pending", "running"}
+
+
 def persist_helper_timeout_boundary(workspace: Path, run_id: str, node: str, message: str) -> bool:
     run_dir = workspace / ".autolabos" / "runs" / run_id
     record_path = run_dir / "run_record.json"
@@ -186,11 +371,9 @@ def persist_helper_timeout_boundary(workspace: Path, run_id: str, node: str, mes
         record = json.loads(record_path.read_text(encoding="utf-8"))
     except Exception:
         return False
-    if current_node(record) != node:
+    if not can_persist_helper_timeout_boundary(record, node):
         return False
     state = node_state(record, node)
-    if record.get("status") != "running" or state.get("status") != "running":
-        return False
     now = iso_now()
     record["status"] = "paused"
     record["updatedAt"] = now
@@ -219,15 +402,31 @@ def persist_helper_timeout_boundary(workspace: Path, run_id: str, node: str, mes
             "updatedAt": now,
         })
         write_json_atomic(status_path, status_record)
+    resume_manifest_path = persist_staged_llm_resume_manifest(run_dir, node, message, now)
     diagnostic_path = run_dir / node / "p6_helper_timeout.json"
     diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(diagnostic_path, {
+    diagnostic_payload = {
         "status": "failed",
         "reason": "p6_helper_timeout",
         "node": node,
         "message": message,
         "updatedAt": now,
-    })
+    }
+    if resume_manifest_path is not None:
+        diagnostic_payload["resume_manifest"] = str(resume_manifest_path.relative_to(run_dir))
+        try:
+            resume_manifest = json.loads(resume_manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            resume_manifest = {}
+        for key in (
+            "next_unfinished_artifact",
+            "next_unfinished_section_id",
+            "next_unfinished_prompt",
+            "incomplete_or_failed_artifact_count",
+        ):
+            if resume_manifest.get(key) is not None:
+                diagnostic_payload[key] = resume_manifest.get(key)
+    write_json_atomic(diagnostic_path, diagnostic_payload)
     return True
 
 
@@ -911,6 +1110,53 @@ def run_selftest() -> int:
             return 1
     with tempfile.TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir)
+        timeout_run_id = "observe-timeout-boundary"
+        timeout_node = "implement_experiments"
+        record_dir = workspace / ".autolabos" / "runs" / timeout_run_id
+        node_dir = record_dir / timeout_node
+        (node_dir / "unit_chunk_responses").mkdir(parents=True)
+        (node_dir / "unit_sections").mkdir(parents=True)
+        (node_dir / "unit_chunk_prompts").mkdir(parents=True)
+        (node_dir / "unit_chunk_responses" / "artifact__chunk_1.txt").write_text("ok", encoding="utf-8")
+        (node_dir / "unit_chunk_responses" / "artifact__chunk_2_error.txt").write_text("timeout", encoding="utf-8")
+        (node_dir / "unit_chunk_prompts" / "artifact__chunk_2.txt").write_text("prompt", encoding="utf-8")
+        (node_dir / "unit_sections" / "artifact__chunk_1.txt").write_text("def ok():\n    return True\n", encoding="utf-8")
+        (record_dir / "run_record.json").write_text(json.dumps({
+            "status": "paused",
+            "currentNode": timeout_node,
+            "graph": {
+                "currentNode": timeout_node,
+                "nodeStates": {
+                    timeout_node: {"status": "pending", "updatedAt": "before"},
+                }
+            },
+        }), encoding="utf-8")
+        (node_dir / "status.json").write_text(json.dumps({
+            "status": "pending",
+            "stage": "codex",
+            "message": "reattached helper timed out",
+        }), encoding="utf-8")
+        if not persist_helper_timeout_boundary(workspace, timeout_run_id, timeout_node, "observe helper timeout"):
+            print("FAIL: observe-only helper timeout boundary was not persisted")
+            return 1
+        observe_record = json.loads((record_dir / "run_record.json").read_text(encoding="utf-8"))
+        observe_state = observe_record["graph"]["nodeStates"][timeout_node]
+        if observe_record.get("status") != "paused" or observe_state.get("status") != "failed":
+            print("FAIL: observe-only helper timeout did not fail the paused target node")
+            return 1
+        observe_manifest_path = node_dir / "staged_llm_resume_manifest.json"
+        if not observe_manifest_path.exists():
+            print("FAIL: observe-only helper timeout did not write a staged_llm resume manifest")
+            return 1
+        observe_diagnostic = json.loads((node_dir / "p6_helper_timeout.json").read_text(encoding="utf-8"))
+        if observe_diagnostic.get("resume_manifest") != "implement_experiments/staged_llm_resume_manifest.json":
+            print("FAIL: observe-only helper timeout diagnostic did not link the resume manifest")
+            return 1
+        if observe_diagnostic.get("next_unfinished_section_id") != "chunk_2":
+            print("FAIL: observe-only helper timeout diagnostic did not expose the next unfinished section")
+            return 1
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
         streaming_run_id = "streaming-boundary"
         streaming_node = "run_experiments"
         record_dir = workspace / ".autolabos" / "runs" / streaming_run_id
@@ -1276,6 +1522,87 @@ def run_selftest() -> int:
     return 0
 
 
+def run_resume_manifest_selftest() -> int:
+    with tempfile.TemporaryDirectory(prefix="autolabos-p6-resume-manifest-") as tmp:
+        run_dir = Path(tmp) / ".autolabos" / "runs" / "run-p6"
+        node_dir = run_dir / "implement_experiments"
+        response_dir = node_dir / "unit_chunk_responses"
+        section_dir = node_dir / "unit_sections"
+        prompt_dir = node_dir / "unit_chunk_prompts"
+        response_dir.mkdir(parents=True)
+        section_dir.mkdir(parents=True)
+        prompt_dir.mkdir(parents=True)
+        (response_dir / "artifact__chunk_1.txt").write_text("ok", encoding="utf-8")
+        (response_dir / "artifact__chunk_2_error.txt").write_text("timeout", encoding="utf-8")
+        (response_dir / "artifact__chunk_2_partial_on_error.txt").write_text("partial", encoding="utf-8")
+        (section_dir / "artifact__chunk_1.txt").write_text("def ok():\n    return True\n", encoding="utf-8")
+        (section_dir / "artifact__chunk_1__candidate.py").write_text("def ok():\n    return True\n", encoding="utf-8")
+        (section_dir / "__pycache__").mkdir()
+        (section_dir / "__pycache__" / "artifact__chunk_1.cpython-313.pyc").write_bytes(b"cache")
+        (prompt_dir / "artifact__chunk_1.txt").write_text("prompt", encoding="utf-8")
+        (prompt_dir / "artifact__chunk_2.txt").write_text("prompt", encoding="utf-8")
+        (node_dir / "progress.jsonl").write_text('{"index": 7, "message": "chunk done"}\n', encoding="utf-8")
+        manifest_path = persist_staged_llm_resume_manifest(
+            run_dir,
+            "implement_experiments",
+            "timeout",
+            "2026-07-05T00:00:00Z",
+        )
+        if manifest_path is None or not manifest_path.exists():
+            print("FAIL: resume manifest was not written")
+            return 1
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("status") != "resumable":
+            print("FAIL: resume manifest status was not resumable")
+            return 1
+        if manifest.get("latest_progress_index") != 7:
+            print("FAIL: resume manifest did not capture latest progress index")
+            return 1
+        if "unit_chunk_responses/artifact__chunk_1.txt" not in manifest.get("completed_chunk_responses", []):
+            print("FAIL: resume manifest did not capture completed chunk response")
+            return 1
+        if "unit_chunk_responses/artifact__chunk_2_error.txt" not in manifest.get("incomplete_or_failed_artifacts", []):
+            print("FAIL: resume manifest did not capture incomplete artifact")
+            return 1
+        if manifest.get("next_unfinished_section_id") != "chunk_2":
+            print("FAIL: resume manifest did not expose the next unfinished section")
+            return 1
+        if manifest.get("next_unfinished_prompt") != "unit_chunk_prompts/artifact__chunk_2.txt":
+            print("FAIL: resume manifest did not link the next unfinished prompt")
+            return 1
+        (section_dir / "artifact__chunk_2.txt").write_text("def recovered():\n    return True\n", encoding="utf-8")
+        (response_dir / "artifact__chunk_2_part_1_error.txt").write_text("subdivision timeout", encoding="utf-8")
+        (prompt_dir / "artifact__chunk_2_part_1.txt").write_text("prompt", encoding="utf-8")
+        (prompt_dir / "artifact__chunk_3.txt").write_text("prompt", encoding="utf-8")
+        manifest_path = persist_staged_llm_resume_manifest(
+            run_dir,
+            "implement_experiments",
+            "timeout",
+            "2026-07-05T00:00:01Z",
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if "unit_chunk_responses/artifact__chunk_2_error.txt" in manifest.get("incomplete_or_failed_artifacts", []):
+            print("FAIL: resume manifest kept stale incomplete artifact for a completed section")
+            return 1
+        if "unit_chunk_responses/artifact__chunk_2_part_1_error.txt" in manifest.get("incomplete_or_failed_artifacts", []):
+            print("FAIL: resume manifest kept stale sub-part artifact for a completed parent section")
+            return 1
+        if manifest.get("next_unfinished_section_id") != "chunk_3":
+            print("FAIL: resume manifest did not advance to the prompt-only unfinished section")
+            return 1
+        if manifest.get("next_unfinished_prompt") != "unit_chunk_prompts/artifact__chunk_3.txt":
+            print("FAIL: resume manifest did not link the prompt-only unfinished section")
+            return 1
+        if any(
+            "__pycache__" in item or item.endswith(".pyc") or item.endswith("__candidate.py")
+            for item in manifest.get("completed_sections", [])
+        ):
+            print("FAIL: resume manifest leaked derived Python cache or candidate artifacts")
+            return 1
+    print("PASS: p6 staged_llm resume manifest self-test")
+    return 0
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     default_workspace = repo_root.parent / ".autolabos-validation" / "p6-paper-ready-live"
@@ -1460,4 +1787,6 @@ def main() -> int:
 if __name__ == "__main__":
     if os.environ.get("AUTOLABOS_P6_CONTINUE_SELFTEST") == "1":
         raise SystemExit(run_selftest())
+    if os.environ.get("AUTOLABOS_P6_RESUME_MANIFEST_SELFTEST") == "1":
+        raise SystemExit(run_resume_manifest_selftest())
     raise SystemExit(main())

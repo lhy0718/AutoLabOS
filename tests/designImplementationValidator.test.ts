@@ -1322,6 +1322,69 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("blocks planned contracts whose marker list cannot represent the required condition count", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-incomplete-marker-count-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-incomplete-marker-count", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = ('baseline_condition', 'candidate_condition_a')",
+        "REQUIRED_CONDITION_COUNT = 4",
+        "REQUIRED_RUN_COUNT = 32",
+        "def run_study():",
+        "    return {'status': 'completed'}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-incomplete-marker-count", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "plan_selected",
+        hypothesis_ids: ["h1"],
+        baselines: ["baseline_condition"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = await validateDesignImplementationAlignment({
+      comparisonContract: contract,
+      plannedConditionContract: {
+        required_condition_count: 4,
+        required_run_count: 32,
+        seed_schedule: [42, 43, 44, 45, 46, 47, 48, 49],
+        baseline_condition_marker: "baseline_condition",
+        required_condition_markers: ["baseline_condition", "candidate_condition_a"]
+      },
+      attempt: {
+        runCommand: "python3 " + JSON.stringify(scriptPath) + " --metrics-path " + JSON.stringify(metricsPath),
+        testCommand: "python3 -m py_compile " + JSON.stringify(scriptPath),
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_CONDITION_MARKER_COUNT_INCOMPLETE",
+          severity: "block",
+          evidence: "required_markers=2; required=4"
+        })
+      ])
+    );
+  });
+
   it("blocks planned runners whose execution loop resolver raises the runnable-helper variant", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-runnable-helper-"));
     tempDirs.push(workspace);
@@ -1547,6 +1610,141 @@ describe("validateDesignImplementationAlignment", () => {
           code: "PLANNED_RUNTIME_CALLABLE_RESOLVER_TARGET_MISSING",
           severity: "block",
           evidence: expect.stringContaining("resolve_execution_context")
+        })
+      ])
+    );
+  });
+
+  it("does not treat argparse action strings as missing callable resolver candidates", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-argparse-action-literal-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-argparse-action-literal", "metrics.json");
+    const markers = ["baseline_condition", "candidate_condition"];
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = (\'baseline_condition\', \'candidate_condition\')",
+        "REQUIRED_CONDITION_COUNT = 2",
+        "REQUIRED_RUN_COUNT = 2",
+        "SEED_SCHEDULE = [7]",
+        "PRIMARY_METRIC_KEY = \'score_delta\'",
+        "import argparse",
+        "def _entry_call(candidates, arg_options):",
+        "    available = []",
+        "    for name in candidates:",
+        "        fn = globals().get(name)",
+        "        if callable(fn):",
+        "            available.append(name)",
+        "            return fn()",
+        "    return {\'available\': available}",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument(\'--full-evaluation\', action=\'store_true\', default=False)",
+        "    return parser.parse_args(argv)",
+        "def main(argv=None):",
+        "    args = parse_args(argv)",
+        "    candidates = tuple(name for name in () if args.full_evaluation)",
+        "    return _entry_call(candidates, ())",
+        "if __name__ == \'__main__\':",
+        "    main()"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 2,
+        required_run_count: 2,
+        seed_schedule: [7],
+        baseline_condition_marker: markers[0],
+        required_condition_markers: markers
+      },
+      attempt: {
+        runCommand: "python3 " + JSON.stringify(scriptPath) + " --metrics-path " + JSON.stringify(metricsPath),
+        testCommand: "python3 -m py_compile " + JSON.stringify(scriptPath),
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.findings).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_RUNTIME_CALLABLE_RESOLVER_TARGET_MISSING",
+          evidence: expect.stringContaining("store_true")
+        })
+      ])
+    );
+  });
+
+
+  it("does not treat Python dunder attribute strings as missing callable resolver candidates", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-dunder-literal-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-dunder-literal", "metrics.json");
+    const markers = ["baseline_condition", "candidate_condition"];
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = ('baseline_condition', 'candidate_condition')",
+        "REQUIRED_CONDITION_COUNT = 2",
+        "REQUIRED_RUN_COUNT = 2",
+        "SEED_SCHEDULE = [7]",
+        "PRIMARY_METRIC_KEY = 'score_delta'",
+        "def _lookup_callable(candidate_names, purpose):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "def encode_record(value):",
+        "    class_name = getattr(value, '__name__', None)",
+        "    fields = getattr(value, '__dataclass_fields__', None)",
+        "    return {'name': class_name, 'fields': tuple((fields or {}).keys())}",
+        "def main():",
+        "    resolver = _lookup_callable((), '__dataclass_fields__')",
+        "    return {'completed_run_count': 2, 'resolver': resolver}",
+        "if __name__ == '__main__':",
+        "    main()"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 2,
+        required_run_count: 2,
+        seed_schedule: [7],
+        baseline_condition_marker: markers[0],
+        required_condition_markers: markers
+      },
+      attempt: {
+        runCommand: "python3 " + JSON.stringify(scriptPath) + " --metrics-path " + JSON.stringify(metricsPath),
+        testCommand: "python3 -m py_compile " + JSON.stringify(scriptPath),
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.findings).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_RUNTIME_CALLABLE_RESOLVER_TARGET_MISSING",
+          evidence: expect.stringContaining("__dataclass_fields__")
         })
       ])
     );

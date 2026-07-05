@@ -24,6 +24,19 @@ describe("p6 continue helper", () => {
   });
 
 
+  it("writes a staged_llm resume manifest for helper timeouts", async () => {
+    const script = path.join(repoRoot, "scripts", "p6-approve-and-run-next.py");
+    const result = await execFileAsync("python3", [script], {
+      env: {
+        ...process.env,
+        AUTOLABOS_P6_RESUME_MANIFEST_SELFTEST: "1",
+      },
+    });
+
+    expect(result.stdout).toContain("PASS: p6 staged_llm resume manifest self-test");
+  });
+
+
   it("matches current doctor check rows across P6 helper scripts", async () => {
     for (const scriptName of ["p6-resume-check.py", "p6-doctor-pty-smoke.py", "p6-start-live-run.py"]) {
       const script = path.join(repoRoot, "scripts", scriptName);
