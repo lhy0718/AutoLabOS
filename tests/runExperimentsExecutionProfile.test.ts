@@ -718,6 +718,544 @@ describe("run_experiments execution profile behavior", () => {
     });
   });
 
+  it("fails verification when training aggregates report incomplete execution without objective metrics", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-training-aggregates-incomplete-"));
+    process.chdir(root);
+    const run = makeRun("run-training-aggregates-incomplete");
+    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed_model_execution",
+                selected_model_id: "local-fixture-model",
+                evaluation_ready: false,
+                training_aggregates: {
+                  completed_run_count: 3,
+                  completed_training_run_count: 3,
+                  completed_condition_count: 0,
+                  failed_run_count: 1,
+                  evaluation_ready: false,
+                  condition_execution_aggregates: [
+                    {
+                      condition_marker: "baseline_condition",
+                      is_baseline: true,
+                      run_count: 2,
+                      completed_training_run_count: 2,
+                      failed_run_count: 0,
+                      status_counts: { completed_training: 2 }
+                    },
+                    {
+                      condition_marker: "candidate_condition",
+                      is_baseline: false,
+                      run_count: 2,
+                      completed_training_run_count: 1,
+                      failed_run_count: 1,
+                      status_counts: { completed_training: 1, timeout: 1 }
+                    }
+                  ]
+                },
+                run_records: [
+                  {
+                    condition_marker: "baseline_condition",
+                    seed: 1,
+                    status: "completed_training",
+                    train_metrics: { train_loss: 0.5 },
+                    task_metrics: {}
+                  },
+                  {
+                    condition_marker: "baseline_condition",
+                    seed: 2,
+                    status: "completed_training",
+                    train_metrics: { train_loss: 0.49 },
+                    task_metrics: {}
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    seed: 1,
+                    status: "completed_training",
+                    train_metrics: { train_loss: 0.48 },
+                    task_metrics: {}
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner wrote training aggregate metrics without objective evaluation",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment run coverage incomplete: completed_run_count=3/4");
+    expect(result.error).toContain("No required experiment conditions completed successfully (0/2)");
+    expect(result.error).toContain("Experiment metrics report failed_run_count=1");
+    expect(result.error).toContain("Experiment metrics report timed_out_run_count=1");
+    expect(result.error).toContain("failure_count=1");
+  });
+
+  it("includes condition state failure reasons when objective metrics are missing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-condition-state-failure-"));
+    process.chdir(root);
+    const run = makeRun("run-condition-state-failure");
+    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: {
+        complete: async () => ({
+          text: JSON.stringify({
+            primaryMetric: "accuracy_delta_vs_baseline",
+            preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+            direction: "maximize",
+            comparator: ">=",
+            targetValue: 0.01,
+            analysisFocus: [],
+            paperEmphasis: [],
+            assumptions: []
+          }),
+          usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 }
+        })
+      } as any,
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed_model_execution",
+                success: true,
+                selected_model_id: "fixture-model-family",
+                condition_states: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    error: "no usable normalized training texts",
+                    failure_code: "RuntimeError",
+                    failure_stage: "condition_execution"
+                  },
+                  {
+                    condition_marker: "candidate_condition_a",
+                    status: "failed",
+                    error: "no usable normalized training texts",
+                    failure_code: "RuntimeError",
+                    failure_stage: "condition_execution"
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner wrote condition state failures without objective evaluation",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain('Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json');
+    expect(result.error).toContain("condition_state_reasons=no usable normalized training texts:2");
+    expect(result.error).toContain("condition_state_failure_stages=condition_execution:2");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("condition_state_reasons=no usable normalized training texts:2");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback?.summary).toContain("condition_state_reasons=no usable normalized training texts:2");
+  });
+
+
+  it("includes nested high-level result failures when objective metrics are missing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-nested-result-failure-"));
+    process.chdir(root);
+    const run = makeRun("run-nested-result-failure");
+    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: {
+        complete: async () => ({
+          text: JSON.stringify({
+            primaryMetric: "accuracy_delta_vs_baseline",
+            preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+            direction: "maximize",
+            comparator: ">=",
+            targetValue: 0.01,
+            analysisFocus: [],
+            paperEmphasis: [],
+            assumptions: []
+          }),
+          usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 }
+        })
+      } as any,
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                result: {
+                  status: "dependency_blocked",
+                  failures: [
+                    {
+                      failure_code: "dependency_preflight_failed",
+                      error: "TypeError(\"preflight_model_dependencies() missing 1 required positional argument: 'runtime'\")",
+                      traceback: [
+                        "Traceback (most recent call last):",
+                        "  File \"experiment.py\", line 10, in execute_model_execution_phase",
+                        "    preflight_model_dependencies()",
+                        "TypeError: preflight_model_dependencies() missing 1 required positional argument: 'runtime'"
+                      ].join("\n")
+                    }
+                  ]
+                }
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner wrote nested blocked result without objective evaluation",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain('Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json');
+    expect(result.error).toContain("nested_failures=dependency_preflight_failed");
+    expect(result.error).toContain("missing 1 required positional argument");
+
+    const feedback = await runContext.get<{ summary: string }>("implement_experiments.runner_feedback");
+    expect(feedback?.summary).toContain("nested_failures=dependency_preflight_failed");
+  });
+
+
+  it("leads dependency-blocked metrics with failure code and loader diagnostics", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-dependency-blocked-summary-"));
+    process.chdir(root);
+    const run = makeRun("run-dependency-blocked-summary");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: {
+        complete: async () => ({
+          text: JSON.stringify({
+            primaryMetric: "accuracy_delta_vs_baseline",
+            preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+            direction: "maximize",
+            comparator: ">=",
+            targetValue: 0.01,
+            analysisFocus: [],
+            paperEmphasis: [],
+            assumptions: []
+          }),
+          usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 }
+        })
+      } as any,
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          const diagnostics = {
+            loader_failures: [
+              {
+                loader: "load_task_bundle",
+                diagnostics: {
+                  stage: "data_access",
+                  task: "benchmark_task_a",
+                  allow_dataset_download: false,
+                  usable_count: 3,
+                  required_count: 12
+                },
+                error: "DataAccessError('benchmark examples unavailable')"
+              }
+            ]
+          };
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "dependency_blocked",
+                success: false,
+                failure_code: "data_dependency_unavailable",
+                error: "RuntimeError(\"Experiment data bundle could not be materialized\")",
+                diagnostics,
+                failures: [
+                  {
+                    failure_code: "data_dependency_unavailable",
+                    message: "benchmark examples unavailable",
+                    diagnostics
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "error" as const,
+            stdout: "",
+            stderr: "",
+            exit_code: 1,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment dependency blocked (data_dependency_unavailable)");
+    expect(result.error).toContain("metrics_status=dependency_blocked");
+    expect(result.error).toContain("failure_code=data_dependency_unavailable");
+    expect(result.error).toContain("loader_diagnostics=loader=load_task_bundle,stage=data_access,task=benchmark_task_a,allow_dataset_download=false,usable_count=3,required_count=12");
+
+    const feedback = await runContext.get<{ summary: string }>("implement_experiments.runner_feedback");
+    expect(feedback?.summary).toContain("Experiment dependency blocked (data_dependency_unavailable)");
+    expect(feedback?.summary).toContain("loader_diagnostics=loader=load_task_bundle");
+  });
+
+  it("includes condition traceback tails when failed metrics omit direct error messages", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-condition-traceback-failure-"));
+    process.chdir(root);
+    const run = makeRun("run-condition-traceback-failure");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const traceback = [
+      "Traceback (most recent call last):",
+      '  File "experiment.py", line 100, in run_model_execution_phase',
+      '    raise RuntimeError("no condition execution helper is defined")',
+      "RuntimeError: no condition execution helper is defined",
+      ""
+    ].join("\n");
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: true,
+                condition_states: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    failure_code: "model_execution_failed",
+                    failure_traceback: traceback
+                  },
+                  {
+                    condition_marker: "candidate_condition_a",
+                    status: "failed",
+                    failure_code: "model_execution_failed",
+                    failure_traceback: traceback
+                  }
+                ],
+                condition_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    failure_code: "model_execution_failed",
+                    failure_traceback: traceback
+                  },
+                  {
+                    condition_marker: "candidate_condition_a",
+                    status: "failed",
+                    failure_code: "model_execution_failed",
+                    failure_traceback: traceback
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner wrote failed condition rows with tracebacks",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment metrics payload reports failed status");
+    expect(result.error).toContain("condition_state_failure_codes=model_execution_failed:2");
+    expect(result.error).toContain("condition_state_reasons=RuntimeError: no condition execution helper is defined:2");
+    expect(result.error).toContain("condition_result_reasons=RuntimeError: no condition execution helper is defined:2");
+  });
+
   it("fails verification when planned brief conditions are under-executed", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-under-executed-conditions-"));
     process.chdir(root);

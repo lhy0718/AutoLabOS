@@ -2150,10 +2150,26 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
           (nestedErrorMessage
             ? `${nestedErrorType ? `${nestedErrorType}: ` : ""}${nestedErrorMessage}`
             : undefined);
+  const firstFailure = Array.isArray(metrics.failures)
+    ? metrics.failures.map((item) => asRecord(item)).find((item) => Object.keys(item).length > 0)
+    : undefined;
+  const failureCode =
+    asString(metrics.failure_code) ||
+    asString(failure?.failure_code) ||
+    asString(firstFailure?.failure_code) ||
+    asString(firstFailure?.code);
+  const dependencyBlocked =
+    status === "dependency_blocked" ||
+    status === "dependency_failed" ||
+    /(?:^|_)dependency(?:_|$)/iu.test(failureCode || "") ||
+    /_unavailable$/iu.test(failureCode || "");
 
   if (isFailureLikeMetricsStatus(status)) {
+    const prefix = dependencyBlocked
+      ? `Experiment dependency blocked${failureCode ? ` (${failureCode})` : ""}`
+      : "Experiment metrics payload reports failed status";
     return appendMetricsFailureEvidence(
-      `Experiment metrics payload reports failed status${failureMessage ? `: ${failureMessage}` : "."}`,
+      `${prefix}${failureMessage ? `: ${failureMessage}` : "."}`,
       metrics
     );
   }
@@ -2391,6 +2407,27 @@ function appendMetricsFailureEvidence(message: string, metrics: Record<string, u
 
 function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): string {
   const parts: string[] = [];
+  const status = asString(metrics.status);
+  if (status && isFailureLikeMetricsStatus(status.toLowerCase())) {
+    parts.push(`metrics_status=${trimShort(status, 80)}`);
+  }
+  const failureRecord = asRecord(metrics.failure);
+  const firstFailure = Array.isArray(metrics.failures)
+    ? metrics.failures.map((item) => asRecord(item)).find((item) => Object.keys(item).length > 0)
+    : undefined;
+  const failureCode =
+    asString(metrics.failure_code) ||
+    asString(failureRecord.failure_code) ||
+    asString(firstFailure?.failure_code) ||
+    asString(firstFailure?.code);
+  if (failureCode) {
+    parts.push(`failure_code=${trimShort(failureCode, 120)}`);
+  }
+  const loaderDiagnostics = summarizeLoaderDiagnostics(metrics);
+  if (loaderDiagnostics.length > 0) {
+    parts.push(`loader_diagnostics=${loaderDiagnostics.join(" | ")}`);
+  }
+
   const requiredRunCount = asNumber(metrics.required_run_count);
   const completedRunCount = asNumber(metrics.completed_run_count);
   if (requiredRunCount !== undefined && completedRunCount !== undefined) {
@@ -2437,6 +2474,11 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
     parts.push(`metrics_evidence=${evidenceMessages.join(" | ")}`);
   }
 
+  const nestedFailureMessages = summarizeNestedFailureRecords(metrics);
+  if (nestedFailureMessages.length > 0) {
+    parts.push(`nested_failures=${nestedFailureMessages.join(" | ")}`);
+  }
+
   const evaluationHandoffMessages = summarizeConditionEvaluationHandoffEvidence(metrics);
   if (evaluationHandoffMessages.length > 0) {
     parts.push(...evaluationHandoffMessages);
@@ -2448,6 +2490,7 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
   }
 
   parts.push(...summarizePrimaryMetricValueEvidence(metrics));
+  parts.push(...summarizeConditionStateFailureEvidence(metrics));
   parts.push(...summarizeConditionResultFailureEvidence(metrics));
 
   const observedConditionCount = asNumber(metrics.observed_condition_count);
@@ -2468,6 +2511,47 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
   }
 
   return parts.length > 0 ? `Metrics evidence: ${parts.join("; ")}.` : "";
+}
+
+
+function summarizeLoaderDiagnostics(metrics: Record<string, unknown>): string[] {
+  const summaries: string[] = [];
+  const addSummary = (value: string | undefined) => {
+    if (!value || summaries.length >= 3 || summaries.includes(value)) {
+      return;
+    }
+    summaries.push(value);
+  };
+  const collectLoaderFailures = (value: unknown): unknown[] => {
+    const record = asRecord(value);
+    const loaderFailures = record.loader_failures;
+    return Array.isArray(loaderFailures) ? loaderFailures : [];
+  };
+  const sources: unknown[] = [metrics.diagnostics];
+  for (const failure of Array.isArray(metrics.failures) ? metrics.failures : []) {
+    sources.push(asRecord(failure).diagnostics);
+  }
+  for (const source of sources) {
+    for (const item of collectLoaderFailures(source)) {
+      const failure = asRecord(item);
+      const diagnostics = asRecord(failure.diagnostics);
+      const loaderName = asString(failure.loader);
+      const stage = asString(diagnostics.stage);
+      const task = asString(diagnostics.task);
+      const usableCount = asNumber(diagnostics.usable_count);
+      const requiredCount = asNumber(diagnostics.required_count);
+      const fields = [
+        loaderName ? `loader=${trimShort(loaderName, 80)}` : undefined,
+        stage ? `stage=${trimShort(stage, 80)}` : undefined,
+        task ? `task=${trimShort(task, 80)}` : undefined,
+        typeof diagnostics.allow_dataset_download === "boolean" ? `allow_dataset_download=${diagnostics.allow_dataset_download}` : undefined,
+        usableCount !== undefined ? `usable_count=${usableCount}` : undefined,
+        requiredCount !== undefined ? `required_count=${requiredCount}` : undefined
+      ].filter((field): field is string => Boolean(field));
+      addSummary(fields.join(","));
+    }
+  }
+  return summaries;
 }
 
 function summarizeMetricsErrorMessages(metrics: Record<string, unknown>): string[] {
@@ -2524,6 +2608,88 @@ async function currentRunExperimentsHarnessUpdatedAt(): Promise<number | undefin
   } catch {
     return undefined;
   }
+}
+
+
+function summarizeNestedFailureRecords(metrics: Record<string, unknown>): string[] {
+  const summaries: string[] = [];
+  const failureStatusPattern = /^(?:failed|failure|error|errored|blocked|dependency_blocked|dependency_failed|partial|partial_completed)$/iu;
+  const hasRecordFields = (record: Record<string, unknown>) => Object.keys(record).length > 0;
+  const addSummary = (summary: string | undefined) => {
+    if (!summary || summaries.length >= 3 || summaries.includes(summary)) {
+      return;
+    }
+    summaries.push(summary);
+  };
+  const addFailure = (value: unknown, fallbackStatus?: string) => {
+    if (value === undefined || value === null) {
+      return;
+    }
+    const record = asRecord(value);
+    if (!hasRecordFields(record)) {
+      const text = asString(value);
+      if (text) {
+        addSummary(trimShort(text, 220));
+      } else if (fallbackStatus && failureStatusPattern.test(fallbackStatus)) {
+        addSummary(`status=${trimShort(fallbackStatus, 80)}`);
+      }
+      return;
+    }
+    const status = asString(record.status) || fallbackStatus;
+    const kind =
+      asString(record.failure_code) ||
+      asString(record.error_code) ||
+      asString(record.code) ||
+      asString(record.type) ||
+      asString(asRecord(record.error)?.type);
+    const message =
+      asString(record.message) ||
+      asString(record.error) ||
+      asString(record.failure_reason) ||
+      asString(asRecord(record.error)?.message) ||
+      asString(asRecord(record.exception)?.message);
+    const tracebackTail =
+      tracebackLastLine(asString(record.traceback)) ||
+      tracebackLastLine(asString(record.failure_traceback)) ||
+      tracebackLastLine(asString(record.stack_trace)) ||
+      tracebackLastLine(asString(record.exception_traceback));
+    const summary = [
+      kind ? trimShort(kind, 80) : status && failureStatusPattern.test(status) ? `status=${trimShort(status, 80)}` : undefined,
+      message ? trimShort(message, 220) : undefined,
+      tracebackTail && tracebackTail !== message ? trimShort(tracebackTail, 220) : undefined
+    ].filter((part): part is string => Boolean(part)).join(": ");
+    addSummary(summary);
+  };
+  const addFailures = (value: unknown, fallbackStatus?: string) => {
+    if (value === undefined || value === null) {
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        addFailure(item, fallbackStatus);
+      }
+      return;
+    }
+    addFailure(value, fallbackStatus);
+  };
+
+  addFailures(metrics.failures, asString(metrics.status));
+  addFailures(metrics.failure, asString(metrics.status));
+  const result = asRecord(metrics.result);
+  if (hasRecordFields(result)) {
+    const resultStatus = asString(result.status);
+    addFailures(result.failures, resultStatus);
+    addFailures(result.failure, resultStatus);
+    const resultError = result.error;
+    if (typeof resultError === "object" && resultError !== null) {
+      addFailure(resultError, resultStatus);
+    }
+    if (summaries.length === 0 && resultStatus && failureStatusPattern.test(resultStatus)) {
+      addSummary(`status=${trimShort(resultStatus, 80)}`);
+    }
+  }
+
+  return summaries;
 }
 
 function summarizeMetricsEvidenceRecords(metrics: Record<string, unknown>): string[] {
@@ -2594,6 +2760,98 @@ function describeMetricValue(value: unknown): string {
     return value.trim() ? "non_numeric_string" : "empty_string";
   }
   return typeof value;
+}
+
+function summarizeConditionStateFailureEvidence(metrics: Record<string, unknown>): string[] {
+  const study = asRecord(metrics.study);
+  const studySummary = asRecord(metrics.study_summary);
+  const conditionRows = [
+    ...collectConditionRows(metrics.condition_states),
+    ...collectConditionRows(metrics.condition_state_results),
+    ...collectConditionRows(metrics.per_condition_states),
+    ...collectConditionRows(metrics.run_rows),
+    ...collectConditionRows(metrics.run_records),
+    ...collectConditionRows(metrics.per_run_rows),
+    ...collectConditionRows(study.condition_states),
+    ...collectConditionRows(study.condition_state_results),
+    ...collectConditionRows(study.per_condition_states),
+    ...collectConditionRows(study.run_rows),
+    ...collectConditionRows(study.run_records),
+    ...collectConditionRows(study.per_run_rows),
+    ...collectConditionRows(studySummary.condition_states),
+    ...collectConditionRows(studySummary.condition_state_results),
+    ...collectConditionRows(studySummary.per_condition_states),
+    ...collectConditionRows(studySummary.run_rows),
+    ...collectConditionRows(studySummary.run_records),
+    ...collectConditionRows(studySummary.per_run_rows)
+  ];
+  if (conditionRows.length === 0) {
+    return [];
+  }
+
+  const statusCounts = new Map<string, number>();
+  const reasonCounts = new Map<string, number>();
+  const failureCodeCounts = new Map<string, number>();
+  const failureStageCounts = new Map<string, number>();
+  const sampleFailures: string[] = [];
+
+  for (const row of conditionRows) {
+    const status = normalizeConditionResultStatus(row);
+    statusCounts.set(status, (statusCounts.get(status) || 0) + 1);
+    if (isCompletedConditionStatus(status)) {
+      continue;
+    }
+
+    const reason = conditionResultReason(row);
+    if (reason) {
+      reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
+    }
+
+    const errorRecord = asRecord(row.error);
+    const failureCode =
+      asString(row.failure_code) ||
+      asString(row.error_code) ||
+      asString(row.error_type) ||
+      asString(errorRecord.code) ||
+      asString(errorRecord.type);
+    if (failureCode) {
+      failureCodeCounts.set(failureCode, (failureCodeCounts.get(failureCode) || 0) + 1);
+    }
+
+    const failureStage = asString(row.failure_stage) || asString(row.error_stage) || asString(row.stage);
+    if (failureStage) {
+      failureStageCounts.set(failureStage, (failureStageCounts.get(failureStage) || 0) + 1);
+    }
+
+    if (sampleFailures.length < 2) {
+      const id = conditionResultId(row);
+      const sample = [
+        id ? trimShort(id, 80) : "unlabeled_condition",
+        `status=${status}`,
+        failureStage ? `stage=${trimShort(failureStage, 80)}` : undefined,
+        reason ? `reason=${trimShort(reason, 120)}` : undefined
+      ].filter((part): part is string => Boolean(part)).join(",");
+      sampleFailures.push(sample);
+    }
+  }
+
+  const parts = [`condition_state_statuses=${formatCountMap(statusCounts, 6)}`];
+  const formattedReasons = formatCountMap(reasonCounts, 4);
+  if (formattedReasons) {
+    parts.push(`condition_state_reasons=${formattedReasons}`);
+  }
+  const formattedCodes = formatCountMap(failureCodeCounts, 4);
+  if (formattedCodes) {
+    parts.push(`condition_state_failure_codes=${formattedCodes}`);
+  }
+  const formattedStages = formatCountMap(failureStageCounts, 4);
+  if (formattedStages) {
+    parts.push(`condition_state_failure_stages=${formattedStages}`);
+  }
+  if (sampleFailures.length > 0) {
+    parts.push(`condition_state_samples=${sampleFailures.join(" | ")}`);
+  }
+  return parts;
 }
 
 function summarizeConditionResultFailureEvidence(metrics: Record<string, unknown>): string[] {
@@ -2953,6 +3211,10 @@ function conditionResultReason(row: Record<string, unknown>): string | undefined
     row.failure_reason,
     row.error_message,
     row.message,
+    tracebackLastLine(asString(row.failure_traceback)),
+    tracebackLastLine(asString(row.traceback)),
+    tracebackLastLine(asString(row.stack_trace)),
+    tracebackLastLine(asString(row.exception_traceback)),
     conditionResultModelLoadReason(row)
   ];
   if (typeof row.error === 'string') {
@@ -2967,6 +3229,10 @@ function conditionResultReason(row: Record<string, unknown>): string | undefined
       nested.error,
       nested.failure,
       nested.failure_type,
+      tracebackLastLine(asString(nested.failure_traceback)),
+      tracebackLastLine(asString(nested.traceback)),
+      tracebackLastLine(asString(nested.stack_trace)),
+      tracebackLastLine(asString(nested.exception_traceback)),
       conditionResultModelLoadReason(nested)
     );
   }
@@ -6037,9 +6303,12 @@ function wilsonInterval(correctCount: number, totalCount: number): Record<string
 }
 
 function promoteSummaryPrimaryMetric(metrics: Record<string, unknown>): string | undefined {
-  const aggregatePromotion = promoteAggregatePrimaryMetric(metrics);
-  if (aggregatePromotion) {
-    return aggregatePromotion;
+  const promotions = [
+    promoteAggregatePrimaryMetric(metrics),
+    promoteTrainingAggregateMetrics(metrics)
+  ].filter((value): value is string => Boolean(value));
+  if (promotions.length > 0) {
+    return promotions.join(" ");
   }
 
   const topLevelPrimaryMetricKey = metrics.primary_metric_key;
@@ -6152,6 +6421,53 @@ function promoteAggregatePrimaryMetric(metrics: Record<string, unknown>): string
     return undefined;
   }
   return `Promoted aggregate metrics projection before contract evaluation: ${promoted.join(", ")}.`;
+}
+
+function promoteTrainingAggregateMetrics(metrics: Record<string, unknown>): string | undefined {
+  const trainingAggregates = asRecord(metrics.training_aggregates);
+  if (Object.keys(trainingAggregates).length === 0) {
+    return undefined;
+  }
+
+  const promoted: string[] = [];
+  promoteNumericField(metrics, trainingAggregates, "completed_run_count", promoted);
+  promoteNumericField(metrics, trainingAggregates, "failed_run_count", promoted);
+  promoteNumericField(metrics, trainingAggregates, "completed_condition_count", promoted);
+
+  const conditionAggregates = collectConditionRows(trainingAggregates.condition_execution_aggregates);
+  if (conditionAggregates.length > 0) {
+    if (asNumber(metrics.required_condition_count) === undefined) {
+      metrics.required_condition_count = conditionAggregates.length;
+      promoted.push(`required_condition_count=${conditionAggregates.length}`);
+    }
+    if (asNumber(metrics.required_run_count) === undefined) {
+      const requiredRunCount = conditionAggregates
+        .map((row) => asNumber(row.run_count) ?? collectConditionSeedValues(row).length)
+        .filter((value): value is number => typeof value === "number" && value > 0)
+        .reduce((sum, value) => sum + value, 0);
+      if (requiredRunCount > 0) {
+        metrics.required_run_count = requiredRunCount;
+        promoted.push(`required_run_count=${requiredRunCount}`);
+      }
+    }
+    if (asNumber(metrics.timed_out_run_count) === undefined) {
+      const timedOutRunCount = conditionAggregates
+        .map((row) => {
+          const statusCounts = asRecord(row.status_counts);
+          return asNumber(statusCounts.timeout) ?? asNumber(statusCounts.timed_out) ?? 0;
+        })
+        .reduce((sum, value) => sum + value, 0);
+      if (timedOutRunCount > 0) {
+        metrics.timed_out_run_count = timedOutRunCount;
+        promoted.push(`timed_out_run_count=${timedOutRunCount}`);
+      }
+    }
+  }
+
+  if (promoted.length === 0) {
+    return undefined;
+  }
+  return `Promoted training aggregate metrics projection before contract evaluation: ${promoted.join(", ")}.`;
 }
 
 function promoteNumericField(
@@ -7394,6 +7710,20 @@ function validateRunMetricsContract(input: {
     asNumber(studySummary.failed_run_count),
     asNumber(study.failed_run_count)
   ].find((value): value is number => typeof value === "number");
+  const timedOutRunCount = [
+    asNumber(input.metrics.timed_out_run_count),
+    asNumber(studySummary.timed_out_run_count),
+    asNumber(study.timed_out_run_count)
+  ].find((value): value is number => typeof value === "number");
+  if (failedRunCount !== undefined && failedRunCount > 0) {
+    issues.push(
+      `Experiment metrics report failed_run_count=${failedRunCount}` +
+        (completedRunCount !== undefined ? ` with completed_run_count=${completedRunCount}.` : ".")
+    );
+  }
+  if (timedOutRunCount !== undefined && timedOutRunCount > 0) {
+    issues.push(`Experiment metrics report timed_out_run_count=${timedOutRunCount}.`);
+  }
   if (requiredRunCount !== undefined && requiredRunCount > 0) {
     if (completedRunCount === undefined && explicitRequiredRunCount !== undefined) {
       issues.push(`Experiment metrics omitted completed_run_count for required ${requiredRunCount} run(s).`);
@@ -7444,10 +7774,16 @@ function validateRunMetricsContract(input: {
     asNumber(studySummary.completed_condition_count),
     asNumber(study.completed_condition_count)
   ].find((value): value is number => typeof value === "number");
-  if (requiredConditionCount !== undefined && requiredConditionCount > 0 && completedConditionCount === 0) {
-    issues.push(
-      "No required experiment conditions completed successfully (" + completedConditionCount + "/" + requiredConditionCount + ")."
-    );
+  if (requiredConditionCount !== undefined && requiredConditionCount > 0 && completedConditionCount !== undefined) {
+    if (completedConditionCount === 0) {
+      issues.push(
+        "No required experiment conditions completed successfully (" + completedConditionCount + "/" + requiredConditionCount + ")."
+      );
+    } else if (completedConditionCount < requiredConditionCount) {
+      issues.push(
+        `Experiment condition coverage incomplete: completed_condition_count=${completedConditionCount}/${requiredConditionCount}.`
+      );
+    }
   }
   if (
     requiredRunCount !== undefined &&
