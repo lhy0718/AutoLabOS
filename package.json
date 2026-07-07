@@ -37,7 +37,7 @@
     "web/dist",
     "plugins",
     "README.md",
-    "README.ko.md",
+    "docs/README*.md",
     "LICENSE",
     ".env.example"
   ],
@@ -73,11 +73,11 @@
     "prepack": "npm run build"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=18.17"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",
-    "cheerio": "^1.2.0",
+    "cheerio": "~1.0.0",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
@@ -85,6 +85,7 @@
     "@types/node": "^22.13.14",
     "tsx": "^4.20.3",
     "typescript": "^5.8.2",
-    "vitest": "^4.0.18"
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
   }
 }
