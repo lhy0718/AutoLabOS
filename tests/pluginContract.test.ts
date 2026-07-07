@@ -49,6 +49,15 @@ describe("AutoLabOS Codex plugin contract", () => {
     expect(report.verdict).toBe("pass");
     expect(report.validationCommand).toBe("npm run plugin:dogfood");
     expect(report.checks.every((item: { passed: boolean }) => item.passed)).toBe(true);
+    expect(report.checkedArtifacts).toContain("plugins/autolabos-research-governor/README.md");
+    expect(report.checkedArtifacts).toContain("docs/codex-plugin-governance.md");
+    expect(report.checks.map((item: { id: string }) => item.id)).toEqual(
+      expect.arrayContaining([
+        "plugin_readme_documents_first_run",
+        "plugin_readme_documents_all_command_intents",
+        "print_contract_outputs_expected_contract"
+      ])
+    );
   });
 
   it("documents every plugin command intent in the skill", () => {
@@ -71,6 +80,22 @@ describe("AutoLabOS Codex plugin contract", () => {
       "## Update Rule"
     ]) {
       expect(text).toContain(section);
+    }
+  });
+
+  it("ships first-run plugin onboarding for contract inspection and self-dogfood", () => {
+    const readmePath = path.join(PLUGIN_ROOT, "README.md");
+    const text = fs.readFileSync(readmePath, "utf8");
+
+    expect(text).toContain("## First Run");
+    expect(text).toContain("node plugins/autolabos-research-governor/scripts/print-contract.mjs");
+    expect(text).toContain("npm run plugin:dogfood");
+    expect(text).toContain("docs/codex-plugin-governance.md");
+    expect(text).toContain("External outputs remain untrusted evidence");
+
+    for (const command of RESEARCH_GOVERNANCE_COMMANDS) {
+      expect(text).toContain(command.id);
+      expect(text).toContain(command.outputArtifact);
     }
   });
 });

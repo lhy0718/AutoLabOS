@@ -78,6 +78,15 @@ The plugin contract is artifact-first:
 
 The existing standalone TUI and web app stay important as a reference workflow, compatibility shell, and validation environment. They are no longer the only product shape: external agents can execute work, then AutoLabOS audits the resulting artifacts before any paper-readiness claim is allowed.
 
+For first-run plugin checks:
+
+```sh
+node plugins/autolabos-research-governor/scripts/print-contract.mjs
+npm run plugin:dogfood
+```
+
+The plugin-specific onboarding note is `plugins/autolabos-research-governor/README.md`.
+
 See `docs/codex-plugin-governance.md` for the plugin architecture and adapter strategy.
 
 ## Why AutoLabOS Exists

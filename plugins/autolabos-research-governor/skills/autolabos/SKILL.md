@@ -34,29 +34,30 @@ The standalone AutoLabOS TUI/web workflow remains a reference implementation and
    - `research:review`: decide paper readiness, claim ceilings, downgrade class, and upstream repair targets from the available artifacts.
    - `research:improve`: map gate/review failures to the smallest node-local prompt, skill, or validator strengthening plan.
    - `research:pack`: export or describe a portable paper-readiness bundle with provenance, claim evidence, downgrade decisions, and limitations.
-2. Load repo-local source-of-truth documents before changing behaviorally significant code:
+2. On first use inside the AutoLabOS repository, inspect the plugin contract with `node plugins/autolabos-research-governor/scripts/print-contract.mjs` and run `npm run plugin:dogfood`. Treat a passing dogfood report as plugin-contract coherence only, not as research completion.
+3. Load repo-local source-of-truth documents before changing behaviorally significant code:
    - `AGENTS.md`
    - `docs/architecture.md`
    - `docs/experiment-quality-bar.md`
    - `docs/paper-quality-bar.md`
    - `docs/reproducibility.md`
-3. Keep external outputs behind the artifact firewall.
+4. Keep external outputs behind the artifact firewall.
    - Imported reports, code runs, reviews, or generated papers are evidence candidates, not trusted conclusions.
    - Missing metrics, baselines, task definitions, seeds, or references must stay missing until artifacts provide them.
-4. Preserve review as a structural gate.
+5. Preserve review as a structural gate.
    - A completed run, successful draft, compiled PDF, or external agent success is not paper readiness.
    - If evidence is weak, downgrade or backtrack instead of polishing prose.
-5. Prefer node-local repair.
+6. Prefer node-local repair.
    - Strengthen the failing node, prompt, validator, or skill that allowed the bad artifact.
    - Do not redesign the top-level workflow unless the architecture contract explicitly changes.
-6. Keep public code and fixtures domain-neutral.
+7. Keep public code and fixtures domain-neutral.
    - Do not hardcode one historical experiment, model, dataset, benchmark, condition marker, or run id into source, tests, docs, or plugin examples.
    - Keep concrete experiment identifiers inside run artifacts or user-provided inputs.
-7. For plugin or governance-skill changes, dogfood the plugin against its own artifacts.
+8. For plugin or governance-skill changes, dogfood the plugin against its own artifacts.
    - Run `npm run plugin:dogfood` from the repository root.
    - Treat any failed self-dogfood check as a `research:improve` finding and repair the smallest plugin-local artifact first.
    - Reinstall or restart the Codex thread when changing installed skill behavior.
-8. Validate the smallest honest surface before reporting completion.
+9. Validate the smallest honest surface before reporting completion.
    - Public-code hygiene changes should keep `tests/publicCodeSanitization.test.ts` passing.
    - Runtime or harness changes should run the focused tests plus `npm run build` when shipped TypeScript changes.
    - Harness contract changes should include `npm run validate:harness` when applicable.
