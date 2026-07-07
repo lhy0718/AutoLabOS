@@ -64,6 +64,7 @@
     "p6:continue": "python3 scripts/p6-approve-and-run-next.py",
     "validate:harness": "tsx src/cli/validateHarness.ts",
     "plugin:contract": "node plugins/autolabos-research-governor/scripts/print-contract.mjs",
+    "plugin:doctor": "node plugins/autolabos-research-governor/scripts/plugin-doctor.mjs",
     "plugin:dogfood": "node plugins/autolabos-research-governor/scripts/dogfood-audit.mjs",
     "test:smoke:natural-collect": "bash tests/smoke/run_natural_collect_pending_command.sh",
     "test:smoke:natural-collect-execute": "bash tests/smoke/run_natural_collect_execute_and_verify_artifacts.sh",

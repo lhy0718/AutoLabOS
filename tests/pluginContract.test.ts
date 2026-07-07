@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { RESEARCH_GOVERNANCE_COMMANDS } from "../src/core/researchGovernanceContract.js";
@@ -55,8 +56,10 @@ describe("AutoLabOS Codex plugin contract", () => {
       expect.arrayContaining([
         "plugin_readme_documents_first_run",
         "plugin_readme_documents_all_command_intents",
+        "plugin_doctor_reports_cache_alignment",
         "print_contract_outputs_expected_contract",
-        "package_exposes_contract_script"
+        "package_exposes_contract_script",
+        "package_exposes_doctor_script"
       ])
     );
   });
@@ -91,12 +94,64 @@ describe("AutoLabOS Codex plugin contract", () => {
     expect(text).toContain("## First Run");
     expect(text).toContain("npm run plugin:contract");
     expect(text).toContain("npm run plugin:dogfood");
+    expect(text).toContain("npm run plugin:doctor");
     expect(text).toContain("docs/codex-plugin-governance.md");
     expect(text).toContain("External outputs remain untrusted evidence");
 
     for (const command of RESEARCH_GOVERNANCE_COMMANDS) {
       expect(text).toContain(command.id);
       expect(text).toContain(command.outputArtifact);
+    }
+  });
+
+  it("reports installed plugin cache alignment without exposing absolute cache paths", () => {
+    const manifestPath = path.join(PLUGIN_ROOT, ".codex-plugin", "plugin.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const tempCodexHome = fs.mkdtempSync(path.join(os.tmpdir(), "autolabos-plugin-doctor-"));
+    const cacheRoot = path.join(
+      tempCodexHome,
+      "plugins",
+      "cache",
+      "autolabos-local",
+      manifest.name,
+      manifest.version
+    );
+    const comparableFiles = [
+      ".codex-plugin/plugin.json",
+      "scripts/dogfood-audit.mjs",
+      "scripts/plugin-doctor.mjs",
+      "scripts/print-contract.mjs",
+      "skills/autolabos/SKILL.md"
+    ];
+
+    try {
+      for (const relativePath of comparableFiles) {
+        const source = path.join(PLUGIN_ROOT, relativePath);
+        const destination = path.join(cacheRoot, relativePath);
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.copyFileSync(source, destination);
+      }
+
+      const output = execFileSync("node", [
+        path.join(PLUGIN_ROOT, "scripts", "plugin-doctor.mjs")
+      ], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, CODEX_HOME: tempCodexHome }
+      });
+      const report = JSON.parse(output);
+
+      expect(report.commandIntent).toBe("research:audit");
+      expect(report.outputArtifact).toBe("GateReport");
+      expect(report.gate).toBe("installed_plugin_cache_alignment");
+      expect(report.verdict).toBe("pass");
+      expect(report.installedCache.cacheRelativePath).toBe(
+        path.posix.join("plugins", "cache", "autolabos-local", manifest.name, manifest.version)
+      );
+      expect(report.installedCache.comparisons.every((item: { status: string }) => item.status === "match")).toBe(true);
+      expect(JSON.stringify(report)).not.toContain(tempCodexHome);
+    } finally {
+      fs.rmSync(tempCodexHome, { recursive: true, force: true });
     }
   });
 });

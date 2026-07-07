@@ -58,6 +58,8 @@ No adapter may skip baseline requirements, claim-evidence mapping, reproducibili
 
 The plugin must be able to inspect its own public contract as an untrusted artifact bundle. Maintainers should run `npm run plugin:dogfood` after changing the plugin manifest, skill text, marketplace entry, governance contract, or plugin helper scripts.
 
+Maintainers should also run `npm run plugin:doctor` when checking whether the installed Codex plugin cache matches the repo-local plugin contract. The doctor report is diagnostic: cache drift means the plugin should be reinstalled or the Codex thread restarted before relying on installed skill behavior.
+
 The dogfood report is a `research:improve` surface: failed checks map to the smallest plugin-local repair target and must not be treated as broad workflow redesign requests. A passing report proves only that the plugin contract is internally coherent; it does not prove paper-readiness or research completion.
 
 ## Non-Goals

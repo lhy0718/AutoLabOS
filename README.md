@@ -83,6 +83,7 @@ For first-run plugin checks:
 ```sh
 npm run plugin:contract
 npm run plugin:dogfood
+npm run plugin:doctor
 ```
 
 The plugin-specific onboarding note is `plugins/autolabos-research-governor/README.md`.
