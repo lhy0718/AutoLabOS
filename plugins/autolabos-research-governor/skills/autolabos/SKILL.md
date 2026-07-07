@@ -34,7 +34,7 @@ The standalone AutoLabOS TUI/web workflow remains a reference implementation and
    - `research:review`: decide paper readiness, claim ceilings, downgrade class, and upstream repair targets from the available artifacts.
    - `research:improve`: map gate/review failures to the smallest node-local prompt, skill, or validator strengthening plan.
    - `research:pack`: export or describe a portable paper-readiness bundle with provenance, claim evidence, downgrade decisions, and limitations.
-2. On first use inside the AutoLabOS repository, inspect the plugin contract with `npm run plugin:contract`, run `npm run plugin:dogfood`, and use `npm run plugin:doctor` when checking whether the installed Codex plugin cache matches the repo-local contract. Treat a passing dogfood report as plugin-contract coherence only, not as research completion.
+2. On first use inside the AutoLabOS repository, inspect the plugin contract with `npm run plugin:contract`, run `npm run plugin:dogfood`, and use `npm run plugin:doctor` when checking whether the installed Codex plugin cache matches the repo-local contract. Use `npm run plugin:doctor -- --strict` for CI or release checks that should fail on cache drift. Treat a passing dogfood report as plugin-contract coherence only, not as research completion.
 3. Load repo-local source-of-truth documents before changing behaviorally significant code:
    - `AGENTS.md`
    - `docs/architecture.md`

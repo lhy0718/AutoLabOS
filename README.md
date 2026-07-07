@@ -84,9 +84,10 @@ For first-run plugin checks:
 npm run plugin:contract
 npm run plugin:dogfood
 npm run plugin:doctor
+npm run plugin:doctor -- --strict
 ```
 
-The plugin-specific onboarding note is `plugins/autolabos-research-governor/README.md`.
+Use `npm run plugin:doctor -- --strict` for CI or release checks that should fail on installed cache drift. The plugin-specific onboarding note is `plugins/autolabos-research-governor/README.md`.
 
 See `docs/codex-plugin-governance.md` for the plugin architecture and adapter strategy.
 

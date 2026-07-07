@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -57,6 +57,7 @@ describe("AutoLabOS Codex plugin contract", () => {
         "plugin_readme_documents_first_run",
         "plugin_readme_documents_all_command_intents",
         "plugin_doctor_reports_cache_alignment",
+        "plugin_doctor_supports_strict_mode",
         "print_contract_outputs_expected_contract",
         "package_exposes_contract_script",
         "package_exposes_doctor_script"
@@ -95,12 +96,39 @@ describe("AutoLabOS Codex plugin contract", () => {
     expect(text).toContain("npm run plugin:contract");
     expect(text).toContain("npm run plugin:dogfood");
     expect(text).toContain("npm run plugin:doctor");
+    expect(text).toContain("npm run plugin:doctor -- --strict");
     expect(text).toContain("docs/codex-plugin-governance.md");
     expect(text).toContain("External outputs remain untrusted evidence");
 
     for (const command of RESEARCH_GOVERNANCE_COMMANDS) {
       expect(text).toContain(command.id);
       expect(text).toContain(command.outputArtifact);
+    }
+  });
+
+  it("fails in strict mode when installed plugin cache is missing", () => {
+    const manifestPath = path.join(PLUGIN_ROOT, ".codex-plugin", "plugin.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const tempCodexHome = fs.mkdtempSync(path.join(os.tmpdir(), "autolabos-plugin-doctor-strict-"));
+
+    try {
+      const result = spawnSync(process.execPath, [
+        path.join(PLUGIN_ROOT, "scripts", "plugin-doctor.mjs"),
+        "--strict"
+      ], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, CODEX_HOME: tempCodexHome }
+      });
+      const report = JSON.parse(result.stdout);
+
+      expect(result.status).toBe(1);
+      expect(report.doctorTarget).toBe(manifest.name);
+      expect(report.strictMode).toBe(true);
+      expect(report.verdict).toBe("not_installed");
+      expect(JSON.stringify(report)).not.toContain(tempCodexHome);
+    } finally {
+      fs.rmSync(tempCodexHome, { recursive: true, force: true });
     }
   });
 
@@ -133,7 +161,8 @@ describe("AutoLabOS Codex plugin contract", () => {
       }
 
       const output = execFileSync("node", [
-        path.join(PLUGIN_ROOT, "scripts", "plugin-doctor.mjs")
+        path.join(PLUGIN_ROOT, "scripts", "plugin-doctor.mjs"),
+        "--strict"
       ], {
         cwd: ROOT,
         encoding: "utf8",
@@ -144,6 +173,7 @@ describe("AutoLabOS Codex plugin contract", () => {
       expect(report.commandIntent).toBe("research:audit");
       expect(report.outputArtifact).toBe("GateReport");
       expect(report.gate).toBe("installed_plugin_cache_alignment");
+      expect(report.strictMode).toBe(true);
       expect(report.verdict).toBe("pass");
       expect(report.installedCache.cacheRelativePath).toBe(
         path.posix.join("plugins", "cache", "autolabos-local", manifest.name, manifest.version)

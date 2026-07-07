@@ -111,11 +111,11 @@ const checks = [
     commandIntents
   }),
   check("skill_documents_first_run_orientation", skillText.includes("npm run plugin:contract") && skillText.includes("plugin-contract coherence")),
-  check("skill_documents_doctor", skillText.includes("npm run plugin:doctor") && skillText.includes("installed Codex plugin cache")),
+  check("skill_documents_doctor", skillText.includes("npm run plugin:doctor") && skillText.includes("installed Codex plugin cache") && skillText.includes("--strict")),
   check("skill_documents_self_dogfood", skillText.includes("dogfood") && skillText.includes("plugin:dogfood")),
   check("plugin_readme_exists", pluginReadmeText.length > 0),
-  check("plugin_readme_documents_first_run", pluginReadmeText.includes("## First Run") && pluginReadmeText.includes("npm run plugin:contract") && pluginReadmeText.includes("npm run plugin:dogfood") && pluginReadmeText.includes("npm run plugin:doctor")),
-  check("plugin_readme_documents_doctor", pluginReadmeText.includes("installed Codex plugin cache") && pluginReadmeText.includes("repo-local plugin contract")),
+  check("plugin_readme_documents_first_run", pluginReadmeText.includes("## First Run") && pluginReadmeText.includes("npm run plugin:contract") && pluginReadmeText.includes("npm run plugin:dogfood") && pluginReadmeText.includes("npm run plugin:doctor") && pluginReadmeText.includes("--strict")),
+  check("plugin_readme_documents_doctor", pluginReadmeText.includes("installed Codex plugin cache") && pluginReadmeText.includes("repo-local plugin contract") && pluginReadmeText.includes("--strict")),
   check("plugin_readme_documents_all_command_intents", commandIntents.length > 0 && commandIntents.every((id) => pluginReadmeText.includes(id)), {
     commandIntents
   }),
@@ -125,12 +125,13 @@ const checks = [
   }),
   check("governance_doc_documents_all_artifacts", artifactNames.every((artifact) => governanceDocText.includes(artifact))),
   check("governance_doc_documents_self_dogfood", governanceDocText.includes("Self-Dogfood Loop") && governanceDocText.includes("npm run plugin:dogfood")),
-  check("governance_doc_documents_doctor", governanceDocText.includes("npm run plugin:doctor") && governanceDocText.includes("installed Codex plugin cache")),
+  check("governance_doc_documents_doctor", governanceDocText.includes("npm run plugin:doctor") && governanceDocText.includes("installed Codex plugin cache") && governanceDocText.includes("--strict")),
   check("marketplace_entry", Boolean(marketplaceEntry), { marketplace: marketplace.name }),
   check("marketplace_source_is_repo_relative", marketplaceEntry?.source?.source === "local" && marketplaceEntry?.source?.path === "./plugins/autolabos-research-governor", {
     source: marketplaceEntry?.source
   }),
   check("plugin_doctor_reports_cache_alignment", pluginDoctorSource.includes("installed_plugin_cache_alignment") && pluginDoctorSource.includes("cache_update_required")),
+  check("plugin_doctor_supports_strict_mode", pluginDoctorSource.includes("--strict") && pluginDoctorSource.includes("strictMode") && pluginDoctorSource.includes("process.exitCode = 1")),
   check("print_contract_lists_artifacts", artifactNames.every((artifact) => printContractSource.includes(artifact))),
   check("print_contract_outputs_expected_contract", printedContract.pluginName === manifest.name
     && printedContract.primarySurface === "codex_plugin"

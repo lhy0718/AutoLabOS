@@ -18,13 +18,16 @@ auditing the plugin:
 npm run plugin:contract
 npm run plugin:dogfood
 npm run plugin:doctor
+npm run plugin:doctor -- --strict
 ```
 
 `npm run plugin:contract` prints the public artifact and intent contract.
 `npm run plugin:dogfood` checks the plugin manifest, skill, marketplace entry,
 README, helper scripts, and package wiring as an untrusted artifact bundle.
 `npm run plugin:doctor` reports whether the installed Codex plugin cache is
-aligned with the repo-local plugin contract.
+aligned with the repo-local plugin contract. Use
+`npm run plugin:doctor -- --strict` in CI or release checks when cache drift
+should fail the command instead of only appearing in the JSON verdict.
 
 After changing plugin files, reinstall the plugin or restart the Codex thread so
 cached skill text cannot drift from the repo-local contract.

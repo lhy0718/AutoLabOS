@@ -12,6 +12,20 @@ const repoRoot = path.resolve(pluginRoot, "..", "..");
 const codexHome = process.env.CODEX_HOME
   ? path.resolve(process.env.CODEX_HOME)
   : path.join(os.homedir(), ".codex");
+const args = process.argv.slice(2);
+const allowedArgs = new Set(["--strict", "--help", "-h"]);
+const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
+const strictMode = args.includes("--strict");
+
+if (args.includes("--help") || args.includes("-h")) {
+  process.stdout.write("Usage: npm run plugin:doctor -- [--strict]\n");
+  process.exit(0);
+}
+
+if (unknownArgs.length > 0) {
+  process.stderr.write("Unknown plugin:doctor argument: " + unknownArgs.join(", ") + "\n");
+  process.exit(2);
+}
 
 const repoRelativePluginPath = "plugins/autolabos-research-governor";
 const marketplacePath = ".agents/plugins/marketplace.json";
@@ -110,6 +124,7 @@ const report = {
   commandIntent: "research:audit",
   outputArtifact: "GateReport",
   doctorTarget: manifest.name,
+  strictMode,
   verdict,
   gate: "installed_plugin_cache_alignment",
   repoLocal: {
@@ -131,3 +146,7 @@ const report = {
 };
 
 process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+
+if (strictMode && verdict !== "pass") {
+  process.exitCode = 1;
+}

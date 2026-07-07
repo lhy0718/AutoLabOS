@@ -445,6 +445,7 @@ describe("collectPapers bibtex", () => {
               abstract: "Compares a baseline and comparator on a public dataset.",
               year: 2025,
               url: "https://arxiv.org/abs/2501.00003",
+              openAccessPdfUrl: "https://arxiv.org/pdf/2501.00003",
               authors: ["Clean Author"]
             }
           ])
