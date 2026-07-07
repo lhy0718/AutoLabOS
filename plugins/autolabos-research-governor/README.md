@@ -15,13 +15,16 @@ Run these commands from the repository root when installing, changing, or
 auditing the plugin:
 
 ```sh
-node plugins/autolabos-research-governor/scripts/print-contract.mjs
+npm run plugin:contract
 npm run plugin:dogfood
 ```
 
-`print-contract.mjs` prints the public artifact and intent contract.
+`npm run plugin:contract` prints the public artifact and intent contract.
 `npm run plugin:dogfood` checks the plugin manifest, skill, marketplace entry,
 README, helper scripts, and package wiring as an untrusted artifact bundle.
+
+After changing plugin files, reinstall the plugin or restart the Codex thread so
+cached skill text cannot drift from the repo-local contract.
 
 ## Command Intents
 

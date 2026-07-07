@@ -55,7 +55,8 @@ describe("AutoLabOS Codex plugin contract", () => {
       expect.arrayContaining([
         "plugin_readme_documents_first_run",
         "plugin_readme_documents_all_command_intents",
-        "print_contract_outputs_expected_contract"
+        "print_contract_outputs_expected_contract",
+        "package_exposes_contract_script"
       ])
     );
   });
@@ -88,7 +89,7 @@ describe("AutoLabOS Codex plugin contract", () => {
     const text = fs.readFileSync(readmePath, "utf8");
 
     expect(text).toContain("## First Run");
-    expect(text).toContain("node plugins/autolabos-research-governor/scripts/print-contract.mjs");
+    expect(text).toContain("npm run plugin:contract");
     expect(text).toContain("npm run plugin:dogfood");
     expect(text).toContain("docs/codex-plugin-governance.md");
     expect(text).toContain("External outputs remain untrusted evidence");

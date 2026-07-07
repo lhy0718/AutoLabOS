@@ -106,10 +106,10 @@ const checks = [
   check("skill_documents_all_command_intents", commandIntents.length > 0 && commandIntents.every((id) => skillText.includes(id)), {
     commandIntents
   }),
-  check("skill_documents_first_run_orientation", skillText.includes("print-contract.mjs") && skillText.includes("plugin-contract coherence")),
+  check("skill_documents_first_run_orientation", skillText.includes("npm run plugin:contract") && skillText.includes("plugin-contract coherence")),
   check("skill_documents_self_dogfood", skillText.includes("dogfood") && skillText.includes("plugin:dogfood")),
   check("plugin_readme_exists", pluginReadmeText.length > 0),
-  check("plugin_readme_documents_first_run", pluginReadmeText.includes("## First Run") && pluginReadmeText.includes("npm run plugin:dogfood") && pluginReadmeText.includes("print-contract.mjs")),
+  check("plugin_readme_documents_first_run", pluginReadmeText.includes("## First Run") && pluginReadmeText.includes("npm run plugin:contract") && pluginReadmeText.includes("npm run plugin:dogfood")),
   check("plugin_readme_documents_all_command_intents", commandIntents.length > 0 && commandIntents.every((id) => pluginReadmeText.includes(id)), {
     commandIntents
   }),
@@ -131,6 +131,9 @@ const checks = [
     && typeof printedContract.invariant === "string"
     && printedContract.invariant.includes("untrusted evidence"), {
     observed: printedContract
+  }),
+  check("package_exposes_contract_script", packageJson.scripts?.["plugin:contract"] === "node plugins/autolabos-research-governor/scripts/print-contract.mjs", {
+    observed: packageJson.scripts?.["plugin:contract"]
   }),
   check("package_exposes_dogfood_script", packageJson.scripts?.["plugin:dogfood"] === "node plugins/autolabos-research-governor/scripts/dogfood-audit.mjs", {
     observed: packageJson.scripts?.["plugin:dogfood"]

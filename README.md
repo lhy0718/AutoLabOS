@@ -81,7 +81,7 @@ The existing standalone TUI and web app stay important as a reference workflow, 
 For first-run plugin checks:
 
 ```sh
-node plugins/autolabos-research-governor/scripts/print-contract.mjs
+npm run plugin:contract
 npm run plugin:dogfood
 ```
 
