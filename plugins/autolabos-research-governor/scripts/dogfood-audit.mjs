@@ -49,6 +49,9 @@ function repairTarget(id) {
   if (id.startsWith("governance_doc_")) {
     return "docs/codex-plugin-governance.md";
   }
+  if (id.startsWith("ci_workflow_")) {
+    return ".github/workflows/ci.yml";
+  }
   if (id.startsWith("plugin_doctor_")) {
     return "plugins/autolabos-research-governor/scripts/plugin-doctor.mjs";
   }
@@ -72,6 +75,7 @@ const marketplace = readJson(".agents/plugins/marketplace.json");
 const skillText = readText("plugins/autolabos-research-governor/skills/autolabos/SKILL.md");
 const pluginReadmeText = readOptionalText("plugins/autolabos-research-governor/README.md");
 const governanceDocText = readText("docs/codex-plugin-governance.md");
+const ciWorkflowText = readOptionalText(".github/workflows/ci.yml");
 const contractSource = readText("src/core/researchGovernanceContract.ts");
 const packageJson = readJson("package.json");
 const printContractSource = readText("plugins/autolabos-research-governor/scripts/print-contract.mjs");
@@ -137,6 +141,7 @@ const checks = [
   check("governance_doc_documents_self_dogfood", governanceDocText.includes("Self-Dogfood Loop") && governanceDocText.includes("npm run plugin:dogfood")),
   check("governance_doc_documents_doctor", governanceDocText.includes("npm run plugin:doctor") && governanceDocText.includes("installed Codex plugin cache") && governanceDocText.includes("--strict")),
   check("governance_doc_documents_release_check", governanceDocText.includes("npm run plugin:release-check") && governanceDocText.includes("npm run plugin:sync-cache") && governanceDocText.includes("dry-run")),
+  check("ci_workflow_runs_plugin_release_check", ciWorkflowText.includes("npm run plugin:sync-cache -- --write") && ciWorkflowText.includes("npm run plugin:release-check")),
   check("marketplace_entry", Boolean(marketplaceEntry), { marketplace: marketplace.name }),
   check("marketplace_source_is_repo_relative", marketplaceEntry?.source?.source === "local" && marketplaceEntry?.source?.path === "./plugins/autolabos-research-governor", {
     source: marketplaceEntry?.source
@@ -184,6 +189,7 @@ const report = {
     "plugins/autolabos-research-governor/README.md",
     ".agents/plugins/marketplace.json",
     "docs/codex-plugin-governance.md",
+    ".github/workflows/ci.yml",
     "src/core/researchGovernanceContract.ts",
     "plugins/autolabos-research-governor/scripts/plugin-doctor.mjs",
     "plugins/autolabos-research-governor/scripts/plugin-release-check.mjs",

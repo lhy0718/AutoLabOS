@@ -60,6 +60,7 @@ describe("AutoLabOS Codex plugin contract", () => {
         "plugin_doctor_supports_strict_mode",
         "plugin_release_check_reports_release_gate",
         "plugin_sync_cache_supports_dry_run_and_write",
+        "ci_workflow_runs_plugin_release_check",
         "print_contract_outputs_expected_contract",
         "package_exposes_contract_script",
         "package_exposes_doctor_script",
@@ -110,6 +111,17 @@ describe("AutoLabOS Codex plugin contract", () => {
       expect(text).toContain(command.id);
       expect(text).toContain(command.outputArtifact);
     }
+  });
+
+  it("wires plugin release readiness into CI after syncing the ephemeral cache", () => {
+    const workflowPath = path.join(ROOT, ".github", "workflows", "ci.yml");
+    const text = fs.readFileSync(workflowPath, "utf8");
+
+    expect(text).toContain("npm run plugin:sync-cache -- --write");
+    expect(text).toContain("npm run plugin:release-check");
+    expect(text.indexOf("npm run plugin:sync-cache -- --write")).toBeLessThan(
+      text.indexOf("npm run plugin:release-check")
+    );
   });
 
   it("fails in strict mode when installed plugin cache is missing", () => {

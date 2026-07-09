@@ -29,5 +29,11 @@ jobs:
       - name: Validate harness records
         run: npm run validate:harness
 
+      - name: Sync repo-local plugin cache
+        run: npm run plugin:sync-cache -- --write
+
+      - name: Check plugin release readiness
+        run: npm run plugin:release-check
+
       - name: Test
         run: npm test
