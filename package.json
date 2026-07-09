@@ -72,7 +72,9 @@
     "test:smoke:natural-composite-all": "bash tests/smoke/run_natural_composite_run_all_execute_and_verify_artifacts.sh",
     "test:smoke:natural-llm-composite-all": "bash tests/smoke/run_natural_llm_composite_run_all_execute_and_verify_artifacts.sh",
     "test:smoke:ci": "CI=true bash tests/smoke/run_ci_smoke.sh",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "plugin:release-check": "node plugins/autolabos-research-governor/scripts/plugin-release-check.mjs",
+    "plugin:sync-cache": "node plugins/autolabos-research-governor/scripts/sync-cache.mjs"
   },
   "engines": {
     "node": ">=18.17"

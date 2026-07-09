@@ -52,6 +52,12 @@ function repairTarget(id) {
   if (id.startsWith("plugin_doctor_")) {
     return "plugins/autolabos-research-governor/scripts/plugin-doctor.mjs";
   }
+  if (id.startsWith("plugin_release_")) {
+    return "plugins/autolabos-research-governor/scripts/plugin-release-check.mjs";
+  }
+  if (id.startsWith("plugin_sync_")) {
+    return "plugins/autolabos-research-governor/scripts/sync-cache.mjs";
+  }
   if (id.startsWith("print_contract_")) {
     return "plugins/autolabos-research-governor/scripts/print-contract.mjs";
   }
@@ -70,6 +76,8 @@ const contractSource = readText("src/core/researchGovernanceContract.ts");
 const packageJson = readJson("package.json");
 const printContractSource = readText("plugins/autolabos-research-governor/scripts/print-contract.mjs");
 const pluginDoctorSource = readText("plugins/autolabos-research-governor/scripts/plugin-doctor.mjs");
+const pluginReleaseCheckSource = readText("plugins/autolabos-research-governor/scripts/plugin-release-check.mjs");
+const pluginSyncCacheSource = readText("plugins/autolabos-research-governor/scripts/sync-cache.mjs");
 const printedContract = JSON.parse(execFileSync(process.execPath, [
   path.join(repoRoot, "plugins/autolabos-research-governor/scripts/print-contract.mjs")
 ], { cwd: repoRoot, encoding: "utf8" }));
@@ -112,10 +120,12 @@ const checks = [
   }),
   check("skill_documents_first_run_orientation", skillText.includes("npm run plugin:contract") && skillText.includes("plugin-contract coherence")),
   check("skill_documents_doctor", skillText.includes("npm run plugin:doctor") && skillText.includes("installed Codex plugin cache") && skillText.includes("--strict")),
+  check("skill_documents_release_check", skillText.includes("npm run plugin:release-check") && skillText.includes("npm run plugin:sync-cache")),
   check("skill_documents_self_dogfood", skillText.includes("dogfood") && skillText.includes("plugin:dogfood")),
   check("plugin_readme_exists", pluginReadmeText.length > 0),
-  check("plugin_readme_documents_first_run", pluginReadmeText.includes("## First Run") && pluginReadmeText.includes("npm run plugin:contract") && pluginReadmeText.includes("npm run plugin:dogfood") && pluginReadmeText.includes("npm run plugin:doctor") && pluginReadmeText.includes("--strict")),
+  check("plugin_readme_documents_first_run", pluginReadmeText.includes("## First Run") && pluginReadmeText.includes("npm run plugin:contract") && pluginReadmeText.includes("npm run plugin:dogfood") && pluginReadmeText.includes("npm run plugin:doctor") && pluginReadmeText.includes("--strict") && pluginReadmeText.includes("npm run plugin:release-check") && pluginReadmeText.includes("npm run plugin:sync-cache")),
   check("plugin_readme_documents_doctor", pluginReadmeText.includes("installed Codex plugin cache") && pluginReadmeText.includes("repo-local plugin contract") && pluginReadmeText.includes("--strict")),
+  check("plugin_readme_documents_release_check", pluginReadmeText.includes("contract, dogfood, strict doctor, pack") && pluginReadmeText.includes("-- --write")),
   check("plugin_readme_documents_all_command_intents", commandIntents.length > 0 && commandIntents.every((id) => pluginReadmeText.includes(id)), {
     commandIntents
   }),
@@ -126,12 +136,15 @@ const checks = [
   check("governance_doc_documents_all_artifacts", artifactNames.every((artifact) => governanceDocText.includes(artifact))),
   check("governance_doc_documents_self_dogfood", governanceDocText.includes("Self-Dogfood Loop") && governanceDocText.includes("npm run plugin:dogfood")),
   check("governance_doc_documents_doctor", governanceDocText.includes("npm run plugin:doctor") && governanceDocText.includes("installed Codex plugin cache") && governanceDocText.includes("--strict")),
+  check("governance_doc_documents_release_check", governanceDocText.includes("npm run plugin:release-check") && governanceDocText.includes("npm run plugin:sync-cache") && governanceDocText.includes("dry-run")),
   check("marketplace_entry", Boolean(marketplaceEntry), { marketplace: marketplace.name }),
   check("marketplace_source_is_repo_relative", marketplaceEntry?.source?.source === "local" && marketplaceEntry?.source?.path === "./plugins/autolabos-research-governor", {
     source: marketplaceEntry?.source
   }),
   check("plugin_doctor_reports_cache_alignment", pluginDoctorSource.includes("installed_plugin_cache_alignment") && pluginDoctorSource.includes("cache_update_required")),
   check("plugin_doctor_supports_strict_mode", pluginDoctorSource.includes("--strict") && pluginDoctorSource.includes("strictMode") && pluginDoctorSource.includes("process.exitCode = 1")),
+  check("plugin_release_check_reports_release_gate", pluginReleaseCheckSource.includes("plugin_release_readiness") && pluginReleaseCheckSource.includes("plugin-doctor.mjs") && pluginReleaseCheckSource.includes("--strict") && pluginReleaseCheckSource.includes("pack_includes_plugin_files")),
+  check("plugin_sync_cache_supports_dry_run_and_write", pluginSyncCacheSource.includes("installed_plugin_cache_sync") && pluginSyncCacheSource.includes("--dry-run") && pluginSyncCacheSource.includes("--write")),
   check("print_contract_lists_artifacts", artifactNames.every((artifact) => printContractSource.includes(artifact))),
   check("print_contract_outputs_expected_contract", printedContract.pluginName === manifest.name
     && printedContract.primarySurface === "codex_plugin"
@@ -146,6 +159,12 @@ const checks = [
   }),
   check("package_exposes_doctor_script", packageJson.scripts?.["plugin:doctor"] === "node plugins/autolabos-research-governor/scripts/plugin-doctor.mjs", {
     observed: packageJson.scripts?.["plugin:doctor"]
+  }),
+  check("package_exposes_release_check_script", packageJson.scripts?.["plugin:release-check"] === "node plugins/autolabos-research-governor/scripts/plugin-release-check.mjs", {
+    observed: packageJson.scripts?.["plugin:release-check"]
+  }),
+  check("package_exposes_sync_cache_script", packageJson.scripts?.["plugin:sync-cache"] === "node plugins/autolabos-research-governor/scripts/sync-cache.mjs", {
+    observed: packageJson.scripts?.["plugin:sync-cache"]
   }),
   check("package_exposes_dogfood_script", packageJson.scripts?.["plugin:dogfood"] === "node plugins/autolabos-research-governor/scripts/dogfood-audit.mjs", {
     observed: packageJson.scripts?.["plugin:dogfood"]
@@ -167,6 +186,8 @@ const report = {
     "docs/codex-plugin-governance.md",
     "src/core/researchGovernanceContract.ts",
     "plugins/autolabos-research-governor/scripts/plugin-doctor.mjs",
+    "plugins/autolabos-research-governor/scripts/plugin-release-check.mjs",
+    "plugins/autolabos-research-governor/scripts/sync-cache.mjs",
     "plugins/autolabos-research-governor/scripts/print-contract.mjs",
     "package.json"
   ],

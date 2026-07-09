@@ -33,6 +33,8 @@ const comparableFiles = [
   ".codex-plugin/plugin.json",
   "scripts/dogfood-audit.mjs",
   "scripts/plugin-doctor.mjs",
+  "scripts/plugin-release-check.mjs",
+  "scripts/sync-cache.mjs",
   "scripts/print-contract.mjs",
   "skills/autolabos/SKILL.md"
 ];

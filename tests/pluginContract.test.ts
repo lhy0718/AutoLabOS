@@ -58,9 +58,13 @@ describe("AutoLabOS Codex plugin contract", () => {
         "plugin_readme_documents_all_command_intents",
         "plugin_doctor_reports_cache_alignment",
         "plugin_doctor_supports_strict_mode",
+        "plugin_release_check_reports_release_gate",
+        "plugin_sync_cache_supports_dry_run_and_write",
         "print_contract_outputs_expected_contract",
         "package_exposes_contract_script",
-        "package_exposes_doctor_script"
+        "package_exposes_doctor_script",
+        "package_exposes_release_check_script",
+        "package_exposes_sync_cache_script"
       ])
     );
   });
@@ -97,6 +101,8 @@ describe("AutoLabOS Codex plugin contract", () => {
     expect(text).toContain("npm run plugin:dogfood");
     expect(text).toContain("npm run plugin:doctor");
     expect(text).toContain("npm run plugin:doctor -- --strict");
+    expect(text).toContain("npm run plugin:sync-cache");
+    expect(text).toContain("npm run plugin:release-check");
     expect(text).toContain("docs/codex-plugin-governance.md");
     expect(text).toContain("External outputs remain untrusted evidence");
 
@@ -132,6 +138,59 @@ describe("AutoLabOS Codex plugin contract", () => {
     }
   });
 
+  it("syncs repo-local plugin cache without exposing absolute cache paths", () => {
+    const manifestPath = path.join(PLUGIN_ROOT, ".codex-plugin", "plugin.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const tempCodexHome = fs.mkdtempSync(path.join(os.tmpdir(), "autolabos-plugin-sync-cache-"));
+    const cacheRoot = path.join(
+      tempCodexHome,
+      "plugins",
+      "cache",
+      "autolabos-local",
+      manifest.name,
+      manifest.version
+    );
+
+    try {
+      const dryRun = spawnSync(process.execPath, [
+        path.join(PLUGIN_ROOT, "scripts", "sync-cache.mjs")
+      ], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, CODEX_HOME: tempCodexHome }
+      });
+      const dryRunReport = JSON.parse(dryRun.stdout);
+
+      expect(dryRun.status).toBe(0);
+      expect(dryRunReport.dryRun).toBe(true);
+      expect(dryRunReport.verdict).toBe("would_sync");
+      expect(dryRunReport.installedCache.cacheRelativePath).toBe(
+        path.posix.join("plugins", "cache", "autolabos-local", manifest.name, manifest.version)
+      );
+      expect(JSON.stringify(dryRunReport)).not.toContain(tempCodexHome);
+      expect(fs.existsSync(cacheRoot)).toBe(false);
+
+      const write = spawnSync(process.execPath, [
+        path.join(PLUGIN_ROOT, "scripts", "sync-cache.mjs"),
+        "--write"
+      ], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, CODEX_HOME: tempCodexHome }
+      });
+      const writeReport = JSON.parse(write.stdout);
+
+      expect(write.status).toBe(0);
+      expect(writeReport.dryRun).toBe(false);
+      expect(writeReport.verdict).toBe("synced");
+      expect(writeReport.copiedFiles).toContain("scripts/sync-cache.mjs");
+      expect(JSON.stringify(writeReport)).not.toContain(tempCodexHome);
+      expect(fs.existsSync(path.join(cacheRoot, ".codex-plugin", "plugin.json"))).toBe(true);
+    } finally {
+      fs.rmSync(tempCodexHome, { recursive: true, force: true });
+    }
+  });
+
   it("reports installed plugin cache alignment without exposing absolute cache paths", () => {
     const manifestPath = path.join(PLUGIN_ROOT, ".codex-plugin", "plugin.json");
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
@@ -148,6 +207,8 @@ describe("AutoLabOS Codex plugin contract", () => {
       ".codex-plugin/plugin.json",
       "scripts/dogfood-audit.mjs",
       "scripts/plugin-doctor.mjs",
+      "scripts/plugin-release-check.mjs",
+      "scripts/sync-cache.mjs",
       "scripts/print-contract.mjs",
       "skills/autolabos/SKILL.md"
     ];

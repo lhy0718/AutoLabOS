@@ -58,7 +58,7 @@ No adapter may skip baseline requirements, claim-evidence mapping, reproducibili
 
 The plugin must be able to inspect its own public contract as an untrusted artifact bundle. Maintainers should run `npm run plugin:dogfood` after changing the plugin manifest, skill text, marketplace entry, governance contract, or plugin helper scripts.
 
-Maintainers should also run `npm run plugin:doctor` when checking whether the installed Codex plugin cache matches the repo-local plugin contract. The default doctor report is diagnostic; `npm run plugin:doctor -- --strict` should be used for CI or release checks that must fail on cache drift. Cache drift means the plugin should be reinstalled or the Codex thread restarted before relying on installed skill behavior.
+Maintainers should also run `npm run plugin:doctor` when checking whether the installed Codex plugin cache matches the repo-local plugin contract. The default doctor report is diagnostic; `npm run plugin:doctor -- --strict` should be used for CI or release checks that must fail on cache drift. `npm run plugin:sync-cache` is dry-run by default and should be run with `-- --write` only when intentionally refreshing a local Codex installation. `npm run plugin:release-check` bundles contract, dogfood, strict doctor, pack, and public-surface hygiene checks for release readiness. Cache drift means the plugin should be reinstalled or the Codex thread restarted before relying on installed skill behavior.
 
 The dogfood report is a `research:improve` surface: failed checks map to the smallest plugin-local repair target and must not be treated as broad workflow redesign requests. A passing report proves only that the plugin contract is internally coherent; it does not prove paper-readiness or research completion.
 

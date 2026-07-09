@@ -19,6 +19,8 @@ npm run plugin:contract
 npm run plugin:dogfood
 npm run plugin:doctor
 npm run plugin:doctor -- --strict
+npm run plugin:sync-cache
+npm run plugin:release-check
 ```
 
 `npm run plugin:contract` prints the public artifact and intent contract.
@@ -28,6 +30,10 @@ README, helper scripts, and package wiring as an untrusted artifact bundle.
 aligned with the repo-local plugin contract. Use
 `npm run plugin:doctor -- --strict` in CI or release checks when cache drift
 should fail the command instead of only appearing in the JSON verdict.
+`npm run plugin:sync-cache` performs a dry run for copying the repo-local plugin
+into the installed Codex cache; add `-- --write` only when intentionally
+refreshing the local Codex installation. `npm run plugin:release-check` bundles
+contract, dogfood, strict doctor, pack, and public-surface hygiene checks.
 
 After changing plugin files, reinstall the plugin or restart the Codex thread so
 cached skill text cannot drift from the repo-local contract.
