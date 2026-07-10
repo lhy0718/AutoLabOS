@@ -61,6 +61,9 @@ function repairTarget(id) {
   if (id.startsWith("plugin_sync_")) {
     return "plugins/autolabos-research-governor/scripts/sync-cache.mjs";
   }
+  if (id.startsWith("plugin_bridge_")) {
+    return "plugins/autolabos-research-governor/scripts/run-research-intent.mjs";
+  }
   if (id.startsWith("print_contract_")) {
     return "plugins/autolabos-research-governor/scripts/print-contract.mjs";
   }
@@ -82,6 +85,7 @@ const printContractSource = readText("plugins/autolabos-research-governor/script
 const pluginDoctorSource = readText("plugins/autolabos-research-governor/scripts/plugin-doctor.mjs");
 const pluginReleaseCheckSource = readText("plugins/autolabos-research-governor/scripts/plugin-release-check.mjs");
 const pluginSyncCacheSource = readText("plugins/autolabos-research-governor/scripts/sync-cache.mjs");
+const pluginBridgeSource = readText("plugins/autolabos-research-governor/scripts/run-research-intent.mjs");
 const printedContract = JSON.parse(execFileSync(process.execPath, [
   path.join(repoRoot, "plugins/autolabos-research-governor/scripts/print-contract.mjs")
 ], { cwd: repoRoot, encoding: "utf8" }));
@@ -150,9 +154,11 @@ const checks = [
   check("plugin_doctor_supports_strict_mode", pluginDoctorSource.includes("--strict") && pluginDoctorSource.includes("strictMode") && pluginDoctorSource.includes("process.exitCode = 1")),
   check("plugin_release_check_reports_release_gate", pluginReleaseCheckSource.includes("plugin_release_readiness") && pluginReleaseCheckSource.includes("plugin-doctor.mjs") && pluginReleaseCheckSource.includes("--strict") && pluginReleaseCheckSource.includes("pack_includes_plugin_files")),
   check("plugin_sync_cache_supports_dry_run_and_write", pluginSyncCacheSource.includes("installed_plugin_cache_sync") && pluginSyncCacheSource.includes("--dry-run") && pluginSyncCacheSource.includes("--write")),
+  check("plugin_bridge_executes_all_research_intents", ["new", "audit", "review", "improve", "pack"].every((intent) => pluginBridgeSource.includes(`"${intent}"`)) && pluginBridgeSource.includes("autolabos_cli_dependency_missing") && pluginBridgeSource.includes('["research", intent')),
   check("print_contract_lists_artifacts", artifactNames.every((artifact) => printContractSource.includes(artifact))),
   check("print_contract_outputs_expected_contract", printedContract.pluginName === manifest.name
     && printedContract.primarySurface === "codex_plugin"
+    && printedContract.schemaVersion === "1.0"
     && arraysEqual(printedContract.artifacts, artifactNames)
     && arraysEqual(printedContract.commandIntents, commandIntents)
     && typeof printedContract.invariant === "string"
@@ -173,6 +179,9 @@ const checks = [
   }),
   check("package_exposes_dogfood_script", packageJson.scripts?.["plugin:dogfood"] === "node plugins/autolabos-research-governor/scripts/dogfood-audit.mjs", {
     observed: packageJson.scripts?.["plugin:dogfood"]
+  }),
+  check("package_exposes_research_bridge_script", packageJson.scripts?.["plugin:research"] === "node plugins/autolabos-research-governor/scripts/run-research-intent.mjs", {
+    observed: packageJson.scripts?.["plugin:research"]
   })
 ];
 
@@ -193,6 +202,7 @@ const report = {
     "src/core/researchGovernanceContract.ts",
     "plugins/autolabos-research-governor/scripts/plugin-doctor.mjs",
     "plugins/autolabos-research-governor/scripts/plugin-release-check.mjs",
+    "plugins/autolabos-research-governor/scripts/run-research-intent.mjs",
     "plugins/autolabos-research-governor/scripts/sync-cache.mjs",
     "plugins/autolabos-research-governor/scripts/print-contract.mjs",
     "package.json"

@@ -34,6 +34,7 @@ const comparableFiles = [
   "scripts/dogfood-audit.mjs",
   "scripts/plugin-doctor.mjs",
   "scripts/plugin-release-check.mjs",
+  "scripts/run-research-intent.mjs",
   "scripts/sync-cache.mjs",
   "scripts/print-contract.mjs",
   "skills/autolabos/SKILL.md"

@@ -54,6 +54,19 @@ Adapter categories:
 
 No adapter may skip baseline requirements, claim-evidence mapping, reproducibility checks, or paper-readiness review.
 
+## Executable Adapter
+
+The plugin ships a thin bridge for `autolabos research
+<new|audit|review|improve|pack>`. The bridge checks that the AutoLabOS CLI is
+available, delegates execution without a shell, and emits a blocking
+`GateReport` when the dependency is missing. The CLI owns deterministic
+artifact validation and reuse of the existing brief, audit, review, and
+meta-harness logic.
+
+All normalized artifacts use schema version `1.0`. Paths in public artifacts
+are workspace-relative or placeholder-based, and `research:improve` defaults
+to `plan_only`.
+
 ## Self-Dogfood Loop
 
 The plugin must be able to inspect its own public contract as an untrusted artifact bundle. Maintainers should run `npm run plugin:dogfood` after changing the plugin manifest, skill text, marketplace entry, governance contract, or plugin helper scripts.

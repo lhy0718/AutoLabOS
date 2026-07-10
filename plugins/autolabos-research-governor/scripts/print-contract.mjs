@@ -2,6 +2,7 @@
 
 const contract = {
   pluginName: "autolabos-research-governor",
+  schemaVersion: "1.0",
   primarySurface: "codex_plugin",
   standaloneWorkflowRole: "reference_workflow",
   artifacts: [

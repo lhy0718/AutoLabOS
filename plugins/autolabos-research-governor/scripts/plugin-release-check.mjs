@@ -15,6 +15,7 @@ const requiredPackFiles = [
   "plugins/autolabos-research-governor/scripts/dogfood-audit.mjs",
   "plugins/autolabos-research-governor/scripts/plugin-doctor.mjs",
   "plugins/autolabos-research-governor/scripts/plugin-release-check.mjs",
+  "plugins/autolabos-research-governor/scripts/run-research-intent.mjs",
   "plugins/autolabos-research-governor/scripts/sync-cache.mjs",
   "plugins/autolabos-research-governor/scripts/print-contract.mjs",
   "plugins/autolabos-research-governor/skills/autolabos/SKILL.md"
@@ -28,6 +29,7 @@ const publicSurfaceFiles = [
   "plugins/autolabos-research-governor/scripts/dogfood-audit.mjs",
   "plugins/autolabos-research-governor/scripts/plugin-doctor.mjs",
   "plugins/autolabos-research-governor/scripts/plugin-release-check.mjs",
+  "plugins/autolabos-research-governor/scripts/run-research-intent.mjs",
   "plugins/autolabos-research-governor/scripts/sync-cache.mjs",
   "plugins/autolabos-research-governor/scripts/print-contract.mjs",
   "plugins/autolabos-research-governor/skills/autolabos/SKILL.md",

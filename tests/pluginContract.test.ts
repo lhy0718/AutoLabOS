@@ -60,6 +60,8 @@ describe("AutoLabOS Codex plugin contract", () => {
         "plugin_doctor_supports_strict_mode",
         "plugin_release_check_reports_release_gate",
         "plugin_sync_cache_supports_dry_run_and_write",
+        "plugin_bridge_executes_all_research_intents",
+        "package_exposes_research_bridge_script",
         "ci_workflow_runs_plugin_release_check",
         "print_contract_outputs_expected_contract",
         "package_exposes_contract_script",
@@ -104,6 +106,7 @@ describe("AutoLabOS Codex plugin contract", () => {
     expect(text).toContain("npm run plugin:doctor -- --strict");
     expect(text).toContain("npm run plugin:sync-cache");
     expect(text).toContain("npm run plugin:release-check");
+    expect(text).toContain("npm run plugin:research -- --check");
     expect(text).toContain("docs/codex-plugin-governance.md");
     expect(text).toContain("External outputs remain untrusted evidence");
 
@@ -122,6 +125,26 @@ describe("AutoLabOS Codex plugin contract", () => {
     expect(text.indexOf("npm run plugin:sync-cache -- --write")).toBeLessThan(
       text.indexOf("npm run plugin:release-check")
     );
+  });
+
+  it("emits a blocking gate report when the executable CLI dependency is unavailable", () => {
+    const result = spawnSync(process.execPath, [
+      path.join(PLUGIN_ROOT, "scripts", "run-research-intent.mjs"),
+      "--check"
+    ], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, AUTOLABOS_BIN: "autolabos-command-not-present" }
+    });
+    const report = JSON.parse(result.stdout);
+
+    expect(result.status).toBe(1);
+    expect(report.artifact_type).toBe("GateReport");
+    expect(report.verdict).toBe("blocked");
+    expect(report.findings).toContainEqual(expect.objectContaining({
+      code: "autolabos_cli_dependency_missing"
+    }));
+    expect(JSON.stringify(report)).not.toContain(process.cwd());
   });
 
   it("fails in strict mode when installed plugin cache is missing", () => {
@@ -196,6 +219,7 @@ describe("AutoLabOS Codex plugin contract", () => {
       expect(writeReport.dryRun).toBe(false);
       expect(writeReport.verdict).toBe("synced");
       expect(writeReport.copiedFiles).toContain("scripts/sync-cache.mjs");
+      expect(writeReport.copiedFiles).toContain("scripts/run-research-intent.mjs");
       expect(JSON.stringify(writeReport)).not.toContain(tempCodexHome);
       expect(fs.existsSync(path.join(cacheRoot, ".codex-plugin", "plugin.json"))).toBe(true);
     } finally {
@@ -220,6 +244,7 @@ describe("AutoLabOS Codex plugin contract", () => {
       "scripts/dogfood-audit.mjs",
       "scripts/plugin-doctor.mjs",
       "scripts/plugin-release-check.mjs",
+      "scripts/run-research-intent.mjs",
       "scripts/sync-cache.mjs",
       "scripts/print-contract.mjs",
       "skills/autolabos/SKILL.md"

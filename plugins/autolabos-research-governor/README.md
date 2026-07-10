@@ -38,6 +38,22 @@ contract, dogfood, strict doctor, pack, and public-surface hygiene checks.
 After changing plugin files, reinstall the plugin or restart the Codex thread so
 cached skill text cannot drift from the repo-local contract.
 
+## Executable Intents
+
+The bundled bridge delegates deterministic work to the installed AutoLabOS CLI:
+
+```sh
+npm run plugin:research -- --check
+npm run plugin:research -- audit --external <artifact-root> --out-dir outputs/research-governance/audit
+npm run plugin:research -- review --gate outputs/research-governance/audit/gate-report.json
+npm run plugin:research -- improve --review outputs/research-governance/review/review-report.json
+npm run plugin:research -- pack --gate outputs/research-governance/audit/gate-report.json --review outputs/research-governance/review/review-report.json
+```
+
+The bridge emits a blocking `GateReport` when the `autolabos` CLI is unavailable.
+It never substitutes a fabricated audit result. A blocked or downgraded research
+verdict is a valid governance outcome and is preserved through packaging.
+
 ## Command Intents
 
 - `research:new`: create or repair a governed research brief.

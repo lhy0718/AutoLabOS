@@ -66,6 +66,7 @@
     "plugin:contract": "node plugins/autolabos-research-governor/scripts/print-contract.mjs",
     "plugin:doctor": "node plugins/autolabos-research-governor/scripts/plugin-doctor.mjs",
     "plugin:dogfood": "node plugins/autolabos-research-governor/scripts/dogfood-audit.mjs",
+    "plugin:research": "node plugins/autolabos-research-governor/scripts/run-research-intent.mjs",
     "test:smoke:natural-collect": "bash tests/smoke/run_natural_collect_pending_command.sh",
     "test:smoke:natural-collect-execute": "bash tests/smoke/run_natural_collect_execute_and_verify_artifacts.sh",
     "test:smoke:all": "AUTOLABOS_SMOKE_MODE=all bash tests/smoke/run_ci_smoke.sh",
