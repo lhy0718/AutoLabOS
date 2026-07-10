@@ -70,10 +70,10 @@ If a relevant skill exists, follow it in addition to this file and the docs.
 
 ## Workflow Contract
 
-The repository currently operates around a governed 9-node research workflow with bounded transitions, built-in backtracking, and checkpointed artifacts.
+The repository preserves the historical governed 9-node contract plus the approved `figure_audit` checkpoint, for 10 named runtime nodes with bounded transitions, built-in backtracking, and checkpointed artifacts.
 
 - Do not casually add, remove, reorder, or redefine top-level workflow nodes.
-- Treat the 9-node structure as fixed unless there is an explicit contract change reflected in docs, runtime behavior, and validation expectations.
+- Treat the historical 9-node baseline plus the approved `figure_audit` checkpoint as fixed unless there is an explicit contract change reflected in docs, runtime behavior, and validation expectations.
 - Any workflow-structure change must preserve:
   - inspectable state transitions
   - artifact audibility

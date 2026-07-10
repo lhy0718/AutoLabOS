@@ -14,7 +14,7 @@ AutoLabOS operates around a governed fixed research workflow:
 
 `collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> figure_audit -> review -> write_paper`
 
-The historical 9-node contract remains the architectural baseline for the research loop. `figure_audit` is the one approved post-analysis checkpoint added for independent figure-quality and vision-critique resume behavior. Beyond that deliberate checkpoint, the top-level governed workflow must remain stable unless an explicit contract change is made.
+The historical 9-node contract remains the architectural baseline for the research loop. The current runtime has 10 named nodes because `figure_audit` is the one approved post-analysis checkpoint added for independent figure-quality and vision-critique resume behavior. Beyond that deliberate checkpoint, the top-level governed workflow must remain stable unless an explicit contract change is made.
 
 Do not casually add, remove, reorder, or redefine top-level nodes.
 
@@ -172,7 +172,7 @@ When applicable, validation should confirm:
 
 ## 11) Exploration Engine (P2-9)
 
-### 왜 fixed 9-node graph를 유지하는가
+### Historical 9-node baseline and figure_audit checkpoint
 
 AutoLabOS의 핵심 가치는 governed, checkpointed, inspectable workflow다.
 Exploration Engine은 이 graph를 대체하지 않는다.
