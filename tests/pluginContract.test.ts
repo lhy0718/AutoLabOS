@@ -129,6 +129,51 @@ describe("AutoLabOS Codex plugin contract", () => {
     );
   });
 
+  it("distinguishes a CLI contract mismatch from a compatible dependency", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "autolabos-plugin-bridge-contract-"));
+    const fakeCli = path.join(tempRoot, "autolabos-fixture");
+    const source = `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "--version") {
+  process.stdout.write("autolabos 9.9.9\\n");
+} else if (args[0] === "research" && args[1] === "--help") {
+  const compatible = process.env.RESEARCH_HELP_MODE === "compatible";
+  process.stdout.write(compatible ? "new audit review improve pack\\n" : "new audit review improve\\n");
+} else {
+  process.exitCode = 2;
+}
+`;
+
+    try {
+      fs.writeFileSync(fakeCli, source, { mode: 0o755 });
+      const bridge = path.join(PLUGIN_ROOT, "scripts", "run-research-intent.mjs");
+      const mismatch = spawnSync(process.execPath, [bridge, "--check"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, AUTOLABOS_BIN: fakeCli }
+      });
+      const mismatchReport = JSON.parse(mismatch.stdout);
+      const compatible = spawnSync(process.execPath, [bridge, "--check"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, AUTOLABOS_BIN: fakeCli, RESEARCH_HELP_MODE: "compatible" }
+      });
+      const compatibleReport = JSON.parse(compatible.stdout);
+
+      expect(mismatch.status).toBe(1);
+      expect(mismatchReport.verdict).toBe("blocked");
+      expect(mismatchReport.findings).toContainEqual(expect.objectContaining({
+        code: "autolabos_cli_contract_mismatch"
+      }));
+      expect(compatible.status).toBe(0);
+      expect(compatibleReport.verdict).toBe("pass");
+      expect(mismatchReport.artifact_id).not.toBe(compatibleReport.artifact_id);
+      expect(JSON.stringify([mismatchReport, compatibleReport])).not.toContain(tempRoot);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("emits a blocking gate report when the executable CLI dependency is unavailable", () => {
     const result = spawnSync(process.execPath, [
       path.join(PLUGIN_ROOT, "scripts", "run-research-intent.mjs"),

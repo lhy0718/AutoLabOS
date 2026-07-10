@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import path from "node:path";
+
 import { runAutoLabOSApp } from "../app.js";
 import { resolveCliAction } from "./args.js";
 import { runAutoLabOSWebServer } from "../web/server.js";
@@ -279,8 +281,16 @@ async function main(): Promise<void> {
   });
 }
 
+function formatFatalError(error: unknown): string {
+  const debug = process.env.AUTOLABOS_DEBUG === "1";
+  const raw = error instanceof Error
+    ? debug ? error.stack || error.message : error.message
+    : String(error);
+  const cwd = process.cwd();
+  return cwd.length > path.parse(cwd).root.length ? raw.replaceAll(cwd, "<workspace>") : raw;
+}
+
 main().catch((error) => {
-  const message = error instanceof Error ? error.stack || error.message : String(error);
-  process.stderr.write(`${message}\n`);
+  process.stderr.write(`${formatFatalError(error)}\n`);
   process.exitCode = 1;
 });

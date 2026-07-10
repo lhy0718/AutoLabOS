@@ -25,6 +25,19 @@ describe("research governance operations", () => {
     expect(resolveCliAction(["research", "audit", "--external", "artifacts"])).toMatchObject({ kind: "research-audit" });
     expect(resolveCliAction(["research", "review", "--gate", "gate-report.json"])).toMatchObject({ kind: "research-review" });
     expect(resolveCliAction(["research", "improve", "--review", "review-report.json"])).toMatchObject({ kind: "research-improve" });
+    expect(resolveCliAction(["research", "audit", "--help"])).toMatchObject({ kind: "research-help" });
+    expect(resolveCliAction([
+      "research",
+      "audit",
+      "--external",
+      "first-root",
+      "--external",
+      "second-root"
+    ])).toEqual({ kind: "error", message: "Duplicate research argument: --external." });
+    expect(resolveCliAction(["research", "review", "gate.json"])).toEqual({
+      kind: "error",
+      message: "Unexpected positional research argument: gate.json."
+    });
     expect(resolveCliAction([
       "research",
       "pack",

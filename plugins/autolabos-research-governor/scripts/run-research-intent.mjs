@@ -79,10 +79,15 @@ function dependencyReport(input) {
           evidence_refs: []
         }
       : undefined;
+  const dependencySeed = JSON.stringify({
+    available,
+    contractCompatible,
+    observedVersion: input.observedVersion || null
+  });
   return {
     schema_version: "1.0",
     artifact_type: "GateReport",
-    artifact_id: `gate_report_${createHash("sha256").update(`plugin-cli:${available}`).digest("hex").slice(0, 16)}`,
+    artifact_id: `gate_report_${createHash("sha256").update(dependencySeed).digest("hex").slice(0, 16)}`,
     generated_at: generatedAt,
     command_intent: "research:audit",
     provenance: {

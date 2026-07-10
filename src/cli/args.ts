@@ -664,13 +664,22 @@ function parseResearchArgs(args: string[]): CliAction {
   if (!["new", "audit", "review", "improve", "pack"].includes(subcommand)) {
     return { kind: "error", message: "Usage: research <new|audit|review|improve|pack> [options]." };
   }
+  if (args.slice(1).some((arg) => arg === "--help" || arg === "-h")) {
+    return { kind: "research-help" };
+  }
 
   const values = new Map<string, string>();
   for (let index = 1; index < args.length; index += 1) {
     const token = args[index];
     const value = args[index + 1];
-    if (!token?.startsWith("--") || !value || value.startsWith("--")) {
-      return { kind: "error", message: `Missing value for ${token || "research option"}.` };
+    if (!token?.startsWith("--")) {
+      return { kind: "error", message: `Unexpected positional research argument: ${token || "<empty>"}.` };
+    }
+    if (values.has(token)) {
+      return { kind: "error", message: `Duplicate research argument: ${token}.` };
+    }
+    if (!value || value.startsWith("--")) {
+      return { kind: "error", message: `Missing value for ${token}.` };
     }
     values.set(token, value);
     index += 1;

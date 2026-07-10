@@ -31,6 +31,14 @@ function runResearch(workspace, args) {
   return JSON.parse(result.stdout);
 }
 
+function runResearchFailure(workspace, args) {
+  return spawnSync(process.execPath, [cliPath, "research", ...args], {
+    cwd: workspace,
+    encoding: "utf8",
+    env: process.env
+  });
+}
+
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -146,6 +154,22 @@ function main() {
       "--source-dir", "outputs/weak/audit",
       "--out-dir", "outputs/weak/pack"
     ]);
+    const incompatibleGatePath = path.join(workspace, "incompatible-gate.json");
+    writeJson(incompatibleGatePath, { ...weakGate.artifact, schema_version: "2.0" });
+    processCount += 1;
+    const versionFailure = runResearchFailure(workspace, [
+      "review",
+      "--gate",
+      "incompatible-gate.json",
+      "--out-dir",
+      "outputs/incompatible/review"
+    ]);
+    assertCheck(checks, "schema_version_mismatch_is_concise_and_blocking", versionFailure.status === 1
+      && versionFailure.stderr.includes("Invalid GateReport")
+      && versionFailure.stderr.includes("Expected schema version 1.0")
+      && !versionFailure.stderr.includes("\n    at ")
+      && !versionFailure.stderr.includes(repoRoot)
+      && !versionFailure.stderr.includes(workspace));
     assertCheck(checks, "weak_input_stays_blocked", weakGate.artifact.verdict === "blocked"
       && weakReview.artifact.readiness_class === "blocked_for_paper_scale"
       && weakReview.artifact.paper_ready === false);
