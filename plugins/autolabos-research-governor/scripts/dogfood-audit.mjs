@@ -52,6 +52,9 @@ function repairTarget(id) {
   if (id.startsWith("ci_workflow_")) {
     return ".github/workflows/ci.yml";
   }
+  if (id.startsWith("plugin_discovery_")) {
+    return "plugins/autolabos-research-governor/scripts/plugin-discovery-check.mjs";
+  }
   if (id.startsWith("plugin_doctor_")) {
     return "plugins/autolabos-research-governor/scripts/plugin-doctor.mjs";
   }
@@ -82,6 +85,7 @@ const ciWorkflowText = readOptionalText(".github/workflows/ci.yml");
 const contractSource = readText("src/core/researchGovernanceContract.ts");
 const packageJson = readJson("package.json");
 const printContractSource = readText("plugins/autolabos-research-governor/scripts/print-contract.mjs");
+const pluginDiscoverySource = readText("plugins/autolabos-research-governor/scripts/plugin-discovery-check.mjs");
 const pluginDoctorSource = readText("plugins/autolabos-research-governor/scripts/plugin-doctor.mjs");
 const pluginReleaseCheckSource = readText("plugins/autolabos-research-governor/scripts/plugin-release-check.mjs");
 const pluginSyncCacheSource = readText("plugins/autolabos-research-governor/scripts/sync-cache.mjs");
@@ -150,6 +154,7 @@ const checks = [
   check("marketplace_source_is_repo_relative", marketplaceEntry?.source?.source === "local" && marketplaceEntry?.source?.path === "./plugins/autolabos-research-governor", {
     source: marketplaceEntry?.source
   }),
+  check("plugin_discovery_checks_local_codex_and_strict_cache", pluginDiscoverySource.includes("local_codex_plugin_discovery") && pluginDiscoverySource.includes('["plugin", "list"]') && pluginDiscoverySource.includes("plugin-doctor.mjs") && pluginDiscoverySource.includes("--strict")),
   check("plugin_doctor_reports_cache_alignment", pluginDoctorSource.includes("installed_plugin_cache_alignment") && pluginDoctorSource.includes("cache_update_required")),
   check("plugin_doctor_supports_strict_mode", pluginDoctorSource.includes("--strict") && pluginDoctorSource.includes("strictMode") && pluginDoctorSource.includes("process.exitCode = 1")),
   check("plugin_release_check_reports_release_gate", pluginReleaseCheckSource.includes("plugin_release_readiness") && pluginReleaseCheckSource.includes("plugin-doctor.mjs") && pluginReleaseCheckSource.includes("--strict") && pluginReleaseCheckSource.includes("pack_includes_plugin_files")),
@@ -167,6 +172,9 @@ const checks = [
   }),
   check("package_exposes_contract_script", packageJson.scripts?.["plugin:contract"] === "node plugins/autolabos-research-governor/scripts/print-contract.mjs", {
     observed: packageJson.scripts?.["plugin:contract"]
+  }),
+  check("package_exposes_discovery_script", packageJson.scripts?.["plugin:discovery-check"] === "node plugins/autolabos-research-governor/scripts/plugin-discovery-check.mjs", {
+    observed: packageJson.scripts?.["plugin:discovery-check"]
   }),
   check("package_exposes_doctor_script", packageJson.scripts?.["plugin:doctor"] === "node plugins/autolabos-research-governor/scripts/plugin-doctor.mjs", {
     observed: packageJson.scripts?.["plugin:doctor"]
@@ -200,6 +208,7 @@ const report = {
     "docs/codex-plugin-governance.md",
     ".github/workflows/ci.yml",
     "src/core/researchGovernanceContract.ts",
+    "plugins/autolabos-research-governor/scripts/plugin-discovery-check.mjs",
     "plugins/autolabos-research-governor/scripts/plugin-doctor.mjs",
     "plugins/autolabos-research-governor/scripts/plugin-release-check.mjs",
     "plugins/autolabos-research-governor/scripts/run-research-intent.mjs",

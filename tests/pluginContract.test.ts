@@ -56,6 +56,7 @@ describe("AutoLabOS Codex plugin contract", () => {
       expect.arrayContaining([
         "plugin_readme_documents_first_run",
         "plugin_readme_documents_all_command_intents",
+        "plugin_discovery_checks_local_codex_and_strict_cache",
         "plugin_doctor_reports_cache_alignment",
         "plugin_doctor_supports_strict_mode",
         "plugin_release_check_reports_release_gate",
@@ -65,6 +66,7 @@ describe("AutoLabOS Codex plugin contract", () => {
         "ci_workflow_runs_plugin_release_check",
         "print_contract_outputs_expected_contract",
         "package_exposes_contract_script",
+        "package_exposes_discovery_script",
         "package_exposes_doctor_script",
         "package_exposes_release_check_script",
         "package_exposes_sync_cache_script"
@@ -242,6 +244,7 @@ describe("AutoLabOS Codex plugin contract", () => {
     const comparableFiles = [
       ".codex-plugin/plugin.json",
       "scripts/dogfood-audit.mjs",
+      "scripts/plugin-discovery-check.mjs",
       "scripts/plugin-doctor.mjs",
       "scripts/plugin-release-check.mjs",
       "scripts/run-research-intent.mjs",

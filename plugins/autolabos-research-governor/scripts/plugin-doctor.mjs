@@ -32,6 +32,7 @@ const marketplacePath = ".agents/plugins/marketplace.json";
 const comparableFiles = [
   ".codex-plugin/plugin.json",
   "scripts/dogfood-audit.mjs",
+  "scripts/plugin-discovery-check.mjs",
   "scripts/plugin-doctor.mjs",
   "scripts/plugin-release-check.mjs",
   "scripts/run-research-intent.mjs",

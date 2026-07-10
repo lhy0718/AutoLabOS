@@ -85,12 +85,13 @@ npm run plugin:contract
 npm run plugin:dogfood
 npm run plugin:doctor
 npm run plugin:doctor -- --strict
+npm run plugin:discovery-check
 npm run plugin:sync-cache
 npm run plugin:release-check
 npm run plugin:research -- --check
 ```
 
-Use `npm run plugin:doctor -- --strict` for CI or release checks that should fail on installed cache drift. Use `npm run plugin:sync-cache -- --write` only when intentionally refreshing the local Codex installation, then run `npm run plugin:release-check`. The plugin-specific onboarding note is `plugins/autolabos-research-governor/README.md`.
+Use `npm run plugin:doctor -- --strict` for CI or release checks that should fail on installed cache drift. Use `npm run plugin:discovery-check` on a Codex-enabled workstation to verify local discovery, enablement, manifest version, repository source, cache, and skill alignment. Use `npm run plugin:sync-cache -- --write` only when intentionally refreshing the local Codex installation, then run `npm run plugin:release-check`. The plugin-specific onboarding note is `plugins/autolabos-research-governor/README.md`.
 
 See `docs/codex-plugin-governance.md` for the plugin architecture and adapter strategy.
 
