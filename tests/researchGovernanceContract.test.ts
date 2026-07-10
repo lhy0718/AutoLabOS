@@ -6,12 +6,14 @@ import {
   RESEARCH_GOVERNANCE_COMMANDS,
   RESEARCH_GOVERNANCE_INVARIANTS,
   RESEARCH_GOVERNANCE_PLUGIN_NAME,
+  RESEARCH_GOVERNANCE_SCHEMA_VERSION,
   RESEARCH_GOVERNANCE_POSITIONING
 } from "../src/core/researchGovernanceContract.js";
 
 describe("research governance contract", () => {
   it("positions AutoLabOS as a plugin-first governance harness", () => {
     expect(RESEARCH_GOVERNANCE_PLUGIN_NAME).toBe("autolabos-research-governor");
+    expect(RESEARCH_GOVERNANCE_SCHEMA_VERSION).toBe("1.0");
     expect(RESEARCH_GOVERNANCE_POSITIONING.primarySurface).toBe("codex_plugin");
     expect(RESEARCH_GOVERNANCE_POSITIONING.autolabosRole).toBe("governed_research_harness");
     expect(RESEARCH_GOVERNANCE_POSITIONING.standaloneWorkflowRole).toBe("reference_workflow");

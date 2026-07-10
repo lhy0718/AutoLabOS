@@ -1,4 +1,5 @@
 export const RESEARCH_GOVERNANCE_PLUGIN_NAME = "autolabos-research-governor" as const;
+export const RESEARCH_GOVERNANCE_SCHEMA_VERSION = "1.0" as const;
 
 export const RESEARCH_GOVERNANCE_POSITIONING = {
   primarySurface: "codex_plugin",
