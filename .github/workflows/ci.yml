@@ -29,6 +29,9 @@ jobs:
       - name: Validate harness records
         run: npm run validate:harness
 
+      - name: Validate research governance process E2E
+        run: npm run validate:research-governance
+
       - name: Sync repo-local plugin cache
         run: npm run plugin:sync-cache -- --write
 

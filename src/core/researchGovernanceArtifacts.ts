@@ -430,7 +430,7 @@ export function validateResearchGovernanceArtifact(value: unknown): ArtifactVali
 export function portableArtifactRef(value: string): string {
   const normalized = value.replace(/\\/gu, "/").trim();
   if (!normalized) return "<unspecified-artifact>";
-  if (path.posix.isAbsolute(normalized) || /^[A-Za-z]:\//u.test(normalized)) {
+  if (path.posix.isAbsolute(normalized) || /^[A-Za-z]:\//u.test(normalized) || normalized === ".." || normalized.startsWith("../")) {
     return `<external-artifact-root>/${path.posix.basename(normalized)}`;
   }
   return normalized.replace(/^\.\//u, "");

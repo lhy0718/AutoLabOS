@@ -99,5 +99,8 @@ describe("research governance artifacts", () => {
       "<external-artifact-root>/gate-report.json"
     );
     expect(portableArtifactRef("outputs/audit/gate-report.json")).toBe("outputs/audit/gate-report.json");
+    expect(portableArtifactRef("../../outside/audit-summary.json")).toBe(
+      "<external-artifact-root>/audit-summary.json"
+    );
   });
 });

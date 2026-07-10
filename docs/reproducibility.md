@@ -62,5 +62,6 @@ For long-running or resumed runs, `npm run validate:harness` also audits checkpo
 
 - Runtime diagnostics: `/doctor` in TUI and web Doctor tab (environment + workspace harness checks).
 - CI/internal gate: `npm run validate:harness` (issue log format + workspace/test run artifact structure, including event logs and portfolio/manifest contracts).
+- Research governance process gate: run `npm run build` followed by `npm run validate:research-governance` to execute `research new`, weak-input `audit/review/improve/pack`, and structurally complete `audit/review/pack` as separate CLI processes. The gate verifies honest downgrade, claim ceiling, portable bundle paths, byte counts, and SHA-256 hashes in a validation workspace outside the checkout.
 
 No separate end-user command is required beyond `/doctor`, but maintainers should still run `npm run validate:harness` before declaring artifact-level reproducibility complete.
