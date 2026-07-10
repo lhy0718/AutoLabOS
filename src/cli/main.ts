@@ -13,6 +13,14 @@ import {
   runGovernanceBenchmarkSeedCli
 } from "./governanceBenchmark.js";
 import { runMetaHarnessCli } from "./metaHarness.js";
+import { getAppVersion } from "../tui/version.js";
+import {
+  runResearchAuditCli,
+  runResearchImproveCli,
+  runResearchNewCli,
+  runResearchPackCli,
+  runResearchReviewCli
+} from "./research.js";
 
 function printHelp(): void {
   process.stdout.write([
@@ -29,6 +37,7 @@ function printHelp(): void {
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
     "  autolabos audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>] | --seed AGB-001..AGB-010) [--out-dir outputs/audit]",
+    "  autolabos research <new|audit|review|improve|pack> [options]",
     "  autolabos governance-benchmark seed --source <path> [--task AGB-001] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]",
     "  autolabos governance-benchmark dry-run --seed <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/AGB-001]",
     "  autolabos governance-benchmark batch --seeds <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
@@ -72,6 +81,21 @@ function printAuditHelp(): void {
   ].join("\n") + "\n");
 }
 
+function printResearchHelp(): void {
+  process.stdout.write([
+    "autolabos research",
+    "",
+    "Execute the artifact-first research governance contract.",
+    "",
+    "Usage:",
+    "  autolabos research new --brief <path> [--out-dir <dir>]",
+    "  autolabos research audit (--run <run-root> | --external <artifact-root> [--draft <draft>] [--log <log>] | --seed <id>) [--out-dir <dir>]",
+    "  autolabos research review --gate <gate-report.json> [--out-dir <dir>]",
+    "  autolabos research improve --review <review-report.json> [--out-dir <dir>]",
+    "  autolabos research pack --gate <gate-report.json> --review <review-report.json> [--source-dir <dir>] [--out-dir <dir>]"
+  ].join("\n") + "\n");
+}
+
 async function main(): Promise<void> {
   const action = resolveCliAction(process.argv.slice(2));
 
@@ -85,8 +109,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (action.kind === "research-help") {
+    printResearchHelp();
+    return;
+  }
+
   if (action.kind === "version") {
-    process.stdout.write("autolabos 1.0.0\n");
+    process.stdout.write(`autolabos ${getAppVersion()}\n`);
     return;
   }
 
@@ -145,6 +174,45 @@ async function main(): Promise<void> {
       draftPath: action.draftPath,
       logPath: action.logPath,
       seedId: action.seedId,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "research-new") {
+    await runResearchNewCli({ cwd: process.cwd(), briefPath: action.briefPath, outDir: action.outDir });
+    return;
+  }
+
+  if (action.kind === "research-audit") {
+    await runResearchAuditCli({
+      cwd: process.cwd(),
+      runRoot: action.runRoot,
+      externalRoot: action.externalRoot,
+      draftPath: action.draftPath,
+      logPath: action.logPath,
+      seedId: action.seedId,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "research-review") {
+    await runResearchReviewCli({ cwd: process.cwd(), gatePath: action.gatePath, outDir: action.outDir });
+    return;
+  }
+
+  if (action.kind === "research-improve") {
+    await runResearchImproveCli({ cwd: process.cwd(), reviewPath: action.reviewPath, outDir: action.outDir });
+    return;
+  }
+
+  if (action.kind === "research-pack") {
+    await runResearchPackCli({
+      cwd: process.cwd(),
+      gatePath: action.gatePath,
+      reviewPath: action.reviewPath,
+      sourceDir: action.sourceDir,
       outDir: action.outDir
     });
     return;

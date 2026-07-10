@@ -21,6 +21,12 @@ export type CliAction =
   | { kind: "governance-benchmark-export-bundles"; publicOutputRoots: string[]; outDir?: string; maxBundles?: number }
   | { kind: "audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; seedId?: string; outDir?: string }
   | { kind: "audit-help" }
+  | { kind: "research-new"; briefPath: string; outDir?: string }
+  | { kind: "research-audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; seedId?: string; outDir?: string }
+  | { kind: "research-review"; gatePath: string; outDir?: string }
+  | { kind: "research-improve"; reviewPath: string; outDir?: string }
+  | { kind: "research-pack"; gatePath: string; reviewPath: string; sourceDir?: string; outDir?: string }
+  | { kind: "research-help" }
   | {
       kind: "meta-harness";
       runs: number;
@@ -50,6 +56,10 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "--version" || first === "-v") {
     return { kind: "version" };
+  }
+
+  if (first === "research") {
+    return parseResearchArgs(args.slice(1));
   }
 
   if (first === "web") {
@@ -643,6 +653,85 @@ export function resolveCliAction(args: string[]): CliAction {
     kind: "error",
     message:
       "Unsupported CLI arguments. Run `autolabos`, `autolabos web`, `autolabos compare-analysis`, `autolabos eval-harness`, `autolabos evolve`, `autolabos meta-harness`, or use slash commands inside the TUI."
+  };
+}
+
+function parseResearchArgs(args: string[]): CliAction {
+  const subcommand = args[0];
+  if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+    return { kind: "research-help" };
+  }
+  if (!["new", "audit", "review", "improve", "pack"].includes(subcommand)) {
+    return { kind: "error", message: "Usage: research <new|audit|review|improve|pack> [options]." };
+  }
+
+  const values = new Map<string, string>();
+  for (let index = 1; index < args.length; index += 1) {
+    const token = args[index];
+    const value = args[index + 1];
+    if (!token?.startsWith("--") || !value || value.startsWith("--")) {
+      return { kind: "error", message: `Missing value for ${token || "research option"}.` };
+    }
+    values.set(token, value);
+    index += 1;
+  }
+
+  const allowedByCommand: Record<string, string[]> = {
+    new: ["--brief", "--out-dir"],
+    audit: ["--run", "--external", "--draft", "--log", "--seed", "--out-dir"],
+    review: ["--gate", "--out-dir"],
+    improve: ["--review", "--out-dir"],
+    pack: ["--gate", "--review", "--source-dir", "--out-dir"]
+  };
+  const unsupported = [...values.keys()].find((key) => !allowedByCommand[subcommand].includes(key));
+  if (unsupported) {
+    return { kind: "error", message: `Unsupported research ${subcommand} argument: ${unsupported}` };
+  }
+  const outDir = values.get("--out-dir");
+
+  if (subcommand === "new") {
+    const briefPath = values.get("--brief");
+    return briefPath
+      ? { kind: "research-new", briefPath, outDir }
+      : { kind: "error", message: "research new requires --brief <path>." };
+  }
+  if (subcommand === "audit") {
+    const runRoot = values.get("--run");
+    const externalRoot = values.get("--external");
+    const seedId = values.get("--seed");
+    const draftPath = values.get("--draft");
+    const logPath = values.get("--log");
+    if ([runRoot, externalRoot, seedId].filter(Boolean).length !== 1) {
+      return { kind: "error", message: "research audit requires exactly one of --run, --external, or --seed." };
+    }
+    if (!externalRoot && (draftPath || logPath)) {
+      return { kind: "error", message: "research audit --draft and --log require --external." };
+    }
+    return { kind: "research-audit", runRoot, externalRoot, draftPath, logPath, seedId, outDir };
+  }
+  if (subcommand === "review") {
+    const gatePath = values.get("--gate");
+    return gatePath
+      ? { kind: "research-review", gatePath, outDir }
+      : { kind: "error", message: "research review requires --gate <gate-report.json>." };
+  }
+  if (subcommand === "improve") {
+    const reviewPath = values.get("--review");
+    return reviewPath
+      ? { kind: "research-improve", reviewPath, outDir }
+      : { kind: "error", message: "research improve requires --review <review-report.json>." };
+  }
+  const gatePath = values.get("--gate");
+  const reviewPath = values.get("--review");
+  if (!gatePath || !reviewPath) {
+    return { kind: "error", message: "research pack requires --gate <gate-report.json> and --review <review-report.json>." };
+  }
+  return {
+    kind: "research-pack",
+    gatePath,
+    reviewPath,
+    sourceDir: values.get("--source-dir"),
+    outDir
   };
 }
 
