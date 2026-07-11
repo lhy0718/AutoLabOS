@@ -60408,6 +60408,7 @@ export async function repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath
     "        'context': selected_runtime,",
     "        'model_id': model_id,",
     "        'base_model_id': model_id,",
+    "        'base_model_name': model_id,",
     "    }",
     "    kwargs = {name: available[name] for name in signature.parameters if name in available}",
     "    missing = [",
