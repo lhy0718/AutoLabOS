@@ -270,6 +270,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           ? preFailureMemoryRecordedScriptPath
           : undefined);
       if (preFailureMemoryScriptPath && (await fileExists(preFailureMemoryScriptPath))) {
+        const dataclassEvalRecordPreRepair =
+          await repairPythonDataclassEvaluationRecordCoercionSurface(preFailureMemoryScriptPath);
+        if (dataclassEvalRecordPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            dataclassEvalRecordPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Coerced dataclass evaluation records in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
         const multipleChoiceListPreRepair =
           await repairPythonMultipleChoiceListRawVariableSurface(preFailureMemoryScriptPath);
         if (multipleChoiceListPreRepair.repaired) {

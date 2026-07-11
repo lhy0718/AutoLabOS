@@ -27727,6 +27727,34 @@ export async function repairPythonDataclassEvaluationRecordCoercionSurface(
     return { repaired: false };
   }
 
+  const directMarker = "_autolabos_direct_dataclass_eval_record_surface";
+  let repairedDirect = false;
+  const directPattern = /^([ \t]*)if not isinstance\(([A-Za-z_]\w*), dict\):[ \t]*\r?\n\1    \2 = dict\(\2\)[ \t]*$/gmu;
+  const directSource = source.replace(directPattern, (_full: string, indent: string, variableName: string) => {
+    repairedDirect = true;
+    return [
+      `${indent}if not isinstance(${variableName}, dict):  # ${directMarker}`,
+      `${indent}    if hasattr(${variableName}, "__dataclass_fields__"):` ,
+      `${indent}        from dataclasses import asdict as _autolabos_eval_asdict`,
+      `${indent}        ${variableName} = _autolabos_eval_asdict(${variableName})`,
+      `${indent}    elif hasattr(${variableName}, "__dict__"):` ,
+      `${indent}        ${variableName} = dict(vars(${variableName}))`,
+      `${indent}    else:`,
+      `${indent}        ${variableName} = dict(${variableName})`,
+      `${indent}    if "correct_index" in ${variableName} and "answer_index" not in ${variableName}:`,
+      `${indent}        ${variableName}["answer_index"] = ${variableName}["correct_index"]`,
+      `${indent}    if "gold_index" in ${variableName} and "answer_index" not in ${variableName}:`,
+      `${indent}        ${variableName}["answer_index"] = ${variableName}["gold_index"]`
+    ].join("\n");
+  });
+  if (repairedDirect && directSource !== source && directSource.includes(directMarker)) {
+    await fs.writeFile(scriptPath, directSource, "utf8");
+    return {
+      repaired: true,
+      message: `Coerced direct dataclass evaluation records to labeled dictionaries in ${path.basename(scriptPath)} before handoff.`
+    };
+  }
+
   if (
     !source.includes("def _exec_to_plain_records") ||
     !source.includes("_exec_normalize_choice_example") ||
@@ -27737,8 +27765,10 @@ export async function repairPythonDataclassEvaluationRecordCoercionSurface(
 
   const correctIndexAliasLine =
     'if "correct_index" in payload and "answer_index" not in payload:';
+  const goldIndexAliasLine =
+    'if "gold_index" in payload and "answer_index" not in payload:';
   if (source.includes("_autolabos_plain_eval_record")) {
-    if (source.includes(correctIndexAliasLine)) {
+    if (source.includes(correctIndexAliasLine) && source.includes(goldIndexAliasLine)) {
       return { repaired: false };
     }
     let nextSource = source.replace(
@@ -27747,6 +27777,8 @@ export async function repairPythonDataclassEvaluationRecordCoercionSurface(
         "$1payload = asdict(record)",
         `$1${correctIndexAliasLine}`,
         '$1    payload["answer_index"] = payload["correct_index"]',
+        `$1${goldIndexAliasLine}`,
+        '$1    payload["answer_index"] = payload["gold_index"]',
         "$1return payload"
       ].join("\n")
     );
@@ -27756,6 +27788,8 @@ export async function repairPythonDataclassEvaluationRecordCoercionSurface(
         "$1payload = dict(vars(record))",
         `$1${correctIndexAliasLine}`,
         '$1    payload["answer_index"] = payload["correct_index"]',
+        `$1${goldIndexAliasLine}`,
+        '$1    payload["answer_index"] = payload["gold_index"]',
         "$1return payload"
       ].join("\n")
     );
@@ -27787,6 +27821,8 @@ export async function repairPythonDataclassEvaluationRecordCoercionSurface(
     `${innerIndent}        payload = asdict(record)`,
     `${innerIndent}        ${correctIndexAliasLine}`,
     `${innerIndent}            payload["answer_index"] = payload["correct_index"]`,
+    `${innerIndent}        ${goldIndexAliasLine}`,
+    `${innerIndent}            payload["answer_index"] = payload["gold_index"]`,
     `${innerIndent}        return payload`,
     `${innerIndent}    except Exception:`,
     `${innerIndent}        pass`,
@@ -27794,6 +27830,8 @@ export async function repairPythonDataclassEvaluationRecordCoercionSurface(
     `${innerIndent}    payload = dict(vars(record))`,
     `${innerIndent}    ${correctIndexAliasLine}`,
     `${innerIndent}        payload["answer_index"] = payload["correct_index"]`,
+    `${innerIndent}    ${goldIndexAliasLine}`,
+    `${innerIndent}        payload["answer_index"] = payload["gold_index"]`,
     `${innerIndent}    return payload`,
     `${innerIndent}return record`,
     ""

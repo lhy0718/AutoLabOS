@@ -12528,6 +12528,44 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("coerces direct dataclass evaluation rows and preserves gold indexes", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-direct-dataclass-eval-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "",
+        "@dataclass(frozen=True)",
+        "class MultipleChoiceExample:",
+        "    prompt: str",
+        "    choices: list[str]",
+        "    gold_index: int",
+        "",
+        "def normalize(rows):",
+        "    normalized = []",
+        "    for ex in rows:",
+        "        if not isinstance(ex, dict):",
+        "            ex = dict(ex)",
+        "        normalized.append(ex)",
+        "    return normalized",
+        "",
+        "if __name__ == '__main__':",
+        "    rows = normalize([MultipleChoiceExample('Question?', ['A', 'B'], 1)])",
+        "    assert rows[0]['answer_index'] == 1, rows",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow();
+    const repair = await repairPythonDataclassEvaluationRecordCoercionSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_direct_dataclass_eval_record_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("coerces dataclass training examples before prompt and target extraction", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-dataclass-train-examples-"));
     tempDirs.push(workspace);
