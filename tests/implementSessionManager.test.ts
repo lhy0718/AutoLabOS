@@ -45689,6 +45689,60 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("defines generated public records before model execution persistence", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-record-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "# _autolabos_entrypoint_condition_runtime_cleanup_surface",
+        "# _autolabos_entrypoint_evaluation_wrapper_runtime_cleanup",
+        "# _autolabos_entrypoint_condition_public_evidence_surface",
+        "# _autolabos_entrypoint_recursive_public_evidence_surface",
+        "# _autolabos_entrypoint_condition_runtime_cpu_offload_surface",
+        "# _autolabos_condition_state_live_handle_return_cleanup",
+        "def _autolabos_entrypoint_condition_public_evidence(row):",
+        "    return dict(row)",
+        "",
+        "persisted = []",
+        "heartbeats = []",
+        "",
+        "def _state_record(state):",
+        "    return dict(state)",
+        "",
+        "def _maybe_call(fn, **kwargs):",
+        "    return fn(**kwargs)",
+        "",
+        "def persist_record(config=None, state=None, record=None, row=None):",
+        "    persisted.append(record)",
+        "",
+        "def heartbeat(config=None, event=None, index=None, record=None):",
+        "    heartbeats.append(record)",
+        "",
+        "def execute_model_execution_stage():",
+        "    state = {'status': 'completed', 'condition_marker': 'candidate_condition_a'}",
+        "    rec = _state_record(state)",
+        "    _maybe_call(persist_record, config={}, state=state, record=_autolabos_public_rec, row=rec)",
+        "    _maybe_call(heartbeat, config={}, event='condition_seed_finish', index=0, record=_autolabos_public_rec)",
+        "",
+        "if __name__ == '__main__':",
+        "    execute_model_execution_stage()",
+        "    assert persisted == [{'status': 'completed', 'condition_marker': 'candidate_condition_a'}]",
+        "    assert heartbeats == persisted",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/_autolabos_public_rec/);
+    const repair = await repairPythonEntrypointConditionRuntimeCleanupSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_model_execution_public_record_alias_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
 
   it("normalizes generated save_pretrained dtype fields before serialization", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-save-pretrained-dtype-"));
