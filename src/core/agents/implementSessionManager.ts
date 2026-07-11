@@ -11361,6 +11361,8 @@ export class ImplementSessionManager {
       await repairPythonNumericChoiceLabelPrecedenceSurface(executionScriptPath);
     const entrypointSemanticCallAliasRepair =
       await repairPythonEntrypointSemanticCallAliasSurface(executionScriptPath);
+    const finalCliManagedEntrypointPreferenceRepair =
+      await repairPythonFinalCliManagedEntrypointPreferenceSurface(executionScriptPath);
     const extractEvalExamplesAliasRepair =
       await repairPythonExtractEvalExamplesAliasSurface(executionScriptPath);
     const evalTasksTupleUnwrapRepair =
@@ -11610,6 +11612,7 @@ export class ImplementSessionManager {
         multipleChoiceGoldAliasRepair,
         numericChoiceLabelPrecedenceRepair,
         entrypointSemanticCallAliasRepair,
+        finalCliManagedEntrypointPreferenceRepair,
         extractEvalExamplesAliasRepair,
         evalTasksTupleUnwrapRepair,
         entrypointBudgetTimeoutArgparseRepair,
@@ -58202,6 +58205,47 @@ export async function repairPythonEntrypointSemanticCallAliasSurface(scriptPath?
   return {
     repaired: true,
     message: `Aliased semantic runtime arguments in the generated entrypoint dispatcher in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonFinalCliManagedEntrypointPreferenceSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const repairMarker = "_autolabos_final_cli_managed_entrypoint_preference_surface";
+  const target = 'high = _ae_pick("run_experiment", "execute_experiment", "run_all_conditions", "_run_experiment")';
+  if (
+    source.includes(repairMarker) ||
+    !source.includes("def _autolabos_entrypoint_run(") ||
+    !source.includes("def _ae_pick(") ||
+    !source.includes(target)
+  ) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(
+    target,
+    `high = _ae_pick("_autolabos_entrypoint_run", "run_experiment", "execute_experiment", "run_all_conditions", "_run_experiment")  # ${repairMarker}`
+  );
+  if (nextSource === source || !nextSource.includes(repairMarker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Preferred the managed experiment entrypoint over the generated fallback CLI in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

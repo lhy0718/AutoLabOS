@@ -113,6 +113,7 @@ import {
   repairPythonMultipleChoiceListRawVariableSurface,
   repairPythonNumericChoiceLabelPrecedenceSurface,
   repairPythonEntrypointSemanticCallAliasSurface,
+  repairPythonFinalCliManagedEntrypointPreferenceSurface,
   repairPythonOutputDirArgparseAlias,
   repairPythonParameterSummaryRecordSurface,
   repairPythonMetricsPayloadProjectionSurface,
@@ -315,6 +316,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               "before handoff.",
               "before run_experiments retry gate."
             ) || `Normalized training-text limit values in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const finalCliManagedEntrypointPreRepair =
+          await repairPythonFinalCliManagedEntrypointPreferenceSurface(preFailureMemoryScriptPath);
+        if (finalCliManagedEntrypointPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            finalCliManagedEntrypointPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Preferred the managed experiment entrypoint in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
       }
