@@ -113,6 +113,7 @@ export interface PaperReadinessAuditSummary {
     entry_count: number;
     event_count: number;
     checkpoint_count: number;
+    omitted_entry_count: number;
   };
   done_condition: {
     status: DoneConditionAudit["status"];
@@ -443,7 +444,7 @@ async function buildAuditSummary(input: {
     fallbackOnly: evidenceStore.deterministicFallbackUsed && !evidenceStore.nonFallbackMetricEvidencePresent
   });
   const verdict = resolveVerdict(blockers);
-  const relativeOutDir = relativePath(input.cwd, input.outDir);
+  const relativeOutDir = relativePath(input.cwd, input.outDir, "<output>");
   const claimEvidenceExport = buildClaimEvidenceExport({
     claimEvidenceTableArtifact: input.artifacts.claimEvidenceTable,
     claimStatusTableArtifact: input.artifacts.claimStatusTable,
@@ -508,7 +509,7 @@ async function buildAuditSummary(input: {
     verdict,
     input: {
       mode: input.seedId ? "seed" : input.external ? "external" : "run",
-      run_root: relativePath(input.cwd, input.artifacts.runRoot),
+      run_root: relativePath(input.cwd, input.artifacts.runRoot, "<run-artifact-root>"),
       ...(input.seedId ? { seed_id: input.seedId } : {})
     },
     outputs: {
@@ -578,7 +579,8 @@ async function buildAuditSummary(input: {
       measured: auditTimeline.measured,
       entry_count: auditTimeline.entries.length,
       event_count: auditTimeline.event_count,
-      checkpoint_count: auditTimeline.checkpoint_count
+      checkpoint_count: auditTimeline.checkpoint_count,
+      omitted_entry_count: auditTimeline.omitted_entry_count
     },
     done_condition: {
       status: doneConditionAudit.status,
@@ -1646,7 +1648,9 @@ function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function relativePath(cwd: string, value: string): string {
+function relativePath(cwd: string, value: string, externalFallback?: string): string {
   const relative = path.relative(cwd, value).replace(/\\/g, "/");
-  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? relative : value.replace(/\\/g, "/");
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative)
+    ? relative
+    : externalFallback || value.replace(/\\/g, "/");
 }

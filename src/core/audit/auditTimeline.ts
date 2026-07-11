@@ -38,6 +38,12 @@ export interface AuditTimeline {
   event_count: number;
   checkpoint_count: number;
   artifact_entry_count: number;
+  omitted_entry_count: number;
+  event_aggregates: {
+    human_intervention_count: number;
+    rollback_count: number;
+    completed_node_count: number;
+  };
   entries: AuditTimelineEntry[];
   policy_note: string;
 }
@@ -65,9 +71,22 @@ export async function buildAuditTimeline(input: AuditTimelineInput): Promise<Aud
   const checkpointEntries = checkpoints.map(toCheckpointEntry);
   const artifactEntries = buildArtifactEntries(input);
   const auditEntries = buildAuditEntries(input);
-  const entries = [...eventEntries, ...checkpointEntries, ...artifactEntries, ...auditEntries]
+  const durableEntries = [...eventEntries, ...checkpointEntries]
     .sort(compareTimelineEntries)
     .map((entry, index) => ({ ...entry, id: entry.id || `timeline_${index + 1}` }));
+  const bounded = boundDurableEntries(durableEntries);
+  const omissionEntry: AuditTimelineEntry[] = bounded.omittedCount > 0
+    ? [{
+        id: "durable_entries_omitted",
+        source: "audit",
+        kind: "timeline_projection_bounded",
+        title: `Omitted ${bounded.omittedCount} repetitive durable entries from the portable timeline projection`,
+        severity: "info",
+        decision: "Full event and checkpoint counts remain available in timeline metadata."
+      }]
+    : [];
+  const entries = [...bounded.entries, ...artifactEntries, ...auditEntries, ...omissionEntry]
+    .sort(compareTimelineEntries);
 
   return {
     version: 1,
@@ -76,10 +95,92 @@ export async function buildAuditTimeline(input: AuditTimelineInput): Promise<Aud
     status: events.length > 0 || checkpoints.length > 0 ? "available" : "timeline_incomplete",
     event_count: events.length,
     checkpoint_count: checkpoints.length,
-    artifact_entry_count: artifactEntries.length + auditEntries.length,
+    artifact_entry_count: artifactEntries.length + auditEntries.length + omissionEntry.length,
+    omitted_entry_count: bounded.omittedCount,
+    event_aggregates: {
+      human_intervention_count: countHumanInterventionRecords(events, checkpoints),
+      rollback_count: eventEntries.filter((entry) =>
+        entry.event_type === "NODE_ROLLBACK" || entry.event_type === "NODE_JUMP"
+      ).length,
+      completed_node_count: eventEntries.filter((entry) => entry.event_type === "NODE_COMPLETED").length
+    },
     entries,
     policy_note: "The timeline is reconstructed from durable run events, checkpoints, and preserved audit artifacts; missing event streams remain explicit."
   };
+}
+
+const MAX_DURABLE_TIMELINE_ENTRIES = 1_000;
+const EDGE_TIMELINE_ENTRIES = 200;
+const CRITICAL_TIMELINE_ENTRIES = 300;
+
+function boundDurableEntries(entries: AuditTimelineEntry[]): {
+  entries: AuditTimelineEntry[];
+  omittedCount: number;
+} {
+  if (entries.length <= MAX_DURABLE_TIMELINE_ENTRIES) {
+    return { entries, omittedCount: 0 };
+  }
+  const selected = new Set<AuditTimelineEntry>();
+  for (const entry of entries.slice(0, EDGE_TIMELINE_ENTRIES)) {
+    selected.add(entry);
+  }
+  for (const entry of entries.slice(-EDGE_TIMELINE_ENTRIES)) {
+    selected.add(entry);
+  }
+  const criticalEntries = entries.filter((entry) =>
+    entry.severity === "warning" || entry.severity === "blocker"
+  );
+  for (const entry of sampleEvenly(criticalEntries, CRITICAL_TIMELINE_ENTRIES)) {
+    selected.add(entry);
+  }
+  const remainingSlots = MAX_DURABLE_TIMELINE_ENTRIES - selected.size;
+  if (remainingSlots > 0) {
+    const remaining = entries.filter((entry) => !selected.has(entry));
+    for (const entry of sampleEvenly(remaining, remainingSlots)) {
+      selected.add(entry);
+    }
+  }
+  const boundedEntries = entries.filter((entry) => selected.has(entry));
+  return {
+    entries: boundedEntries,
+    omittedCount: entries.length - boundedEntries.length
+  };
+}
+
+function sampleEvenly<T>(items: T[], limit: number): T[] {
+  if (limit <= 0 || items.length === 0) {
+    return [];
+  }
+  if (items.length <= limit) {
+    return items;
+  }
+  if (limit === 1) {
+    return [items[0]!];
+  }
+  const sampled: T[] = [];
+  for (let index = 0; index < limit; index += 1) {
+    sampled.push(items[Math.floor(index * (items.length - 1) / (limit - 1))]!);
+  }
+  return sampled;
+}
+
+function countHumanInterventionRecords(events: PersistedEventLike[], checkpoints: CheckpointLike[]): number {
+  const eventCount = events.filter((event) => {
+    const payload = event.payload || {};
+    const text = [
+      event.type,
+      payload.title,
+      payload.message,
+      payload.reason,
+      payload.action,
+      payload.decision
+    ].filter((value): value is string => typeof value === "string").join(" ").toLowerCase();
+    return /\bhuman\b|\bapproval\b|\bmanual\b|\breview required\b/iu.test(text);
+  }).length;
+  const checkpointCount = checkpoints.filter((checkpoint) =>
+    /\bhuman\b|\bapproval\b|\bmanual\b|\breview required\b/iu.test(checkpoint.reason || "")
+  ).length;
+  return eventCount + checkpointCount;
 }
 
 async function readEvents(filePath: string): Promise<PersistedEventLike[]> {
@@ -138,8 +239,7 @@ function toCheckpointEntry(checkpoint: CheckpointLike): AuditTimelineEntry {
     ...(normalizeNode(checkpoint.node) ? { node: normalizeNode(checkpoint.node) } : {}),
     severity: "info",
     evidence_path: "checkpoints/",
-    ...(Number.isFinite(checkpoint.seq) ? { checkpoint_seq: Number(checkpoint.seq) } : {}),
-    ...(checkpoint.reason ? { decision: checkpoint.reason } : {})
+    ...(Number.isFinite(checkpoint.seq) ? { checkpoint_seq: Number(checkpoint.seq) } : {})
   };
 }
 

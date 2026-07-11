@@ -42,8 +42,11 @@ export function computeAuditAutonomyMetrics(input: {
     }
   }
   const autonomySpanMeasured = timestamps.length >= 2 && Number.isFinite(first) && Number.isFinite(last) && last >= first;
-  const rollbackCount = eventEntries.filter((entry) => entry.event_type === "NODE_ROLLBACK" || entry.event_type === "NODE_JUMP").length;
-  const rollbackRecoveredCount = rollbackCount > 0 && eventEntries.some((entry) => entry.event_type === "NODE_COMPLETED")
+  const rollbackCount = input.timeline.event_aggregates?.rollback_count
+    ?? eventEntries.filter((entry) => entry.event_type === "NODE_ROLLBACK" || entry.event_type === "NODE_JUMP").length;
+  const completedNodeCount = input.timeline.event_aggregates?.completed_node_count
+    ?? eventEntries.filter((entry) => entry.event_type === "NODE_COMPLETED").length;
+  const rollbackRecoveredCount = rollbackCount > 0 && completedNodeCount > 0
     ? rollbackCount
     : 0;
   const claimViolationCount = input.unsupportedClaimCount + input.citationSupportIssueCount;
@@ -65,7 +68,9 @@ export function computeAuditAutonomyMetrics(input: {
     },
     human_intervention_count: {
       measured: eventEntries.length > 0,
-      value: eventEntries.length > 0 ? countHumanInterventions(input.timeline) : null,
+      value: eventEntries.length > 0
+        ? input.timeline.event_aggregates?.human_intervention_count ?? countHumanInterventions(input.timeline)
+        : null,
       note: eventEntries.length > 0
         ? "Counted from explicit human/approval/review intervention markers in event payload titles."
         : "Unmeasured because no durable run events were available."

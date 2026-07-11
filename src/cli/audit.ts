@@ -25,7 +25,7 @@ export function formatPaperReadinessAuditCliSummary(summary: PaperReadinessAudit
     `Citation support issues: ${summary.citation_support_issues.length}`,
     `Design contract findings: ${summary.design_contract_findings.length}`,
     `Literature discovery findings: ${summary.scorer_outputs.literature_discovery.findings.length}`,
-    `Audit timeline: ${summary.audit_timeline.status}; entries=${summary.audit_timeline.entry_count}`,
+    `Audit timeline: ${summary.audit_timeline.status}; entries=${summary.audit_timeline.entry_count}; omitted=${summary.audit_timeline.omitted_entry_count}`,
     `Done condition: ${summary.done_condition.status}; failures=${summary.done_condition.failure_count}`,
     "Outputs:",
     `  report: ${summary.outputs.report_path}`,

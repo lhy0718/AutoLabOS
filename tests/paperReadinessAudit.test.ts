@@ -190,6 +190,37 @@ describe("paper-readiness audit", () => {
     expect(summary.next_action_checklist.join("\n")).toContain("manuscript as unaccepted");
   });
 
+  it("uses portable placeholders when run and output roots are outside cwd", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-portable-roots-"));
+    const repoRoot = path.join(workspace, "repo");
+    const outDir = path.join(workspace, "audit-output");
+    tempDirs.push(workspace);
+    await mkdir(repoRoot, { recursive: true });
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        {
+          metric: "primary_score",
+          baseline: 0.4,
+          comparator: 0.5,
+          delta: 0.1,
+          direction: "higher_better"
+        }
+      ]
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: repoRoot,
+      runRoot,
+      outDir
+    });
+
+    expect(summary.input.run_root).toBe("<run-artifact-root>");
+    expect(summary.outputs.report_path).toBe("<output>/paper-readiness-audit.md");
+    expect(JSON.stringify(summary)).not.toContain(workspace);
+    const report = await readFile(path.join(outDir, "paper-readiness-audit.md"), "utf8");
+    expect(report).not.toContain(workspace);
+  });
+
   it("does not require seed-only governance_condition artifacts for ordinary run audits", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-ordinary-run-contract-"));
     tempDirs.push(workspace);

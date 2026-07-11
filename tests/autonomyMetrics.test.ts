@@ -104,6 +104,12 @@ describe("audit autonomy metrics", () => {
         event_count: 3,
         checkpoint_count: 1,
         artifact_entry_count: 2,
+        omitted_entry_count: 0,
+        event_aggregates: {
+          human_intervention_count: 1,
+          rollback_count: 1,
+          completed_node_count: 1
+        },
         entries: [
           { id: "evt-1", source: "event", kind: "NODE_STARTED", title: "node started", timestamp: "2026-05-05T00:00:00.000Z", event_type: "NODE_STARTED" },
           { id: "evt-2", source: "event", kind: "NODE_ROLLBACK", title: "manual approval rollback", timestamp: "2026-05-05T00:00:30.000Z", event_type: "NODE_ROLLBACK" },
@@ -145,6 +151,12 @@ describe("audit autonomy metrics", () => {
         event_count: entries.length,
         checkpoint_count: 0,
         artifact_entry_count: 0,
+        omitted_entry_count: 0,
+        event_aggregates: {
+          human_intervention_count: 0,
+          rollback_count: 0,
+          completed_node_count: 0
+        },
         entries,
         policy_note: "test"
       },
