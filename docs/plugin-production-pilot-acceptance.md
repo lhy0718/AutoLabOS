@@ -93,4 +93,4 @@ Reports are written through a same-directory temporary file and atomic rename. S
 | Hermetic cache | Isolated cache lifecycle passes without workstation cache reuse | Closed |
 | Operations preflight | Required gates aggregate into one machine-readable verdict | Closed |
 | Contract synchronization | CI, dogfood, release, docs, and skill agree on the gates | Closed |
-| Final validation | Full repository and global gates pass with a clean worktree | Open |
+| Final validation | Full repository and global gates pass with a clean worktree | Closed |
