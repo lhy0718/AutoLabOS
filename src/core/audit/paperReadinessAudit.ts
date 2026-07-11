@@ -146,6 +146,7 @@ interface LoadedRunArtifacts {
   reviewDecision: Record<string, unknown> | undefined;
   figureAuditSummary: FigureAuditSummary | null | undefined;
   runRecord: Record<string, unknown> | undefined;
+  runExperimentsVerifierReport: Record<string, unknown> | undefined;
   evidenceStoreLines: Record<string, unknown>[];
   designContractPayloads: Array<{ path: string; payload: Record<string, unknown> }>;
   literatureDiscoveryPayloads: Array<{ path: string; payload: Record<string, unknown> }>;
@@ -280,6 +281,7 @@ async function buildAuditSummary(input: {
   const runStatus = getRunStatus(input.artifacts.runRecord);
   const activeRun = isActiveRunStatus(runStatus);
   const failedRun = isFailedRunStatus(runStatus);
+  const runFailureDetail = getRunFailureDetail(input.artifacts.runExperimentsVerifierReport);
   const failedRunHidden = failedRun && paperReady;
   const writePaperStatus = getWritePaperStatus(input.artifacts.runRecord);
   const writePaperCompleted = isWritePaperCompleted({
@@ -374,7 +376,9 @@ async function buildAuditSummary(input: {
     blockers.push({
       code: "run_execution_failed",
       severity: "blocker",
-      message: `Run status is ${runStatus}; failed execution must be repaired or explicitly superseded before governance promotion.`,
+      message: runFailureDetail
+        ? `Run status is ${runStatus}; verifier detail: ${runFailureDetail}`
+        : `Run status is ${runStatus}; failed execution must be repaired or explicitly superseded before governance promotion.`,
       source: "runRecord"
     });
   }
@@ -617,6 +621,9 @@ async function loadRunArtifacts(runRoot: string): Promise<LoadedRunArtifacts> {
     reviewDecision: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "review", "decision.json")),
     figureAuditSummary: await readOptionalJson<FigureAuditSummary>(path.join(runRoot, "figure_audit", "figure_audit_summary.json")),
     runRecord: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "run_record.json")),
+    runExperimentsVerifierReport: await readOptionalJson<Record<string, unknown>>(
+      path.join(runRoot, "run_experiments_verify_report.json")
+    ),
     evidenceStoreLines: await readJsonl(path.join(runRoot, "evidence_store.jsonl")),
     designContractPayloads: await readDesignContractPayloads(runRoot),
     literatureDiscoveryPayloads: await readLiteratureDiscoveryPayloads(runRoot),
@@ -624,6 +631,30 @@ async function loadRunArtifacts(runRoot: string): Promise<LoadedRunArtifacts> {
     researchBriefText: await readResearchBriefText(runRoot),
     mainTexExists: await fileExists(path.join(runRoot, "paper", "main.tex"))
   };
+}
+
+function getRunFailureDetail(report: Record<string, unknown> | undefined): string | undefined {
+  if (!report || stringValue(report.status)?.toLowerCase() !== "fail") {
+    return undefined;
+  }
+  const stage = stringValue(report.stage);
+  const summary = stringValue(report.summary);
+  const suggestedAction = stringValue(report.suggested_next_action);
+  const detail = [
+    stage ? `stage=${stage}` : undefined,
+    summary ? portableFailureText(summary) : undefined,
+    suggestedAction ? `next=${portableFailureText(suggestedAction)}` : undefined
+  ].filter((value): value is string => Boolean(value)).join("; ");
+  return detail ? detail.slice(0, 900) : undefined;
+}
+
+function portableFailureText(value: string): string {
+  return value
+    .replace(/`torch_dtype` is deprecated! Use `dtype` instead!/gu, "")
+    .replace(/\bLoading weights:[\s\S]*$/gu, "")
+    .replace(/(?:[A-Za-z]:[\\/][^\s|;:,]+|\/(?:home|Users|tmp|var|mnt|workspace)(?:\/[^\s|;:,]+)+)/gu, "<path>")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 async function materializeSeedAuditRun(input: {

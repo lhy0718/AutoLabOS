@@ -7,6 +7,7 @@ export type RunExperimentsFailureCategory =
   | "policy_block"
   | "preflight_failure"
   | "command_failure"
+  | "execution_budget_exhausted"
   | "transient_command_failure"
   | "dependency_blocker"
   | "missing_metrics"
@@ -291,6 +292,9 @@ function resolveFailureCategory(
   }
   if (stage === "supplemental") {
     return "supplemental_failure";
+  }
+  if (/execution_budget_exhausted=true|command_aborted=true/iu.test(summary)) {
+    return "execution_budget_exhausted";
   }
   if (looksStructuralCommandFailure(summary)) {
     return "command_failure";

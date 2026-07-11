@@ -514,6 +514,85 @@ describe("run_experiments execution profile behavior", () => {
     expect(verifierReport.suggested_next_action).toContain("progress");
   });
 
+  it("blocks long-running generated runners that declare but never enforce a timeout", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-budget-enforcement-"));
+    process.chdir(root);
+    const run = makeRun("run-budget-enforcement");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const publicDir = path.join(root, "outputs", "public-runner");
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+
+    const scriptPath = path.join(publicDir, "run_condition_sweep.py");
+    await writeFile(
+      scriptPath,
+      [
+        "import argparse",
+        "from pathlib import Path",
+        "",
+        "REQUIRED_RUN_COUNT = 12",
+        "train_steps_per_run = 48",
+        "progress_path = Path('progress.jsonl')",
+        "",
+        "def load_model():",
+        "    return AutoModel.from_pretrained('model-under-test')",
+        "",
+        "def evaluate_completed_condition():",
+        "    for _example in range(1000):",
+        "        pass",
+        "",
+        "def main():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--timeout-sec', type=int, default=1800)",
+        "    parser.parse_args()",
+        "    optimizer.step()",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const metricsPath = path.join(runDir, "metrics.json");
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", `python3 ${JSON.stringify(scriptPath)}`);
+    await runContext.put("implement_experiments.cwd", publicDir);
+    await runContext.put("implement_experiments.public_dir", publicDir);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const aci = { runCommand: vi.fn(), runTests: vi.fn() };
+    const node = createRunExperimentsNode({
+      config: { experiments: { timeout_sec: 1800 } } as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: aci as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(String(result.error)).toContain("no executable training or evaluation loop consumes a deadline");
+    expect(aci.runCommand).not.toHaveBeenCalled();
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; suggested_next_action?: string };
+    expect(verifierReport).toMatchObject({ status: "fail", stage: "preflight_test" });
+    expect(verifierReport.summary).toContain("timeout_sec=1800");
+    expect(verifierReport.suggested_next_action).toContain("wall-clock deadline");
+  });
+
   it("does not promote objective metrics from stale public bundle outputs", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-stale-public-metric-"));
     process.chdir(root);

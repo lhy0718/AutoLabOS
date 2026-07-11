@@ -1007,6 +1007,64 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         };
       }
 
+      const budgetEnforcementIssue = await detectLongRunningPythonRunnerWithoutBudgetEnforcement({
+        runContext,
+        command: primaryCommand,
+        cwd: resolved.cwd,
+        workspaceRoot: process.cwd(),
+        timeoutSec: resolveRunExperimentsBudgetTimeoutSec(deps.config)
+      });
+      if (budgetEnforcementIssue) {
+        const report = buildRunVerifierReport({
+          status: "fail",
+          trigger,
+          stage: "preflight_test",
+          summary: budgetEnforcementIssue,
+          command: primaryCommand,
+          cwd: resolved.cwd,
+          metricsPath: resolved.metricsPath,
+          suggestedNextAction:
+            "Make the generated runner consume its shared wall-clock deadline inside training and evaluation loops, then persist partial or timed-out run accounting before retrying."
+        });
+        deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            command: primaryCommand,
+            metrics_path: resolved.metricsPath,
+            stderr: budgetEnforcementIssue
+          }
+        });
+        await persistRunVerifierReport(run, runContext, report);
+        await persistRunFailureState(runContext, {
+          command: primaryCommand,
+          cwd: resolved.cwd,
+          error: budgetEnforcementIssue
+        });
+        await persistGovernanceCrash({
+          run,
+          runContext,
+          comparisonContract,
+          implementationContext,
+          objectiveMetricName: run.objectiveMetric,
+          rationale: report.summary,
+          resourceUsage: {
+            stage: "preflight_budget_enforcement",
+            command: primaryCommand,
+            cwd: resolved.cwd,
+            metrics_path: resolved.metricsPath
+          }
+        });
+        await recordRunFailure(budgetEnforcementIssue, "structural");
+        return {
+          status: "failure",
+          error: budgetEnforcementIssue,
+          toolCallsUsed: preflightToolCallsUsed
+        };
+      }
+
       let parsedMetrics: Record<string, unknown> = {};
       let objectiveEvaluationSummary = "";
       let obs: Awaited<ReturnType<NodeExecutionDeps["aci"]["runCommand"]>> | undefined;
@@ -1060,7 +1118,9 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             stderr: obs.stderr,
             stdout: obs.stdout,
             exitCode: obs.exit_code ?? 1,
-            metricsPath: resolved.metricsPath
+            metricsPath: resolved.metricsPath,
+            aborted: abortSignal?.aborted === true,
+            durationMs: obs.duration_ms
           });
           const suggestedNextAction = metricsFailureSummary
             ? buildMetricsFailureSuggestedNextAction(metricsFailureSummary)
@@ -1968,6 +2028,8 @@ function buildCommandFailureSummary(input: {
   stdout?: string;
   exitCode: number;
   metricsPath: string;
+  aborted?: boolean;
+  durationMs?: number;
 }): string {
   const output = [input.stderr || "", input.stdout || ""].join("\n");
   const details = [
@@ -1975,6 +2037,13 @@ function buildCommandFailureSummary(input: {
     "metrics_written=false",
     `metrics_path=${input.metricsPath}`
   ];
+  if (input.aborted) {
+    details.push("execution_budget_exhausted=true", "command_aborted=true");
+    if (typeof input.durationMs === "number" && Number.isFinite(input.durationMs)) {
+      details.push(`duration_ms=${Math.max(0, Math.round(input.durationMs))}`);
+    }
+    return details.join(" | ");
+  }
   const dependencySummary = detectModelDownloadOrCacheFailure(output);
   if (dependencySummary) {
     details.push(dependencySummary);
@@ -5749,6 +5818,58 @@ async function detectLongRunningPythonRunnerWithoutProgressSurface(input: {
     "Long-running Python experiment runner " + path.basename(scriptPath) + " declares required_run_count=" + requiredRunCount + " and model/training execution but has no observable progress, heartbeat, or partial-metrics surface.",
     "A full paper-scale run must emit node-owned progress artifacts before long training/evaluation loops so the meta harness can distinguish real progress from a hang or silent dependency stall."
   ].join(" ");
+}
+
+async function detectLongRunningPythonRunnerWithoutBudgetEnforcement(input: {
+  runContext: RunContextMemory;
+  command: string;
+  cwd: string;
+  workspaceRoot: string;
+  timeoutSec: number | undefined;
+}): Promise<string | undefined> {
+  if (!input.timeoutSec) {
+    return undefined;
+  }
+  const explicitScript = resolveMaybeRelative(
+    await input.runContext.get<string>("implement_experiments.script"),
+    input.workspaceRoot
+  );
+  const commandScript = extractPythonScriptPathFromCommand(input.command, input.cwd);
+  const scriptPath = await firstExistingCandidate(
+    [commandScript, explicitScript]
+      .filter((candidate): candidate is string => Boolean(candidate))
+      .filter((candidate) => path.extname(candidate) === ".py")
+  );
+  if (!scriptPath) {
+    return undefined;
+  }
+
+  let source = "";
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+  const requiredRunCount = inferRequiredRunCountFromPythonSource(source);
+  const longRunShape = requiredRunCount !== undefined && requiredRunCount >= 8;
+  const heavyExecutionShape = /\b(?:from_pretrained|get_peft_model|optimizer\.step|loss\.backward|train_steps_per_run|evaluate_completed_condition)\b/u.test(source);
+  const declaresBudget = /--(?:budget-|condition-|locked-budget-)?timeout-sec\b|\btimeout_sec\b/u.test(source);
+  if (!longRunShape || !heavyExecutionShape || !declaresBudget || hasPythonBudgetEnforcementSurface(source)) {
+    return undefined;
+  }
+
+  return [
+    "Long-running Python experiment runner " + path.basename(scriptPath) + " declares required_run_count=" + requiredRunCount + " and timeout_sec=" + input.timeoutSec + " but no executable training or evaluation loop consumes a deadline.",
+    "A declared timeout is not a budget control unless the runner checks it before batches and planned runs and persists partial or timed-out accounting without promoting incomplete work."
+  ].join(" ");
+}
+
+function hasPythonBudgetEnforcementSurface(source: string): boolean {
+  return /\.(?:expired|check_deadline|deadline_exceeded|budget_exhausted)\s*\(/u.test(source)
+    || /\b(?:check_deadline|ensure_budget|raise_if_(?:expired|timed_out)|deadline_exceeded|budget_exhausted)\s*\(/u.test(source)
+    || /\b(?:time\.)?monotonic\s*\(\s*\)\s*(?:>=|>)\s*\w*deadline\b/u.test(source)
+    || /\b\w*deadline\b\s*(?:<=|<)\s*(?:time\.)?monotonic\s*\(\s*\)/u.test(source)
+    || /\bsignal\.alarm\s*\(/u.test(source);
 }
 
 function inferRequiredRunCountFromPythonSource(source: string): number | undefined {

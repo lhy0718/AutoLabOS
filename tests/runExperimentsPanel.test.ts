@@ -52,4 +52,19 @@ describe("run experiments panel triage", () => {
       decision: "fail_fast"
     });
   });
+
+  it("fails fast when the governed execution budget aborts a command", () => {
+    const triage = classifyRunExperimentsFailure({
+      attempt: 1,
+      stage: "command",
+      summary: "Experiment command failed | execution_budget_exhausted=true | command_aborted=true",
+      exitCode: 1
+    });
+
+    expect(triage.category).toBe("execution_budget_exhausted");
+    expect(triage.retryable).toBe(false);
+    expect(decideRunExperimentsRerun({ triage, automaticRerunsUsed: 0 })).toMatchObject({
+      decision: "fail_fast"
+    });
+  });
 });

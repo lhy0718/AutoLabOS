@@ -14129,7 +14129,7 @@ function buildLocalBoundedPythonRunnerMaterializationPlan(
     {
       id: "runner_evaluation",
       title: "Task evaluation and raw evidence capture",
-      purpose: `${basePurpose} Evaluate completed condition outputs and persist raw per-task/per-seed evidence before aggregate metrics. Consume preserved runtime handles or reload saved artifacts before scoring; never require handles that the execution chunk already discarded. Normalize choices and objective labels across mapping/object/dataclass examples, including answer_index and correct_index aliases, so requested examples do not collapse to evaluated=0.`,
+      purpose: `${basePurpose} Evaluate completed condition outputs and persist raw per-task/per-seed evidence before aggregate metrics. Consume preserved runtime handles or reload saved artifacts before scoring; never require handles that the execution chunk already discarded. Normalize choices and objective labels across mapping/object/dataclass examples, including answer_index and correct_index aliases, so requested examples do not collapse to evaluated=0. Honor the shared wall-clock budget inside evaluation loops: check the deadline before every batch and before starting another planned run, use the configured evaluation batch size when batching preserves the metric, and persist an explicit partial or timed-out state without counting an incomplete run as completed.`,
       content_kind: contentKind,
       include_imports: false,
       include_entrypoint: false,

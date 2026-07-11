@@ -150,6 +150,54 @@ describe("research governance operations", () => {
     );
   });
 
+  it("preserves terminal verifier detail through review and node-local improvement", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-failed-run-"));
+    const runRoot = path.join(workspace, "runs", "failed-research-run");
+    tempDirs.push(workspace);
+    await writeCompleteExternalBundle(runRoot);
+    await writeJson(path.join(runRoot, "run_record.json"), {
+      id: "failed-research-run",
+      status: "failed",
+      currentNode: "run_experiments"
+    });
+    await writeJson(path.join(runRoot, "run_experiments_verify_report.json"), {
+      status: "fail",
+      stage: "preflight_test",
+      summary: "The runner declares a timeout but no evaluation loop consumes a deadline.",
+      suggested_next_action: "Enforce the shared deadline and persist partial run accounting."
+    });
+
+    const gateResult = await runResearchAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/governance/audit"
+    });
+    const reviewResult = await runResearchReview({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      outDir: "outputs/governance/review"
+    });
+    const improveResult = await runResearchImprove({
+      cwd: workspace,
+      reviewPath: reviewResult.output_path,
+      outDir: "outputs/governance/improve"
+    });
+
+    expect(gateResult.artifact.findings).toContainEqual(expect.objectContaining({
+      code: "run_execution_failed",
+      message: expect.stringContaining("no evaluation loop consumes a deadline")
+    }));
+    expect(reviewResult.artifact.repair_targets).toContainEqual(expect.objectContaining({
+      finding_code: "run_execution_failed",
+      target_node: "implement_experiments"
+    }));
+    expect(improveResult.artifact.targets).toContainEqual(expect.objectContaining({
+      finding_code: "run_execution_failed",
+      target_node: "implement_experiments",
+      proposed_change: expect.stringContaining("implement_experiments")
+    }));
+  });
+
   it("excludes JSON-quoted private paths from paper-readiness bundles", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-portability-"));
     const external = path.join(workspace, "external-artifacts");
