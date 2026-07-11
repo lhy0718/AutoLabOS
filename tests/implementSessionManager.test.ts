@@ -45794,6 +45794,49 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("avoids deep-copying live handles while summarizing condition states", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-state-record-public-evidence-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import asdict, dataclass",
+        "",
+        "class LiveHandle:",
+        "    def __deepcopy__(self, memo):",
+        "        raise RuntimeError('live handle copied')",
+        "",
+        "@dataclass",
+        "class State:",
+        "    status: str",
+        "    runtime_handles: dict",
+        "",
+        "def _state_record(state):",
+        "    return asdict(state)",
+        "",
+        "def main():",
+        "    states = [State('completed', {'model': LiveHandle(), 'tokenizer': LiveHandle()})]",
+        "    state = states[0]",
+        "    record = _state_record(state)",
+        "    records = [_state_record(s) for s in states]",
+        "    assert record['status'] == 'completed'",
+        "    assert records[0]['runtime_handles'] == {}",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/live handle copied/);
+    const repair = await repairPythonEntrypointConditionRuntimeCleanupSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_state_record_public_evidence_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
 
   it("normalizes generated save_pretrained dtype fields before serialization", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-save-pretrained-dtype-"));

@@ -59391,6 +59391,7 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   const conditionStateReturnMarker = "_autolabos_condition_state_live_handle_return_cleanup";
   const runRecordAppendCleanupMarker = "_autolabos_model_execution_run_record_live_handle_cleanup";
   const modelExecutionPublicRecordAliasMarker = "_autolabos_model_execution_public_record_alias_surface";
+  const stateRecordPublicEvidenceMarker = "_autolabos_state_record_public_evidence_surface";
   const trainingRecordArtifactAliasMarker = "_autolabos_model_execution_training_record_artifact_alias_surface";
   const hasRuntimeCleanupHelper = source.includes(repairMarker);
   const hasEvaluationWrapperCleanup = source.includes(evaluationWrapperMarker);
@@ -59400,6 +59401,7 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   const hasConditionStateReturnCleanup = source.includes(conditionStateReturnMarker);
   const hasRunRecordAppendCleanup = source.includes(runRecordAppendCleanupMarker);
   const hasModelExecutionPublicRecordAlias = source.includes(modelExecutionPublicRecordAliasMarker);
+  const hasStateRecordPublicEvidence = source.includes(stateRecordPublicEvidenceMarker);
   const hasTrainingRecordArtifactAlias = source.includes(trainingRecordArtifactAliasMarker);
   const evaluationLinePattern = /^(\s*)evaluation_metric_rows\.extend\(_autolabos_entrypoint_evaluation_metric_rows\(row, eval_tasks, config, condition=condition_arg, paths=runtime_paths\)\)\s*$/gmu;
   const wrapperCallPattern = /^(\s*)evidence_rows\s*=\s*_autolabos_entrypoint_call_compatible\(evaluator,[^\n]*condition_row[^\n]*\)\s*$/gmu;
@@ -59410,6 +59412,7 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   const contractTuplePattern = /^(\s*)if isinstance\(loaded_contract, tuple\):\n\1    contract = loaded_contract\[0\] if len\(loaded_contract\) >= 1 else None\n\1    if len\(loaded_contract\) >= 2 and loaded_contract\[1\]:\n\1        diagnostics\.extend\(list\(loaded_contract\[1\]\)\)\n\1else:\n\1    contract = loaded_contract\s*$/gmu;
   const runRecordDictAppendPattern = /^(\s*)run_records\.append\(dict\(rec\)\)\s*$/gmu;
   const modelExecutionPublicRecordAliasPattern = /^([ \t]*)rec[ \t]*=[ \t]*_state_record\(state\)[ \t]*\r?\n(?=\1_maybe_call\([^\n]*\brecord=_autolabos_public_rec\b)/gmu;
+  const stateRecordCallPattern = /(?<!def )\b_state_record\((state|s)\)/gu;
   const trainingReturnArtifactPathPattern = /^(\s*)"adapter_path"\s*:\s*str\(([^)\n]*adapter_dir[^)\n]*)\)\s*,\s*$/gmu;
   const trainingReturnLiveHandlePattern = /^(\s*)"task_metrics"\s*:\s*\{\}\s*,\n\1"model"\s*:\s*model\s*,\n\1"tokenizer"\s*:\s*tokenizer\s*,?\s*$/gmu;
   const hasPendingRuntimeCleanupRepair =
@@ -59422,6 +59425,7 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
     contractTuplePattern.test(source) ||
     (!hasRunRecordAppendCleanup && runRecordDictAppendPattern.test(source)) ||
     (!hasModelExecutionPublicRecordAlias && modelExecutionPublicRecordAliasPattern.test(source)) ||
+    stateRecordCallPattern.test(source) ||
     (!hasTrainingRecordArtifactAlias && trainingReturnArtifactPathPattern.test(source)) ||
     trainingReturnLiveHandlePattern.test(source) ||
     /_autolabos_entrypoint_jsonable\(condition_row\)/u.test(source);
@@ -59434,6 +59438,7 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   contractTuplePattern.lastIndex = 0;
   runRecordDictAppendPattern.lastIndex = 0;
   modelExecutionPublicRecordAliasPattern.lastIndex = 0;
+  stateRecordCallPattern.lastIndex = 0;
   trainingReturnArtifactPathPattern.lastIndex = 0;
   trainingReturnLiveHandlePattern.lastIndex = 0;
   if (hasRuntimeCleanupHelper && hasEvaluationWrapperCleanup && hasPublicEvidenceSnapshot && hasCpuOffloadCleanup && hasConditionStateReturnCleanup && !hasPendingRuntimeCleanupRepair) {
@@ -59620,6 +59625,16 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
       `${indent}rec = _state_record(state)`,
       `${indent}_autolabos_public_rec = _autolabos_entrypoint_condition_public_evidence(rec)  # ${modelExecutionPublicRecordAliasMarker}`
     ].join("\n") + "\n");
+  }
+  nextSource = nextSource.replace(
+    stateRecordCallPattern,
+    (_call: string, valueName: string) => `_autolabos_entrypoint_condition_public_evidence(${valueName})`
+  );
+  if (!hasStateRecordPublicEvidence && nextSource !== source) {
+    nextSource = nextSource.replace(
+      /^(def\s+_state_record\s*\()/mu,
+      `# ${stateRecordPublicEvidenceMarker}\n$1`
+    );
   }
   if (!hasTrainingRecordArtifactAlias) {
     nextSource = nextSource.replace(trainingReturnArtifactPathPattern, (_line, indent: string, adapterExpr: string) => [
