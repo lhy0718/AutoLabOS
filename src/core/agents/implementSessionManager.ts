@@ -11360,6 +11360,8 @@ export class ImplementSessionManager {
       await repairPythonEvaluationMetricRowsSeedAliasSurface(executionScriptPath);
     const datasetSplitLoaderPreferLabeledRepair =
       await repairPythonDatasetSplitLoaderPreferLabeledSurface(executionScriptPath);
+    const evaluationSplitMinimumCoverageRepair =
+      await repairPythonEvaluationSplitMinimumCoverageSurface(executionScriptPath);
     const entrypointConditionPathAliasesRepair =
       await repairPythonEntrypointConditionPathAliasesSurface(executionScriptPath);
     const publicStudySiblingExperimentBackendRepair =
@@ -11580,6 +11582,7 @@ export class ImplementSessionManager {
         evaluationArtifactDirReloadRepair,
         evaluationMetricRowsSeedAliasRepair,
         datasetSplitLoaderPreferLabeledRepair,
+        evaluationSplitMinimumCoverageRepair,
         entrypointConditionPathAliasesRepair,
         publicStudySiblingExperimentBackendRepair,
         publicStudyBackendCallableLoaderRepair,
@@ -60187,6 +60190,98 @@ export async function repairPythonDatasetSplitLoaderPreferLabeledSurface(scriptP
   return {
     repaired: true,
     message: `Preferred labeled dataset split candidates before test-like candidates in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEvaluationSplitMinimumCoverageSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const repairMarker = "_autolabos_evaluation_split_minimum_coverage_surface";
+  const needle = [
+    "        path, name, split, normalizer = specs[task]",
+    "        ds = _load_hf_dataset(path, name, split, runtime.allow_remote_download)",
+    "        rows: List[EvalExample] = []",
+    "        bad = 0",
+    "        for i, rec in enumerate(ds):",
+    "            ex = normalizer(dict(rec), i)",
+    "            if ex is None:",
+    "                bad += 1",
+    "            else:",
+    "                rows.append(ex)",
+    "        min_required = runtime.min_eval_examples_per_task.get(task, 0) if runtime.full_evaluation_required else 1",
+    "        if len(rows) < min_required:",
+    "            raise RuntimeError(f\"{task} usable eval examples {len(rows)} below required {min_required}; bad_records={bad}; schema_keys={list(ds.features.keys()) if hasattr(ds, 'features') else 'unknown'}\")",
+    "        out[task] = rows",
+    "        diag[task] = {\"source\": path, \"config\": name, \"split\": split, \"usable_count\": len(rows), \"bad_count\": bad, \"minimum_required\": min_required}",
+    ""
+  ].join("\n");
+  if (
+    source.includes(repairMarker) ||
+    !source.includes("def load_evaluation_examples(") ||
+    !source.includes(needle)
+  ) {
+    return { repaired: false };
+  }
+
+  const replacement = [
+    `        # ${repairMarker}`,
+    "        path, name, requested_split, normalizer = specs[task]",
+    "        min_required = runtime.min_eval_examples_per_task.get(task, 0) if runtime.full_evaluation_required else 1",
+    "        split_candidates: List[str] = []",
+    "        for candidate_split in (requested_split, 'validation', 'dev', 'test'):",
+    "            if candidate_split and candidate_split not in split_candidates:",
+    "                split_candidates.append(candidate_split)",
+    "        attempts: List[Dict[str, Any]] = []",
+    "        rows: List[EvalExample] = []",
+    "        bad = 0",
+    "        split = requested_split",
+    "        for candidate_split in split_candidates:",
+    "            try:",
+    "                candidate_ds = _load_hf_dataset(path, name, candidate_split, runtime.allow_remote_download)",
+    "            except Exception as exc:",
+    "                attempts.append({'split': candidate_split, 'load_error': repr(exc)})",
+    "                continue",
+    "            candidate_rows: List[EvalExample] = []",
+    "            candidate_bad = 0",
+    "            for i, rec in enumerate(candidate_ds):",
+    "                ex = normalizer(dict(rec), i)",
+    "                if ex is None:",
+    "                    candidate_bad += 1",
+    "                else:",
+    "                    candidate_rows.append(ex)",
+    "            attempts.append({'split': candidate_split, 'usable_count': len(candidate_rows), 'bad_count': candidate_bad})",
+    "            if len(candidate_rows) >= min_required:",
+    "                rows = candidate_rows",
+    "                bad = candidate_bad",
+    "                split = candidate_split",
+    "                break",
+    "        if len(rows) < min_required:",
+    "            raise RuntimeError(f\"{task} has no labeled evaluation split meeting required {min_required}; attempted_splits={attempts}\")",
+    "        out[task] = rows",
+    "        diag[task] = {\"source\": path, \"config\": name, \"split\": split, \"requested_split\": requested_split, \"attempted_splits\": attempts, \"usable_count\": len(rows), \"bad_count\": bad, \"minimum_required\": min_required}",
+    ""
+  ].join("\n");
+  const nextSource = source.replace(needle, replacement);
+  if (nextSource === source || !nextSource.includes(repairMarker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Selected the first labeled evaluation split meeting the governed minimum coverage in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

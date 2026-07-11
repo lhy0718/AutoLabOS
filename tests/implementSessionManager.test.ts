@@ -329,6 +329,7 @@ import {
   repairPythonUnresolvedDataclassDefaultFactorySurface,
   repairPythonEarlyMainGuardBeforeGovernedScheduleSurface,
   repairPythonDatasetSplitLoaderPreferLabeledSurface,
+  repairPythonEvaluationSplitMinimumCoverageSurface,
   repairPythonEntrypointConditionPathAliasesSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonPublicStudyBackendCallableLoaderSurface,
@@ -46270,6 +46271,76 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(repairedSource).toContain("_autolabos_dataset_split_loader_prefer_labeled_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("selects a labeled evaluation split that meets the governed minimum coverage", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-eval-split-coverage-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Dict, List",
+        "",
+        "class EvalExample:",
+        "    pass",
+        "",
+        "class Runtime:",
+        "    task_names = ('benchmark_task_a',)",
+        "    min_eval_examples_per_task = {'benchmark_task_a': 4}",
+        "    full_evaluation_required = True",
+        "    allow_remote_download = False",
+        "",
+        "def _load_hf_dataset(path, name, split, allow_remote_download):",
+        "    sizes = {'validation': 2, 'test': 4}",
+        "    if split not in sizes:",
+        "        raise KeyError(split)",
+        "    return [{'label': index} for index in range(sizes[split])]",
+        "",
+        "def normalize_record(record, index):",
+        "    return EvalExample() if 'label' in record else None",
+        "",
+        "def load_evaluation_examples(runtime):",
+        "    specs = {'benchmark_task_a': ('public_dataset_a', None, 'validation', normalize_record)}",
+        "    out: Dict[str, List[EvalExample]] = {}",
+        "    diag: Dict[str, Any] = {}",
+        "    for task in runtime.task_names:",
+        "        path, name, split, normalizer = specs[task]",
+        "        ds = _load_hf_dataset(path, name, split, runtime.allow_remote_download)",
+        "        rows: List[EvalExample] = []",
+        "        bad = 0",
+        "        for i, rec in enumerate(ds):",
+        "            ex = normalizer(dict(rec), i)",
+        "            if ex is None:",
+        "                bad += 1",
+        "            else:",
+        "                rows.append(ex)",
+        "        min_required = runtime.min_eval_examples_per_task.get(task, 0) if runtime.full_evaluation_required else 1",
+        "        if len(rows) < min_required:",
+        "            raise RuntimeError(f\"{task} usable eval examples {len(rows)} below required {min_required}; bad_records={bad}; schema_keys={list(ds.features.keys()) if hasattr(ds, 'features') else 'unknown'}\")",
+        "        out[task] = rows",
+        "        diag[task] = {\"source\": path, \"config\": name, \"split\": split, \"usable_count\": len(rows), \"bad_count\": bad, \"minimum_required\": min_required}",
+        "    return out, diag",
+        "",
+        "if __name__ == '__main__':",
+        "    rows, diagnostics = load_evaluation_examples(Runtime())",
+        "    assert len(rows['benchmark_task_a']) == 4",
+        "    assert diagnostics['benchmark_task_a']['requested_split'] == 'validation'",
+        "    assert diagnostics['benchmark_task_a']['split'] == 'test'",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(
+      /below required/
+    );
+    const repair = await repairPythonEvaluationSplitMinimumCoverageSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_evaluation_split_minimum_coverage_surface");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
