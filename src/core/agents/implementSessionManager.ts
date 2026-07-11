@@ -11336,6 +11336,8 @@ export class ImplementSessionManager {
       await repairPythonEntrypointEvalTasksTupleUnwrapSurface(executionScriptPath);
     const entrypointBudgetTimeoutArgparseRepair =
       await repairPythonEntrypointBudgetTimeoutArgparseSurface(executionScriptPath);
+    const inlineManagedArgparseRepair =
+      await repairPythonInlineManagedArgparseSurface(executionScriptPath);
     const evalTaskIterMetadataRepair =
       await repairPythonEntrypointEvalTaskIterMetadataSurface(executionScriptPath);
     const benchmarkDatasetLoaderAliasRepair =
@@ -11575,6 +11577,7 @@ export class ImplementSessionManager {
         extractEvalExamplesAliasRepair,
         evalTasksTupleUnwrapRepair,
         entrypointBudgetTimeoutArgparseRepair,
+        inlineManagedArgparseRepair,
         evalTaskIterMetadataRepair,
         benchmarkDatasetLoaderAliasRepair,
         keywordMetadataExceptionRepair,
@@ -58394,6 +58397,49 @@ export async function repairPythonEntrypointBudgetTimeoutArgparseSurface(scriptP
   return {
     repaired: true,
     message: `Added budget-timeout argparse aliases to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonInlineManagedArgparseSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") return { repaired: false };
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+  const marker = "_autolabos_inline_managed_argparse_surface";
+  const callPattern = /argparse\.ArgumentParser\(\)\.parse_args\(argv\)/gu;
+  if (source.includes(marker) || !callPattern.test(source)) return { repaired: false };
+  callPattern.lastIndex = 0;
+  if (source.lastIndexOf("\ndef main(") < 0) return { repaired: false };
+  const helper = [
+    `# ${marker}`,
+    "def _autolabos_parse_managed_runtime_args(argv=None):",
+    "    import argparse as _AutoLabOSArgparse",
+    "    if isinstance(argv, _AutoLabOSArgparse.Namespace):",
+    "        return argv",
+    "    parser = _AutoLabOSArgparse.ArgumentParser(add_help=False)",
+    "    parser.add_argument('--metrics-path', default=None)",
+    "    parser.add_argument('--public-dir', default=None)",
+    "    parser.add_argument('--run-artifact-dir', default=None)",
+    "    parser.add_argument('--timeout-sec', dest='timeout_sec', type=float, default=None)",
+    "    parser.add_argument('--budget-timeout-sec', dest='timeout_sec', type=float, default=None)",
+    "    parser.add_argument('--condition-timeout-sec', dest='timeout_sec', type=float, default=None)",
+    "    parser.add_argument('--locked-budget-timeout-sec', dest='timeout_sec', type=float, default=None)",
+    "    return parser.parse_known_args(argv)[0]",
+    ""
+  ].join("\n");
+  let nextSource = source.replace(callPattern, "_autolabos_parse_managed_runtime_args(argv)");
+  const mainIndex = nextSource.lastIndexOf("\ndef main(");
+  nextSource = `${nextSource.slice(0, mainIndex)}\n\n${helper}${nextSource.slice(mainIndex)}`;
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Replaced inline empty argparse fallbacks with managed runtime argument parsing in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

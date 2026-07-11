@@ -318,6 +318,7 @@ import {
   repairPythonExtractEvalExamplesAliasSurface,
   repairPythonEntrypointEvalTasksTupleUnwrapSurface,
   repairPythonEntrypointBudgetTimeoutArgparseSurface,
+  repairPythonInlineManagedArgparseSurface,
   repairPythonEntrypointEvalTaskIterMetadataSurface,
   repairPythonBenchmarkDatasetLoaderAliasSurface,
   repairPythonEvaluationExampleDataclassAliasSurface,
@@ -49118,6 +49119,30 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--public-dir", workspace, "--run-artifact-dir", path.join(workspace, "run"), "--timeout-sec", "90", "--condition-timeout-sec", "90"], { cwd: workspace });
     expect(readFileSync(metricsPath, "utf8")).toBe(`${workspace}:${path.join(workspace, "run")}:90.0`);
+  });
+
+  it("replaces inline empty argparse fallbacks with managed runtime parsing", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-inline-managed-parser-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const metricsPath = path.join(workspace, "metrics.txt");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from pathlib import Path",
+        "def main(argv=None):",
+        "    args = argparse.ArgumentParser().parse_args(argv)",
+        "    Path(args.metrics_path).write_text(str(args.timeout_sec), encoding='utf8')",
+        "if __name__ == '__main__': main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    const repair = await repairPythonInlineManagedArgparseSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--timeout-sec", "120", "--condition-timeout-sec", "120"], { cwd: workspace });
+    expect(readFileSync(metricsPath, "utf8")).toBe("120.0");
   });
 
   it("adds missing condition-timeout aliases to previously marked generated entrypoints", async () => {
