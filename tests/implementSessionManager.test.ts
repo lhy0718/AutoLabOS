@@ -315,6 +315,7 @@ import {
   repairPythonEntrypointConditionSeedExecutorBridgeSurface,
   repairPythonEvaluationTaskBundleAliasSurface,
   repairPythonMultipleChoiceGoldAliasSurface,
+  repairPythonNumericChoiceLabelPrecedenceSurface,
   repairPythonExtractEvalExamplesAliasSurface,
   repairPythonEntrypointEvalTasksTupleUnwrapSurface,
   repairPythonEntrypointBudgetTimeoutArgparseSurface,
@@ -49142,6 +49143,42 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(repairedSource).toContain("_autolabos_multiple_choice_gold_alias_surface");
     execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("matches numeric choice labels before treating them as zero-based indices", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-numeric-choice-label-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def normalize_eval_record(record):",
+        "    choices = list(record['choices']['text'])",
+        "    labels = [str(value) for value in record['choices']['label']]",
+        "    s = str(record['answer']).strip()",
+        "    gold_index = None",
+        "    if s.isdigit():",
+        "        gold_index = int(s)",
+        "    elif s in labels:",
+        "        gold_index = labels.index(s)",
+        "    if gold_index is None or gold_index < 0 or gold_index >= len(choices):",
+        "        return None",
+        "    return gold_index",
+        "",
+        "if __name__ == '__main__':",
+        "    row = {'choices': {'text': ['alpha', 'beta'], 'label': ['1', '2']}, 'answer': '2'}",
+        "    assert normalize_eval_record(row) == 1, normalize_eval_record(row)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/AssertionError/);
+    const repair = await repairPythonNumericChoiceLabelPrecedenceSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_numeric_choice_label_precedence_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonNumericChoiceLabelPrecedenceSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("unwraps evaluation task maps from tuple loader outputs instead of returning diagnostics", async () => {

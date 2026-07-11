@@ -11355,6 +11355,8 @@ export class ImplementSessionManager {
       await repairPythonEvaluationTaskBundleAliasSurface(executionScriptPath);
     const multipleChoiceGoldAliasRepair =
       await repairPythonMultipleChoiceGoldAliasSurface(executionScriptPath);
+    const numericChoiceLabelPrecedenceRepair =
+      await repairPythonNumericChoiceLabelPrecedenceSurface(executionScriptPath);
     const extractEvalExamplesAliasRepair =
       await repairPythonExtractEvalExamplesAliasSurface(executionScriptPath);
     const evalTasksTupleUnwrapRepair =
@@ -11601,6 +11603,7 @@ export class ImplementSessionManager {
         highLevelRunnerDataBundleAliasRepair,
         evaluationTaskBundleAliasRepair,
         multipleChoiceGoldAliasRepair,
+        numericChoiceLabelPrecedenceRepair,
         extractEvalExamplesAliasRepair,
         evalTasksTupleUnwrapRepair,
         entrypointBudgetTimeoutArgparseRepair,
@@ -57995,6 +57998,53 @@ export async function repairPythonMultipleChoiceGoldAliasSurface(scriptPath?: st
   return {
     repaired: true,
     message: `Accepted multiple-choice gold-index aliases in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonNumericChoiceLabelPrecedenceSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const repairMarker = "_autolabos_numeric_choice_label_precedence_surface";
+  if (source.includes(repairMarker)) {
+    return { repaired: false };
+  }
+
+  const numericBeforeLabelPattern =
+    /^([ \t]*)if\s+([A-Za-z_]\w*)\.isdigit\(\):\r?\n([ \t]+)([A-Za-z_]\w*)\s*=\s*int\(\2\)\r?\n\1elif\s+\2\s+in\s+([A-Za-z_]\w*):\r?\n\3\4\s*=\s*\5\.index\(\2\)/gmu;
+  let repaired = false;
+  const nextSource = source.replace(
+    numericBeforeLabelPattern,
+    (_match: string, indent: string, rawLabel: string, bodyIndent: string, goldIndex: string, choiceLabels: string) => {
+      repaired = true;
+      return [
+        `${indent}# ${repairMarker}`,
+        `${indent}if ${rawLabel} in ${choiceLabels}:`,
+        `${bodyIndent}${goldIndex} = ${choiceLabels}.index(${rawLabel})`,
+        `${indent}elif ${rawLabel}.isdigit():`,
+        `${bodyIndent}${goldIndex} = int(${rawLabel})`
+      ].join("\n");
+    }
+  );
+  if (!repaired || nextSource === source || !nextSource.includes(repairMarker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Matched numeric multiple-choice labels before interpreting them as zero-based indices in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
