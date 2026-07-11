@@ -11365,6 +11365,8 @@ export class ImplementSessionManager {
       await repairPythonFinalCliManagedEntrypointPreferenceSurface(executionScriptPath);
     const dependencyWildcardImportRepair =
       await repairPythonDependencyWildcardImportSurface(executionScriptPath);
+    const entrypointSingleRunnerCandidateRepair =
+      await repairPythonEntrypointSingleRunnerCandidateSurface(executionScriptPath);
     const extractEvalExamplesAliasRepair =
       await repairPythonExtractEvalExamplesAliasSurface(executionScriptPath);
     const evalTasksTupleUnwrapRepair =
@@ -11616,6 +11618,7 @@ export class ImplementSessionManager {
         entrypointSemanticCallAliasRepair,
         finalCliManagedEntrypointPreferenceRepair,
         dependencyWildcardImportRepair,
+        entrypointSingleRunnerCandidateRepair,
         extractEvalExamplesAliasRepair,
         evalTasksTupleUnwrapRepair,
         entrypointBudgetTimeoutArgparseRepair,
@@ -16374,7 +16377,7 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "",
     "",
     "def _autolabos_entrypoint_find_single_runner():",
-    "    explicit_names = ('run_single_condition_model_execution', 'execute_single_condition_model_execution', 'run_condition_model_execution', 'execute_condition_model_execution', 'run_condition_model_execution', 'execute_condition_model', 'run_condition_model', 'train_condition_model', 'run_single_condition_training', 'execute_single_condition_training', 'execute_condition_seed', 'run_condition_seed', 'execute_single_condition_seed', 'run_single_condition_seed', 'execute_condition_seed_run', 'run_condition_seed_experiment', 'train_single_condition', 'train_condition', 'run_condition_training', 'execute_condition_training', 'execute_single_condition', 'run_single_condition', 'execute_condition', 'run_condition', 'train_and_evaluate_condition', 'execute_condition_run', 'run_condition_experiment')",
+    "    explicit_names = ('execute_one_condition', 'run_one_condition', 'execute_one_run', 'run_one_run', 'run_single_condition_model_execution', 'execute_single_condition_model_execution', 'run_condition_model_execution', 'execute_condition_model_execution', 'run_condition_model_execution', 'execute_condition_model', 'run_condition_model', 'train_condition_model', 'run_single_condition_training', 'execute_single_condition_training', 'execute_condition_seed', 'run_condition_seed', 'execute_single_condition_seed', 'run_single_condition_seed', 'execute_condition_seed_run', 'run_condition_seed_experiment', 'train_single_condition', 'train_condition', 'run_condition_training', 'execute_condition_training', 'execute_single_condition', 'run_single_condition', 'execute_condition', 'run_condition', 'train_and_evaluate_condition', 'execute_condition_run', 'run_condition_experiment')",
     "    for explicit_name in explicit_names:",
     "        explicit = globals().get(explicit_name)",
     "        if not callable(explicit):",
@@ -58287,6 +58290,61 @@ export async function repairPythonFinalCliManagedEntrypointPreferenceSurface(scr
   return {
     repaired: true,
     message: `Preferred the managed experiment entrypoint over the generated fallback CLI in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointSingleRunnerCandidateSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_entrypoint_single_runner_candidate_surface";
+  const candidateNames = ["execute_one_condition", "run_one_condition", "execute_one_run", "run_one_run"];
+  if (
+    source.includes(marker) ||
+    !source.includes("def _autolabos_entrypoint_find_single_runner(") ||
+    !candidateNames.some((name) => pythonSourceDefinesOrImportsName(source, name))
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  const nextSource = replaceAllPythonTopLevelFunctionSources(
+    source,
+    "_autolabos_entrypoint_find_single_runner",
+    (functionSource) => functionSource.replace(
+      /^(\s*)explicit_names\s*=\s*\(([^\n]*)\)\s*$/mu,
+      (full: string, indent: string, existingNames: string) => {
+        const missing = candidateNames.filter(
+          (name) => !new RegExp(`["']${escapeRegExpLiteral(name)}["']`, "u").test(existingNames)
+        );
+        if (missing.length === 0) {
+          return full;
+        }
+        repaired = true;
+        const renderedMissing = missing.map((name) => `'${name}'`).join(", ");
+        return `${indent}# ${marker}\n${indent}explicit_names = (${renderedMissing}, ${existingNames})`;
+      }
+    )
+  );
+  if (!repaired || nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added conventional one-condition callables to the generated managed runner resolver in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

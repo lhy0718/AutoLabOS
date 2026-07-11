@@ -115,6 +115,7 @@ import {
   repairPythonEntrypointSemanticCallAliasSurface,
   repairPythonFinalCliManagedEntrypointPreferenceSurface,
   repairPythonDependencyWildcardImportSurface,
+  repairPythonEntrypointSingleRunnerCandidateSurface,
   repairPythonOutputDirArgparseAlias,
   repairPythonParameterSummaryRecordSurface,
   repairPythonMetricsPayloadProjectionSurface,
@@ -339,6 +340,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               "before handoff.",
               "before run_experiments retry gate."
             ) || `Avoided wildcard dependency imports in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const entrypointSingleRunnerCandidatePreRepair =
+          await repairPythonEntrypointSingleRunnerCandidateSurface(preFailureMemoryScriptPath);
+        if (entrypointSingleRunnerCandidatePreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            entrypointSingleRunnerCandidatePreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Added conventional one-condition runner candidates in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
       }

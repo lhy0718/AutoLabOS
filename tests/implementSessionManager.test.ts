@@ -320,6 +320,7 @@ import {
   repairPythonNumericChoiceLabelPrecedenceSurface,
   repairPythonEntrypointSemanticCallAliasSurface,
   repairPythonFinalCliManagedEntrypointPreferenceSurface,
+  repairPythonEntrypointSingleRunnerCandidateSurface,
   repairPythonExtractEvalExamplesAliasSurface,
   repairPythonEntrypointEvalTasksTupleUnwrapSurface,
   repairPythonEntrypointBudgetTimeoutArgparseSurface,
@@ -49323,6 +49324,39 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_final_cli_managed_entrypoint_preference_surface");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect((await repairPythonFinalCliManagedEntrypointPreferenceSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("discovers conventional one-condition callables in the managed resolver", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-managed-single-runner-candidate-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def run_one_condition(run_spec):",
+        "    return run_spec",
+        "",
+        "def _autolabos_entrypoint_find_single_runner():",
+        "    explicit_names = ('run_single_condition', 'execute_condition')",
+        "    for explicit_name in explicit_names:",
+        "        explicit = globals().get(explicit_name)",
+        "        if callable(explicit):",
+        "            return explicit",
+        "    return None",
+        "",
+        "if __name__ == '__main__':",
+        "    assert _autolabos_entrypoint_find_single_runner() is run_one_condition",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/AssertionError/);
+    const repair = await repairPythonEntrypointSingleRunnerCandidateSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_entrypoint_single_runner_candidate_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonEntrypointSingleRunnerCandidateSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("unwraps evaluation task maps from tuple loader outputs instead of returning diagnostics", async () => {
