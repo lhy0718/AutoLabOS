@@ -112,6 +112,7 @@ import {
   repairPythonMultipleChoiceDataclassChoiceAliasSurface,
   repairPythonMultipleChoiceListRawVariableSurface,
   repairPythonNumericChoiceLabelPrecedenceSurface,
+  repairPythonEntrypointSemanticCallAliasSurface,
   repairPythonOutputDirArgparseAlias,
   repairPythonParameterSummaryRecordSurface,
   repairPythonMetricsPayloadProjectionSurface,
@@ -291,6 +292,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               "before handoff.",
               "before run_experiments retry gate."
             ) || `Matched numeric multiple-choice labels before zero-based index coercion in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const entrypointSemanticCallAliasPreRepair =
+          await repairPythonEntrypointSemanticCallAliasSurface(preFailureMemoryScriptPath);
+        if (entrypointSemanticCallAliasPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            entrypointSemanticCallAliasPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Aliased semantic runtime arguments in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
       }

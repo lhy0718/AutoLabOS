@@ -11357,6 +11357,8 @@ export class ImplementSessionManager {
       await repairPythonMultipleChoiceGoldAliasSurface(executionScriptPath);
     const numericChoiceLabelPrecedenceRepair =
       await repairPythonNumericChoiceLabelPrecedenceSurface(executionScriptPath);
+    const entrypointSemanticCallAliasRepair =
+      await repairPythonEntrypointSemanticCallAliasSurface(executionScriptPath);
     const extractEvalExamplesAliasRepair =
       await repairPythonExtractEvalExamplesAliasSurface(executionScriptPath);
     const evalTasksTupleUnwrapRepair =
@@ -11604,6 +11606,7 @@ export class ImplementSessionManager {
         evaluationTaskBundleAliasRepair,
         multipleChoiceGoldAliasRepair,
         numericChoiceLabelPrecedenceRepair,
+        entrypointSemanticCallAliasRepair,
         extractEvalExamplesAliasRepair,
         evalTasksTupleUnwrapRepair,
         entrypointBudgetTimeoutArgparseRepair,
@@ -58045,6 +58048,70 @@ export async function repairPythonNumericChoiceLabelPrecedenceSurface(scriptPath
   return {
     repaired: true,
     message: `Matched numeric multiple-choice labels before interpreting them as zero-based indices in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointSemanticCallAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const repairMarker = "_autolabos_entrypoint_semantic_call_alias_surface";
+  if (source.includes(repairMarker) || !source.includes("def _ae_call(fn, **ctx):")) {
+    return { repaired: false };
+  }
+
+  const needle = [
+    "    kw = {k: v for k, v in ctx.items() if k in params}",
+    "    return fn(**kw)"
+  ].join("\n");
+  if (!source.includes(needle)) {
+    return { repaired: false };
+  }
+
+  const replacement = [
+    "    kw = {k: v for k, v in ctx.items() if k in params}",
+    `    # ${repairMarker}`,
+    "    semantic_aliases = {",
+    "        'run_spec': ('run_spec', 'spec', 'condition', 'plan_item', 'plan_entry', 'planned_run', 'run'),",
+    "        'spec': ('spec', 'run_spec', 'condition', 'plan_item', 'plan_entry', 'planned_run'),",
+    "        'condition': ('condition', 'spec', 'run_spec', 'plan_item', 'plan_entry', 'planned_run'),",
+    "        'plan_item': ('plan_item', 'plan_entry', 'planned_run', 'run_spec', 'spec', 'condition'),",
+    "        'plan_entry': ('plan_entry', 'plan_item', 'planned_run', 'run_spec', 'spec', 'condition'),",
+    "        'planned_run': ('planned_run', 'plan_item', 'plan_entry', 'run_spec', 'spec', 'condition'),",
+    "        'data_bundle': ('data_bundle', 'task_bundle', 'bundle', 'data'),",
+    "        'task_bundle': ('task_bundle', 'data_bundle', 'bundle', 'data'),",
+    "        'config': ('config', 'args', 'runtime', 'runtime_context', 'run_context'),",
+    "        'args': ('args', 'config', 'runtime', 'runtime_context', 'run_context'),",
+    "    }",
+    "    for parameter_name in params:",
+    "        if parameter_name in kw:",
+    "            continue",
+    "        for alias_name in semantic_aliases.get(parameter_name, ()):",
+    "            if alias_name in ctx and ctx[alias_name] is not None:",
+    "                kw[parameter_name] = ctx[alias_name]",
+    "                break",
+    "    return fn(**kw)"
+  ].join("\n");
+  const nextSource = source.replace(needle, replacement);
+  if (nextSource === source || !nextSource.includes(repairMarker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aliased semantic runtime arguments in the generated entrypoint dispatcher in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

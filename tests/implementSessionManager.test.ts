@@ -316,6 +316,7 @@ import {
   repairPythonEvaluationTaskBundleAliasSurface,
   repairPythonMultipleChoiceGoldAliasSurface,
   repairPythonNumericChoiceLabelPrecedenceSurface,
+  repairPythonEntrypointSemanticCallAliasSurface,
   repairPythonExtractEvalExamplesAliasSurface,
   repairPythonEntrypointEvalTasksTupleUnwrapSurface,
   repairPythonEntrypointBudgetTimeoutArgparseSurface,
@@ -49179,6 +49180,42 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_numeric_choice_label_precedence_surface");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect((await repairPythonNumericChoiceLabelPrecedenceSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("maps semantic runtime aliases in generated entrypoint dispatch", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-semantic-call-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect as _ae_inspect",
+        "",
+        "def _ae_call(fn, **ctx):",
+        "    sig = _ae_inspect.signature(fn)",
+        "    params = sig.parameters",
+        "    if any(p.kind == p.VAR_KEYWORD for p in params.values()):",
+        "        return fn(**ctx)",
+        "    kw = {k: v for k, v in ctx.items() if k in params}",
+        "    return fn(**kw)",
+        "",
+        "def execute_one_condition(run_spec, data_bundle, config):",
+        "    return run_spec['marker'], data_bundle['count'], config['device']",
+        "",
+        "if __name__ == '__main__':",
+        "    result = _ae_call(execute_one_condition, spec={'marker': 'baseline_condition'}, task_bundle={'count': 3}, args={'device': 'cpu'})",
+        "    assert result == ('baseline_condition', 3, 'cpu'), result",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/run_spec/);
+    const repair = await repairPythonEntrypointSemanticCallAliasSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_entrypoint_semantic_call_alias_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonEntrypointSemanticCallAliasSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("unwraps evaluation task maps from tuple loader outputs instead of returning diagnostics", async () => {
