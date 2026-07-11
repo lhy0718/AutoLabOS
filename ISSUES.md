@@ -16,9 +16,35 @@ Path placeholders:
 ---
 
 
+## Issue: LV-574
+
+- Status: reproduced in the same live flow; source repair, focused regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.
+- Validation target: `implement_experiments` must block a long-running generated runner that declares a timeout but does not consume a deadline, before handing it to `run_experiments`.
+- Environment/session context: a governed live run loaded the latest verifier feedback plus prior structural failure constraints, regenerated a runner, passed compile-oriented implementation verification, and then repeated the earlier deadline failure in `run_experiments`.
+- Reproduction steps:
+  1. Preserve a prior deadline-consumption failure in run-scoped failure memory.
+  2. Regenerate a repeated-run Python implementation while repairing a later evaluation failure.
+  3. Let implementation verification pass and observe the next node's long-run budget preflight.
+- Expected behavior: the implementation node should apply the same semantic budget guard as the run node and retry its own generation when a long-running runner lacks executable deadline consumption.
+- Actual behavior: prompt constraints contained the prior failure, but compile-oriented handoff verification accepted the regressed runner; `run_experiments` rejected it again with `required_run_count=21` and no executable deadline consumer.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral implementation-manager regression repeatedly generates a syntactically valid long-running runner without a deadline guard and expects handoff rejection inside `implement_experiments`.
+  - Existing session: the same governed run returned from `run_experiments` to `implement_experiments` after the repeated deadline failure.
+  - Divergence: no state or UI divergence; the two adjacent nodes enforced different semantic preflight contracts.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: deadline-consumption detection lived only inside `run_experiments`; `implement_experiments` ran syntax and compatibility repairs but lacked the final semantic long-run budget gate.
+- Code/test changes:
+  - Extracted the long-run Python budget detector into a shared experiment guard.
+  - Reused the guard in both `run_experiments` and the final `implement_experiments` handoff verification.
+  - Added a manager-level regression proving that syntactically valid declaration-only runners are retried and never handed off.
+- Regression status: the manager-level handoff regression, all 798 `implementSessionManager` tests, and the existing run-node deadline regression pass. TypeScript/web build, public-code sanitation, and harness validation also pass; same-flow live revalidation remains pending because the currently active process loaded the pre-repair build.
+- Follow-up risks: the shared detector remains intentionally conservative and name-based; uncommon but valid deadline controllers require a recognized semantic adapter.
+
+
 ## Issue: LV-573
 
-- Status: reproduced across consecutive same-flow repairs and repaired in source; focused regression, build, public-code sanitation, and harness pass, same-flow retry pending.
+- Status: prompt projection repaired and verified in the same live task spec, but the generated runner still regressed; advanced to the shared handoff-gate defect in LV-574.
 - Validation target: when `implement_experiments` regenerates a runner for the latest verifier failure, it must preserve distinct structural constraints learned from earlier `run_experiments` failures in the same run.
 - Environment/session context: a governed live run first repaired deadline consumption, then advanced to an evaluation-label normalization failure, and finally regenerated a runner that lost the previously required deadline control.
 - Reproduction steps:
@@ -39,7 +65,7 @@ Path placeholders:
   - Add those failures to the implement task context as prior run failure constraints.
   - Preserve the constraints in full, compact staged, bootstrap, and per-chunk prompts with an explicit no-cross-regression instruction.
   - Extended the runner-feedback prompt regression with a prior deadline failure.
-- Regression status: focused prompt regression, TypeScript/web build, public-code sanitation, and harness validation pass; commit and same-flow retry remain pending.
+- Regression status: focused prompt regression, TypeScript/web build, public-code sanitation, and harness validation pass. Same-flow task-spec inspection confirmed that current feedback and four prior constraints were projected, but prompt guidance alone did not prevent the deadline regression.
 - Follow-up risks: failure memory can contain obsolete environment-specific failures; bounded distinct selection and non-transient/do-not-retry filtering limit noise, but future work may add explicit supersession metadata.
 
 

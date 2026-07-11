@@ -63955,4 +63955,103 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" });
   });
 
+  it("blocks a long-running generated runner without deadline consumption before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-budget-guard-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Budget Guard Handoff",
+      topic: "validate a repeated condition runner",
+      constraints: ["bounded execution"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      path.join(runDir, "experiment_plan.yaml"),
+      "conditions:\n  - baseline_condition\n  - candidate_condition_a\nseeds: [1, 2, 3, 4, 5, 6, 7, 8]\n",
+      "utf8"
+    );
+
+    const scriptPath = path.join(runDir, "experiment.py");
+    let generationCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        generationCount += 1;
+        writeFileSync(
+          scriptPath,
+          [
+            "import argparse",
+            "",
+            "REQUIRED_RUN_COUNT = 12",
+            "",
+            "class Optimizer:",
+            "    def step(self):",
+            "        return None",
+            "",
+            "def from_pretrained():",
+            "    return object()",
+            "",
+            "def execute_planned_runs(timeout_sec):",
+            "    optimizer = Optimizer()",
+            "    for _run_index in range(REQUIRED_RUN_COUNT):",
+            "        from_pretrained()",
+            "        optimizer.step()",
+            "    return {'completed_run_count': REQUIRED_RUN_COUNT}",
+            "",
+            "def main():",
+            "    parser = argparse.ArgumentParser()",
+            "    parser.add_argument('--timeout-sec', type=int, default=3600)",
+            "    args = parser.parse_args()",
+            "    execute_planned_runs(args.timeout_sec)",
+            "",
+            "if __name__ == '__main__':",
+            "    main()",
+            ""
+          ].join("\n"),
+          "utf8"
+        );
+        return {
+          threadId: `thread-budget-${generationCount}`,
+          finalText: JSON.stringify({
+            summary: "Generated a repeated condition runner.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --timeout-sec 3600`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(
+      "no executable training or evaluation loop consumes a deadline"
+    );
+    expect(generationCount).toBeGreaterThan(1);
+    const verifyReport = JSON.parse(
+      readFileSync(path.join(runDir, "verify_report.json"), "utf8")
+    ) as { status: string; failure_type?: string; summary: string };
+    expect(verifyReport).toMatchObject({ status: "fail", failure_type: "implementation" });
+    expect(verifyReport.summary).toContain("required_run_count=8");
+  });
+
 });

@@ -28,6 +28,7 @@ import {
 import { buildIntermediateArtifactCaptureManifest } from "../artifacts/intermediateArtifactCapture.js";
 import { supportsRealExecutionBundle, writeRealExecutionBundle } from "../experiments/realExecutionBundle.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
+import { detectLongRunningPythonBudgetGuardFailure } from "../experiments/pythonRunnerBudgetGuard.js";
 import { buildErrorFingerprint } from "../experiments/failureMemory.js";
 import { AgentComputerInterface, AciObservation } from "../../tools/aci.js";
 import {
@@ -11907,6 +11908,47 @@ export class ImplementSessionManager {
         stderr_excerpt: finalUnsupportedTrainingArgumentsKwarg,
         summary: buildVerificationFailureSummary(command, "implementation", finalUnsupportedTrainingArgumentsKwarg)
       };
+    }
+
+    const finalRunnerSource = executionScriptPath
+      ? await fs.readFile(executionScriptPath, "utf8").catch(() => "")
+      : "";
+    const finalBudgetGuardFailure = finalRunnerSource
+      ? detectLongRunningPythonBudgetGuardFailure({
+          source: finalRunnerSource,
+          timeoutSec: this.deps.config.experiments.timeout_sec,
+          scriptName: path.basename(executionScriptPath || attempt.scriptPath || "experiment.py")
+        })
+      : undefined;
+    if (finalBudgetGuardFailure) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: finalBudgetGuardFailure,
+        summary: buildVerificationFailureSummary(command, "implementation", finalBudgetGuardFailure)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
     }
 
     if (attempt.experimentMode === "real_execution" && commandRequestsNonEvidenceRun(attempt.runCommand)) {
