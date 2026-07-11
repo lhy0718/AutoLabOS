@@ -11351,6 +11351,8 @@ export class ImplementSessionManager {
       await repairPythonEntrypointSingleRunnerTrainBundleAliasSurface(executionScriptPath);
     const highLevelRunnerDataBundleAliasRepair =
       await repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface(executionScriptPath);
+    const highLevelResultRowsRepair =
+      await repairPythonEntrypointHighLevelResultRowsSurface(executionScriptPath);
     const singleRunnerConditionSeedExecutorBridgeRepair =
       await repairPythonEntrypointConditionSeedExecutorBridgeSurface(executionScriptPath);
     const evaluationTaskBundleAliasRepair =
@@ -11363,6 +11365,8 @@ export class ImplementSessionManager {
       await repairPythonEntrypointSemanticCallAliasSurface(executionScriptPath);
     const finalCliManagedEntrypointPreferenceRepair =
       await repairPythonFinalCliManagedEntrypointPreferenceSurface(executionScriptPath);
+    const finalCliManagedMetricsPreservationRepair =
+      await repairPythonFinalCliManagedMetricsPreservationSurface(executionScriptPath);
     const dependencyWildcardImportRepair =
       await repairPythonDependencyWildcardImportSurface(executionScriptPath);
     const entrypointSingleRunnerCandidateRepair =
@@ -11612,11 +11616,13 @@ export class ImplementSessionManager {
       mappingFirstRecordIndexRepair,
         singleRunnerTrainBundleAliasRepair,
         highLevelRunnerDataBundleAliasRepair,
+        highLevelResultRowsRepair,
         evaluationTaskBundleAliasRepair,
         multipleChoiceGoldAliasRepair,
         numericChoiceLabelPrecedenceRepair,
         entrypointSemanticCallAliasRepair,
         finalCliManagedEntrypointPreferenceRepair,
+        finalCliManagedMetricsPreservationRepair,
         dependencyWildcardImportRepair,
         entrypointSingleRunnerCandidateRepair,
         extractEvalExamplesAliasRepair,
@@ -16484,7 +16490,7 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "    if not isinstance(result, dict):",
     "        return []",
     "    rows = []",
-    "    for key in ('run_records', 'condition_results', 'raw_condition_results', 'rows', 'results', 'per_seed_results', 'condition_seed_rows'):",
+    "    for key in ('run_records', 'condition_results', 'raw_condition_results', 'rows', 'results', 'per_seed_results', 'condition_seed_rows', 'condition_states', 'evaluation_ready_states'):",
     "        value = result.get(key)",
     "        if isinstance(value, list):",
     "            rows.extend(item for item in value if item is not None)",
@@ -27524,9 +27530,7 @@ export async function repairPythonTrainingTextExtractorLimitValueSurface(
   }
 
   const marker = "_autolabos_training_text_extractor_limit_value_surface";
-  if (source.includes(marker)) {
-    return { repaired: false };
-  }
+  const hasLimitHelper = source.includes("def _autolabos_training_text_limit_value(");
   const supportedFunctionNames = [
     "_extract_train_texts",
     "_extract_training_texts",
@@ -27583,8 +27587,10 @@ export async function repairPythonTrainingTextExtractorLimitValueSurface(
     "",
     ""
   ].join("\n");
-  const definitionPattern = new RegExp(`^(\\s*)def\\s+${escapeRegex(targetFunctionName)}\\s*\\(`, "mu");
-  nextSource = nextSource.replace(definitionPattern, `${helper}$&`);
+  if (!hasLimitHelper) {
+    const definitionPattern = new RegExp(`^(\\s*)def\\s+${escapeRegex(targetFunctionName)}\\s*\\(`, "mu");
+    nextSource = nextSource.replace(definitionPattern, `${helper}$&`);
+  }
   if (!nextSource.includes(marker)) {
     return { repaired: false };
   }
@@ -57762,39 +57768,27 @@ export async function repairPythonEntrypointHighLevelRunnerDataBundleAliasSurfac
 
   const repairMarker = "_autolabos_entrypoint_high_level_runner_data_bundle_alias_surface";
   const hasHighLevelCandidateCall = /_autolabos_entrypoint_call_compatible\(candidate,[^\n]*\)/u.test(source);
-  const highLevelCallHasTaskBundle = /_autolabos_entrypoint_call_compatible\(candidate,[^\n]*\btask_bundle=/u.test(source);
-  const highLevelCallHasLoadedDataMaterialization =
-    /runtime_context\s*=\s*_autolabos_entrypoint_runtime_context\(config,\s*runtime_paths,\s*args\)[\s\S]{0,1200}loaded_data\s*=\s*_autolabos_entrypoint_loaded_data\(config\)[\s\S]{0,1200}_autolabos_entrypoint_call_compatible\(candidate,[^\n]*\btask_bundle=loaded_data/u.test(source);
+  const highLevelRuntimeContextPattern = /^([ \t]*)runtime_context[ \t]*=[ \t]*_autolabos_entrypoint_runtime_context\(config,[ \t]*runtime_paths,[ \t]*args\)[ \t]*\r?\n(?=\1for[ \t]+_autolabos_paths_alias[ \t]+in[ \t]+\([^\n]*runtime_paths[^\n]*\):)/gmu;
+  const hasPendingLoadedDataMaterialization = highLevelRuntimeContextPattern.test(source);
+  highLevelRuntimeContextPattern.lastIndex = 0;
+  const hasPendingTaskBundleAlias = source
+    .split("\n")
+    .some((line) => line.includes("_autolabos_entrypoint_call_compatible(candidate,") && !line.includes("task_bundle="));
   if (
     !source.includes("def _autolabos_entrypoint_run(") ||
     !source.includes("high_level_names =") ||
     !hasHighLevelCandidateCall ||
-    (source.includes(repairMarker) && highLevelCallHasTaskBundle && highLevelCallHasLoadedDataMaterialization) ||
-    (highLevelCallHasTaskBundle && highLevelCallHasLoadedDataMaterialization)
+    (!hasPendingLoadedDataMaterialization && !hasPendingTaskBundleAlias)
   ) {
     return { repaired: false };
   }
 
-  let nextSource = source;
-  const highLevelRuntimeContextNeedle = [
-    "        runtime_context = _autolabos_entrypoint_runtime_context(config, runtime_paths, args)",
-    "        for _autolabos_paths_alias in ('paths', 'output_paths', 'artifact_paths', 'experiment_paths', 'runtime_paths'):"
-  ].join("\n");
-  const highLevelRuntimeContextReplacement = [
-    "        runtime_context = _autolabos_entrypoint_runtime_context(config, runtime_paths, args)",
-    `        # ${repairMarker}`,
-    "        loaded_data = _autolabos_entrypoint_loaded_data(config)",
-    "        for _autolabos_paths_alias in ('paths', 'output_paths', 'artifact_paths', 'experiment_paths', 'runtime_paths'):"
-  ].join("\n");
-  if (nextSource.includes(highLevelRuntimeContextNeedle)) {
-    nextSource = nextSource.replace(highLevelRuntimeContextNeedle, highLevelRuntimeContextReplacement);
-  }
-  if (!nextSource.includes(repairMarker)) {
-    nextSource = nextSource.replace(
-      /(^\s*runtime_context\s*=\s*_autolabos_entrypoint_runtime_context\(config,\s*runtime_paths,\s*args\)\s*\n)(?=\s*for\s+_autolabos_paths_alias\s+in\s*\([^\n]*runtime_paths[^\n]*\):)/mu,
-      `$1        # ${repairMarker}\n        loaded_data = _autolabos_entrypoint_loaded_data(config)\n`
-    );
-  }
+  let nextSource = source.replace(highLevelRuntimeContextPattern, (_line, indent: string) => [
+    `${indent}runtime_context = _autolabos_entrypoint_runtime_context(config, runtime_paths, args)`,
+    `${indent}# ${repairMarker}`,
+    `${indent}loaded_data = _autolabos_entrypoint_loaded_data(config)`,
+    ""
+  ].join("\n"));
 
   const aliasSuffix = [
     "train_source=loaded_data",
@@ -57829,7 +57823,17 @@ export async function repairPythonEntrypointHighLevelRunnerDataBundleAliasSurfac
     })
     .join("\n");
 
-  if (nextSource === source || !nextSource.includes(repairMarker) || !/_autolabos_entrypoint_call_compatible\(candidate,[^\n]*\btask_bundle=loaded_data/u.test(nextSource)) {
+  highLevelRuntimeContextPattern.lastIndex = 0;
+  const hasRemainingMaterializationGap = highLevelRuntimeContextPattern.test(nextSource);
+  const hasRemainingTaskBundleGap = nextSource
+    .split("\n")
+    .some((line) => line.includes("_autolabos_entrypoint_call_compatible(candidate,") && !line.includes("task_bundle="));
+  if (
+    nextSource === source ||
+    !nextSource.includes(repairMarker) ||
+    hasRemainingMaterializationGap ||
+    hasRemainingTaskBundleGap
+  ) {
     return { repaired: false };
   }
 
@@ -57837,6 +57841,51 @@ export async function repairPythonEntrypointHighLevelRunnerDataBundleAliasSurfac
   return {
     repaired: true,
     message: `Aliased high-level runner data/task bundle arguments in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointHighLevelResultRowsSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!source.includes("def _autolabos_entrypoint_rows_from_high_level_result(")) {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_entrypoint_high_level_result_rows_surface";
+  let repairedAny = false;
+  const nextSource = source.replace(
+    /^([ \t]*)for key in \(([^\n]*'run_records'[^\n]*)\):[ \t]*$/gmu,
+    (full: string, indent: string, existingNames: string) => {
+      if (existingNames.includes("'condition_states'") && existingNames.includes("'evaluation_ready_states'")) {
+        return full;
+      }
+      repairedAny = true;
+      return [
+        `${indent}# ${marker}`,
+        `${indent}for key in (${existingNames}, 'condition_states', 'evaluation_ready_states'):`
+      ].join("\n");
+    }
+  );
+  if (!repairedAny || nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Included high-level condition states in generated result aggregation in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -58324,6 +58373,61 @@ export async function repairPythonFinalCliManagedEntrypointPreferenceSurface(scr
   return {
     repaired: true,
     message: `Preferred the managed experiment entrypoint over the generated fallback CLI in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonFinalCliManagedMetricsPreservationSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _autolabos_entrypoint_run(") ||
+    !source.includes("def _ae_pick(") ||
+    !source.includes("_ae_call(high, **base_ctx)")
+  ) {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_final_cli_managed_metrics_preservation_surface";
+  let repairedAny = false;
+  const nextSource = source.replace(
+    /^([ \t]*)payload = _ae_call\(high, \*\*base_ctx\)[ \t]*\r?\n\1if not isinstance\(payload, dict\):[ \t]*\r?\n\1    payload = \{"status": "completed", "result": payload\}[ \t]*$/gmu,
+    (_full: string, indent: string) => {
+      repairedAny = true;
+      return [
+        `${indent}managed_result = _ae_call(high, **base_ctx)`,
+        `${indent}payload = None  # ${marker}`,
+        `${indent}if high is globals().get("_autolabos_entrypoint_run") and metrics_path.exists():`,
+        `${indent}    try:`,
+        `${indent}        managed_payload = json.loads(metrics_path.read_text(encoding="utf-8"))`,
+        `${indent}        if isinstance(managed_payload, dict):`,
+        `${indent}            payload = managed_payload`,
+        `${indent}    except Exception:`,
+        `${indent}        payload = None`,
+        `${indent}if payload is None:`,
+        `${indent}    payload = managed_result if isinstance(managed_result, dict) else {"status": "completed", "result": managed_result}`
+      ].join("\n");
+    }
+  );
+  if (!repairedAny || nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Preserved metrics written by the managed entrypoint in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

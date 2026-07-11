@@ -113,7 +113,10 @@ import {
   repairPythonMultipleChoiceListRawVariableSurface,
   repairPythonNumericChoiceLabelPrecedenceSurface,
   repairPythonEntrypointSemanticCallAliasSurface,
+  repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface,
+  repairPythonEntrypointHighLevelResultRowsSurface,
   repairPythonFinalCliManagedEntrypointPreferenceSurface,
+  repairPythonFinalCliManagedMetricsPreservationSurface,
   repairPythonDependencyWildcardImportSurface,
   repairPythonEntrypointSingleRunnerCandidateSurface,
   repairPythonModelExecutionSingleConditionRunnerAliasSurface,
@@ -321,6 +324,28 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             ) || `Normalized training-text limit values in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
+        const highLevelDataBundlePreRepair =
+          await repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface(preFailureMemoryScriptPath);
+        if (highLevelDataBundlePreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            highLevelDataBundlePreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Materialized high-level runner data bundles in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const highLevelResultRowsPreRepair =
+          await repairPythonEntrypointHighLevelResultRowsSurface(preFailureMemoryScriptPath);
+        if (highLevelResultRowsPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            highLevelResultRowsPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Included high-level condition states in result aggregation in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
         const finalCliManagedEntrypointPreRepair =
           await repairPythonFinalCliManagedEntrypointPreferenceSurface(preFailureMemoryScriptPath);
         if (finalCliManagedEntrypointPreRepair.repaired) {
@@ -330,6 +355,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               "before handoff.",
               "before run_experiments retry gate."
             ) || `Preferred the managed experiment entrypoint in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const finalCliManagedMetricsPreRepair =
+          await repairPythonFinalCliManagedMetricsPreservationSurface(preFailureMemoryScriptPath);
+        if (finalCliManagedMetricsPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            finalCliManagedMetricsPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Preserved managed entrypoint metrics in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
         const dependencyWildcardImportPreRepair =

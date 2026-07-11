@@ -314,12 +314,14 @@ import {
   repairPythonMappingFirstRecordIndexSurface,
   repairPythonEntrypointSingleRunnerTrainBundleAliasSurface,
   repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface,
+  repairPythonEntrypointHighLevelResultRowsSurface,
   repairPythonEntrypointConditionSeedExecutorBridgeSurface,
   repairPythonEvaluationTaskBundleAliasSurface,
   repairPythonMultipleChoiceGoldAliasSurface,
   repairPythonNumericChoiceLabelPrecedenceSurface,
   repairPythonEntrypointSemanticCallAliasSurface,
   repairPythonFinalCliManagedEntrypointPreferenceSurface,
+  repairPythonFinalCliManagedMetricsPreservationSurface,
   repairPythonEntrypointSingleRunnerCandidateSurface,
   repairPythonExtractEvalExamplesAliasSurface,
   repairPythonEntrypointEvalTasksTupleUnwrapSurface,
@@ -1426,6 +1428,13 @@ describe("ImplementSessionManager", () => {
         "import json",
         "from pathlib import Path",
         "",
+        "# _autolabos_entrypoint_high_level_runner_data_bundle_alias_surface",
+        "def _previous_managed_block(config, args, candidate):",
+        "    runtime_paths = _autolabos_entrypoint_paths(config, args, output_dir='old', metrics_path='old.json')",
+        "    runtime_context = _autolabos_entrypoint_runtime_context(config, runtime_paths, args)",
+        "    loaded_data = _autolabos_entrypoint_loaded_data(config)",
+        "    return _autolabos_entrypoint_call_compatible(candidate, config=config, runtime=runtime_context, task_bundle=loaded_data)",
+        "",
         "def _autolabos_entrypoint_call_compatible(func, **kwargs):",
         "    signature = inspect.signature(func)",
         "    supported = {}",
@@ -1506,6 +1515,48 @@ describe("ImplementSessionManager", () => {
       success: true,
       task_count: 1
     });
+  });
+
+  it("includes high-level condition states in managed result rows", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-high-level-result-rows-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "# _autolabos_entrypoint_high_level_result_rows_surface",
+        "def _previous_rows_from_high_level_result(result):",
+        "    rows = []",
+        "    for key in ('run_records', 'condition_states', 'evaluation_ready_states'):",
+        "        value = result.get(key)",
+        "        if isinstance(value, list):",
+        "            rows.extend(value)",
+        "    return rows",
+        "",
+        "def _autolabos_entrypoint_rows_from_high_level_result(result):",
+        "    if not isinstance(result, dict):",
+        "        return []",
+        "    rows = []",
+        "    for key in ('run_records', 'condition_results', 'raw_condition_results', 'rows', 'results', 'per_seed_results', 'condition_seed_rows'):",
+        "        value = result.get(key)",
+        "        if isinstance(value, list):",
+        "            rows.extend(item for item in value if item is not None)",
+        "    return rows",
+        "",
+        "if __name__ == '__main__':",
+        "    rows = _autolabos_entrypoint_rows_from_high_level_result({'condition_states': [{'status': 'completed'}]})",
+        "    assert rows == [{'status': 'completed'}], rows",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow();
+    const repair = await repairPythonEntrypointHighLevelResultRowsSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_entrypoint_high_level_result_rows_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonEntrypointHighLevelResultRowsSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("fills missing runtime task defaults from neutral task constants before data loading", () => {
@@ -48772,6 +48823,21 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_training_text_extractor_limit_value_surface");
     execFileSync("python3", [scriptPath], { cwd: workspace });
+    writeFileSync(
+      scriptPath,
+      readFileSync(scriptPath, "utf8") + [
+        "",
+        "def execute_training_again(train_bundle, budget):",
+        "    return _training_texts(train_bundle, budget)",
+        "",
+        "if __name__ == '__main__':",
+        "    assert execute_training_again(['first', 'second'], {'train_examples_per_seed': 1}) == ['first']",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    expect((await repairPythonTrainingTextExtractorLimitValueSurface(scriptPath)).repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
     expect((await repairPythonTrainingTextExtractorLimitValueSurface(scriptPath)).repaired).toBe(false);
   });
 
@@ -49378,6 +49444,60 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_final_cli_managed_entrypoint_preference_surface");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect((await repairPythonFinalCliManagedEntrypointPreferenceSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("preserves metrics written by the managed entrypoint", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-managed-metrics-preservation-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def _autolabos_entrypoint_run(argv=None):",
+        "    Path('metrics.json').write_text(json.dumps({'status': 'completed', 'accuracy_delta_vs_baseline': 0.25}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "def _ae_pick(*names):",
+        "    for name in names:",
+        "        fn = globals().get(name)",
+        "        if callable(fn):",
+        "            return fn",
+        "    return None",
+        "",
+        "def _ae_call(fn, **ctx):",
+        "    return fn()",
+        "",
+        "def _ae_write(path, payload):",
+        "    Path(path).write_text(json.dumps(payload), encoding='utf-8')",
+        "",
+        "def main():",
+        "    metrics_path = Path('metrics.json')",
+        "    base_ctx = {}",
+        "    high = _ae_pick('_autolabos_entrypoint_run')",
+        "    if high and high is not main:",
+        "        payload = _ae_call(high, **base_ctx)",
+        "        if not isinstance(payload, dict):",
+        "            payload = {\"status\": \"completed\", \"result\": payload}",
+        "    _ae_write(metrics_path, payload)",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        "    payload = json.loads(Path('metrics.json').read_text(encoding='utf-8'))",
+        "    assert payload.get('accuracy_delta_vs_baseline') == 0.25, payload",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow();
+    const repair = await repairPythonFinalCliManagedMetricsPreservationSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_final_cli_managed_metrics_preservation_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonFinalCliManagedMetricsPreservationSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("discovers conventional one-condition callables in the managed resolver", async () => {
