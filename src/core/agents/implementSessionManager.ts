@@ -11363,6 +11363,8 @@ export class ImplementSessionManager {
       await repairPythonEntrypointSemanticCallAliasSurface(executionScriptPath);
     const finalCliManagedEntrypointPreferenceRepair =
       await repairPythonFinalCliManagedEntrypointPreferenceSurface(executionScriptPath);
+    const dependencyWildcardImportRepair =
+      await repairPythonDependencyWildcardImportSurface(executionScriptPath);
     const extractEvalExamplesAliasRepair =
       await repairPythonExtractEvalExamplesAliasSurface(executionScriptPath);
     const evalTasksTupleUnwrapRepair =
@@ -11613,6 +11615,7 @@ export class ImplementSessionManager {
         numericChoiceLabelPrecedenceRepair,
         entrypointSemanticCallAliasRepair,
         finalCliManagedEntrypointPreferenceRepair,
+        dependencyWildcardImportRepair,
         extractEvalExamplesAliasRepair,
         evalTasksTupleUnwrapRepair,
         entrypointBudgetTimeoutArgparseRepair,
@@ -25320,6 +25323,44 @@ export async function repairPythonDependencyCheckerCallSurface(
   return {
     repaired: true,
     message: `Passed generated dependency lists to dependency checker helpers in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonDependencyWildcardImportSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_dependency_wildcard_import_surface";
+  if (source.includes(marker) || !/fromlist\s*=\s*\[\s*["']\*["']\s*\]/u.test(source)) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  const nextSource = source.replace(
+    /__import__\(\s*([A-Za-z_]\w*)\s*,\s*fromlist\s*=\s*\[\s*["']\*["']\s*\]\s*\)/gu,
+    (_match: string, moduleName: string) => {
+      repaired = true;
+      return `__import__('importlib', fromlist=['import_module']).import_module(${moduleName})  # ${marker}`;
+    }
+  );
+  if (!repaired || nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Avoided wildcard lazy-export imports during generated dependency preflight in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

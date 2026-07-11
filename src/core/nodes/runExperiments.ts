@@ -114,6 +114,7 @@ import {
   repairPythonNumericChoiceLabelPrecedenceSurface,
   repairPythonEntrypointSemanticCallAliasSurface,
   repairPythonFinalCliManagedEntrypointPreferenceSurface,
+  repairPythonDependencyWildcardImportSurface,
   repairPythonOutputDirArgparseAlias,
   repairPythonParameterSummaryRecordSurface,
   repairPythonMetricsPayloadProjectionSurface,
@@ -327,6 +328,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               "before handoff.",
               "before run_experiments retry gate."
             ) || `Preferred the managed experiment entrypoint in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const dependencyWildcardImportPreRepair =
+          await repairPythonDependencyWildcardImportSurface(preFailureMemoryScriptPath);
+        if (dependencyWildcardImportPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            dependencyWildcardImportPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Avoided wildcard dependency imports in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
       }

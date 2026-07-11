@@ -230,6 +230,7 @@ import {
   repairPythonAdapterVirtualTokenEvaluationAlignmentSurface,
   repairPythonIa3FeedforwardSubsetSurface,
   repairPythonDependencyCheckerCallSurface,
+  repairPythonDependencyWildcardImportSurface,
   repairPythonRuntimeDependencyHelperAlias,
   repairPythonPathLikeSignatureAliasSurface,
   repairPythonTokenizerHelperAliasSurface,
@@ -32518,6 +32519,40 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain('required_dependencies = globals().get("REQUIRED_DEPENDENCIES", ())');
     expect(repairedSource).toContain("dependency_checker(required_dependencies)");
     execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("avoids wildcard lazy-export imports in dependency preflight", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-dependency-wildcard-import-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import builtins",
+        "",
+        "_real_import = builtins.__import__",
+        "def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):",
+        "    if name == 'json' and list(fromlist or ()) == ['*']:",
+        "        raise RuntimeError('optional lazy export failed')",
+        "    return _real_import(name, globals, locals, fromlist, level)",
+        "builtins.__import__ = _guarded_import",
+        "",
+        "def _require_dependency(module_name):",
+        "    return __import__(module_name, fromlist=['*'])",
+        "",
+        "if __name__ == '__main__':",
+        "    assert _require_dependency('json').loads('{\"ok\": true}')['ok'] is True",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/optional lazy export/);
+    const repair = await repairPythonDependencyWildcardImportSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_dependency_wildcard_import_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonDependencyWildcardImportSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("repairs a python runner that calls setup_logging while defining configure_logging", async () => {
