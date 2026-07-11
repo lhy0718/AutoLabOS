@@ -20,6 +20,7 @@ import {
   buildLocalPythonUtilityChunkContent,
   buildLocalMaterializationPlanForUnit,
   buildLocalChunkSubdivisionPlanForChunk,
+  derivePlannedConditionContract,
   extractWorkspacePathsFromCommand,
   evaluateImplementBootstrapContract,
   isReusableBootstrapContractCompatibleWithDependencyRepair,
@@ -22462,6 +22463,44 @@ describe("ImplementSessionManager", () => {
     });
     expect(contract?.requirements).toHaveLength(1);
     expect(contract?.checks).toHaveLength(1);
+  });
+
+  it("preserves fixed-factor cells and comma-formatted task floors from a selected design", () => {
+    const contract = derivePlannedConditionContract({
+      plan: [
+        "retry_context:",
+        '  transition_action: "backtrack_to_design"',
+        "selected_design:",
+        '  summary: "Four parameter cells x seven paired seeds form the confirmation design."',
+        "  implementation_notes:",
+        '    - "Use seeds [42, 43, 44, 45, 46, 47, 48] for paired runs."',
+        "  evaluation_steps:",
+        '    - "Evaluate parameter_x {4, 8, 16, 32} across all seeds with parameter_y=0.0."',
+        '    - "Evaluation: Benchmark Task Alpha full approved split with raw total fixed at n=1,172 examples per run."',
+        '    - "Evaluation: Benchmark Task Beta validation split with raw total fixed at n=10,042 examples per run."',
+        "  resource_notes:",
+        '    - "Evidence floor is 4 parameter cells x 7 paired seeds = 28 completed runs."'
+      ].join("\n"),
+      objectiveMetric: "score_delta_vs_baseline"
+    });
+
+    expect(contract).toMatchObject({
+      required_condition_count: 4,
+      required_run_count: 28,
+      seed_schedule: [42, 43, 44, 45, 46, 47, 48],
+      minimum_seeds_per_condition: 7,
+      required_condition_markers: [
+        "condition_4_parameter_0_0",
+        "condition_8_parameter_0_0",
+        "condition_16_parameter_0_0",
+        "condition_32_parameter_0_0"
+      ],
+      full_evaluation_required: true,
+      minimum_eval_examples_per_task: {
+        benchmark_task_alpha: 1172,
+        benchmark_task_beta: 10042
+      }
+    });
   });
 
   it("invalidates cached bootstrap contracts from a different dependency repair class", () => {

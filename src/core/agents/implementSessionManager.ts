@@ -17661,7 +17661,7 @@ function extractYamlBoolean(text: string, key: string): boolean | undefined {
   return undefined;
 }
 
-function derivePlannedConditionContract(input: {
+export function derivePlannedConditionContract(input: {
   plan?: string;
   brief?: string;
   preferBriefContract?: boolean;
@@ -17905,9 +17905,9 @@ function parseRepeatedSeedRunContract(
     text.match(/\btotal\s+training\s+conditions?\s+per\s+seed\s*[:=]\s*(\d+)\b/iu) ||
     text.match(/\bconditions?\s+per\s+seed\s*[:=]\s*(\d+)\b/iu);
   const cellSeedMatch =
-    text.match(/\b(\d+)\s+repeated\s+cells?\s*[x×]\s*(\d+)[-\s]*seeds?\b/iu) ||
-    text.match(/\b(\d+)\s+ranks?\s*[x×]\s*(\d+)[-\s]*seeds?\b/iu) ||
-    text.match(/\b(\d+)[-\s]*cells?\s*[x×]\s*(\d+)[-\s]*seeds?\b/iu);
+    text.match(/\b(\d+)\s+repeated\s+cells?\s*[x×]\s*(\d+)[-\s]*(?:paired\s+)?seeds?\b/iu) ||
+    text.match(/\b(\d+)\s+ranks?\s*[x×]\s*(\d+)[-\s]*(?:paired\s+)?seeds?\b/iu) ||
+    text.match(/\b(\d+)[-\s]*(?:parameter\s+|rank\s+)?cells?\s*[x×]\s*(\d+)[-\s]*(?:paired\s+)?seeds?\b/iu);
   const cellCount = cellSeedMatch
     ? Number.parseInt(cellSeedMatch[1] || "", 10)
     : conditionsPerSeedMatch
@@ -18033,20 +18033,21 @@ function mergeFullEvaluationContracts(
 function extractNamedTaskEvaluationCounts(text: string): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const line of text.split(/\r?\n/u)) {
-    if (!/\bn\s*=\s*\d+\b/iu.test(line)) {
+    if (!/\bn\s*=\s*\d[\d,]*\b/iu.test(line)) {
       continue;
     }
-    const segments = line.split(/\s+and\s+(?=(?:full\s+)?[^,;]{1,100}\bn\s*=\s*\d+\b)/giu);
+    const segments = line.split(/\s+and\s+(?=(?:full\s+)?[^;]{1,100}\bn\s*=\s*\d[\d,]*\b)/giu);
     for (const rawSegment of segments) {
-      const countMatch = /\bn\s*=\s*(\d+)\b/iu.exec(rawSegment);
-      const count = countMatch ? Number.parseInt(countMatch[1] || "", 10) : NaN;
-      if (!Number.isFinite(count) || count <= 0) {
+      const countMatch = /\bn\s*=\s*(\d[\d,]*)\b/iu.exec(rawSegment);
+      const count = countMatch ? parseGroupedPositiveInteger(countMatch[1] || "") : undefined;
+      if (count === undefined) {
         continue;
       }
       const prefix = rawSegment
         .slice(0, countMatch?.index ?? rawSegment.length)
         .replace(/^\s*[-*]\s*/u, "")
         .replace(/^["']+/u, "")
+        .replace(/^(?:evaluation|validation|test)\s*:\s*/iu, "")
         .replace(/^.*?\b(?:on|using)\s+(?:the\s+)?(?:full\s+)?/iu, "")
         .replace(/^\s*full\s+/iu, "")
         .trim();
@@ -18077,18 +18078,23 @@ function canonicalEvaluationTaskKey(value: string): string | undefined {
 function extractTaskEvaluationCount(text: string, taskAliases: string[]): number | undefined {
   const aliasPattern = taskAliases.map((alias) => alias.replace(/[-_]/gu, "[-_\\s]?")).join("|");
   const patterns = [
-    new RegExp(`\\b(?:${aliasPattern})\\b[\\s\\S]{0,120}?\\bn\\s*=\\s*(\\d+)\\b`, "iu"),
-    new RegExp(`\\b(?:${aliasPattern})\\b[\\s\\S]{0,120}?\\b(\\d+)\\s+(?:validation|evaluation)\\s+examples?\\b`, "iu"),
-    new RegExp(`\\b(\\d+)\\s+(?:validation|evaluation)\\s+examples?\\b[\\s\\S]{0,120}?\\b(?:${aliasPattern})\\b`, "iu")
+    new RegExp(`\\b(?:${aliasPattern})\\b[\\s\\S]{0,120}?\\bn\\s*=\\s*(\\d[\\d,]*)\\b`, "iu"),
+    new RegExp(`\\b(?:${aliasPattern})\\b[\\s\\S]{0,120}?\\b(\\d[\\d,]*)\\s+(?:validation|evaluation)\\s+examples?\\b`, "iu"),
+    new RegExp(`\\b(\\d[\\d,]*)\\s+(?:validation|evaluation)\\s+examples?\\b[\\s\\S]{0,120}?\\b(?:${aliasPattern})\\b`, "iu")
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    const parsed = match ? Number.parseInt(match[1] || "", 10) : NaN;
-    if (Number.isFinite(parsed) && parsed > 0) {
+    const parsed = match ? parseGroupedPositiveInteger(match[1] || "") : undefined;
+    if (parsed !== undefined) {
       return parsed;
     }
   }
   return undefined;
+}
+
+function parseGroupedPositiveInteger(value: string): number | undefined {
+  const parsed = Number.parseInt(value.replace(/,/gu, ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function extractConditionParameterConditionMarkers(text: string): string[] {
@@ -18175,7 +18181,7 @@ function extractConditionParameterGridMarkers(text: string): string[] {
     }
   }
   for (const match of text.matchAll(
-    /\branks?(?:\s+in)?\s+`?\{([^}]+)\}`?[^\n.]{0,80}?\b(?:fixed\s+)?(?:adapter\s+)?parameter_y\s*(?:=|at|fixed\s+at|of)?\s*`?([0-9]+(?:[._][0-9]+)?)`?/giu
+    /\branks?(?:\s+in)?\s+`?\{([^}]+)\}`?[^\n.]{0,80}?\b(?:fixed\s+)?(?:adapter\s+)?(?:parameter_y|dropout|drop|regularization)\s*(?:=|at|fixed\s+at|of)?\s*`?([0-9]+(?:[._][0-9]+)?)`?/giu
   )) {
     const ranks = parseNumericList(match[1] || "").map((value) => Math.trunc(value));
     const parameter_y = parseParameterYNumber(match[2] || "");
@@ -18187,6 +18193,20 @@ function extractConditionParameterGridMarkers(text: string): string[] {
         continue;
       }
       markers.add(conditionParameterMarker(rank, parameter_y));
+    }
+  }
+  for (const match of text.matchAll(
+    /\b(?:parameter_x|condition_x|factor\s+x)(?:\s+values?)?\s+`?\{([^}]+)\}`?[^\n.]{0,80}?\b(?:fixed\s+)?(?:parameter_y|condition_y|factor\s+y)\s*(?:=|at|fixed\s+at|of)?\s*`?([0-9]+(?:[._][0-9]+)?)`?/giu
+  )) {
+    const values = parseNumericList(match[1] || "").map((value) => Math.trunc(value));
+    const parameter_y = parseParameterYNumber(match[2] || "");
+    if (parameter_y === undefined) {
+      continue;
+    }
+    for (const value of values) {
+      if (Number.isFinite(value) && value > 0) {
+        markers.add(conditionParameterMarker(value, parameter_y));
+      }
     }
   }
   const fixedParameterPatterns = [
