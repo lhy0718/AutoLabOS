@@ -49297,7 +49297,7 @@ describe("ImplementSessionManager", () => {
     );
     const repair = await repairPythonInlineManagedArgparseSurface(scriptPath);
     expect(repair.repaired).toBe(true);
-    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--timeout-sec", "120", "--condition-timeout-sec", "120"], { cwd: workspace });
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--max-runtime-sec", "120"], { cwd: workspace });
     expect(readFileSync(metricsPath, "utf8")).toBe("120.0");
   });
 
@@ -49376,7 +49376,7 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     const repaired = readFileSync(scriptPath, "utf8");
     expect(repaired).toContain("_autolabos_entrypoint_budget_timeout_argparse_surface");
-    expect(repaired).toContain("parser.add_argument('--timeout-sec', \"--budget-timeout-sec\", \"--condition-timeout-sec\", \"--locked-budget-timeout-sec\"");
+    expect(repaired).toContain("parser.add_argument('--timeout-sec', \"--budget-timeout-sec\", \"--condition-timeout-sec\", \"--locked-budget-timeout-sec\", \"--max-runtime-sec\"");
 
     execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { encoding: "utf8" });
     expect(readFileSync(metricsPath, "utf8")).toBe("1800");
@@ -49384,6 +49384,10 @@ describe("ImplementSessionManager", () => {
       encoding: "utf8"
     });
     expect(readFileSync(metricsPath, "utf8")).toBe("456");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--max-runtime-sec", "789"], {
+      encoding: "utf8"
+    });
+    expect(readFileSync(metricsPath, "utf8")).toBe("789");
   });
 
   it("adds timeout aliases to the actual parser factory even when a wrapper parser already accepts them", async () => {

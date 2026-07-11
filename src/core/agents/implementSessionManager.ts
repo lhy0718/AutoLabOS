@@ -58196,7 +58196,7 @@ export async function repairPythonEntrypointBudgetTimeoutArgparseSurface(scriptP
   }
 
   let acceptedFlags = extractPythonArgparseLongFlags(source);
-  const timeoutAliasFlags = ["--budget-timeout-sec", "--condition-timeout-sec", "--locked-budget-timeout-sec"];
+  const timeoutAliasFlags = ["--budget-timeout-sec", "--condition-timeout-sec", "--locked-budget-timeout-sec", "--max-runtime-sec"];
   let nextSource = source;
   let aliasedExistingTimeoutArgument = false;
   const sourceLines = source.split(/\r?\n/u);
@@ -58277,7 +58277,8 @@ export async function repairPythonEntrypointBudgetTimeoutArgparseSurface(scriptP
     { flag: "--timeout-sec", line: "{parser}.add_argument('--timeout-sec', dest='timeout_sec', type=float, default=None, help='AutoLabOS execution budget in seconds.')" },
     { flag: "--budget-timeout-sec", line: "{parser}.add_argument('--budget-timeout-sec', dest='timeout_sec', type=float, default=None, help='AutoLabOS execution budget in seconds.')" },
     { flag: "--condition-timeout-sec", line: "{parser}.add_argument('--condition-timeout-sec', dest='timeout_sec', type=float, default=None, help='AutoLabOS per-condition execution budget in seconds.')" },
-    { flag: "--locked-budget-timeout-sec", line: "{parser}.add_argument('--locked-budget-timeout-sec', dest='timeout_sec', type=float, default=None, help='Locked AutoLabOS execution budget in seconds.')" }
+    { flag: "--locked-budget-timeout-sec", line: "{parser}.add_argument('--locked-budget-timeout-sec', dest='timeout_sec', type=float, default=None, help='Locked AutoLabOS execution budget in seconds.')" },
+    { flag: "--max-runtime-sec", line: "{parser}.add_argument('--max-runtime-sec', dest='timeout_sec', type=float, default=None, help='Maximum AutoLabOS runtime in seconds.')" }
   ].filter((option) => !acceptedFlags.has(option.flag));
   const scopedLines = nextSource.split(/\r?\n/u);
   const scopedInsertions: Array<{ index: number; lines: string[] }> = [];
@@ -58365,8 +58366,10 @@ export async function repairPythonEntrypointBudgetTimeoutArgparseSurface(scriptP
             ? "{parser}.add_argument('--timeout-sec', dest='timeout_sec', type=float, default=None, help='AutoLabOS execution budget in seconds.')"
             : flag === "--budget-timeout-sec"
               ? "{parser}.add_argument('--budget-timeout-sec', dest='timeout_sec', type=float, default=None, help='AutoLabOS execution budget in seconds.')"
-              : flag === "--condition-timeout-sec"
-                ? "{parser}.add_argument('--condition-timeout-sec', dest='timeout_sec', type=float, default=None, help='AutoLabOS per-condition execution budget in seconds.')"
+                : flag === "--condition-timeout-sec"
+                  ? "{parser}.add_argument('--condition-timeout-sec', dest='timeout_sec', type=float, default=None, help='AutoLabOS per-condition execution budget in seconds.')"
+                : flag === "--max-runtime-sec"
+                  ? "{parser}.add_argument('--max-runtime-sec', dest='timeout_sec', type=float, default=None, help='Maximum AutoLabOS runtime in seconds.')"
                 : flag === "--run-dir"
                   ? "{parser}.add_argument('--run-dir', dest='run_artifact_dir', default=None, help='Private AutoLabOS run artifact directory alias.')"
                   : "{parser}.add_argument('--locked-budget-timeout-sec', dest='timeout_sec', type=float, default=None, help='Locked AutoLabOS execution budget in seconds.')";
@@ -58474,6 +58477,7 @@ export async function repairPythonInlineManagedArgparseSurface(scriptPath?: stri
     "    parser.add_argument('--budget-timeout-sec', dest='timeout_sec', type=float, default=None)",
     "    parser.add_argument('--condition-timeout-sec', dest='timeout_sec', type=float, default=None)",
     "    parser.add_argument('--locked-budget-timeout-sec', dest='timeout_sec', type=float, default=None)",
+    "    parser.add_argument('--max-runtime-sec', dest='timeout_sec', type=float, default=None)",
     "    return parser.parse_known_args(argv)[0]",
     ""
   ].join("\n");
