@@ -111,6 +111,7 @@ import {
   repairPythonLockedConditionSingleRunnerBridgeSurface,
   repairPythonMultipleChoiceDataclassChoiceAliasSurface,
   repairPythonMultipleChoiceListRawVariableSurface,
+  repairPythonNumericChoiceLabelPrecedenceSurface,
   repairPythonOutputDirArgparseAlias,
   repairPythonParameterSummaryRecordSurface,
   repairPythonMetricsPayloadProjectionSurface,
@@ -279,6 +280,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               "before handoff.",
               "before run_experiments retry gate."
             ) || `Accepted already-normalized evaluation example records in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const numericChoiceLabelPreRepair =
+          await repairPythonNumericChoiceLabelPrecedenceSurface(preFailureMemoryScriptPath);
+        if (numericChoiceLabelPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            numericChoiceLabelPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Matched numeric multiple-choice labels before zero-based index coercion in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
       }
