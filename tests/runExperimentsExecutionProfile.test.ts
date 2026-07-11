@@ -591,6 +591,28 @@ describe("run_experiments execution profile behavior", () => {
     expect(verifierReport).toMatchObject({ status: "fail", stage: "preflight_test" });
     expect(verifierReport.summary).toContain("timeout_sec=1800");
     expect(verifierReport.suggested_next_action).toContain("wall-clock deadline");
+
+    await writeFile(
+      scriptPath,
+      (await readFile(scriptPath, "utf8")).replace(
+        "    optimizer.step()",
+        "    runtime.assert_time_available('before_planned_run')\n    optimizer.step()"
+      ),
+      "utf8"
+    );
+    aci.runCommand.mockResolvedValue({
+      status: "error",
+      stdout: "",
+      stderr: "stopped after governed preflight",
+      exit_code: 1,
+      duration_ms: 1
+    });
+
+    const guardedResult = await node.execute({ run, graph: run.graph });
+
+    expect(guardedResult.status).toBe("failure");
+    expect(String(guardedResult.error)).not.toContain("no executable training or evaluation loop consumes a deadline");
+    expect(aci.runCommand).toHaveBeenCalled();
   });
 
   it("does not promote objective metrics from stale public bundle outputs", async () => {

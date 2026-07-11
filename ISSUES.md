@@ -16,6 +16,31 @@ Path placeholders:
 ---
 
 
+## Issue: LV-569
+
+- Status: reproduced from consecutive live regenerations and repaired in source; focused regression and build pass, same-flow resume pending.
+- Validation target: long-run preflight must recognize conventional method-based deadline assertions that are actually called before planned runs or evaluation batches.
+- Environment/session context: an existing governed live run regenerated its Python runner specifically in response to missing deadline enforcement feedback.
+- Reproduction steps:
+  1. Generate a long-running Python experiment with a finite timeout and repeated-run schedule.
+  2. Implement a runtime deadline method and call it from executable run/evaluation control flow.
+  3. Run the static long-run budget preflight.
+- Expected behavior: called assertion-style guards should satisfy the budget-enforcement surface while runners that only declare timeout fields remain blocked.
+- Actual behavior: the generated runner used `assert_time_available(...)`, but the preflight recognized only a narrower set of method names and would have repeated the earlier false blocker.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral regression first blocks a declaration-only runner, then confirms that adding the called method guard reaches command execution.
+  - Existing session: two consecutive regenerated runners materialized the same assertion-style runtime deadline API after receiving the long-run safety feedback.
+  - Divergence: no state divergence; this was a validator vocabulary gap.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the preflight modeled deadline semantics through a fixed callable-name set that omitted common assertion/ensure naming used by generated runtime contexts.
+- Code/test changes:
+  - Added conventional assertion/ensure method names to the budget-enforcement recognizer.
+  - Extended the existing long-run regression to prove declaration-only blocking and called-guard acceptance in one flow.
+- Regression status: focused run-experiments regression, TypeScript/web build, and diff checks pass.
+- Follow-up risks: the preflight remains intentionally conservative and name-based; uncommon custom budget controllers need an explicit adapter or stronger structural analysis.
+
+
 ## Issue: LV-568
 
 - Status: reproduced from a preserved live attempt and repaired in source; focused regression and build pass, same-flow regenerated implementation in progress.
