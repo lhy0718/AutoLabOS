@@ -24,6 +24,7 @@ import {
   extractWorkspacePathsFromCommand,
   evaluateImplementBootstrapContract,
   isReusableBootstrapContractCompatibleWithDependencyRepair,
+  isStagedLlmResumeManifestCompatibleWithTaskSpec,
   parseImplementBootstrapContractFromText,
   getImplementLlmTimeoutMs,
   getImplementLlmProgressStallTimeoutMs,
@@ -22542,6 +22543,36 @@ describe("ImplementSessionManager", () => {
       )
     ).toBe(false);
     expect(isReusableBootstrapContractCompatibleWithDependencyRepair(cachedContract, undefined)).toBe(true);
+  });
+
+  it("invalidates staged resume manifests from a different experiment plan", () => {
+    const taskSpec = (planHash: string, planChanged: boolean) =>
+      ({ context: { plan_hash: planHash, plan_changed: planChanged } }) as never;
+
+    expect(
+      isStagedLlmResumeManifestCompatibleWithTaskSpec(
+        { status: "resumable", node: "implement_experiments", plan_hash: "plan-a" },
+        taskSpec("plan-a", false)
+      )
+    ).toBe(true);
+    expect(
+      isStagedLlmResumeManifestCompatibleWithTaskSpec(
+        { status: "resumable", node: "implement_experiments", plan_hash: "plan-a" },
+        taskSpec("plan-b", false)
+      )
+    ).toBe(false);
+    expect(
+      isStagedLlmResumeManifestCompatibleWithTaskSpec(
+        { status: "resumable", node: "implement_experiments" },
+        taskSpec("plan-b", true)
+      )
+    ).toBe(false);
+    expect(
+      isStagedLlmResumeManifestCompatibleWithTaskSpec(
+        { status: "resumable", node: "implement_experiments" },
+        taskSpec("plan-b", false)
+      )
+    ).toBe(true);
   });
 
   it("verifies python_module_available checks before accepting package-missing bootstrap blockers", async () => {

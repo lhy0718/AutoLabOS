@@ -306,6 +306,19 @@ def latest_progress_index(node_dir: Path) -> int | None:
     return latest
 
 
+def implement_task_plan_hash(run_dir: Path) -> str | None:
+    task_spec_path = run_dir / "implement_task_spec.json"
+    try:
+        task_spec = json.loads(task_spec_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    context = task_spec.get("context")
+    if not isinstance(context, dict):
+        return None
+    plan_hash = context.get("plan_hash")
+    return plan_hash.strip() if isinstance(plan_hash, str) and plan_hash.strip() else None
+
+
 def build_staged_llm_resume_manifest(run_dir: Path, node: str, message: str, now: str) -> dict | None:
     if node != "implement_experiments":
         return None
@@ -335,6 +348,9 @@ def build_staged_llm_resume_manifest(run_dir: Path, node: str, message: str, now
         "incomplete_or_failed_artifacts": unresolved_incomplete_artifacts,
         "recommended_resume_action": "retry implement_experiments with staged materialization resume support; do not discard completed chunks if the regenerated plan matches this manifest",
     }
+    plan_hash = implement_task_plan_hash(run_dir)
+    if plan_hash:
+        manifest["plan_hash"] = plan_hash
     manifest.update(build_staged_llm_resume_boundary(incomplete_artifacts, chunk_prompt_paths, completed_section_ids))
     return manifest
 
@@ -1542,6 +1558,10 @@ def run_resume_manifest_selftest() -> int:
         (prompt_dir / "artifact__chunk_1.txt").write_text("prompt", encoding="utf-8")
         (prompt_dir / "artifact__chunk_2.txt").write_text("prompt", encoding="utf-8")
         (node_dir / "progress.jsonl").write_text('{"index": 7, "message": "chunk done"}\n', encoding="utf-8")
+        (run_dir / "implement_task_spec.json").write_text(
+            json.dumps({"context": {"plan_hash": "plan-fingerprint-a"}}),
+            encoding="utf-8",
+        )
         manifest_path = persist_staged_llm_resume_manifest(
             run_dir,
             "implement_experiments",
@@ -1557,6 +1577,9 @@ def run_resume_manifest_selftest() -> int:
             return 1
         if manifest.get("latest_progress_index") != 7:
             print("FAIL: resume manifest did not capture latest progress index")
+            return 1
+        if manifest.get("plan_hash") != "plan-fingerprint-a":
+            print("FAIL: resume manifest did not capture the current plan fingerprint")
             return 1
         if "unit_chunk_responses/artifact__chunk_1.txt" not in manifest.get("completed_chunk_responses", []):
             print("FAIL: resume manifest did not capture completed chunk response")

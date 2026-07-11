@@ -133,6 +133,7 @@ interface StagedLlmResumeManifest {
   status?: string;
   reason?: string;
   node?: string;
+  plan_hash?: string;
   completed_sections?: string[];
   completed_chunk_responses?: string[];
   incomplete_or_failed_artifacts?: string[];
@@ -3239,8 +3240,25 @@ export class ImplementSessionManager {
     ) => void;
     reasoningEffort?: string;
   }): Promise<{ text: string; threadId?: string }> {
-    const stagedResumeManifest = await loadStagedLlmResumeManifest(input.runDir);
+    const loadedStagedResumeManifest = await loadStagedLlmResumeManifest(input.runDir);
+    const stagedResumeManifest =
+      loadedStagedResumeManifest &&
+      isStagedLlmResumeManifestCompatibleWithTaskSpec(loadedStagedResumeManifest, input.taskSpec)
+        ? loadedStagedResumeManifest
+        : undefined;
     await clearStagedLlmAttemptArtifacts(input.runDir, { preserveResumeArtifacts: Boolean(stagedResumeManifest) });
+    if (loadedStagedResumeManifest && !stagedResumeManifest) {
+      await fs.rm(path.join(input.runDir, IMPLEMENT_STAGED_LLM_RESUME_MANIFEST_ARTIFACT), { force: true });
+      input.emitImplementObservation(
+        "codex",
+        "Invalidating staged_llm resume artifacts because their experiment-plan fingerprint is stale.",
+        {
+          attempt: input.attempt,
+          threadId: input.threadId,
+          publicDir: input.publicDir
+        }
+      );
+    }
     if (stagedResumeManifest) {
       input.emitImplementObservation(
         "codex",
@@ -13426,6 +13444,23 @@ async function loadStagedLlmResumeManifest(runDir: string): Promise<StagedLlmRes
   } catch {
     return undefined;
   }
+}
+
+export function isStagedLlmResumeManifestCompatibleWithTaskSpec(
+  manifest: StagedLlmResumeManifest,
+  taskSpec: ImplementTaskSpec
+): boolean {
+  const manifestPlanHash = manifest.plan_hash?.trim();
+  const currentPlanHash = taskSpec.context.plan_hash?.trim();
+  if (manifestPlanHash || currentPlanHash) {
+    if (manifestPlanHash && currentPlanHash) {
+      return manifestPlanHash === currentPlanHash;
+    }
+    if (manifestPlanHash) {
+      return false;
+    }
+  }
+  return !taskSpec.context.plan_changed;
 }
 
 async function readJsonArtifact(runDir: string, artifactPath: string): Promise<unknown | undefined> {
