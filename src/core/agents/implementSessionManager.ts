@@ -58144,7 +58144,7 @@ export async function repairPythonEntrypointBudgetTimeoutArgparseSurface(scriptP
   }
 
   const repairMarker = "_autolabos_entrypoint_budget_timeout_argparse_surface";
-  if (!/\bargparse\b/u.test(source) || !/\badd_argument\s*\(/u.test(source) || !source.includes("def _autolabos_entrypoint_budget(")) {
+  if (!/\bargparse\b/u.test(source) || !source.includes("def _autolabos_entrypoint_budget(")) {
     return { repaired: false };
   }
 
@@ -58277,11 +58277,14 @@ export async function repairPythonEntrypointBudgetTimeoutArgparseSurface(scriptP
         parserFlags.add(flagMatch[1]);
       }
     }
-    const looksLikeRuntimeParser = parserFlags.has("--metrics-path") || parserFlags.has("--public-dir") || parserFlags.has("--run-artifact-dir") || parserFlags.has("--max-runtime-sec");
+    const looksLikeRuntimeParser = parserFlags.has("--metrics-path") || parserFlags.has("--public-dir") || parserFlags.has("--run-artifact-dir") || parserFlags.has("--max-runtime-sec") || (parserFlags.size === 0 && nextSource.includes("METRICS_PATH") && nextSource.includes("RUN_ARTIFACT_DIR"));
     if (!looksLikeRuntimeParser) {
       continue;
     }
-    const missingForParser = ["--timeout-sec", ...timeoutAliasFlags].filter((flag) => !parserFlags.has(flag));
+    const runtimePathFlags = nextSource.includes("METRICS_PATH") && nextSource.includes("PUBLIC_DIR") && nextSource.includes("RUN_ARTIFACT_DIR")
+      ? ["--metrics-path", "--public-dir", "--run-artifact-dir"]
+      : [];
+    const missingForParser = [...runtimePathFlags, "--timeout-sec", ...timeoutAliasFlags].filter((flag) => !parserFlags.has(flag));
     if (parserFlags.has("--run-artifact-dir") && !parserFlags.has("--run-dir")) {
       missingForParser.push("--run-dir");
     }
@@ -58290,7 +58293,7 @@ export async function repairPythonEntrypointBudgetTimeoutArgparseSurface(scriptP
     }
     let insertionIndex = -1;
     for (let cursor = index + 1; cursor < functionEnd; cursor += 1) {
-      if (new RegExp(`^\\s*return\\s+${escapeRegExpLiteral(scopedParserVar)}\\s*$`, "u").test(scopedLines[cursor])) {
+      if (new RegExp(`^\\s*return\\s+${escapeRegExpLiteral(scopedParserVar)}(?:\\.parse_args\\([^)]*\\))?\\s*$`, "u").test(scopedLines[cursor])) {
         insertionIndex = cursor;
         break;
       }
@@ -58305,7 +58308,13 @@ export async function repairPythonEntrypointBudgetTimeoutArgparseSurface(scriptP
       ...(nextSource.includes(repairMarker) ? [] : [`${parserIndent}${scopedParserVar}.set_defaults(_autolabos_entrypoint_budget_timeout_argparse_surface=True)`]),
       ...missingForParser.map((flag) => {
         const template =
-          flag === "--timeout-sec"
+          flag === "--metrics-path"
+            ? "{parser}.add_argument('--metrics-path', default=str(METRICS_PATH))"
+            : flag === "--public-dir"
+              ? "{parser}.add_argument('--public-dir', default=str(PUBLIC_DIR))"
+              : flag === "--run-artifact-dir"
+                ? "{parser}.add_argument('--run-artifact-dir', default=str(RUN_ARTIFACT_DIR))"
+          : flag === "--timeout-sec"
             ? "{parser}.add_argument('--timeout-sec', dest='timeout_sec', type=float, default=None, help='AutoLabOS execution budget in seconds.')"
             : flag === "--budget-timeout-sec"
               ? "{parser}.add_argument('--budget-timeout-sec', dest='timeout_sec', type=float, default=None, help='AutoLabOS execution budget in seconds.')"

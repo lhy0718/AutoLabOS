@@ -49088,6 +49088,38 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(metricsPath, "utf8")).toBe("123.0");
   });
 
+  it("materializes runtime path and timeout flags on an empty generated parser", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-empty-runtime-parser-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const metricsPath = path.join(workspace, "metrics.txt");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from pathlib import Path",
+        `PUBLIC_DIR = Path(${JSON.stringify(workspace)})`,
+        `RUN_ARTIFACT_DIR = Path(${JSON.stringify(path.join(workspace, "run"))})`,
+        `METRICS_PATH = Path(${JSON.stringify(metricsPath)})`,
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    return parser.parse_args(argv)",
+        "def _autolabos_entrypoint_budget(config, args=None):",
+        "    return getattr(args, 'timeout_sec', None)",
+        "if __name__ == '__main__':",
+        "    args = parse_args()",
+        "    Path(args.metrics_path).write_text(':'.join((str(args.public_dir), str(args.run_artifact_dir), str(args.timeout_sec))), encoding='utf8')",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonEntrypointBudgetTimeoutArgparseSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--public-dir", workspace, "--run-artifact-dir", path.join(workspace, "run"), "--timeout-sec", "90", "--condition-timeout-sec", "90"], { cwd: workspace });
+    expect(readFileSync(metricsPath, "utf8")).toBe(`${workspace}:${path.join(workspace, "run")}:90.0`);
+  });
+
   it("adds missing condition-timeout aliases to previously marked generated entrypoints", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-condition-timeout-"));
     const scriptPath = path.join(workspace, "run_condition_sweep_experiment.py");
