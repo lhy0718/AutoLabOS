@@ -109,6 +109,47 @@ describe("research governance operations", () => {
     expect(JSON.stringify(packResult)).not.toContain(workspace);
   });
 
+  it("blocks active runs even when stale paper-scale artifacts look complete", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-active-run-"));
+    const runRoot = path.join(workspace, "runs", "active-research-run");
+    tempDirs.push(workspace);
+    await writeCompleteExternalBundle(runRoot);
+    await writeJson(path.join(runRoot, "run_record.json"), {
+      id: "active-research-run",
+      status: "running",
+      currentNode: "run_experiments"
+    });
+
+    const gateResult = await runResearchAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/governance/audit"
+    });
+    const reviewResult = await runResearchReview({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      outDir: "outputs/governance/review"
+    });
+    const improveResult = await runResearchImprove({
+      cwd: workspace,
+      reviewPath: reviewResult.output_path,
+      outDir: "outputs/governance/improve"
+    });
+
+    expect(gateResult.artifact.verdict).toBe("blocked");
+    expect(gateResult.artifact.findings).toContainEqual(
+      expect.objectContaining({ code: "run_execution_incomplete", severity: "blocker" })
+    );
+    expect(reviewResult.artifact.readiness_class).toBe("blocked_for_paper_scale");
+    expect(reviewResult.artifact.paper_ready).toBe(false);
+    expect(improveResult.artifact.targets).toContainEqual(
+      expect.objectContaining({
+        finding_code: "run_execution_incomplete",
+        target_node: "run_experiments"
+      })
+    );
+  });
+
   it("excludes JSON-quoted private paths from paper-readiness bundles", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-portability-"));
     const external = path.join(workspace, "external-artifacts");

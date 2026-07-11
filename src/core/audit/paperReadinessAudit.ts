@@ -276,7 +276,10 @@ async function buildAuditSummary(input: {
   });
   const paperReady = input.artifacts.paperReadiness?.paper_ready === true;
   const readinessState = stringValue(input.artifacts.paperReadiness?.readiness_state);
-  const failedRunHidden = isFailedRun(input.artifacts.runRecord) && paperReady;
+  const runStatus = getRunStatus(input.artifacts.runRecord);
+  const activeRun = isActiveRunStatus(runStatus);
+  const failedRun = isFailedRunStatus(runStatus);
+  const failedRunHidden = failedRun && paperReady;
   const writePaperStatus = getWritePaperStatus(input.artifacts.runRecord);
   const writePaperCompleted = isWritePaperCompleted({
     status: writePaperStatus,
@@ -354,6 +357,24 @@ async function buildAuditSummary(input: {
       severity: "blocker",
       message: "Only deterministic fallback evidence is present; quantitative research claims are blocked.",
       source: "liveValidationScoring"
+    });
+  }
+  if (activeRun) {
+    rulesApplied.push("active run -> governance pass 차단");
+    blockers.push({
+      code: "run_execution_incomplete",
+      severity: "blocker",
+      message: `Run status is ${runStatus}; active execution cannot pass the research governance gate.`,
+      source: "runRecord"
+    });
+  }
+  if (failedRun) {
+    rulesApplied.push("failed run -> governance pass 차단");
+    blockers.push({
+      code: "run_execution_failed",
+      severity: "blocker",
+      message: `Run status is ${runStatus}; failed execution must be repaired or explicitly superseded before governance promotion.`,
+      source: "runRecord"
     });
   }
   if (failedRunHidden) {
@@ -1270,6 +1291,10 @@ function buildNextActions(blockers: PaperReadinessAuditBlocker[]): string[] {
       actions.add("Repair figure/result/caption mismatches and rerun figure_audit before review.");
     } else if (blocker.code === "hidden_failed_run") {
       actions.add("Expose failed run status in the audit bundle and remove paper_ready=true.");
+    } else if (blocker.code === "run_execution_incomplete") {
+      actions.add("Wait for the active run to reach a terminal governed state, then rerun the audit against its final artifacts.");
+    } else if (blocker.code === "run_execution_failed") {
+      actions.add("Repair or explicitly supersede the failed run before rerunning the governance audit.");
     } else if (blocker.code === "write_paper_failed") {
       actions.add("Treat the manuscript as unaccepted, return to the failed gate, and rerun write_paper only after the cited blockers are repaired.");
     } else if (blocker.code === "artifact_contract_incomplete") {
@@ -1457,8 +1482,19 @@ function parseConditionName(value: Record<string, unknown> | undefined): Governa
   return "gated";
 }
 
-function isFailedRun(value: Record<string, unknown> | undefined): boolean {
-  const status = stringValue(value?.status) || stringValue(value?.state) || stringValue(value?.phase);
+function getRunStatus(value: Record<string, unknown> | undefined): string | undefined {
+  return stringValue(value?.status) || stringValue(value?.state) || stringValue(value?.phase);
+}
+
+function isActiveRunStatus(status: string | undefined): boolean {
+  return status === "running"
+    || status === "in_progress"
+    || status === "pending"
+    || status === "queued"
+    || status === "waiting";
+}
+
+function isFailedRunStatus(status: string | undefined): boolean {
   return status === "failed" || status === "error";
 }
 
