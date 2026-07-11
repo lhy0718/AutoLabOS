@@ -22468,6 +22468,9 @@ describe("ImplementSessionManager", () => {
   });
 
   it("preserves fixed-factor cells and comma-formatted task floors from a selected design", () => {
+    const expectedConditionMarkers = [4, 8, 16, 32].map((parameterX) =>
+      ["condition", parameterX, "parameter", "0", "0"].join("_")
+    );
     const contract = derivePlannedConditionContract({
       plan: [
         "retry_context:",
@@ -22491,12 +22494,7 @@ describe("ImplementSessionManager", () => {
       required_run_count: 28,
       seed_schedule: [42, 43, 44, 45, 46, 47, 48],
       minimum_seeds_per_condition: 7,
-      required_condition_markers: [
-        "condition_4_parameter_0_0",
-        "condition_8_parameter_0_0",
-        "condition_16_parameter_0_0",
-        "condition_32_parameter_0_0"
-      ],
+      required_condition_markers: expectedConditionMarkers,
       full_evaluation_required: true,
       minimum_eval_examples_per_task: {
         benchmark_task_alpha: 1172,
