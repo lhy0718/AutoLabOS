@@ -330,6 +330,7 @@ import {
   repairPythonEarlyMainGuardBeforeGovernedScheduleSurface,
   repairPythonDatasetSplitLoaderPreferLabeledSurface,
   repairPythonEvaluationSplitMinimumCoverageSurface,
+  repairPythonEntrypointBuildPathsAdapterSurface,
   repairPythonEntrypointConditionPathAliasesSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonPublicStudyBackendCallableLoaderSurface,
@@ -46342,6 +46343,64 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(repairedSource).toContain("_autolabos_evaluation_split_minimum_coverage_surface");
     execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("bridges final entrypoint path-builder arguments to an existing generic builder", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-path-builder-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def build_paths(public_dir='.', run_artifact_dir='run', metrics_path='metrics.json'):",
+        "    return {'public_dir': public_dir, 'run_artifact_dir': run_artifact_dir, 'metrics_path': metrics_path}",
+        "",
+        "def _autolabos_ep_call(names, **candidates):",
+        "    for name in names:",
+        "        fn = globals().get(name)",
+        "        if not callable(fn):",
+        "            continue",
+        "        signature = inspect.signature(fn)",
+        "        if any(parameter.kind == parameter.VAR_KEYWORD for parameter in signature.parameters.values()):",
+        "            return fn(**candidates)",
+        "        return fn(**{key: value for key, value in candidates.items() if key in signature.parameters})",
+        "    return None",
+        "",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--public-dir', required=True)",
+        "    parser.add_argument('--run-artifact-dir', required=True)",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    args = parser.parse_args(argv)",
+        "    paths = _autolabos_ep_call(['_autolabos_entrypoint_build_paths'], args=args)",
+        "    if paths is None:",
+        "        paths = build_runner_paths(args)",
+        "    Path(paths['metrics_path']).write_text(json.dumps(paths), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath, "--public-dir", workspace, "--run-artifact-dir", workspace, "--metrics-path", metricsPath], { cwd: workspace, stdio: "pipe" })).toThrow(/build_runner_paths/);
+    const repair = await repairPythonEntrypointBuildPathsAdapterSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    execFileSync("python3", [scriptPath, "--public-dir", workspace, "--run-artifact-dir", workspace, "--metrics-path", metricsPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      public_dir: workspace,
+      run_artifact_dir: workspace,
+      metrics_path: metricsPath
+    });
   });
 
   it("attaches marker-scoped artifact path aliases to generated condition objects", async () => {

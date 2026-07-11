@@ -11362,6 +11362,8 @@ export class ImplementSessionManager {
       await repairPythonDatasetSplitLoaderPreferLabeledSurface(executionScriptPath);
     const evaluationSplitMinimumCoverageRepair =
       await repairPythonEvaluationSplitMinimumCoverageSurface(executionScriptPath);
+    const entrypointBuildPathsAdapterRepair =
+      await repairPythonEntrypointBuildPathsAdapterSurface(executionScriptPath);
     const entrypointConditionPathAliasesRepair =
       await repairPythonEntrypointConditionPathAliasesSurface(executionScriptPath);
     const publicStudySiblingExperimentBackendRepair =
@@ -11583,6 +11585,7 @@ export class ImplementSessionManager {
         evaluationMetricRowsSeedAliasRepair,
         datasetSplitLoaderPreferLabeledRepair,
         evaluationSplitMinimumCoverageRepair,
+        entrypointBuildPathsAdapterRepair,
         entrypointConditionPathAliasesRepair,
         publicStudySiblingExperimentBackendRepair,
         publicStudyBackendCallableLoaderRepair,
@@ -60282,6 +60285,78 @@ export async function repairPythonEvaluationSplitMinimumCoverageSurface(scriptPa
   return {
     repaired: true,
     message: `Selected the first labeled evaluation split meeting the governed minimum coverage in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointBuildPathsAdapterSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const repairMarker = "_autolabos_entrypoint_build_paths_adapter_surface";
+  if (
+    source.includes(repairMarker) ||
+    /^def _autolabos_entrypoint_build_paths\s*\(/mu.test(source) ||
+    !/^def build_paths\s*\(/mu.test(source) ||
+    !source.includes("_autolabos_entrypoint_build_paths")
+  ) {
+    return { repaired: false };
+  }
+
+  const mainIndex = source.lastIndexOf("\ndef main(");
+  if (mainIndex < 0) {
+    return { repaired: false };
+  }
+  const helper = [
+    `# ${repairMarker}`,
+    "def _autolabos_entrypoint_build_paths(args=None, **runtime_values):",
+    "    import inspect",
+    "    def _value(name, default=None):",
+    "        if isinstance(args, dict) and args.get(name) not in (None, ''):",
+    "            return args.get(name)",
+    "        value = getattr(args, name, None) if args is not None else None",
+    "        if value not in (None, ''):",
+    "            return value",
+    "        value = runtime_values.get(name)",
+    "        return default if value in (None, '') else value",
+    "    public_dir = _value('public_dir', _value('output_dir', globals().get('PUBLIC_DIR', '.')))",
+    "    run_artifact_dir = _value('run_artifact_dir', globals().get('RUN_ARTIFACT_DIR', public_dir))",
+    "    metrics_path = _value('metrics_path', globals().get('METRICS_PATH', None))",
+    "    available = {",
+    "        'args': args,",
+    "        'public_dir': public_dir,",
+    "        'output_dir': public_dir,",
+    "        'run_artifact_dir': run_artifact_dir,",
+    "        'metrics_path': metrics_path,",
+    "    }",
+    "    signature = inspect.signature(build_paths)",
+    "    kwargs = {name: available[name] for name in signature.parameters if name in available and available[name] is not None}",
+    "    missing = [",
+    "        parameter.name for parameter in signature.parameters.values()",
+    "        if parameter.default is parameter.empty",
+    "        and parameter.kind in (parameter.POSITIONAL_OR_KEYWORD, parameter.KEYWORD_ONLY)",
+    "        and parameter.name not in kwargs",
+    "    ]",
+    "    if missing:",
+    "        raise TypeError(f'build_paths adapter cannot satisfy required arguments: {missing}')",
+    "    return build_paths(**kwargs)",
+    ""
+  ].join("\n");
+  const nextSource = `${source.slice(0, mainIndex)}\n\n${helper}${source.slice(mainIndex)}`;
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged generated entrypoint path-builder arguments in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
