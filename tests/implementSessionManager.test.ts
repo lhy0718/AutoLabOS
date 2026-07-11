@@ -19989,7 +19989,8 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"seed_schedule":');
     expect(capturedPrompt).toContain('"full_evaluation_required": true');
     expect(capturedPrompt).toContain('"minimum_eval_examples_per_task":');
-    expect(capturedPrompt).toContain('"benchmark_task": 299');
+    expect(capturedPrompt).toContain('"benchmark_task_a": 299');
+    expect(capturedPrompt).toContain('"benchmark_task_b": 10042');
     expect(capturedPrompt).toContain("42");
     expect(capturedPrompt).toContain("43");
     expect(capturedPrompt).toContain("44");

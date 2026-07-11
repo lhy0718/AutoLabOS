@@ -17905,10 +17905,12 @@ function parseFullEvaluationContract(text: string): {
   const fullEvaluationRequired =
     /\bfull\b[\s\S]{0,120}\b(?:benchmark|task|validation|evaluation)\b/iu.test(text) ||
     /\b(?:benchmark|task)\b[\s\S]{0,120}\bfull\b[\s\S]{0,120}\b(?:validation|evaluation|split|set)s?\b/iu.test(text);
-  const minimumEvalExamplesPerTask: Record<string, number> = {};
-  const taskCount = extractTaskEvaluationCount(text, ["benchmark", "task", "evaluation"]);
-  if (taskCount !== undefined) {
-    minimumEvalExamplesPerTask.benchmark_task = taskCount;
+  const minimumEvalExamplesPerTask = extractNamedTaskEvaluationCounts(text);
+  if (Object.keys(minimumEvalExamplesPerTask).length === 0) {
+    const taskCount = extractTaskEvaluationCount(text, ["benchmark", "task", "evaluation"]);
+    if (taskCount !== undefined) {
+      minimumEvalExamplesPerTask.benchmark_task = taskCount;
+    }
   }
   if (
     /\bfull\b/u.test(lower) &&
@@ -17918,6 +17920,50 @@ function parseFullEvaluationContract(text: string): {
     return { fullEvaluationRequired: true, minimumEvalExamplesPerTask };
   }
   return { fullEvaluationRequired, minimumEvalExamplesPerTask };
+}
+
+function extractNamedTaskEvaluationCounts(text: string): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const line of text.split(/\r?\n/u)) {
+    if (!/\bn\s*=\s*\d+\b/iu.test(line)) {
+      continue;
+    }
+    const segments = line.split(/\s+and\s+(?=(?:full\s+)?[^,;]{1,100}\bn\s*=\s*\d+\b)/giu);
+    for (const rawSegment of segments) {
+      const countMatch = /\bn\s*=\s*(\d+)\b/iu.exec(rawSegment);
+      const count = countMatch ? Number.parseInt(countMatch[1] || "", 10) : NaN;
+      if (!Number.isFinite(count) || count <= 0) {
+        continue;
+      }
+      const prefix = rawSegment
+        .slice(0, countMatch?.index ?? rawSegment.length)
+        .replace(/^\s*[-*]\s*/u, "")
+        .replace(/^["']+/u, "")
+        .replace(/^.*?\b(?:on|using)\s+(?:the\s+)?(?:full\s+)?/iu, "")
+        .replace(/^\s*full\s+/iu, "")
+        .trim();
+      const taskMatch = /^(.+?)(?=\s+(?:multiple[-\s]?choice|labelled|labeled|validation|test|evaluation|full)\b)/iu.exec(prefix);
+      const taskKey = taskMatch ? canonicalEvaluationTaskKey(taskMatch[1] || "") : undefined;
+      if (taskKey) {
+        counts[taskKey] = Math.max(counts[taskKey] || 0, count);
+      }
+    }
+  }
+  return counts;
+}
+
+function canonicalEvaluationTaskKey(value: string): string | undefined {
+  const normalized = value
+    .replace(/^["'([{]+|["')\]}:,]+$/gu, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "_")
+    .replace(/^_+|_+$/gu, "")
+    .slice(0, 64);
+  if (!normalized || /^(?:benchmark|task|evaluation|validation|test|full)$/u.test(normalized)) {
+    return undefined;
+  }
+  return normalized;
 }
 
 function extractTaskEvaluationCount(text: string, taskAliases: string[]): number | undefined {
