@@ -6,20 +6,24 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runResearchGovernanceAcceptance } from "./lib/research-governance-acceptance.mjs";
+import { parseOptionalReportArg, writeValidationReport } from "./lib/validation-report.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), "..");
 const cliPath = path.join(repoRoot, "dist", "cli", "main.js");
 const validationCommand = "npm run validate:research-governance";
+let reportPath;
+
+function emitReport(report) {
+  const persisted = writeValidationReport(report, reportPath);
+  process.stdout.write(`${JSON.stringify(persisted, null, 2)}\n`);
+}
 
 function main() {
-  if (process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h")) {
-    process.stdout.write(`Usage: ${validationCommand}\nRequires a current npm run build output.\n`);
-    return;
-  }
-  if (process.argv.length > 2) {
-    process.stderr.write(`Unknown validation argument: ${process.argv.slice(2).join(", ")}\n`);
-    process.exitCode = 2;
+  const options = parseOptionalReportArg(process.argv.slice(2));
+  reportPath = options.reportPath;
+  if (options.help) {
+    process.stdout.write(`Usage: ${validationCommand} [-- --report <path>]\nRequires a current npm run build output.\n`);
     return;
   }
   if (!fs.existsSync(cliPath)) {
@@ -39,20 +43,20 @@ function main() {
       });
     }
   });
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  emitReport(report);
 }
 
 try {
   main();
 } catch (error) {
-  process.stdout.write(`${JSON.stringify({
+  emitReport({
     commandIntent: "research:audit",
     outputArtifact: "GateReport",
     verdict: "fail",
     gate: "research_governance_process_e2e",
     executionSurface: "direct_cli",
-    message: error instanceof Error ? error.message : String(error),
+    message: (error instanceof Error ? error.message : String(error)).replaceAll(repoRoot, "<repo-root>"),
     validationCommand
-  }, null, 2)}\n`);
+  });
   process.exitCode = 1;
 }

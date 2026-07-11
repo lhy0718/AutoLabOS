@@ -19,7 +19,7 @@ No acceptance class substitutes for another. A deterministic CI pass does not pr
 | Research artifact chain | Nine-process direct acceptance | Preserve downgrade, claim ceiling, schema block, and bundle hashes | Passing |
 | Repo bridge delegation | Nine-process deterministic bridge acceptance | Keep Codex-independent and required in CI | Passing |
 | Installed bridge delegation | Discovery, bridge hash, dependency check, nine-process chain | Keep workstation-only and versioned | Passing |
-| Machine-readable report retention | JSON printed to stdout | Optional report file with portable metadata and atomic write | Gap |
+| Machine-readable report retention | Optional atomic JSON reports for direct, fixture, and installed surfaces | Preserve portable metadata and reject private paths | Passing |
 | Missing CLI | Unit-level blocking `GateReport` | Fault matrix entry with repair target | Partial |
 | CLI contract mismatch | Unit-level blocking `GateReport` | Fault matrix entry with distinct artifact identity | Partial |
 | Missing cache | Strict doctor test | Fault matrix entry with deterministic repair target | Partial |
@@ -29,6 +29,18 @@ No acceptance class substitutes for another. A deterministic CI pass does not pr
 | Non-portable bundle content | Pack-time exclusion logic | Fault matrix entry proving exclusion and downgraded portability | Partial |
 | Hermetic cache lifecycle | Isolated sync and doctor unit tests | Integrated sync, strict doctor, bridge dependency, and cleanup | Gap |
 | Aggregate operating verdict | Independent commands | One bounded summary that cannot hide a failed required gate | Gap |
+
+## Report Retention
+
+Each acceptance command accepts an optional report path:
+
+```sh
+npm run validate:research-governance -- --report <path>
+npm run validate:plugin-bridge -- --report <path>
+npm run validate:plugin-bridge:local -- --report <path>
+```
+
+Reports are written through a same-directory temporary file and atomic rename. Serialized content is rejected when it contains a machine-specific absolute path or credential-like assignment. An output outside the invocation directory is represented as `<external-report-root>/<filename>`.
 
 ## Promotion Rules
 
@@ -43,7 +55,7 @@ No acceptance class substitutes for another. A deterministic CI pass does not pr
 
 | Milestone | Exit condition | State |
 | --- | --- | --- |
-| Report retention | Direct and bridge runners support validated optional report output | Open |
+| Report retention | Direct and bridge runners support validated optional report output | Closed |
 | Fault matrix | Seven named failure classes produce deterministic blocking evidence | Open |
 | Hermetic cache | Isolated cache lifecycle passes without workstation cache reuse | Open |
 | Operations preflight | Required gates aggregate into one machine-readable verdict | Open |

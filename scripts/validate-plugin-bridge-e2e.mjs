@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runResearchGovernanceAcceptance } from "./lib/research-governance-acceptance.mjs";
+import { parseOptionalReportArg, writeValidationReport } from "./lib/validation-report.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), "..");
@@ -16,6 +17,12 @@ const repoBridgePath = path.join(pluginRoot, "scripts", "run-research-intent.mjs
 const cliProxyPath = path.join(repoRoot, "scripts", "fixtures", "autolabos-cli-proxy.mjs");
 const manifestPath = path.join(pluginRoot, ".codex-plugin", "plugin.json");
 const marketplacePath = path.join(repoRoot, ".agents", "plugins", "marketplace.json");
+let reportPath;
+
+function emitReport(report) {
+  const persisted = writeValidationReport(report, reportPath);
+  process.stdout.write(`${JSON.stringify(persisted, null, 2)}\n`);
+}
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -92,24 +99,22 @@ function resolveExecutionMode(installed) {
 
 function main() {
   const args = process.argv.slice(2);
-  if (args.some((arg) => arg === "--help" || arg === "-h")) {
+  const installedCount = args.filter((arg) => arg === "--installed").length;
+  if (installedCount > 1) throw new Error("--installed may be specified only once.");
+  const installed = installedCount === 1;
+  const options = parseOptionalReportArg(args.filter((arg) => arg !== "--installed"));
+  reportPath = options.reportPath;
+  if (options.help) {
     process.stdout.write([
       "Usage:",
-      "  npm run validate:plugin-bridge",
-      "  npm run validate:plugin-bridge:local",
+      "  npm run validate:plugin-bridge [-- --report <path>]",
+      "  npm run validate:plugin-bridge:local [-- --report <path>]",
       "",
       "The default mode is deterministic and CI-safe; --installed validates the installed Codex plugin cache.",
       "Both modes require a current npm run build output."
     ].join("\n") + "\n");
     return;
   }
-  const installed = args.length === 1 && args[0] === "--installed";
-  if (args.length > 0 && !installed) {
-    process.stderr.write(`Unknown plugin bridge validation argument: ${args.join(", ")}\n`);
-    process.exitCode = 2;
-    return;
-  }
-
   const mode = resolveExecutionMode(installed);
   for (const requiredPath of [mode.bridgePath, path.join(repoRoot, "dist", "cli", "main.js")]) {
     if (!fs.existsSync(requiredPath)) throw new Error("Plugin bridge acceptance dependency is missing. Run npm run build and refresh the plugin installation.");
@@ -155,7 +160,7 @@ function main() {
     }
   });
   report.pluginVersion = mode.pluginVersion;
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  emitReport(report);
 }
 
 try {
@@ -166,7 +171,7 @@ try {
   const message = (error instanceof Error ? error.message : String(error))
     .replaceAll(repoRoot, "<repo-root>")
     .replaceAll(codexHome, "<codex-home>");
-  process.stdout.write(`${JSON.stringify({
+  emitReport({
     commandIntent: "research:audit",
     outputArtifact: "GateReport",
     verdict: "fail",
@@ -177,6 +182,6 @@ try {
     validationCommand: process.argv.includes("--installed")
       ? "npm run validate:plugin-bridge:local"
       : "npm run validate:plugin-bridge"
-  }, null, 2)}\n`);
+  });
   process.exitCode = 1;
 }
