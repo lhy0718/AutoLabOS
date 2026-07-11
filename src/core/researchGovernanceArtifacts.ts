@@ -484,11 +484,11 @@ function mapFindingToRepairTarget(finding: GateFinding): ReviewRepairTarget {
   } else if (/(hypothesis|research question|novelty)/u.test(normalized)) {
     targetNode = "generate_hypotheses";
     targetSurface = "prompt";
-  } else if (/(baseline|comparator|sample|seed|repeat|uncertainty|design contract|single.change)/u.test(normalized)) {
-    targetNode = "design_experiments";
-    targetSurface = "validator";
   } else if (/(dependency|implementation|syntax|entrypoint|runner)/u.test(normalized)) {
     targetNode = "implement_experiments";
+    targetSurface = "validator";
+  } else if (/(baseline|comparator|sample|seed|repeat|uncertainty|design contract|single.change)/u.test(normalized)) {
+    targetNode = "design_experiments";
     targetSurface = "validator";
   } else if (/(execution|failed run|missing metric|run manifest)/u.test(normalized)) {
     targetNode = "run_experiments";

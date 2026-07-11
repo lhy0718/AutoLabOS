@@ -11389,6 +11389,8 @@ export class ImplementSessionManager {
       await repairPythonNumericChoiceLabelPrecedenceSurface(executionScriptPath);
     const entrypointSemanticCallAliasRepair =
       await repairPythonEntrypointSemanticCallAliasSurface(executionScriptPath);
+    const finalCliModelRuntimeContextRepair =
+      await repairPythonFinalCliModelRuntimeContextSurface(executionScriptPath);
     const finalCliManagedEntrypointPreferenceRepair =
       await repairPythonFinalCliManagedEntrypointPreferenceSurface(executionScriptPath);
     const finalCliManagedMetricsPreservationRepair =
@@ -11650,6 +11652,7 @@ export class ImplementSessionManager {
         multipleChoiceGoldAliasRepair,
         numericChoiceLabelPrecedenceRepair,
         entrypointSemanticCallAliasRepair,
+        finalCliModelRuntimeContextRepair,
         finalCliManagedEntrypointPreferenceRepair,
         finalCliManagedMetricsPreservationRepair,
         dependencyWildcardImportRepair,
@@ -30060,6 +30063,7 @@ export async function repairPythonModelExecutionSingleConditionRunnerAliasSurfac
     "train_and_evaluate_condition",
     "run_single_condition_training",
     "execute_single_condition_training",
+    "execute_one_condition_run",
     "execute_condition_seed",
     "run_single_condition_seed",
     "execute_single_condition_seed",
@@ -58511,6 +58515,65 @@ export async function repairPythonEntrypointSemanticCallAliasSurface(scriptPath?
   return {
     repaired: true,
     message: `Aliased semantic runtime arguments in the generated entrypoint dispatcher in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonFinalCliModelRuntimeContextSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_final_cli_model_runtime_context_surface";
+  const preflightCallPattern =
+    /preflight\s*=\s*_ae_call\(\s*preflight_fn\s*,\s*args\s*=\s*args\s*,\s*paths\s*=\s*paths\s*,\s*runtime\s*=\s*args\s*\)\s*if\s+preflight_fn\s+else\s+\{["']ok["']\s*:\s*True\s*\}/;
+  if (
+    source.includes(marker) ||
+    !source.includes("def build_model_runtime_context(") ||
+    !preflightCallPattern.test(source)
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  const nextSource = replaceAllPythonTopLevelFunctionSources(source, "main", (functionSource) => {
+    if (!preflightCallPattern.test(functionSource) || !functionSource.includes("    paths = _ae_paths(args)\n")) {
+      return functionSource;
+    }
+    let nextFunction = functionSource.replace(
+      "    paths = _ae_paths(args)\n",
+      [
+        "    paths = _ae_paths(args)",
+        `    # ${marker}`,
+        "    runtime_context = build_model_runtime_context(args)",
+        ""
+      ].join("\n")
+    );
+    nextFunction = nextFunction.replaceAll(
+      "runtime=args",
+      "runtime=runtime_context, runtime_context=runtime_context"
+    );
+    repaired = repaired || nextFunction !== functionSource;
+    return nextFunction;
+  });
+
+  if (!repaired || nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Passed the generated model runtime context through the final CLI in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

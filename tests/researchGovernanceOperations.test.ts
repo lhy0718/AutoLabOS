@@ -164,7 +164,7 @@ describe("research governance operations", () => {
       status: "fail",
       stage: "preflight_test",
       summary: "The runner declares a timeout but no evaluation loop consumes a deadline.",
-      suggested_next_action: "Enforce the shared deadline and persist partial run accounting."
+      suggested_next_action: "Repair the experiment implementation so baseline/comparator execution reaches completed metrics."
     });
 
     const gateResult = await runResearchAudit({

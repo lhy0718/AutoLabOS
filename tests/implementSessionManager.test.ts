@@ -321,6 +321,7 @@ import {
   repairPythonMultipleChoiceGoldAliasSurface,
   repairPythonNumericChoiceLabelPrecedenceSurface,
   repairPythonEntrypointSemanticCallAliasSurface,
+  repairPythonFinalCliModelRuntimeContextSurface,
   repairPythonFinalCliManagedEntrypointPreferenceSurface,
   repairPythonFinalCliManagedMetricsPreservationSurface,
   repairPythonEntrypointSingleRunnerCandidateSurface,
@@ -49651,6 +49652,75 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_entrypoint_semantic_call_alias_surface");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect((await repairPythonEntrypointSemanticCallAliasSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("passes the generated model runtime context through the final CLI", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-final-cli-model-runtime-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "",
+        "@dataclass",
+        "class ModelRuntime:",
+        "    torch_import_error: object = None",
+        "",
+        "class Paths:",
+        "    dependency_report_path = Path('dependency.json')",
+        "",
+        "def build_model_runtime_context(args):",
+        "    return ModelRuntime()",
+        "",
+        "def run_dependency_preflight(runtime, paths):",
+        "    return {'ok': runtime.torch_import_error is None}",
+        "",
+        "def _ae_pick(*names):",
+        "    for name in names:",
+        "        value = globals().get(name)",
+        "        if callable(value): return value",
+        "    return None",
+        "",
+        "def _ae_call(fn, **kwargs):",
+        "    params = inspect.signature(fn).parameters",
+        "    return fn(**{key: value for key, value in kwargs.items() if key in params})",
+        "",
+        "def _ae_args(argv=None): return argparse.Namespace()",
+        "def _ae_paths(args): return Paths()",
+        "def _ae_write(path, payload): Path(path).write_text(json.dumps(payload), encoding='utf-8')",
+        "",
+        "def main(argv=None):",
+        "    args = _ae_args(argv)",
+        "    paths = _ae_paths(args)",
+        "    try:",
+        "        preflight_fn = _ae_pick('run_dependency_preflight', 'preflight_dependencies', 'dependency_preflight')",
+        "        preflight = _ae_call(preflight_fn, args=args, paths=paths, runtime=args) if preflight_fn else {'ok': True}",
+        "        _ae_write(paths.dependency_report_path, preflight)",
+        "        return 0",
+        "    except Exception:",
+        "        return 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow();
+    const repair = await repairPythonFinalCliModelRuntimeContextSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_final_cli_model_runtime_context_surface");
+    expect(repairedSource).toContain("runtime=runtime_context, runtime_context=runtime_context");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "dependency.json"), "utf8"))).toEqual({ ok: true });
   });
 
   it("prefers the managed entrypoint over a generated fallback CLI", async () => {

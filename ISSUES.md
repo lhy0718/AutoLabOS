@@ -16,9 +16,60 @@ Path placeholders:
 ---
 
 
+## Issue: LV-571
+
+- Status: reproduced through installed-plugin review and repaired in source; focused regression passes, live plugin rerun pending.
+- Validation target: research review and improvement must route a concrete experiment implementation failure to `implement_experiments` even when the verifier's remediation sentence also mentions baseline or comparator execution.
+- Environment/session context: an installed plugin audited a terminal governed run whose verifier preserved a Python runtime projection failure and an implementation-focused suggested action.
+- Reproduction steps:
+  1. Audit a terminal run with a failed experiment verifier.
+  2. Preserve a remediation sentence that names both experiment implementation and baseline/comparator execution.
+  3. Run research review followed by plan-only research improvement.
+- Expected behavior: the meta harness should prioritize the concrete implementation/entrypoint/runner signal and target `implement_experiments`.
+- Actual behavior: generic baseline/comparator matching ran first and incorrectly targeted `design_experiments`.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral governance fixture preserves the conflicting wording through audit, review, and improvement.
+  - Existing session: the installed plugin reproduced the wrong design-node target from the terminal verifier detail.
+  - Divergence: no persisted-state divergence; this was repair-target precedence in the meta harness.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `mapFindingToRepairTarget(...)` evaluated broad evidence-design vocabulary before concrete implementation and runtime-failure vocabulary.
+- Code/test changes:
+  - Moved implementation/entrypoint/runner classification ahead of baseline/comparator classification.
+  - Strengthened the end-to-end governance operation regression with a remediation sentence containing both signal classes.
+- Regression status: the focused audit-review-improve regression passes; installed-plugin rerun is pending after build and commit.
+- Follow-up risks: mixed findings without concrete node vocabulary still rely on the broader fallback taxonomy and should remain visible in generated patch plans.
+
+
+## Issue: LV-570
+
+- Status: reproduced in same-flow live execution and repaired in source; focused regressions pass, same-flow resume pending.
+- Validation target: the generated final CLI must pass its constructed model runtime context, rather than the raw CLI namespace, to dependency preflight and downstream model-execution helpers.
+- Environment/session context: an existing governed live run completed `implement_experiments`, advanced into `run_experiments`, and failed before GPU work began.
+- Reproduction steps:
+  1. Generate a Python runner with `build_model_runtime_context(args)` and a runtime preflight that reads dependency state from that object.
+  2. Let the final CLI materialize `args` and paths, then dispatch preflight with `runtime=args`.
+  3. Execute the generated runner through the governed run node.
+- Expected behavior: the final CLI should construct the existing model runtime context and project it through signature-filtered calls; the concrete generated one-condition runner should also be discoverable under the final resolver's conventional names.
+- Actual behavior: preflight received `argparse.Namespace` and failed on a runtime-only attribute before model execution. The adjacent final resolver also omitted the concrete generated `execute_one_condition_run(...)` name.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral executable fixture reproduces the namespace/runtime attribute failure and succeeds after repair.
+  - Existing session: the live traceback shows the final CLI passing `runtime=args` despite defining a model runtime builder.
+  - Divergence: no state divergence; this was a generated runtime-object and callable-name projection mismatch.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: independently generated CLI, runtime-context, and one-condition chunks were not reconciled before handoff to `run_experiments`.
+- Code/test changes:
+  - Added a final-CLI repair that constructs the existing model runtime context and passes both `runtime` and `runtime_context` aliases through compatible calls.
+  - Added `execute_one_condition_run` to the existing concrete-runner alias surface.
+  - Added executable regressions for the runtime-context and adjacent single-condition resolver shapes.
+- Regression status: focused runtime-context, single-condition alias, and adjacent resolver regressions pass; build and same-flow resume are pending.
+- Follow-up risks: later execution may expose data, model, accelerator, training, or evaluation failures that were previously hidden behind this preflight boundary.
+
+
 ## Issue: LV-569
 
-- Status: reproduced from consecutive live regenerations and repaired in source; focused regression and build pass, same-flow resume pending.
+- Status: reproduced from consecutive live regenerations and repaired in source; same-flow execution accepted the called guard and advanced to LV-570.
 - Validation target: long-run preflight must recognize conventional method-based deadline assertions that are actually called before planned runs or evaluation batches.
 - Environment/session context: an existing governed live run regenerated its Python runner specifically in response to missing deadline enforcement feedback.
 - Reproduction steps:
