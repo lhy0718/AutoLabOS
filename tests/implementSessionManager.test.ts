@@ -19923,6 +19923,14 @@ describe("ImplementSessionManager", () => {
       "utf8"
     );
     writeFileSync(path.join(runDir, "hypotheses.jsonl"), "", "utf8");
+    const memory = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await memory.put(
+      "run_brief.raw",
+      [
+        "Conditions: baseline_condition; candidate_condition_a; candidate_condition_a5; baseline_condition5; candidate_condition_d; candidate_condition_d5; candidate_condition_f; candidate_condition_f5.",
+        "Seeds: [42, 43, 44, 45]."
+      ].join("\n")
+    );
 
     const publicDir = buildPublicExperimentDir(workspace, run);
     const publicScriptPath = path.join(publicDir, "experiment.py");
@@ -22135,7 +22143,7 @@ describe("ImplementSessionManager", () => {
     expect(bootstrapContract.summary).toContain("Hugging Face model and tokenizer bootstrap");
   });
 
-  it("blocks staged implementation when bootstrap contract ignores dependency repair context", async () => {
+  it("prioritizes current data dependency feedback over stale model repair context", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-dependency-repair-bootstrap-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -22170,6 +22178,21 @@ describe("ImplementSessionManager", () => {
       ].join("\n"),
       "utf8"
     );
+    const memory = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "manual",
+      stage: "metrics",
+      summary: "Experiment dependency blocked (data_dependency_unavailable): task-specific data materialization failed.",
+      failure_code: "data_dependency_unavailable",
+      repair_target: "implementation",
+      recommended_backtrack_node: "implement_experiments",
+      upstream_repair_hint:
+        "Repair task-specific data materialization and schema normalization without lowering the evidence floor.",
+      operator_action_required: true,
+      recorded_at: "2099-01-01T00:00:00.000Z"
+    });
 
     let llmCalls = 0;
     const manager = new ImplementSessionManager({
@@ -22229,7 +22252,8 @@ describe("ImplementSessionManager", () => {
       "utf8"
     );
     expect(prompt).toContain("dependency_repair_context");
-    expect(prompt).toContain("model_dependency_unavailable");
+    expect(prompt).toContain('"failure_code": "data_dependency_unavailable"');
+    expect(prompt).toContain('"repair_target": "implementation"');
 
     const bootstrapContract = JSON.parse(
       readFileSync(path.join(runDir, "implement_experiments", "bootstrap_contract.json"), "utf8")
@@ -22240,17 +22264,17 @@ describe("ImplementSessionManager", () => {
       requires_network?: boolean;
       requires_warm_cache?: boolean;
     };
-    expect(bootstrapContract.requires_network).toBe(true);
-    expect(bootstrapContract.requires_warm_cache).toBe(true);
-    expect(bootstrapContract.blocking_reason).toContain("dependency repair remains unresolved");
+    expect(bootstrapContract.requires_network).toBe(false);
+    expect(bootstrapContract.requires_warm_cache).toBe(false);
+    expect(bootstrapContract.blocking_reason).toContain("data dependency repair remains unresolved");
     expect(bootstrapContract.remediation).toContain(
-      "Do not repeat a design that depends on an unavailable model/tokenizer asset; select an explicitly available local dependency or mark the run dependency-blocked before implementation."
+      "Repair task-specific data materialization and schema normalization without lowering the approved task, split, or minimum-count evidence floor."
     );
     expect(bootstrapContract.requirements).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "experiment_model_tokenizer_dependency",
-          kind: "model",
+          id: "experiment_data_dependency",
+          kind: "dataset",
           availability: "unknown"
         })
       ])

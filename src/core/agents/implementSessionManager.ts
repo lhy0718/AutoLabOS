@@ -16895,19 +16895,36 @@ function applyDependencyRepairContextToBootstrapContract(
     return contract;
   }
   const contractText = JSON.stringify(contract).toLowerCase();
-  const mentionsDependencyRepair =
-    contractText.includes("model") ||
-    contractText.includes("tokenizer") ||
-    contractText.includes("prewarm") ||
-    contractText.includes("dependency-blocked") ||
-    contractText.includes("available substitute");
+  const isDataDependency = context.failure_code === "data_dependency_unavailable";
+  const mentionsDependencyRepair = isDataDependency
+    ? contractText.includes("dataset") ||
+      contractText.includes("data materialization") ||
+      contractText.includes("schema normalization") ||
+      contractText.includes("dependency-blocked")
+    : contractText.includes("model") ||
+      contractText.includes("tokenizer") ||
+      contractText.includes("prewarm") ||
+      contractText.includes("dependency-blocked") ||
+      contractText.includes("available substitute");
   const remediation = dedupeStrings([
     ...(contract.remediation || []),
     ...context.retry_directives,
     context.upstream_repair_hint || ""
   ]);
   const requirements = [...contract.requirements];
-  if (!requirements.some((item) => item.kind === "model" || item.kind === "tokenizer")) {
+  if (isDataDependency) {
+    if (!requirements.some((item) => item.kind === "dataset" || item.kind === "reference_data")) {
+      requirements.push({
+        id: "experiment_data_dependency",
+        kind: "dataset",
+        source: "other",
+        required_for: ["experiment_execution", "evaluation"],
+        availability: "unknown",
+        summary: "Task-specific data materialization must preserve the approved task, split, schema, and minimum-count contract.",
+        remediation: context.upstream_repair_hint || context.retry_directives[0]
+      });
+    }
+  } else if (!requirements.some((item) => item.kind === "model" || item.kind === "tokenizer")) {
     requirements.push({
       id: "experiment_model_tokenizer_dependency",
       kind: "model",
@@ -16920,7 +16937,9 @@ function applyDependencyRepairContextToBootstrapContract(
   }
   const blockingReason = contract.blocking_reason || (
     context.operator_action_required && !mentionsDependencyRepair
-      ? "Experiment dependency repair remains unresolved: prewarm the required model/tokenizer asset, choose a concrete available substitute, or mark the run dependency-blocked before code generation."
+      ? isDataDependency
+        ? "Experiment data dependency repair remains unresolved: preserve the approved task, split, schema, and minimum-count contract or mark the run dependency-blocked before code generation."
+        : "Experiment dependency repair remains unresolved: prewarm the required model/tokenizer asset, choose a concrete available substitute, or mark the run dependency-blocked before code generation."
       : undefined
   );
   return {
@@ -17520,26 +17539,36 @@ function deriveImplementDependencyRepairContext(input: {
   runnerFeedback?: RunVerifierReport;
 }): ImplementDependencyRepairContext | undefined {
   const text = [input.plan || "", JSON.stringify(input.runnerFeedback || {})].join("\n");
-  const failureCode = extractYamlScalar(text, "run_verifier_failure_code") || input.runnerFeedback?.failure_code;
-  const repairTarget = extractYamlScalar(text, "run_verifier_repair_target") || input.runnerFeedback?.repair_target;
-  if (failureCode !== "model_dependency_unavailable" && repairTarget !== "environment_dependency") {
+  const failureCode = input.runnerFeedback?.failure_code || extractYamlScalar(text, "run_verifier_failure_code");
+  const repairTarget = input.runnerFeedback?.repair_target || extractYamlScalar(text, "run_verifier_repair_target");
+  const isModelDependency = failureCode === "model_dependency_unavailable" || repairTarget === "environment_dependency";
+  const isDataDependency = failureCode === "data_dependency_unavailable";
+  if (!isModelDependency && !isDataDependency) {
     return undefined;
   }
-  const directives = extractDependencyRepairDirectives(text);
+  const directives = extractDependencyRepairDirectives(text).filter((directive) =>
+    isDataDependency
+      ? /(?:task-specific data|data materialization|schema normalization|minimum-count evidence floor)/iu.test(directive)
+      : /(?:model|tokenizer|prewarm|available local dependency|known available substitute)/iu.test(directive)
+  );
   return {
     failure_code: failureCode,
     repair_target: repairTarget,
     recommended_backtrack_node:
-      extractYamlScalar(text, "run_verifier_recommended_backtrack_node") || input.runnerFeedback?.recommended_backtrack_node,
+      input.runnerFeedback?.recommended_backtrack_node || extractYamlScalar(text, "run_verifier_recommended_backtrack_node"),
     upstream_repair_hint:
-      extractYamlScalar(text, "run_verifier_upstream_repair_hint") || input.runnerFeedback?.upstream_repair_hint,
+      input.runnerFeedback?.upstream_repair_hint || extractYamlScalar(text, "run_verifier_upstream_repair_hint"),
     operator_action_required:
-      extractYamlBoolean(text, "run_verifier_operator_action_required") ?? input.runnerFeedback?.operator_action_required,
+      input.runnerFeedback?.operator_action_required ?? extractYamlBoolean(text, "run_verifier_operator_action_required"),
     retry_directives: directives.length > 0
       ? directives
-      : [
-          "Do not repeat a design that depends on an unavailable model/tokenizer asset; select an explicitly available local dependency or mark the run dependency-blocked before implementation."
-        ]
+      : isDataDependency
+        ? [
+            "Repair task-specific data materialization and schema normalization without lowering the approved task, split, or minimum-count evidence floor."
+          ]
+        : [
+            "Do not repeat a design that depends on an unavailable model/tokenizer asset; select an explicitly available local dependency or mark the run dependency-blocked before implementation."
+          ]
   };
 }
 
@@ -17647,7 +17676,10 @@ function derivePlannedConditionContract(input: {
   const repeatedRunContract = parseRepeatedSeedRunContract(text);
   const explicitTrainingRunCount = parseExplicitTrainingRunCount(text);
   const seedSchedule = extractSeedSchedule(text);
-  const evaluationContract = parseFullEvaluationContract(text);
+  const evaluationContract = mergeFullEvaluationContracts(
+    parseFullEvaluationContract(text),
+    planHasSpecificContract ? parseFullEvaluationContract(planText) : undefined
+  );
   const baselineConditionMarker =
     extractBaselineConditionParameterMarker(text) ||
     (planHasSpecificContract ? extractBaselineConditionParameterMarker(fullContractText) : undefined);
@@ -17920,6 +17952,27 @@ function parseFullEvaluationContract(text: string): {
     return { fullEvaluationRequired: true, minimumEvalExamplesPerTask };
   }
   return { fullEvaluationRequired, minimumEvalExamplesPerTask };
+}
+
+function mergeFullEvaluationContracts(
+  primary: ReturnType<typeof parseFullEvaluationContract>,
+  planContract: ReturnType<typeof parseFullEvaluationContract> | undefined
+): ReturnType<typeof parseFullEvaluationContract> {
+  if (!planContract) {
+    return primary;
+  }
+  const minimumEvalExamplesPerTask = {
+    ...primary.minimumEvalExamplesPerTask,
+    ...planContract.minimumEvalExamplesPerTask
+  };
+  const namedTaskKeys = Object.keys(minimumEvalExamplesPerTask).filter((key) => key !== "benchmark_task");
+  if (namedTaskKeys.length > 0) {
+    delete minimumEvalExamplesPerTask.benchmark_task;
+  }
+  return {
+    fullEvaluationRequired: primary.fullEvaluationRequired || planContract.fullEvaluationRequired,
+    minimumEvalExamplesPerTask
+  };
 }
 
 function extractNamedTaskEvaluationCounts(text: string): Record<string, number> {
