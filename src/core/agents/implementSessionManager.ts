@@ -188,6 +188,10 @@ interface ImplementBootstrapContract {
   requires_warm_cache?: boolean;
   blocking_reason?: string;
   remediation?: string[];
+  repair_context?: {
+    failure_code?: string;
+    repair_target?: string;
+  };
   requirements: ImplementBootstrapRequirement[];
   checks: ImplementBootstrapCheck[];
 }
@@ -3327,9 +3331,28 @@ export class ImplementSessionManager {
       scaffoldParsed = parseStructuredResponse(scaffoldCompletion.text);
       activeThreadId = scaffoldCompletion.threadId || input.threadId;
     }
-    const reusableBootstrapContract = stagedResumeManifest
+    const cachedBootstrapContract = stagedResumeManifest
       ? await readReusableStagedBootstrapContract(input.runDir)
       : undefined;
+    const reusableBootstrapContract =
+      cachedBootstrapContract &&
+      isReusableBootstrapContractCompatibleWithDependencyRepair(
+        cachedBootstrapContract,
+        input.taskSpec.context.dependency_repair_context
+      )
+        ? cachedBootstrapContract
+        : undefined;
+    if (cachedBootstrapContract && !reusableBootstrapContract) {
+      input.emitImplementObservation(
+        "codex",
+        "Invalidating a staged_llm bootstrap contract whose dependency repair context is stale.",
+        {
+          attempt: input.attempt,
+          threadId: activeThreadId,
+          publicDir: input.publicDir
+        }
+      );
+    }
     if (reusableBootstrapContract) {
       input.emitImplementObservation(
         "codex",
@@ -16820,6 +16843,16 @@ function parseImplementBootstrapContract(value: unknown): ImplementBootstrapCont
         .map((item) => parseImplementBootstrapCheck(item))
         .filter((item): item is ImplementBootstrapCheck => Boolean(item))
     : [];
+  const rawRepairContext =
+    record.repair_context && typeof record.repair_context === "object"
+      ? (record.repair_context as Record<string, unknown>)
+      : undefined;
+  const repairContext = rawRepairContext
+    ? {
+        failure_code: asOptionalString(rawRepairContext.failure_code),
+        repair_target: asOptionalString(rawRepairContext.repair_target)
+      }
+    : undefined;
   if (requirements.length === 0 && checks.length === 0 && typeof record.summary !== "string") {
     return undefined;
   }
@@ -16831,6 +16864,8 @@ function parseImplementBootstrapContract(value: unknown): ImplementBootstrapCont
     requires_warm_cache: record.requires_warm_cache === true,
     blocking_reason: asOptionalString(record.blocking_reason),
     remediation: asOptionalStringArray(record.remediation),
+    repair_context:
+      repairContext?.failure_code || repairContext?.repair_target ? repairContext : undefined,
     requirements,
     checks
   };
@@ -16950,8 +16985,28 @@ function applyDependencyRepairContextToBootstrapContract(
     requires_warm_cache: contract.requires_warm_cache || context.failure_code === "model_dependency_unavailable",
     blocking_reason: blockingReason,
     remediation,
+    repair_context: {
+      failure_code: context.failure_code,
+      repair_target: context.repair_target
+    },
     requirements
   };
+}
+
+export function isReusableBootstrapContractCompatibleWithDependencyRepair(
+  contract: ImplementBootstrapContract,
+  context: ImplementDependencyRepairContext | undefined
+): boolean {
+  if (!context || (!context.failure_code && !context.repair_target)) {
+    return true;
+  }
+  if (!contract.repair_context) {
+    return false;
+  }
+  return (
+    (!context.failure_code || contract.repair_context.failure_code === context.failure_code) &&
+    (!context.repair_target || contract.repair_context.repair_target === context.repair_target)
+  );
 }
 
 function parseImplementBootstrapRequirement(value: unknown): ImplementBootstrapRequirement | undefined {

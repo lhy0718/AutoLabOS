@@ -22,6 +22,7 @@ import {
   buildLocalChunkSubdivisionPlanForChunk,
   extractWorkspacePathsFromCommand,
   evaluateImplementBootstrapContract,
+  isReusableBootstrapContractCompatibleWithDependencyRepair,
   parseImplementBootstrapContractFromText,
   getImplementLlmTimeoutMs,
   getImplementLlmProgressStallTimeoutMs,
@@ -22421,6 +22422,10 @@ describe("ImplementSessionManager", () => {
       requires_warm_cache: false,
       blocking_reason: "",
       remediation: "Remote assets may need to be fetched.",
+      repair_context: {
+        failure_code: "data_dependency_unavailable",
+        repair_target: "implementation"
+      },
       requirements: [
         {
           id: "hf_model_tiny",
@@ -22451,8 +22456,53 @@ describe("ImplementSessionManager", () => {
 
     expect(contract?.summary).toContain("Recovered bootstrap contract after transcript noise");
     expect(contract?.requires_network).toBe(true);
+    expect(contract?.repair_context).toEqual({
+      failure_code: "data_dependency_unavailable",
+      repair_target: "implementation"
+    });
     expect(contract?.requirements).toHaveLength(1);
     expect(contract?.checks).toHaveLength(1);
+  });
+
+  it("invalidates cached bootstrap contracts from a different dependency repair class", () => {
+    const cachedContract = {
+      version: 1,
+      summary: "Cached model dependency bootstrap.",
+      repair_context: {
+        failure_code: "model_dependency_unavailable",
+        repair_target: "environment_dependency"
+      },
+      requirements: [],
+      checks: []
+    };
+    const currentContext = {
+      failure_code: "data_dependency_unavailable",
+      repair_target: "implementation",
+      retry_directives: ["Preserve the approved task-specific data contract."]
+    };
+
+    expect(
+      isReusableBootstrapContractCompatibleWithDependencyRepair(cachedContract, currentContext)
+    ).toBe(false);
+    expect(
+      isReusableBootstrapContractCompatibleWithDependencyRepair(
+        {
+          ...cachedContract,
+          repair_context: {
+            failure_code: "data_dependency_unavailable",
+            repair_target: "implementation"
+          }
+        },
+        currentContext
+      )
+    ).toBe(true);
+    expect(
+      isReusableBootstrapContractCompatibleWithDependencyRepair(
+        { ...cachedContract, repair_context: undefined },
+        currentContext
+      )
+    ).toBe(false);
+    expect(isReusableBootstrapContractCompatibleWithDependencyRepair(cachedContract, undefined)).toBe(true);
   });
 
   it("verifies python_module_available checks before accepting package-missing bootstrap blockers", async () => {
