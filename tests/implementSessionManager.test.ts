@@ -47841,6 +47841,61 @@ describe("ImplementSessionManager", () => {
     expect(existsSync(path.join(workspace, "out", "partial_metrics.json"))).toBe(true);
   });
 
+  it("adds progress aliases directly to generated entrypoint path objects", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-path-object-aliases-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from argparse import Namespace",
+        "from pathlib import Path",
+        "",
+        "class _AutoLabOSEntrypointPaths:",
+        "    def __init__(self, public_dir=None, run_artifact_dir=None, metrics_path=None):",
+        "        self.public_dir = Path(public_dir or globals().get('PUBLIC_DIR', '.'))",
+        "        self.run_artifact_dir = Path(run_artifact_dir or globals().get('RUN_ARTIFACT_DIR', self.public_dir))",
+        "        self.metrics_path = Path(metrics_path or globals().get('DEFAULT_METRICS_PATH', self.run_artifact_dir / 'metrics.json'))",
+        "        self.results_dir = self.public_dir / 'results'",
+        "    def ensure(self):",
+        "        self.run_artifact_dir.mkdir(parents=True, exist_ok=True)",
+        "        return self",
+        "",
+        "def _autolabos_entrypoint_paths(config, args=None, output_dir=None, metrics_path=None):",
+        "    return _AutoLabOSEntrypointPaths(output_dir, output_dir, metrics_path).ensure()",
+        "",
+        "def _autolabos_entrypoint_loaded_data(config): return {'ready': True}",
+        "",
+        "def _autolabos_entrypoint_run(argv=None):",
+        "    args = Namespace()",
+        "    config = args",
+        "    output_dir = 'out'",
+        "    metrics_path = 'out/metrics.json'",
+        "    runtime_paths = _autolabos_entrypoint_paths(config, args, output_dir=output_dir, metrics_path=metrics_path)",
+        "    # _autolabos_entrypoint_loader_runtime_path_defaults_surface",
+        "    loaded_data = _autolabos_entrypoint_loaded_data(config)",
+        "    assert loaded_data",
+        "    return runtime_paths",
+        "",
+        "def main():",
+        "    paths = _autolabos_entrypoint_run()",
+        "    paths.progress_path.write_text('started', encoding='utf-8')",
+        "",
+        "if __name__ == '__main__': main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/progress_path/);
+    const repair = await repairPythonEntrypointLoaderRuntimePathDefaultsSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_entrypoint_path_object_progress_aliases_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(readFileSync(path.join(workspace, "out", "progress.jsonl"), "utf8")).toBe("started");
+  });
+
   it("fills heartbeat path aliases when generated runtime paths are frozen", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-frozen-runtime-path-aliases-"));
     tempDirs.push(workspace);

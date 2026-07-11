@@ -56992,6 +56992,22 @@ export async function repairPythonEntrypointLoaderRuntimePathDefaultsSurface(scr
     ].join("\n");
     nextSource = nextSource.split(pathAliasLoopNeedle).join(`${pathAliasLoopNeedle}\n${pathAliasFallbackBlock}`);
   }
+  const pathObjectMarker = "_autolabos_entrypoint_path_object_progress_aliases_surface";
+  const pathObjectNeedle = [
+    "        self.metrics_path = Path(metrics_path or globals().get('DEFAULT_METRICS_PATH', self.run_artifact_dir / 'metrics.json'))",
+    "        self.results_dir = self.public_dir / 'results'"
+  ].join("\n");
+  const pathObjectReplacement = [
+    "        self.metrics_path = Path(metrics_path or globals().get('DEFAULT_METRICS_PATH', self.run_artifact_dir / 'metrics.json'))",
+    `        # ${pathObjectMarker}`,
+    "        self.progress_path = Path(globals().get('PROGRESS_PATH', self.run_artifact_dir / 'progress.jsonl'))",
+    "        self.heartbeat_path = Path(globals().get('HEARTBEAT_PATH', self.run_artifact_dir / 'heartbeat.jsonl'))",
+    "        self.partial_metrics_path = Path(globals().get('PARTIAL_METRICS_PATH', self.run_artifact_dir / 'partial_metrics.json'))",
+    "        self.results_dir = self.public_dir / 'results'"
+  ].join("\n");
+  if (!nextSource.includes(pathObjectMarker)) {
+    nextSource = nextSource.split(pathObjectNeedle).join(pathObjectReplacement);
+  }
   if (nextSource === source || !nextSource.includes(repairMarker)) {
     return { repaired: false };
   }
