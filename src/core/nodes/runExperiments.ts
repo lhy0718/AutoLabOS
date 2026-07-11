@@ -127,6 +127,7 @@ import {
   repairPythonTerminalMetricsExistingConditionCountSurface,
   repairPythonTrainLossHelperAritySurface,
   repairPythonNestedTrainingTextExtractionSurface,
+  repairPythonTrainingTextExtractorLimitValueSurface,
   repairPythonRunCommandArgparseAliases,
   resolvePythonVerificationScriptPath
 } from "../agents/implementSessionManager.js";
@@ -303,6 +304,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               "before handoff.",
               "before run_experiments retry gate."
             ) || `Aliased semantic runtime arguments in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const trainingTextLimitValuePreRepair =
+          await repairPythonTrainingTextExtractorLimitValueSurface(preFailureMemoryScriptPath);
+        if (trainingTextLimitValuePreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            trainingTextLimitValuePreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Normalized training-text limit values in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
       }

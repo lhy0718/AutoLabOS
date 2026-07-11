@@ -11281,6 +11281,8 @@ export class ImplementSessionManager {
       await repairPythonNestedTrainingTextExtractionSurface(executionScriptPath);
     const trainingTextExtractorLimitArgumentRepair =
       await repairPythonTrainingTextExtractorLimitArgumentSurface(executionScriptPath);
+    const trainingTextExtractorLimitValueRepair =
+      await repairPythonTrainingTextExtractorLimitValueSurface(executionScriptPath);
     const dataCollatorTokenizerArgumentRepair =
       await repairPythonDataCollatorTokenizerArgumentSurface(executionScriptPath);
     const dataCollatorPrecomputedLabelReturnRepair =
@@ -11569,6 +11571,7 @@ export class ImplementSessionManager {
         formatTrainTextStringRepair,
         nestedTrainingTextExtractionRepair,
         trainingTextExtractorLimitArgumentRepair,
+        trainingTextExtractorLimitValueRepair,
         dataCollatorTokenizerArgumentRepair,
         dataCollatorPrecomputedLabelReturnRepair,
         dataclassEvaluationRecordCoercionRepair,
@@ -27456,6 +27459,93 @@ export async function repairPythonTrainingTextExtractorLimitArgumentSurface(
   return {
     repaired: true,
     message: `Passed a bounded training-text limit into generated extractors in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonTrainingTextExtractorLimitValueSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_training_text_extractor_limit_value_surface";
+  if (source.includes(marker)) {
+    return { repaired: false };
+  }
+  const supportedFunctionNames = [
+    "_extract_train_texts",
+    "_extract_training_texts",
+    "extract_training_texts",
+    "_training_texts_from_bundle",
+    "training_texts_from_bundle",
+    "_bundle_training_texts",
+    "bundle_training_texts",
+    "_training_texts",
+    "training_texts"
+  ];
+  const targetFunctionName = supportedFunctionNames.find((name) =>
+    new RegExp(
+      `def\\s+${escapeRegex(name)}\\s*\\([^\\n)]*?,\\s*limit(?:\\s*:[^=,)]+)?(?:\\s*=\\s*[^,)]+)?\\)`,
+      "u"
+    ).test(source)
+  );
+  if (!targetFunctionName) {
+    return { repaired: false };
+  }
+
+  const callPattern = new RegExp(
+    `^([ \\t]*)(?!def\\b)([^\\n]*?\\b${escapeRegex(targetFunctionName)}\\()([^(),\\n]+),\\s*([^(),\\n]+)(\\)[^\\n]*)$`,
+    "gmu"
+  );
+  let repairedAny = false;
+  let nextSource = source.replace(
+    callPattern,
+    (full: string, indent: string, prefix: string, bundleArg: string, limitArg: string, suffix: string) => {
+      const normalizedLimitArg = String(limitArg || "").trim();
+      if (!normalizedLimitArg || normalizedLimitArg.includes("_autolabos_training_text_limit_value")) {
+        return full;
+      }
+      repairedAny = true;
+      return `${indent}${prefix}${String(bundleArg).trim()}, _autolabos_training_text_limit_value(${normalizedLimitArg})${suffix}`;
+    }
+  );
+  if (!repairedAny || nextSource === source) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    `# ${marker}`,
+    "def _autolabos_training_text_limit_value(value):",
+    "    keys = ('train_examples_per_seed', 'max_train_samples', 'max_train_examples', 'limit')",
+    "    if isinstance(value, dict):",
+    "        value = next((value.get(key) for key in keys if value.get(key) is not None), None)",
+    "    elif value is not None and not isinstance(value, (str, int, float)):",
+    "        value = next((getattr(value, key, None) for key in keys if getattr(value, key, None) is not None), None)",
+    "    try:",
+    "        return max(1, int(value))",
+    "    except (TypeError, ValueError):",
+    "        return max(1, int(globals().get('MAX_TRAIN_EXAMPLES', 1024)))",
+    "",
+    ""
+  ].join("\n");
+  const definitionPattern = new RegExp(`^(\\s*)def\\s+${escapeRegex(targetFunctionName)}\\s*\\(`, "mu");
+  nextSource = nextSource.replace(definitionPattern, `${helper}$&`);
+  if (!nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Normalized generated training-text limit values in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

@@ -196,6 +196,7 @@ import {
   repairPythonFormatTrainTextStringSurface,
   repairPythonNestedTrainingTextExtractionSurface,
   repairPythonTrainingTextExtractorLimitArgumentSurface,
+  repairPythonTrainingTextExtractorLimitValueSurface,
   repairPythonAllowPartialLabeledEvalSubsetSurface,
   repairPythonPromptChoicesLabelSequenceSurface,
   repairPythonMultipleChoiceListRawVariableSurface,
@@ -48647,6 +48648,40 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_training_text_extractor_limit_argument_surface");
     expect(repairedSource).toContain("_extract_training_texts(train_bundle, max(1, int(");
     execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("normalizes mapping-valued training text limits", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-training-text-limit-value-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def _training_texts(train_bundle, limit=None):",
+        "    texts = []",
+        "    for value in train_bundle:",
+        "        if limit and len(texts) >= int(limit):",
+        "            break",
+        "        texts.append(str(value))",
+        "    return texts",
+        "",
+        "def execute_training(train_bundle, budget):",
+        "    return _training_texts(train_bundle, budget)",
+        "",
+        "if __name__ == '__main__':",
+        "    result = execute_training(['first', 'second', 'third'], {'train_examples_per_seed': 2})",
+        "    assert result == ['first', 'second'], result",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/int\(\)/);
+    const repair = await repairPythonTrainingTextExtractorLimitValueSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_training_text_extractor_limit_value_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonTrainingTextExtractorLimitValueSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("passes a bounded limit into generated train-text shorthand extractors", async () => {
