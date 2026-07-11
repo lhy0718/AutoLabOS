@@ -64,6 +64,7 @@
     "p6:continue": "python3 scripts/p6-approve-and-run-next.py",
     "validate:harness": "tsx src/cli/validateHarness.ts",
     "validate:research-governance": "node scripts/validate-research-governance-e2e.mjs",
+    "validate:plugin-bridge": "node scripts/validate-plugin-bridge-e2e.mjs",
     "plugin:contract": "node plugins/autolabos-research-governor/scripts/print-contract.mjs",
     "plugin:doctor": "node plugins/autolabos-research-governor/scripts/plugin-doctor.mjs",
     "plugin:discovery-check": "node plugins/autolabos-research-governor/scripts/plugin-discovery-check.mjs",
