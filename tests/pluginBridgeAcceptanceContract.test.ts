@@ -16,10 +16,10 @@ describe("plugin bridge acceptance contract", () => {
     expect(packageJson.scripts?.["validate:plugin-bridge:local"]).toBe(
       "node scripts/validate-plugin-bridge-e2e.mjs --installed"
     );
-    expect(workflow).toContain("npm run validate:plugin-bridge");
-    expect(workflow).not.toContain("npm run validate:plugin-bridge:local");
-    expect(workflow.indexOf("npm run build")).toBeLessThan(workflow.indexOf("npm run validate:plugin-bridge"));
-    expect(workflow.indexOf("npm run validate:plugin-bridge")).toBeLessThan(
+    expect(workflow).toContain("npm run validate:plugin-operations");
+    expect(workflow).not.toContain("npm run validate:plugin-operations:local");
+    expect(workflow.indexOf("npm run build")).toBeLessThan(workflow.indexOf("npm run validate:plugin-operations"));
+    expect(workflow.indexOf("npm run validate:plugin-operations")).toBeLessThan(
       workflow.indexOf("npm run plugin:sync-cache -- --write")
     );
   });

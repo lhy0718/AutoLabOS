@@ -56,6 +56,8 @@ describe("AutoLabOS Codex plugin contract", () => {
       expect.arrayContaining([
         "plugin_readme_documents_first_run",
         "plugin_readme_documents_all_command_intents",
+        "ci_workflow_runs_operations_preflight",
+        "operations_preflight_blocks_partial_promotion",
         "plugin_discovery_checks_local_codex_and_strict_cache",
         "plugin_doctor_reports_cache_alignment",
         "plugin_doctor_supports_strict_mode",

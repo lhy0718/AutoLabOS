@@ -88,12 +88,16 @@ npm run plugin:doctor -- --strict
 npm run plugin:discovery-check
 npm run validate:plugin-bridge
 npm run validate:plugin-bridge:local
+npm run validate:plugin-faults
+npm run validate:plugin-hermetic
+npm run validate:plugin-operations
+npm run validate:plugin-operations:local
 npm run plugin:sync-cache
 npm run plugin:release-check
 npm run plugin:research -- --check
 ```
 
-Use `npm run plugin:doctor -- --strict` for CI or release checks that should fail on installed cache drift. Use `npm run plugin:discovery-check` on a Codex-enabled workstation to verify local discovery, enablement, manifest version, repository source, cache, and skill alignment. Use `npm run validate:plugin-bridge` for the deterministic CI-safe bridge acceptance and `npm run validate:plugin-bridge:local` to execute the same governed chain through the installed Codex plugin cache. Use `npm run plugin:sync-cache -- --write` only when intentionally refreshing the local Codex installation, then run `npm run plugin:release-check`. The plugin-specific onboarding note is `plugins/autolabos-research-governor/README.md`.
+Use `npm run plugin:doctor -- --strict` for CI or release checks that should fail on installed cache drift. Use `npm run plugin:discovery-check` on a Codex-enabled workstation to verify local discovery, enablement, manifest version, repository source, cache, and skill alignment. Use `npm run validate:plugin-bridge` for the deterministic CI-safe bridge acceptance and `npm run validate:plugin-bridge:local` to execute the same governed chain through the installed Codex plugin cache. Use `npm run validate:plugin-faults` for deterministic blocking-path coverage, `npm run validate:plugin-hermetic` for an isolated cache lifecycle, `npm run validate:plugin-operations` for the CI aggregate, and `npm run validate:plugin-operations:local` for the workstation aggregate. Use `npm run plugin:sync-cache -- --write` only when intentionally refreshing the local Codex installation, then run `npm run plugin:release-check`. The plugin-specific onboarding note is `plugins/autolabos-research-governor/README.md`.
 
 See `docs/codex-plugin-governance.md` for the plugin architecture and adapter strategy.
 
