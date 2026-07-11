@@ -200,6 +200,7 @@ import {
   repairPythonPromptChoicesLabelSequenceSurface,
   repairPythonMultipleChoiceListRawVariableSurface,
   repairPythonDataclassEvaluationRecordCoercionSurface,
+  repairPythonDataclassesFieldImportSurface,
   repairPythonNormalizedEvalExampleRecordSurface,
   repairPythonDataclassTrainingExampleCoercionSurface,
   repairPythonTrainingTargetAliasSurface,
@@ -22573,6 +22574,33 @@ describe("ImplementSessionManager", () => {
         taskSpec("plan-b", false)
       )
     ).toBe(true);
+  });
+
+  it("imports dataclasses.field before generated dataclass definitions execute", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "autolabos-dataclass-field-import-"));
+    tempDirs.push(root);
+    const scriptPath = path.join(root, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, Dict",
+        "",
+        "@dataclass",
+        "class ExperimentConfig:",
+        "    metadata: Dict[str, Any] = field(default_factory=dict)",
+        "",
+        "CONFIG = ExperimentConfig()"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonDataclassesFieldImportSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("from dataclasses import field");
+    expect(() => execFileSync("python3", [scriptPath], { cwd: root })).not.toThrow();
+    expect((await repairPythonDataclassesFieldImportSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("verifies python_module_available checks before accepting package-missing bootstrap blockers", async () => {

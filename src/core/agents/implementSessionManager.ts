@@ -1581,6 +1581,31 @@ export class ImplementSessionManager {
           }
         );
       }
+      const earlyDataclassesFieldImportRepair = await repairPythonDataclassesFieldImportSurface(
+        prepared.scriptPath
+      );
+      if (earlyDataclassesFieldImportRepair.repaired) {
+        prepared.changedFiles = dedupeStrings([
+          ...prepared.changedFiles,
+          ...(prepared.scriptPath ? [prepared.scriptPath] : [])
+        ]);
+        prepared.publicArtifacts = dedupeStrings([
+          ...prepared.publicArtifacts,
+          ...(prepared.scriptPath && isSubpath(prepared.scriptPath, prepared.publicDir) ? [prepared.scriptPath] : [])
+        ]);
+        emitImplementObservation(
+          "verify",
+          earlyDataclassesFieldImportRepair.message ||
+            "Imported dataclasses.field before executing generated dataclass definitions.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: prepared.publicDir,
+            scriptPath: prepared.scriptPath,
+            runCommand: prepared.runCommand
+          }
+        );
+      }
       const earlyDataclassLambdaDefaultFactoryRepair = await repairPythonDataclassLambdaDefaultFactorySurface(
         prepared.scriptPath
       );
@@ -13036,6 +13061,28 @@ function ensurePythonDataclassesFieldImport(source: string): string {
     return source;
   }
   return insertPythonTopLevelHelperAfterImports(source, "from dataclasses import field\n");
+}
+
+export async function repairPythonDataclassesFieldImportSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath).toLowerCase() !== ".py") {
+    return { repaired: false };
+  }
+  const source = await safeRead(scriptPath);
+  if (!source.trim()) {
+    return { repaired: false };
+  }
+  const nextSource = ensurePythonDataclassesFieldImport(source);
+  if (nextSource === source || !(await pythonSourceParsesForRepair(nextSource, scriptPath))) {
+    return { repaired: false };
+  }
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Imported dataclasses.field for generated dataclass defaults in ${path.basename(scriptPath)} before handoff.`
+  };
 }
 
 function ensurePythonTypingImports(source: string, names: string[]): string {
