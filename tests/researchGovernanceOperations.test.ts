@@ -109,6 +109,43 @@ describe("research governance operations", () => {
     expect(JSON.stringify(packResult)).not.toContain(workspace);
   });
 
+  it("excludes JSON-quoted private paths from paper-readiness bundles", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-portability-"));
+    const external = path.join(workspace, "external-artifacts");
+    tempDirs.push(workspace);
+    await mkdir(external, { recursive: true });
+
+    const gateResult = await runResearchAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/governance/audit"
+    });
+    const reviewResult = await runResearchReview({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      outDir: "outputs/governance/review"
+    });
+    await writeJson(path.join(workspace, "outputs", "governance", "audit", "audit-summary.json"), {
+      source: path.posix.join(path.sep, "home", "example", "private-artifact.json")
+    });
+
+    const packResult = await runResearchPack({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      reviewPath: reviewResult.output_path,
+      sourceDir: "outputs/governance/audit",
+      outDir: "outputs/governance/pack"
+    });
+
+    expect(packResult.artifact.portability.valid).toBe(false);
+    expect(packResult.artifact.portability.issues).toContainEqual(
+      expect.stringContaining("audit-summary.json")
+    );
+    expect(packResult.artifact.files.map((item) => item.path)).not.toContain(
+      "artifacts/audit-summary.json"
+    );
+  });
+
   it("advances a structurally complete external bundle only to its supported claim ceiling", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-complete-"));
     const external = path.join(workspace, "external-artifacts");

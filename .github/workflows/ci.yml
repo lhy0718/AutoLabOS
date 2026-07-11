@@ -35,6 +35,9 @@ jobs:
       - name: Validate plugin bridge process E2E
         run: npm run validate:plugin-bridge
 
+      - name: Validate plugin fault matrix
+        run: npm run validate:plugin-faults
+
       - name: Sync repo-local plugin cache
         run: npm run plugin:sync-cache -- --write
 

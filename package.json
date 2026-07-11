@@ -66,6 +66,7 @@
     "validate:research-governance": "node scripts/validate-research-governance-e2e.mjs",
     "validate:plugin-bridge": "node scripts/validate-plugin-bridge-e2e.mjs",
     "validate:plugin-bridge:local": "node scripts/validate-plugin-bridge-e2e.mjs --installed",
+    "validate:plugin-faults": "node scripts/validate-plugin-fault-matrix.mjs",
     "plugin:contract": "node plugins/autolabos-research-governor/scripts/print-contract.mjs",
     "plugin:doctor": "node plugins/autolabos-research-governor/scripts/plugin-doctor.mjs",
     "plugin:discovery-check": "node plugins/autolabos-research-governor/scripts/plugin-discovery-check.mjs",

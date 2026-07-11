@@ -20,15 +20,26 @@ No acceptance class substitutes for another. A deterministic CI pass does not pr
 | Repo bridge delegation | Nine-process deterministic bridge acceptance | Keep Codex-independent and required in CI | Passing |
 | Installed bridge delegation | Discovery, bridge hash, dependency check, nine-process chain | Keep workstation-only and versioned | Passing |
 | Machine-readable report retention | Optional atomic JSON reports for direct, fixture, and installed surfaces | Preserve portable metadata and reject private paths | Passing |
-| Missing CLI | Unit-level blocking `GateReport` | Fault matrix entry with repair target | Partial |
-| CLI contract mismatch | Unit-level blocking `GateReport` | Fault matrix entry with distinct artifact identity | Partial |
-| Missing cache | Strict doctor test | Fault matrix entry with deterministic repair target | Partial |
-| Stale cache version | Doctor verdict logic | Fault matrix entry proving stale-version rejection | Partial |
-| Bridge drift | Comparable-file hashing | Fault matrix entry proving bridge-specific rejection | Partial |
+| Missing CLI | Blocking fault-matrix `GateReport` with repair target | Preserve deterministic dependency rejection | Passing |
+| CLI contract mismatch | Distinct blocking fault-matrix artifact identity | Preserve incompatible-contract rejection | Passing |
+| Missing cache | Strict doctor fault-matrix rejection | Preserve `not_installed` verdict and repair target | Passing |
+| Stale cache version | Strict fault-matrix version rejection | Preserve `cache_update_required` verdict | Passing |
+| Bridge drift | Cached bridge hash mutation and strict rejection | Preserve bridge-specific drift evidence | Passing |
 | Schema mismatch | Direct and bridge acceptance | Preserve concise blocking output | Passing |
-| Non-portable bundle content | Pack-time exclusion logic | Fault matrix entry proving exclusion and downgraded portability | Partial |
+| Non-portable bundle content | Quoted-path fault injection, exclusion, and portability downgrade | Preserve exclusion and `portable=false` | Passing |
 | Hermetic cache lifecycle | Isolated sync and doctor unit tests | Integrated sync, strict doctor, bridge dependency, and cleanup | Gap |
 | Aggregate operating verdict | Independent commands | One bounded summary that cannot hide a failed required gate | Gap |
+
+## Fault-Injection Matrix
+
+Run the seven-case matrix after a current build:
+
+```sh
+npm run validate:plugin-faults
+npm run validate:plugin-faults -- --report <path>
+```
+
+The matrix passes only when each injected fault is blocked or excluded as specified. Every case records an expected behavior, observed verdict, and repair target. A successfully injected but unblocked fault fails the matrix.
 
 ## Report Retention
 
@@ -56,7 +67,7 @@ Reports are written through a same-directory temporary file and atomic rename. S
 | Milestone | Exit condition | State |
 | --- | --- | --- |
 | Report retention | Direct and bridge runners support validated optional report output | Closed |
-| Fault matrix | Seven named failure classes produce deterministic blocking evidence | Open |
+| Fault matrix | Seven named failure classes produce deterministic blocking evidence | Closed |
 | Hermetic cache | Isolated cache lifecycle passes without workstation cache reuse | Open |
 | Operations preflight | Required gates aggregate into one machine-readable verdict | Open |
 | Contract synchronization | CI, dogfood, release, docs, and skill agree on the gates | Open |

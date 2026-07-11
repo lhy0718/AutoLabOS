@@ -50,7 +50,7 @@ const PACK_ALLOWLIST = [
 ] as const;
 
 const PRIVATE_PATH_PATTERN = new RegExp(
-  `(?:^|\\s)(?:${[
+  `(?:^|[\\s\"'=:])(?:${[
     String.fromCharCode(47, 104, 111, 109, 101, 47),
     String.fromCharCode(47, 85, 115, 101, 114, 115, 47),
     String.fromCharCode(47, 109, 110, 116, 47),
