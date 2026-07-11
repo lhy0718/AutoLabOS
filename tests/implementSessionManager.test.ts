@@ -57860,6 +57860,43 @@ describe("ImplementSessionManager", () => {
     });
   });
 
+  it("adds conventional one-condition callables to model execution stage dispatch", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-model-execution-direct-runner-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def _callable_named(names):",
+        "    for name in names:",
+        "        value = globals().get(name)",
+        "        if callable(value):",
+        "            return value",
+        "    return None",
+        "",
+        "def execute_one_condition(run_spec):",
+        "    return {'marker': run_spec['marker']}",
+        "",
+        "def execute_model_execution_stage():",
+        "    one_run_fn = _callable_named((\"execute_one_condition_run\", \"run_one_condition_seed\", \"train_one_condition_seed\", \"execute_single_condition\"))",
+        "    if one_run_fn is None:",
+        "        raise RuntimeError('No single-condition execution helper is available')",
+        "    return one_run_fn({'marker': 'baseline_condition'})",
+        "",
+        "if __name__ == '__main__':",
+        "    assert execute_model_execution_stage()['marker'] == 'baseline_condition'",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/No single-condition/);
+    const repair = await repairPythonModelExecutionSingleConditionRunnerAliasSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_model_execution_single_condition_runner_alias_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("bridges generated raw condition-row writer invocation arguments", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-raw-condition-writer-bridge-"));
     tempDirs.push(workspace);

@@ -116,6 +116,7 @@ import {
   repairPythonFinalCliManagedEntrypointPreferenceSurface,
   repairPythonDependencyWildcardImportSurface,
   repairPythonEntrypointSingleRunnerCandidateSurface,
+  repairPythonModelExecutionSingleConditionRunnerAliasSurface,
   repairPythonOutputDirArgparseAlias,
   repairPythonParameterSummaryRecordSurface,
   repairPythonMetricsPayloadProjectionSurface,
@@ -351,6 +352,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               "before handoff.",
               "before run_experiments retry gate."
             ) || `Added conventional one-condition runner candidates in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const modelExecutionSingleRunnerPreRepair =
+          await repairPythonModelExecutionSingleConditionRunnerAliasSurface(preFailureMemoryScriptPath);
+        if (modelExecutionSingleRunnerPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            modelExecutionSingleRunnerPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Added one-condition callables to model execution dispatch in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
       }

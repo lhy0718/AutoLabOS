@@ -29903,12 +29903,46 @@ export async function repairPythonModelExecutionSingleConditionRunnerAliasSurfac
   }
 
   const marker = "_autolabos_model_execution_single_condition_runner_alias_surface";
+  const hasDirectCandidateLookup =
+    source.includes("one_run_fn") &&
+    source.includes("_callable_named");
   if (
     source.includes(marker) ||
     !source.includes("def execute_model_execution_stage") ||
-    !source.includes("execute_single_condition_run")
+    (!source.includes("execute_single_condition_run") && !hasDirectCandidateLookup)
   ) {
     return { repaired: false };
+  }
+
+  const directCandidateNames = [
+    "execute_one_condition",
+    "run_one_condition",
+    "execute_one_run",
+    "run_one_run"
+  ];
+  let repairedDirectCandidates = false;
+  const directCandidateSource = source.replace(
+    /^(\s*)one_run_fn\s*=\s*_callable_named\(\(([^\n]*)\)\)\s*$/gmu,
+    (full: string, indent: string, existingNames: string) => {
+      const missing = directCandidateNames.filter(
+        (name) => !new RegExp(`["']${escapeRegExpLiteral(name)}["']`, "u").test(existingNames)
+      );
+      if (missing.length === 0) {
+        return full;
+      }
+      repairedDirectCandidates = true;
+      return [
+        `${indent}# ${marker}`,
+        `${indent}one_run_fn = _callable_named((${missing.map((name) => `"${name}"`).join(", ")}, ${existingNames}))`
+      ].join("\n");
+    }
+  );
+  if (repairedDirectCandidates && directCandidateSource !== source && directCandidateSource.includes(marker)) {
+    await fs.writeFile(scriptPath, directCandidateSource, "utf8");
+    return {
+      repaired: true,
+      message: `Added generated one-condition callables to model-execution stage dispatch in ${path.basename(scriptPath)} before handoff.`
+    };
   }
 
   const searchedNames = [
