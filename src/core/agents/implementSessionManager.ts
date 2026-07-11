@@ -59392,6 +59392,8 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   const runRecordAppendCleanupMarker = "_autolabos_model_execution_run_record_live_handle_cleanup";
   const modelExecutionPublicRecordAliasMarker = "_autolabos_model_execution_public_record_alias_surface";
   const stateRecordPublicEvidenceMarker = "_autolabos_state_record_public_evidence_surface";
+  const nestedRuntimeHandleCleanupMarker = "_autolabos_entrypoint_nested_runtime_handle_cleanup_surface";
+  const modelExecutionStateReleaseMarker = "_autolabos_model_execution_state_release_surface";
   const trainingRecordArtifactAliasMarker = "_autolabos_model_execution_training_record_artifact_alias_surface";
   const hasRuntimeCleanupHelper = source.includes(repairMarker);
   const hasEvaluationWrapperCleanup = source.includes(evaluationWrapperMarker);
@@ -59402,6 +59404,8 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   const hasRunRecordAppendCleanup = source.includes(runRecordAppendCleanupMarker);
   const hasModelExecutionPublicRecordAlias = source.includes(modelExecutionPublicRecordAliasMarker);
   const hasStateRecordPublicEvidence = source.includes(stateRecordPublicEvidenceMarker);
+  const hasNestedRuntimeHandleCleanup = source.includes(nestedRuntimeHandleCleanupMarker);
+  const hasModelExecutionStateRelease = source.includes(modelExecutionStateReleaseMarker);
   const hasTrainingRecordArtifactAlias = source.includes(trainingRecordArtifactAliasMarker);
   const evaluationLinePattern = /^(\s*)evaluation_metric_rows\.extend\(_autolabos_entrypoint_evaluation_metric_rows\(row, eval_tasks, config, condition=condition_arg, paths=runtime_paths\)\)\s*$/gmu;
   const wrapperCallPattern = /^(\s*)evidence_rows\s*=\s*_autolabos_entrypoint_call_compatible\(evaluator,[^\n]*condition_row[^\n]*\)\s*$/gmu;
@@ -59413,6 +59417,7 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   const runRecordDictAppendPattern = /^(\s*)run_records\.append\(dict\(rec\)\)\s*$/gmu;
   const modelExecutionPublicRecordAliasPattern = /^([ \t]*)rec[ \t]*=[ \t]*_state_record\(state\)[ \t]*\r?\n(?=\1_maybe_call\([^\n]*\brecord=_autolabos_public_rec\b)/gmu;
   const stateRecordCallPattern = /(?<!def )\b_state_record\((state|s)\)/gu;
+  const modelExecutionStateReleasePattern = /^([ \t]*)_maybe_call\(heartbeat_fn,[^\n]*event=["']condition_seed_finish["'][^\n]*record=_autolabos_public_rec[^\n]*\)[ \t]*$/gmu;
   const trainingReturnArtifactPathPattern = /^(\s*)"adapter_path"\s*:\s*str\(([^)\n]*adapter_dir[^)\n]*)\)\s*,\s*$/gmu;
   const trainingReturnLiveHandlePattern = /^(\s*)"task_metrics"\s*:\s*\{\}\s*,\n\1"model"\s*:\s*model\s*,\n\1"tokenizer"\s*:\s*tokenizer\s*,?\s*$/gmu;
   const hasPendingRuntimeCleanupRepair =
@@ -59426,6 +59431,8 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
     (!hasRunRecordAppendCleanup && runRecordDictAppendPattern.test(source)) ||
     (!hasModelExecutionPublicRecordAlias && modelExecutionPublicRecordAliasPattern.test(source)) ||
     stateRecordCallPattern.test(source) ||
+    (!hasNestedRuntimeHandleCleanup && source.includes("    for target in targets:")) ||
+    (!hasModelExecutionStateRelease && modelExecutionStateReleasePattern.test(source)) ||
     (!hasTrainingRecordArtifactAlias && trainingReturnArtifactPathPattern.test(source)) ||
     trainingReturnLiveHandlePattern.test(source) ||
     /_autolabos_entrypoint_jsonable\(condition_row\)/u.test(source);
@@ -59439,6 +59446,7 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
   runRecordDictAppendPattern.lastIndex = 0;
   modelExecutionPublicRecordAliasPattern.lastIndex = 0;
   stateRecordCallPattern.lastIndex = 0;
+  modelExecutionStateReleasePattern.lastIndex = 0;
   trainingReturnArtifactPathPattern.lastIndex = 0;
   trainingReturnLiveHandlePattern.lastIndex = 0;
   if (hasRuntimeCleanupHelper && hasEvaluationWrapperCleanup && hasPublicEvidenceSnapshot && hasCpuOffloadCleanup && hasConditionStateReturnCleanup && !hasPendingRuntimeCleanupRepair) {
@@ -59592,6 +59600,23 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
     const overrideInsertionIndex = overrideInsertionMatch?.index ?? nextSource.length;
     nextSource = `${nextSource.slice(0, overrideInsertionIndex)}${publicEvidenceOverride}${nextSource.slice(overrideInsertionIndex)}`;
   }
+  if (!hasNestedRuntimeHandleCleanup) {
+    nextSource = nextSource.replace(
+      /^    for target in targets:[ \t]*$/mu,
+      [
+        `    # ${nestedRuntimeHandleCleanupMarker}`,
+        "    for root in list(targets):",
+        "        for nested_key in ('runtime_handles', 'loaded_model_bundle', 'model_bundle'):",
+        "            try:",
+        "                nested = root.get(nested_key) if hasattr(root, 'get') else getattr(root, nested_key, None)",
+        "            except Exception:",
+        "                nested = None",
+        "            if nested is not None:",
+        "                targets.append(nested)",
+        "    for target in targets:"
+      ].join("\n")
+    );
+  }
   nextSource = nextSource.replace(evaluationLinePattern, (_match, indent: string) => [
     `${indent}try:`,
     `${indent}    evaluation_metric_rows.extend(_autolabos_entrypoint_evaluation_metric_rows(row, eval_tasks, config, condition=condition_arg, paths=runtime_paths))`,
@@ -59625,6 +59650,12 @@ export async function repairPythonEntrypointConditionRuntimeCleanupSurface(scrip
       `${indent}rec = _state_record(state)`,
       `${indent}_autolabos_public_rec = _autolabos_entrypoint_condition_public_evidence(rec)  # ${modelExecutionPublicRecordAliasMarker}`
     ].join("\n") + "\n");
+  }
+  if (!hasModelExecutionStateRelease) {
+    nextSource = nextSource.replace(modelExecutionStateReleasePattern, (line: string, indent: string) => [
+      line,
+      `${indent}_autolabos_entrypoint_release_condition_runtime(state)  # ${modelExecutionStateReleaseMarker}`
+    ].join("\n"));
   }
   nextSource = nextSource.replace(
     stateRecordCallPattern,
@@ -60082,7 +60113,10 @@ export async function repairPythonEvaluationArtifactDirReloadSurface(scriptPath?
   }
 
   const repairMarker = "_autolabos_evaluation_artifact_dir_reload_surface";
-  const hasEvaluationHandleLoader = source.includes("def _load_eval_handles(") || source.includes("def _reload_eval_handles(");
+  const hasEvaluationHandleLoader =
+    source.includes("def _load_eval_handles(") ||
+    source.includes("def _reload_eval_handles(") ||
+    source.includes("def _restore_eval_handles(");
   const hasSupportedModelReload =
     source.includes("PeftModel.from_pretrained") || source.includes("AutoModelForCausalLM.from_pretrained");
   const artifactLookupPattern =
@@ -60146,7 +60180,7 @@ export async function repairPythonEvaluationArtifactDirReloadSurface(scriptPath?
     "def _autolabos_reload_model_from_adapter_or_full_model(state, runtime, artifact_dir, AutoModelForCausalLM, **kwargs):",
     "    resolved_adapter = _autolabos_valid_adapter_artifact_dir(artifact_dir)",
     "    model_source = resolved_adapter if resolved_adapter is not None else artifact_dir",
-    "    base_model_id = _autolabos_state_get_nested(state, 'base_model_id') or _autolabos_state_get_nested(state, 'model_id') or getattr(runtime, 'model_id', None)",
+    "    base_model_id = _autolabos_state_get_nested(state, 'base_model_id') or _autolabos_state_get_nested(state, 'base_model') or _autolabos_state_get_nested(state, 'model_id') or getattr(runtime, 'model_id', None)",
     "    if resolved_adapter is not None and base_model_id:",
     "        base_model = AutoModelForCausalLM.from_pretrained(str(base_model_id), **kwargs)",
     "        peft_model_cls = globals().get('PeftModel')",
@@ -60165,6 +60199,7 @@ export async function repairPythonEvaluationArtifactDirReloadSurface(scriptPath?
     "",
     "def _autolabos_resolve_trained_adapter_dir(state):",
     "    candidates = (",
+    "        _autolabos_state_get_nested(state, 'artifact_paths', 'adapter_dir'),",
     "        _autolabos_state_get_nested(state, 'adapter_dir'),",
     "        _autolabos_state_get_nested(state, 'train_metrics', 'adapter_dir'),",
     "        _autolabos_state_get_nested(state, 'training_result', 'adapter_dir'),",
@@ -60183,7 +60218,10 @@ export async function repairPythonEvaluationArtifactDirReloadSurface(scriptPath?
     ""
   ].join("\n");
 
-  const insertionMatch = source.match(/\ndef\s+_load_eval_handles\s*\(/u) || source.match(/\ndef\s+_reload_eval_handles\s*\(/u);
+  const insertionMatch =
+    source.match(/\ndef\s+_load_eval_handles\s*\(/u) ||
+    source.match(/\ndef\s+_reload_eval_handles\s*\(/u) ||
+    source.match(/\ndef\s+_restore_eval_handles\s*\(/u);
   if (!insertionMatch || insertionMatch.index === undefined) {
     return { repaired: false };
   }

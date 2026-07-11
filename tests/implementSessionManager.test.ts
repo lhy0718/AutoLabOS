@@ -45837,6 +45837,55 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("releases nested runtime handles after each model execution state", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-nested-runtime-release-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "class Handle:",
+        "    def __init__(self):",
+        "        self.moves = []",
+        "    def to(self, device):",
+        "        self.moves.append(device)",
+        "",
+        "def _state_record(state):",
+        "    return {'status': state['status']}",
+        "",
+        "def _maybe_call(fn, **kwargs):",
+        "    return fn(**kwargs) if fn else None",
+        "",
+        "def heartbeat_fn(**_kwargs):",
+        "    return None",
+        "",
+        "def execute_model_execution_stage():",
+        "    model = Handle()",
+        "    tokenizer = Handle()",
+        "    state = {'status': 'completed_training', 'runtime_handles': {'model': model, 'tokenizer': tokenizer}}",
+        "    rec = _state_record(state)",
+        "    _autolabos_public_rec = rec",
+        "    _maybe_call(heartbeat_fn, config={}, event='condition_seed_finish', index=0, record=_autolabos_public_rec)",
+        "    assert state['runtime_handles'] == {}",
+        "    assert model.moves == ['cpu']",
+        "    assert tokenizer.moves == ['cpu']",
+        "",
+        "if __name__ == '__main__':",
+        "    execute_model_execution_stage()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow();
+    const repair = await repairPythonEntrypointConditionRuntimeCleanupSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_entrypoint_nested_runtime_handle_cleanup_surface");
+    expect(repairedSource).toContain("_autolabos_model_execution_state_release_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
 
   it("normalizes generated save_pretrained dtype fields before serialization", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-save-pretrained-dtype-"));
@@ -63505,7 +63554,7 @@ describe("ImplementSessionManager", () => {
         "            raise RuntimeError(f'missing adapter_config.json at {artifact_path}')",
         "        return {'loaded_from': str(artifact_path)}",
         "",
-        "def _load_eval_handles(state, runtime):",
+        "def _restore_eval_handles(state, runtime):",
         "    model = state.get('model')",
         "    tokenizer = state.get('tokenizer')",
         "    device = 'cpu'",
@@ -63522,8 +63571,8 @@ describe("ImplementSessionManager", () => {
         "    adapter = root / 'adapter'",
         "    adapter.mkdir(parents=True, exist_ok=True)",
         "    (adapter / 'adapter_config.json').write_text('{}', encoding='utf-8')",
-        "    state = {'artifact_dir': str(root)}",
-        "    model, _tokenizer, _device = _load_eval_handles(state, {})",
+        "    state = {'artifact_dir': str(root / 'missing'), 'artifact_paths': {'adapter_dir': str(adapter)}}",
+        "    model, _tokenizer, _device = _restore_eval_handles(state, {})",
         "    assert model['loaded_from'].endswith('adapter')",
         "",
         "if __name__ == '__main__':",
