@@ -22472,15 +22472,15 @@ describe("ImplementSessionManager", () => {
         "retry_context:",
         '  transition_action: "backtrack_to_design"',
         "selected_design:",
-        '  summary: "Four parameter cells x seven paired seeds form the confirmation design."',
+        '  summary: "Four trained parameter conditions x 7 completed seeds form the confirmation design."',
         "  implementation_notes:",
-        '    - "Use seeds [42, 43, 44, 45, 46, 47, 48] for paired runs."',
+        '    - "The seed schedule must be exactly [42, 43, 44, 45, 46, 47, 48]."',
         "  evaluation_steps:",
         '    - "Evaluate parameter_x {4, 8, 16, 32} across all seeds with parameter_y=0.0."',
         '    - "Evaluation: Benchmark Task Alpha full approved split with raw total fixed at n=1,172 examples per run."',
         '    - "Evaluation: Benchmark Task Beta validation split with raw total fixed at n=10,042 examples per run."',
         "  resource_notes:",
-        '    - "Evidence floor is 4 parameter cells x 7 paired seeds = 28 completed runs."'
+        '    - "Evidence floor requires every planned condition and seed."'
       ].join("\n"),
       objectiveMetric: "score_delta_vs_baseline"
     });
