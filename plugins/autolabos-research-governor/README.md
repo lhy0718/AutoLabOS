@@ -20,6 +20,8 @@ npm run plugin:dogfood
 npm run plugin:doctor
 npm run plugin:doctor -- --strict
 npm run plugin:discovery-check
+npm run validate:plugin-bridge
+npm run validate:plugin-bridge:local
 npm run plugin:sync-cache
 npm run plugin:release-check
 ```
@@ -32,6 +34,7 @@ aligned with the repo-local plugin contract. Use
 `npm run plugin:doctor -- --strict` in CI or release checks when cache drift
 should fail the command instead of only appearing in the JSON verdict.
 `npm run plugin:discovery-check` verifies that local Codex lists the plugin as installed and enabled at the manifest version, resolves it to this repository, and passes the strict cache/skill cross-check. It requires a local Codex installation and is not a substitute for CI's structural contract tests.
+`npm run validate:plugin-bridge` runs a deterministic CI-safe research chain through the repo plugin bridge. `npm run validate:plugin-bridge:local` first verifies discovery and cache alignment, then runs the same chain through the installed cache bridge; it is the workstation acceptance gate.
 `npm run plugin:sync-cache` performs a dry run for copying the repo-local plugin
 into the installed Codex cache; add `-- --write` only when intentionally
 refreshing the local Codex installation. `npm run plugin:release-check` bundles

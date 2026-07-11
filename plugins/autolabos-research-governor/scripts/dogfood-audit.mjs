@@ -64,6 +64,9 @@ function repairTarget(id) {
   if (id.startsWith("plugin_sync_")) {
     return "plugins/autolabos-research-governor/scripts/sync-cache.mjs";
   }
+  if (id.startsWith("bridge_acceptance_")) {
+    return "scripts/validate-plugin-bridge-e2e.mjs";
+  }
   if (id.startsWith("plugin_bridge_")) {
     return "plugins/autolabos-research-governor/scripts/run-research-intent.mjs";
   }
@@ -90,6 +93,9 @@ const pluginDoctorSource = readText("plugins/autolabos-research-governor/scripts
 const pluginReleaseCheckSource = readText("plugins/autolabos-research-governor/scripts/plugin-release-check.mjs");
 const pluginSyncCacheSource = readText("plugins/autolabos-research-governor/scripts/sync-cache.mjs");
 const pluginBridgeSource = readText("plugins/autolabos-research-governor/scripts/run-research-intent.mjs");
+const bridgeAcceptanceSource = readText("scripts/validate-plugin-bridge-e2e.mjs");
+const bridgeProxySource = readText("scripts/fixtures/autolabos-cli-proxy.mjs");
+const acceptanceHarnessSource = readText("scripts/lib/research-governance-acceptance.mjs");
 const printedContract = JSON.parse(execFileSync(process.execPath, [
   path.join(repoRoot, "plugins/autolabos-research-governor/scripts/print-contract.mjs")
 ], { cwd: repoRoot, encoding: "utf8" }));
@@ -133,9 +139,11 @@ const checks = [
   check("skill_documents_first_run_orientation", skillText.includes("npm run plugin:contract") && skillText.includes("plugin-contract coherence")),
   check("skill_documents_doctor", skillText.includes("npm run plugin:doctor") && skillText.includes("installed Codex plugin cache") && skillText.includes("--strict")),
   check("skill_documents_release_check", skillText.includes("npm run plugin:release-check") && skillText.includes("npm run plugin:sync-cache")),
+  check("skill_documents_bridge_acceptance", skillText.includes("npm run validate:plugin-bridge") && skillText.includes("npm run validate:plugin-bridge:local")),
   check("skill_documents_self_dogfood", skillText.includes("dogfood") && skillText.includes("plugin:dogfood")),
   check("plugin_readme_exists", pluginReadmeText.length > 0),
   check("plugin_readme_documents_first_run", pluginReadmeText.includes("## First Run") && pluginReadmeText.includes("npm run plugin:contract") && pluginReadmeText.includes("npm run plugin:dogfood") && pluginReadmeText.includes("npm run plugin:doctor") && pluginReadmeText.includes("--strict") && pluginReadmeText.includes("npm run plugin:release-check") && pluginReadmeText.includes("npm run plugin:sync-cache")),
+  check("plugin_readme_documents_bridge_acceptance", pluginReadmeText.includes("npm run validate:plugin-bridge") && pluginReadmeText.includes("npm run validate:plugin-bridge:local") && pluginReadmeText.includes("workstation acceptance gate")),
   check("plugin_readme_documents_doctor", pluginReadmeText.includes("installed Codex plugin cache") && pluginReadmeText.includes("repo-local plugin contract") && pluginReadmeText.includes("--strict")),
   check("plugin_readme_documents_release_check", pluginReadmeText.includes("contract, dogfood, strict doctor, pack") && pluginReadmeText.includes("-- --write")),
   check("plugin_readme_documents_all_command_intents", commandIntents.length > 0 && commandIntents.every((id) => pluginReadmeText.includes(id)), {
@@ -149,7 +157,9 @@ const checks = [
   check("governance_doc_documents_self_dogfood", governanceDocText.includes("Self-Dogfood Loop") && governanceDocText.includes("npm run plugin:dogfood")),
   check("governance_doc_documents_doctor", governanceDocText.includes("npm run plugin:doctor") && governanceDocText.includes("installed Codex plugin cache") && governanceDocText.includes("--strict")),
   check("governance_doc_documents_release_check", governanceDocText.includes("npm run plugin:release-check") && governanceDocText.includes("npm run plugin:sync-cache") && governanceDocText.includes("dry-run")),
+  check("governance_doc_documents_bridge_acceptance_boundary", governanceDocText.includes("npm run validate:plugin-bridge") && governanceDocText.includes("npm run validate:plugin-bridge:local") && governanceDocText.includes("workstation-only gate")),
   check("ci_workflow_runs_plugin_release_check", ciWorkflowText.includes("npm run plugin:sync-cache -- --write") && ciWorkflowText.includes("npm run plugin:release-check")),
+  check("ci_workflow_runs_bridge_fixture_only", ciWorkflowText.includes("npm run validate:plugin-bridge") && !ciWorkflowText.includes("npm run validate:plugin-bridge:local")),
   check("marketplace_entry", Boolean(marketplaceEntry), { marketplace: marketplace.name }),
   check("marketplace_source_is_repo_relative", marketplaceEntry?.source?.source === "local" && marketplaceEntry?.source?.path === "./plugins/autolabos-research-governor", {
     source: marketplaceEntry?.source
@@ -159,6 +169,7 @@ const checks = [
   check("plugin_doctor_supports_strict_mode", pluginDoctorSource.includes("--strict") && pluginDoctorSource.includes("strictMode") && pluginDoctorSource.includes("process.exitCode = 1")),
   check("plugin_release_check_reports_release_gate", pluginReleaseCheckSource.includes("plugin_release_readiness") && pluginReleaseCheckSource.includes("plugin-doctor.mjs") && pluginReleaseCheckSource.includes("--strict") && pluginReleaseCheckSource.includes("pack_includes_plugin_files")),
   check("plugin_sync_cache_supports_dry_run_and_write", pluginSyncCacheSource.includes("installed_plugin_cache_sync") && pluginSyncCacheSource.includes("--dry-run") && pluginSyncCacheSource.includes("--write")),
+  check("bridge_acceptance_separates_fixture_and_installed_modes", bridgeAcceptanceSource.includes("repo_plugin_bridge_fixture_cli") && bridgeAcceptanceSource.includes("installed_plugin_cache_bridge") && bridgeAcceptanceSource.includes("installed_bridge_matches_repo") && bridgeAcceptanceSource.includes("--installed") && bridgeProxySource.includes("dist") && acceptanceHarnessSource.includes("runResearchGovernanceAcceptance")),
   check("plugin_bridge_executes_all_research_intents", ["new", "audit", "review", "improve", "pack"].every((intent) => pluginBridgeSource.includes(`"${intent}"`)) && pluginBridgeSource.includes("autolabos_cli_dependency_missing") && pluginBridgeSource.includes('["research", intent')),
   check("print_contract_lists_artifacts", artifactNames.every((artifact) => printContractSource.includes(artifact))),
   check("print_contract_outputs_expected_contract", printedContract.pluginName === manifest.name
@@ -169,6 +180,10 @@ const checks = [
     && typeof printedContract.invariant === "string"
     && printedContract.invariant.includes("untrusted evidence"), {
     observed: printedContract
+  }),
+  check("package_exposes_bridge_acceptance_scripts", packageJson.scripts?.["validate:plugin-bridge"] === "node scripts/validate-plugin-bridge-e2e.mjs" && packageJson.scripts?.["validate:plugin-bridge:local"] === "node scripts/validate-plugin-bridge-e2e.mjs --installed", {
+    fixture: packageJson.scripts?.["validate:plugin-bridge"],
+    installed: packageJson.scripts?.["validate:plugin-bridge:local"]
   }),
   check("package_exposes_contract_script", packageJson.scripts?.["plugin:contract"] === "node plugins/autolabos-research-governor/scripts/print-contract.mjs", {
     observed: packageJson.scripts?.["plugin:contract"]
@@ -208,6 +223,9 @@ const report = {
     "docs/codex-plugin-governance.md",
     ".github/workflows/ci.yml",
     "src/core/researchGovernanceContract.ts",
+    "scripts/validate-plugin-bridge-e2e.mjs",
+    "scripts/fixtures/autolabos-cli-proxy.mjs",
+    "scripts/lib/research-governance-acceptance.mjs",
     "plugins/autolabos-research-governor/scripts/plugin-discovery-check.mjs",
     "plugins/autolabos-research-governor/scripts/plugin-doctor.mjs",
     "plugins/autolabos-research-governor/scripts/plugin-release-check.mjs",

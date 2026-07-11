@@ -25,6 +25,10 @@ const requiredPackFiles = [
 const publicSurfaceFiles = [
   "README.md",
   "docs/codex-plugin-governance.md",
+  "docs/reproducibility.md",
+  "scripts/validate-plugin-bridge-e2e.mjs",
+  "scripts/fixtures/autolabos-cli-proxy.mjs",
+  "scripts/lib/research-governance-acceptance.mjs",
   "plugins/autolabos-research-governor/.codex-plugin/plugin.json",
   "plugins/autolabos-research-governor/README.md",
   "plugins/autolabos-research-governor/scripts/dogfood-audit.mjs",

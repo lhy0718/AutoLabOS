@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,53 +11,128 @@ import { runResearchGovernanceAcceptance } from "./lib/research-governance-accep
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), "..");
-const bridgePath = path.join(
-  repoRoot,
-  "plugins",
-  "autolabos-research-governor",
-  "scripts",
-  "run-research-intent.mjs"
-);
+const pluginRoot = path.join(repoRoot, "plugins", "autolabos-research-governor");
+const repoBridgePath = path.join(pluginRoot, "scripts", "run-research-intent.mjs");
 const cliProxyPath = path.join(repoRoot, "scripts", "fixtures", "autolabos-cli-proxy.mjs");
-const validationCommand = "npm run validate:plugin-bridge";
+const manifestPath = path.join(pluginRoot, ".codex-plugin", "plugin.json");
+const marketplacePath = path.join(repoRoot, ".agents", "plugins", "marketplace.json");
+
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
 
 function parseJson(output) {
   const start = output.indexOf("{");
   return start >= 0 ? JSON.parse(output.slice(start)) : null;
 }
 
+function digest(filePath) {
+  return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function runJsonScript(scriptPath, args = [], env = process.env) {
+  const result = spawnSync(process.execPath, [scriptPath, ...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env
+  });
+  return { result, report: result.stdout.trim() ? parseJson(result.stdout) : null };
+}
+
+function resolveExecutionMode(installed) {
+  if (!installed) {
+    return {
+      bridgePath: repoBridgePath,
+      bridgeEnv: { ...process.env, AUTOLABOS_BIN: cliProxyPath },
+      executionSurface: "repo_plugin_bridge_fixture_cli",
+      validationCommand: "npm run validate:plugin-bridge",
+      workspacePrefix: "autolabos-plugin-bridge-e2e-",
+      pluginVersion: readJson(manifestPath).version,
+      preflightChecks: []
+    };
+  }
+
+  const manifest = readJson(manifestPath);
+  const marketplace = readJson(marketplacePath);
+  const marketplaceName = marketplace.name || "autolabos-local";
+  const codexHome = process.env.CODEX_HOME
+    ? path.resolve(process.env.CODEX_HOME)
+    : path.join(os.homedir(), ".codex");
+  const installedRoot = path.join(
+    codexHome,
+    "plugins",
+    "cache",
+    marketplaceName,
+    manifest.name,
+    manifest.version
+  );
+  const installedBridgePath = path.join(installedRoot, "scripts", "run-research-intent.mjs");
+  const discovery = runJsonScript(path.join(pluginRoot, "scripts", "plugin-discovery-check.mjs"));
+  const installedBridgeExists = fs.existsSync(installedBridgePath);
+  const bridgeMatches = installedBridgeExists && digest(installedBridgePath) === digest(repoBridgePath);
+
+  return {
+    bridgePath: installedBridgePath,
+    bridgeEnv: { ...process.env },
+    executionSurface: "installed_plugin_cache_bridge",
+    validationCommand: "npm run validate:plugin-bridge:local",
+    workspacePrefix: "autolabos-installed-plugin-bridge-e2e-",
+    pluginVersion: manifest.version,
+    codexHome,
+    preflightChecks: [
+      {
+        id: "installed_plugin_discovery_passes",
+        passed: discovery.result.status === 0 && discovery.report?.verdict === "pass"
+      },
+      { id: "installed_bridge_exists", passed: installedBridgeExists },
+      { id: "installed_bridge_matches_repo", passed: bridgeMatches }
+    ]
+  };
+}
+
 function main() {
   const args = process.argv.slice(2);
   if (args.some((arg) => arg === "--help" || arg === "-h")) {
-    process.stdout.write(`Usage: ${validationCommand}\nRequires a current npm run build output.\n`);
+    process.stdout.write([
+      "Usage:",
+      "  npm run validate:plugin-bridge",
+      "  npm run validate:plugin-bridge:local",
+      "",
+      "The default mode is deterministic and CI-safe; --installed validates the installed Codex plugin cache.",
+      "Both modes require a current npm run build output."
+    ].join("\n") + "\n");
     return;
   }
-  if (args.length > 0) {
+  const installed = args.length === 1 && args[0] === "--installed";
+  if (args.length > 0 && !installed) {
     process.stderr.write(`Unknown plugin bridge validation argument: ${args.join(", ")}\n`);
     process.exitCode = 2;
     return;
   }
-  for (const requiredPath of [bridgePath, cliProxyPath, path.join(repoRoot, "dist", "cli", "main.js")]) {
-    if (!fs.existsSync(requiredPath)) throw new Error("Plugin bridge acceptance dependency is missing. Run npm run build first.");
+
+  const mode = resolveExecutionMode(installed);
+  for (const requiredPath of [mode.bridgePath, path.join(repoRoot, "dist", "cli", "main.js")]) {
+    if (!fs.existsSync(requiredPath)) throw new Error("Plugin bridge acceptance dependency is missing. Run npm run build and refresh the plugin installation.");
+  }
+  if (!installed && !fs.existsSync(cliProxyPath)) {
+    throw new Error("Plugin bridge fixture proxy is missing.");
+  }
+  if (mode.preflightChecks.some((item) => !item.passed)) {
+    throw new Error("Installed plugin discovery or cache alignment preflight failed.");
   }
 
-  const bridgeEnv = { ...process.env, AUTOLABOS_BIN: cliProxyPath };
-  const dependencyResult = spawnSync(process.execPath, [bridgePath, "--check"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    env: bridgeEnv
-  });
-  const dependencyReport = dependencyResult.stdout.trim() ? parseJson(dependencyResult.stdout) : null;
+  const dependency = runJsonScript(mode.bridgePath, ["--check"], mode.bridgeEnv);
   const preflightChecks = [
+    ...mode.preflightChecks,
     {
       id: "bridge_dependency_check_passes",
-      passed: dependencyResult.status === 0 && dependencyReport?.verdict === "pass"
+      passed: dependency.result.status === 0 && dependency.report?.verdict === "pass"
     },
     {
       id: "bridge_dependency_report_is_versioned",
-      passed: dependencyReport?.schema_version === "1.0"
-        && dependencyReport?.artifact_type === "GateReport"
-        && dependencyReport?.checks?.done_condition === "pass"
+      passed: dependency.report?.schema_version === "1.0"
+        && dependency.report?.artifact_type === "GateReport"
+        && dependency.report?.checks?.done_condition === "pass"
     }
   ];
   if (preflightChecks.some((item) => !item.passed)) {
@@ -65,33 +142,41 @@ function main() {
   const report = runResearchGovernanceAcceptance({
     repoRoot,
     gate: "plugin_bridge_process_e2e",
-    executionSurface: "repo_plugin_bridge_fixture_cli",
-    validationCommand,
-    workspacePrefix: "autolabos-plugin-bridge-e2e-",
+    executionSurface: mode.executionSurface,
+    validationCommand: mode.validationCommand,
+    workspacePrefix: mode.workspacePrefix,
     preflightChecks,
     execute(workspace, researchArgs) {
-      return spawnSync(process.execPath, [bridgePath, ...researchArgs], {
+      return spawnSync(process.execPath, [mode.bridgePath, ...researchArgs], {
         cwd: workspace,
         encoding: "utf8",
-        env: bridgeEnv
+        env: mode.bridgeEnv
       });
     }
   });
+  report.pluginVersion = mode.pluginVersion;
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 }
 
 try {
   main();
 } catch (error) {
-  const message = (error instanceof Error ? error.message : String(error)).replaceAll(repoRoot, "<repo-root>");
+  const manifest = fs.existsSync(manifestPath) ? readJson(manifestPath) : null;
+  const codexHome = process.env.CODEX_HOME ? path.resolve(process.env.CODEX_HOME) : path.join(os.homedir(), ".codex");
+  const message = (error instanceof Error ? error.message : String(error))
+    .replaceAll(repoRoot, "<repo-root>")
+    .replaceAll(codexHome, "<codex-home>");
   process.stdout.write(`${JSON.stringify({
     commandIntent: "research:audit",
     outputArtifact: "GateReport",
     verdict: "fail",
     gate: "plugin_bridge_process_e2e",
-    executionSurface: "repo_plugin_bridge_fixture_cli",
+    executionSurface: process.argv.includes("--installed") ? "installed_plugin_cache_bridge" : "repo_plugin_bridge_fixture_cli",
+    ...(manifest?.version ? { pluginVersion: manifest.version } : {}),
     message,
-    validationCommand
+    validationCommand: process.argv.includes("--installed")
+      ? "npm run validate:plugin-bridge:local"
+      : "npm run validate:plugin-bridge"
   }, null, 2)}\n`);
   process.exitCode = 1;
 }
