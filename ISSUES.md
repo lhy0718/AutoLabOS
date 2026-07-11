@@ -15,6 +15,58 @@ Path placeholders:
 
 ---
 
+## Issue: LV-557
+
+- Status: reproduced from the latest persisted `run_experiments` artifacts; source repair pending.
+- Validation target: a generated runner must preserve task-specific full-evaluation counts and labeled split selection instead of collapsing all tasks into one scalar limit and one fixed split.
+- Environment/session context: existing full-run validation workspace, persisted run at `run_experiments`, no active experiment process at inspection time.
+
+- Reproduction steps:
+  1. Retry the node-owned generated runner with the approved full-evaluation design.
+  2. Inspect the generated runtime default, task loader, dataset preflight, `metrics.json`, and verifier report.
+  3. Compare each task's approved minimum count with the split selected by the loader.
+
+- Expected behavior:
+  - The plan-to-implementation contract should retain one minimum evaluation count per named task.
+  - A loader should select a labeled evaluation split that can satisfy that task's approved count, or block with task-specific diagnostics.
+  - A smaller split for one task must not be compared against another task's larger scalar requirement.
+
+- Actual behavior:
+  - The plan contained different full-evaluation counts for two tasks, but the planned condition contract retained only one generic task count.
+  - The generated runner used a single `eval_examples_per_task` value for both tasks and fixed both task sources to the same split name.
+  - Dataset preflight showed both local datasets were available, while execution blocked because the smaller task split was compared against the shared larger requirement.
+  - Persisted state ended at `run_experiments: failed` without a structured upstream repair transition.
+
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic domain-neutral regressions are pending.
+  - Existing session: reproduced from the latest persisted metrics, verifier, dataset preflight, generated runner, and progress artifacts.
+  - Divergence: no UI-only divergence is established; the dominant defect is a plan-to-runner contract projection failure.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: full-evaluation parsing records the first generic count under `benchmark_task`, while validation and generated runtime compatibility retain only a scalar per-task cap. Task identity, differing counts, and split suitability are therefore lost before execution.
+
+- Code/test changes:
+  - Pending.
+
+- Regression status:
+  - Live reproduction: confirmed from persisted artifacts.
+  - Automated regression: pending.
+  - Same-flow live revalidation: pending.
+
+- Follow-up risks:
+  - Do not lower the approved evidence count merely to make the loader pass.
+  - Do not infer that a numerically matching split is appropriate unless it retains labels and matches the approved evaluation role.
+  - A repaired loader may expose a later runtime-budget or evidence-scale blocker; preserve that as a separate governed boundary.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/<run-output>/experiment/dataset_preflight.json`
+  - `<validation-workspace>/outputs/<run-output>/experiment/experiment.py`
+
+---
+
 ## Issue: LV-533
 
 - Status: reproduced and repaired as the post-LV-532 GPU live-handle retention boundary on 2026-07-05. Same-flow live retry now strips generated training records of live model/tokenizer handles before retaining run records, preserves artifact-directory aliases for later reload, and advances past the previous CUDA OOM boundary into later condition runs.
