@@ -540,18 +540,22 @@ describe("ImplementSessionManager", () => {
   });
 
 
-  it("keeps model preflight alias repair in late handoff repairs", () => {
+  it("runs model preflight alias repair before design validation and keeps the late safety net", () => {
     const source = readFileSync(
       path.join(ORIGINAL_CWD, "src", "core", "agents", "implementSessionManager.ts"),
       "utf8"
     );
     const lateHandoffStart = source.indexOf("const lateHandoffRepairs = [");
     const lateHandoffEnd = source.indexOf("].filter((repair) => repair.repaired);", lateHandoffStart);
+    const earlyRepairStart = source.indexOf("const earlyModelPreflightAliasRepair =");
+    const designValidationStart = source.indexOf("const designImplementationValidation =", earlyRepairStart);
 
     const lateHandoffSource = source.slice(lateHandoffStart, lateHandoffEnd);
 
     expect(lateHandoffStart).toBeGreaterThanOrEqual(0);
     expect(lateHandoffEnd).toBeGreaterThan(lateHandoffStart);
+    expect(earlyRepairStart).toBeGreaterThanOrEqual(0);
+    expect(designValidationStart).toBeGreaterThan(earlyRepairStart);
     expect(lateHandoffSource).toContain("modelPreflightAliasRepair");
     expect(lateHandoffSource).toContain("modelPreflightStatusNormalizationRepair");
     expect(lateHandoffSource).toContain("runPlanItemObjectAccessRepair");

@@ -1767,6 +1767,31 @@ export class ImplementSessionManager {
           }
         );
       }
+      const earlyModelPreflightAliasRepair = await repairPythonModelPreflightAliasSurface(
+        prepared.scriptPath
+      );
+      if (earlyModelPreflightAliasRepair.repaired) {
+        prepared.changedFiles = dedupeStrings([
+          ...prepared.changedFiles,
+          ...(prepared.scriptPath ? [prepared.scriptPath] : [])
+        ]);
+        prepared.publicArtifacts = dedupeStrings([
+          ...prepared.publicArtifacts,
+          ...(prepared.scriptPath && isSubpath(prepared.scriptPath, prepared.publicDir) ? [prepared.scriptPath] : [])
+        ]);
+        emitImplementObservation(
+          "verify",
+          earlyModelPreflightAliasRepair.message ||
+            "Aligned model preflight helper aliases before design validation.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: prepared.publicDir,
+            scriptPath: prepared.scriptPath,
+            runCommand: prepared.runCommand
+          }
+        );
+      }
       const designImplementationValidation = enforceUnresolvedImplementationContractFeedback(
         await validateDesignImplementationAlignment({
         comparisonContract,
