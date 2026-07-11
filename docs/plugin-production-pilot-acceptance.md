@@ -8,7 +8,7 @@
 | CI bridge | Repo plugin bridge with deterministic CLI proxy | Bridge delegation without a Codex installation | `npm run validate:plugin-bridge` |
 | Workstation bridge | Installed Codex plugin cache bridge | Local discovery, cache alignment, and bridge execution | `npm run validate:plugin-bridge:local` |
 | Hermetic cache | Temporary isolated Codex home | Cache sync, strict doctor, bridge hash, dependency, and research chain | `npm run validate:plugin-hermetic` |
-| Operations preflight | Bounded aggregate of required gates | Production-pilot go/no-go summary | Pending |
+| Operations preflight | Bounded aggregate of required gates | CI and local go/no-go summaries | `npm run validate:plugin-operations` |
 
 No acceptance class substitutes for another. A deterministic CI pass does not prove that a workstation cache is current, and an installed-cache pass does not replace repeatable CI coverage.
 
@@ -28,7 +28,18 @@ No acceptance class substitutes for another. A deterministic CI pass does not pr
 | Schema mismatch | Direct and bridge acceptance | Preserve concise blocking output | Passing |
 | Non-portable bundle content | Quoted-path fault injection, exclusion, and portability downgrade | Preserve exclusion and `portable=false` | Passing |
 | Hermetic cache lifecycle | Integrated isolated sync, strict doctor, bridge hash, dependency, chain, and cleanup | Preserve workstation-independent cache proof | Passing |
-| Aggregate operating verdict | Independent commands | One bounded summary that cannot hide a failed required gate | Gap |
+| Aggregate operating verdict | CI 4-gate and local 6-gate summaries with fail-only injection proof | Preserve non-promotion of partial success | Passing |
+
+## Operations Preflight
+
+Run the bounded CI or workstation aggregate after a current build:
+
+```sh
+npm run validate:plugin-operations
+npm run validate:plugin-operations:local
+```
+
+CI mode requires direct research acceptance, repo bridge acceptance, hermetic cache acceptance, and the fault matrix. Local mode additionally requires installed-cache bridge acceptance and Codex plugin discovery. Child gates run to completion and retain individual repair targets. Any required failure keeps the aggregate verdict at `fail`; passing sibling gates are never promoted to overall success.
 
 ## Hermetic Cache Acceptance
 
@@ -80,6 +91,6 @@ Reports are written through a same-directory temporary file and atomic rename. S
 | Report retention | Direct and bridge runners support validated optional report output | Closed |
 | Fault matrix | Seven named failure classes produce deterministic blocking evidence | Closed |
 | Hermetic cache | Isolated cache lifecycle passes without workstation cache reuse | Closed |
-| Operations preflight | Required gates aggregate into one machine-readable verdict | Open |
+| Operations preflight | Required gates aggregate into one machine-readable verdict | Closed |
 | Contract synchronization | CI, dogfood, release, docs, and skill agree on the gates | Open |
 | Final validation | Full repository and global gates pass with a clean worktree | Open |
