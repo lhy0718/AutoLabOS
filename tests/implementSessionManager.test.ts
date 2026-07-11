@@ -46438,6 +46438,36 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("adapts to ordered-plan builders that only require runtime context", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-plan-runtime-only-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "PREFERRED_MODEL_ID = 'public_model_a'",
+        "class Paths: condition_output_dir = 'conditions'",
+        "class Runtime:",
+        "    def __init__(self, paths): self.paths = paths",
+        "def build_runtime_context(args, paths): return Runtime(paths)",
+        "def build_ordered_run_plan(runtime): return runtime.paths.condition_output_dir",
+        "def main():",
+        "    args = argparse.Namespace(model_id=None, preferred_model_id='public_model_a')",
+        "    context = argparse.Namespace(paths=Paths())",
+        "    adapter = globals().get('_autolabos_entrypoint_build_run_plan')",
+        "    if adapter is None: raise RuntimeError('adapter missing')",
+        "    assert adapter(args=args, context=context, runtime=context) == 'conditions'",
+        "if __name__ == '__main__': main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    const repair = await repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("attaches marker-scoped artifact path aliases to generated condition objects", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-path-alias-"));
     tempDirs.push(workspace);
