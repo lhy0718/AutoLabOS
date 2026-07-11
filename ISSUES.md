@@ -16,6 +16,32 @@ Path placeholders:
 ---
 
 
+## Issue: LV-568
+
+- Status: reproduced from a preserved live attempt and repaired in source; focused regression and build pass, same-flow regenerated implementation in progress.
+- Validation target: a generated entrypoint must pass its already-materialized path context to an ordered run-plan builder using the builder's actual signature.
+- Environment/session context: an existing governed live run regenerated its Python implementation after a deadline-enforcement failure and preserved the failed attempt snapshot.
+- Reproduction steps:
+  1. Define a run-plan builder that requires a path-context object.
+  2. Materialize that object in the generated entrypoint.
+  3. Invoke the plan builder through a positional fallback dispatcher with runtime and CLI objects instead of the path context.
+- Expected behavior: the handoff repair should inspect the selected plan builder and project only supported `paths`, `runtime`, and `args` keyword inputs.
+- Actual behavior: the entrypoint created the correct path object but called the plan builder with unrelated positional values; fallback retries ended at a zero-argument call and failed with a missing required `paths` argument.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral Python fixture reproduces the same terminal `paths` error and succeeds after repair.
+  - Existing session: the failed implementation snapshot confirms the same builder signature, materialized path object, positional call site, and terminal error.
+  - Divergence: no state divergence; the defect was a generated call-argument projection mismatch.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the final entrypoint independently generated a path-aware plan builder and a generic positional retry helper without reconciling their signatures before second-stage execution.
+- Code/test changes:
+  - Added a handoff repair that recognizes the exact generic entrypoint shape and uses signature-filtered keyword projection.
+  - Preserved runtime-only, args-only, path-only, and no-argument plan builders by passing only declared inputs.
+  - Added an executable regression covering the original missing-path terminal error and successful repaired output.
+- Regression status: focused missing-path and adjacent ordered-plan adapter tests, TypeScript/web build, and diff checks pass.
+- Follow-up risks: this repair intentionally targets entrypoints that explicitly materialize `_entry_runtime_paths`; unrelated dispatch helpers remain governed by their own signature adapters.
+
+
 ## Issue: LV-567
 
 - Status: reproduced and repaired in source; focused regression and build pass, same-flow live regeneration in progress.

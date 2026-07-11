@@ -342,6 +342,7 @@ import {
   repairPythonEvaluationSplitMinimumCoverageSurface,
   repairPythonTaskBundleEvalSplitCoverageSurface,
   repairPythonEntrypointBuildPathsAdapterSurface,
+  repairPythonEntrypointOrderedPlanPathArgumentSurface,
   repairPythonEntrypointOrderedPlanAdapterSurface,
   repairPythonEntrypointConditionPathAliasesSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
@@ -46828,6 +46829,69 @@ describe("ImplementSessionManager", () => {
       run_artifact_dir: workspace,
       metrics_path: metricsPath
     });
+  });
+
+  it("projects generated runtime paths into ordered-plan calls", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-plan-path-argument-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const resultPath = path.join(workspace, "result.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "",
+        "@dataclass",
+        "class RuntimePaths:",
+        "    artifact_dir: Path",
+        "    raw_dir: Path",
+        "",
+        "def build_ordered_run_plan(paths: RuntimePaths):",
+        "    return [{'artifact_dir': str(paths.artifact_dir), 'raw_dir': str(paths.raw_dir)}]",
+        "",
+        "def _entry_call(fn, *args, **kwargs):",
+        "    if fn is None:",
+        "        raise RuntimeError('missing required callable')",
+        "    try:",
+        "        return fn(*args, **kwargs)",
+        "    except TypeError:",
+        "        try:",
+        "            return fn(*args)",
+        "        except TypeError:",
+        "            return fn()",
+        "",
+        "def _entry_runtime_paths(runtime, args):",
+        "    return RuntimePaths(Path('artifacts'), Path('raw'))",
+        "",
+        "def main():",
+        "    args = argparse.Namespace()",
+        "    runtime = {'device': 'cpu'}",
+        "    paths = _entry_runtime_paths(runtime, args)",
+        "    plan_fn = build_ordered_run_plan",
+        "    run_plan = _entry_call(plan_fn, runtime, args)",
+        "    Path('result.json').write_text(json.dumps(run_plan), encoding='utf-8')",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/paths/);
+    const repair = await repairPythonEntrypointOrderedPlanPathArgumentSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_ordered_plan_path_argument_surface");
+    expect(repairedSource).toContain('\"paths\": paths');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(resultPath, "utf8"))).toEqual([
+      { artifact_dir: "artifacts", raw_dir: "raw" }
+    ]);
   });
 
   it("bridges ordered-plan runtime and model arguments without positional Namespace fallback", async () => {

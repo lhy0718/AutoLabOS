@@ -11435,6 +11435,8 @@ export class ImplementSessionManager {
       await repairPythonTaskBundleEvalSplitCoverageSurface(executionScriptPath);
     const entrypointBuildPathsAdapterRepair =
       await repairPythonEntrypointBuildPathsAdapterSurface(executionScriptPath);
+    const entrypointOrderedPlanPathArgumentRepair =
+      await repairPythonEntrypointOrderedPlanPathArgumentSurface(executionScriptPath);
     const entrypointOrderedPlanAdapterRepair =
       await repairPythonEntrypointOrderedPlanAdapterSurface(executionScriptPath);
     const entrypointConditionPathAliasesRepair =
@@ -11670,6 +11672,7 @@ export class ImplementSessionManager {
         evaluationSplitMinimumCoverageRepair,
         taskBundleEvalSplitCoverageRepair,
         entrypointBuildPathsAdapterRepair,
+        entrypointOrderedPlanPathArgumentRepair,
         entrypointOrderedPlanAdapterRepair,
         entrypointConditionPathAliasesRepair,
         publicStudySiblingExperimentBackendRepair,
@@ -61297,6 +61300,59 @@ export async function repairPythonEntrypointBuildPathsAdapterSurface(scriptPath?
   return {
     repaired: true,
     message: `Bridged generated entrypoint path-builder arguments in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointOrderedPlanPathArgumentSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_entrypoint_ordered_plan_path_argument_surface";
+  const planCallPattern = /^(\s*)(run_plan|plan)\s*=\s*_entry_call\(plan_fn,\s*runtime,\s*args\)\s*$/mu;
+  if (
+    source.includes(marker) ||
+    !source.includes("def _entry_call(fn, *args, **kwargs):") ||
+    !source.includes("build_ordered_run_plan") ||
+    !source.includes("paths = _entry_runtime_paths(runtime, args)") ||
+    !planCallPattern.test(source)
+  ) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(
+    planCallPattern,
+    (_full: string, indent: string, resultName: string) => [
+      `${indent}# ${marker}`,
+      `${indent}import inspect as _autolabos_plan_inspect`,
+      `${indent}_autolabos_plan_values = {"paths": paths, "runtime": runtime, "args": args}`,
+      `${indent}_autolabos_plan_signature = _autolabos_plan_inspect.signature(plan_fn)`,
+      `${indent}_autolabos_plan_kwargs = {`,
+      `${indent}    name: _autolabos_plan_values[name]`,
+      `${indent}    for name in _autolabos_plan_signature.parameters`,
+      `${indent}    if name in _autolabos_plan_values`,
+      `${indent}}`,
+      `${indent}${resultName} = _entry_call(plan_fn, **_autolabos_plan_kwargs)`
+    ].join("\n")
+  );
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Projected generated ordered-plan path and runtime arguments in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
