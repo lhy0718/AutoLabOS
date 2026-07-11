@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -16,9 +16,35 @@ Path placeholders:
 ---
 
 
+## Issue: LV-567
+
+- Status: reproduced and repaired in source; focused regression and build pass, same-flow live regeneration in progress.
+- Validation target: generated model-execution helpers must be discoverable by the planned-runtime resolver before design validation and second-stage execution.
+- Environment/session context: an existing governed live run regenerated a multi-run Python experiment after the long-run deadline repair.
+- Reproduction steps:
+  1. Generate a Python runner with a concrete single-condition callable.
+  2. Let the planned-runtime resolver search a compatible but non-overlapping set of conventional single-condition callable names.
+  3. Run design-to-implementation validation or the generated entrypoint.
+- Expected behavior: the implementation node should alias the concrete callable into the resolver's searched names before design validation, without creating condition results or bypassing execution.
+- Actual behavior: the generated runner defined a concrete single-condition function, but the planned-runtime resolver searched only sibling conventional names and failed with a missing callable target.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral executable fixture reproduces the resolver failure, applies the source repair, and completes through the real concrete callable.
+  - Existing session: the live regeneration initially failed design validation before the provider generated a second implementation variant.
+  - Divergence: no state divergence; the defect was a generated callable-name projection mismatch.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: single-condition alias repair was applied after design validation and recognized only the final model-execution dispatcher vocabulary, not the earlier planned-runtime resolver vocabulary.
+- Code/test changes:
+  - Applied the single-condition alias repair before design validation.
+  - Expanded resolver detection and alias targets across domain-neutral conventional condition/seed execution names.
+  - Added an executable regression proving the repaired resolver invokes the existing concrete callable.
+- Regression status: focused resolver and deadline-preflight regressions, TypeScript build, public-code sanitization, harness validation, and diff checks pass.
+- Follow-up risks: unconventional generated names still require an explicit resolver candidate or a semantic adapter; the repair intentionally does not select fuzzy arbitrary callables.
+
+
 ## Issue: LV-566
 
-- Status: reproduced and repaired in source; focused regressions pass, same-flow implementation regeneration pending.
+- Status: reproduced and repaired in source; focused regressions pass, same-flow implementation regeneration in progress.
 - Validation target: a long-running multi-run experiment must consume its declared wall-clock budget inside training/evaluation loops, preserve partial accounting, and expose the actual terminal verifier reason through plugin review and meta-harness improvement.
 - Environment/session context: an existing governed live run executed a paper-scale repeated schedule with full evaluation floors and node-owned raw evidence.
 - Reproduction steps:
@@ -39,7 +65,7 @@ Path placeholders:
   - Strengthened the evaluation materialization contract to require deadline checks, configured batching where metric-preserving, and explicit partial/timed-out accounting.
   - Classified AbortSignal command termination as non-retryable `execution_budget_exhausted` instead of a transient retry.
   - Loaded terminal run verifier details into portable audit findings so review and `MetaHarnessPatchPlan` can target the generated implementation boundary.
-- Regression status: focused run preflight, triage, governance operations, public-code sanitization, and TypeScript/web build checks pass.
+- Regression status: focused run preflight, triage, governance operations, public-code sanitization, and TypeScript/web build checks pass; generated runners using conventional `has_time_for`/`can_start_run` budget guards are accepted by the preflight.
 - Follow-up risks: string-level preflight recognizes conventional deadline-consumption surfaces; uncommon equivalent control mechanisms may require an explicit adapter or validator extension.
 
 

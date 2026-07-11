@@ -1792,6 +1792,30 @@ export class ImplementSessionManager {
           }
         );
       }
+      const earlySingleConditionRunnerAliasRepair =
+        await repairPythonModelExecutionSingleConditionRunnerAliasSurface(prepared.scriptPath);
+      if (earlySingleConditionRunnerAliasRepair.repaired) {
+        prepared.changedFiles = dedupeStrings([
+          ...prepared.changedFiles,
+          ...(prepared.scriptPath ? [prepared.scriptPath] : [])
+        ]);
+        prepared.publicArtifacts = dedupeStrings([
+          ...prepared.publicArtifacts,
+          ...(prepared.scriptPath && isSubpath(prepared.scriptPath, prepared.publicDir) ? [prepared.scriptPath] : [])
+        ]);
+        emitImplementObservation(
+          "verify",
+          earlySingleConditionRunnerAliasRepair.message ||
+            "Aligned single-condition runner aliases before design validation.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: prepared.publicDir,
+            scriptPath: prepared.scriptPath,
+            runCommand: prepared.runCommand
+          }
+        );
+      }
       const designImplementationValidation = enforceUnresolvedImplementationContractFeedback(
         await validateDesignImplementationAlignment({
         comparisonContract,
@@ -29960,10 +29984,17 @@ export async function repairPythonModelExecutionSingleConditionRunnerAliasSurfac
   const hasDirectCandidateLookup =
     source.includes("one_run_fn") &&
     source.includes("_callable_named");
+  const hasPlannedRuntimeCandidateLookup = [
+    "run_single_condition_seed",
+    "execute_single_condition_seed",
+    "run_one_condition_seed",
+    "execute_one_condition_seed",
+    "materialize_condition_state"
+  ].some((name) => source.includes(`"${name}"`) || source.includes(`'${name}'`));
   if (
     source.includes(marker) ||
-    !source.includes("def execute_model_execution_stage") ||
-    (!source.includes("execute_single_condition_run") && !hasDirectCandidateLookup)
+    (!source.includes("def execute_model_execution_stage") && !hasPlannedRuntimeCandidateLookup) ||
+    (!source.includes("execute_single_condition_run") && !hasDirectCandidateLookup && !hasPlannedRuntimeCandidateLookup)
   ) {
     return { repaired: false };
   }
@@ -30003,7 +30034,16 @@ export async function repairPythonModelExecutionSingleConditionRunnerAliasSurfac
     "execute_single_condition_run",
     "run_single_condition_execution",
     "run_one_condition",
-    "run_condition_seed"
+    "run_condition_seed",
+    "run_single_condition_seed",
+    "execute_single_condition_seed",
+    "run_one_condition_seed",
+    "execute_one_condition_seed",
+    "execute_condition_seed",
+    "run_condition",
+    "execute_condition",
+    "train_condition",
+    "materialize_condition_state"
   ];
   if (searchedNames.some((name) => pythonSourceDefinesConcreteCallableCandidate(source, name))) {
     return { repaired: false };

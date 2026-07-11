@@ -5865,7 +5865,7 @@ async function detectLongRunningPythonRunnerWithoutBudgetEnforcement(input: {
 }
 
 function hasPythonBudgetEnforcementSurface(source: string): boolean {
-  return /\.(?:expired|check_deadline|deadline_exceeded|budget_exhausted)\s*\(/u.test(source)
+  return /\.(?:expired|check_deadline|deadline_exceeded|budget_exhausted|has_time_for|can_start_run|can_start_new_run)\s*\(/u.test(source)
     || /\b(?:check_deadline|ensure_budget|raise_if_(?:expired|timed_out)|deadline_exceeded|budget_exhausted)\s*\(/u.test(source)
     || /\b(?:time\.)?monotonic\s*\(\s*\)\s*(?:>=|>)\s*\w*deadline\b/u.test(source)
     || /\b\w*deadline\b\s*(?:<=|<)\s*(?:time\.)?monotonic\s*\(\s*\)/u.test(source)
