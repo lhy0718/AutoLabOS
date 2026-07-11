@@ -113,6 +113,7 @@ import {
   repairPythonMultipleChoiceListRawVariableSurface,
   repairPythonNumericChoiceLabelPrecedenceSurface,
   repairPythonEntrypointSemanticCallAliasSurface,
+  repairPythonEntrypointComprehensiveDataLoaderPrioritySurface,
   repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface,
   repairPythonEntrypointHighLevelResultRowsSurface,
   repairPythonFinalCliManagedEntrypointPreferenceSurface,
@@ -326,6 +327,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         }
         const highLevelDataBundlePreRepair =
           await repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface(preFailureMemoryScriptPath);
+        const comprehensiveDataLoaderPreRepair =
+          await repairPythonEntrypointComprehensiveDataLoaderPrioritySurface(preFailureMemoryScriptPath);
+        if (comprehensiveDataLoaderPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            comprehensiveDataLoaderPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Prioritized comprehensive data bundle loaders in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
         if (highLevelDataBundlePreRepair.repaired) {
           preFailureMemoryRepairApplied = true;
           preFailureMemoryRepairMessages.push(

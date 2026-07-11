@@ -313,6 +313,7 @@ import {
   repairPythonRuntimeNamespaceDeviceAliasesSurface,
   repairPythonMappingFirstRecordIndexSurface,
   repairPythonEntrypointSingleRunnerTrainBundleAliasSurface,
+  repairPythonEntrypointComprehensiveDataLoaderPrioritySurface,
   repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface,
   repairPythonEntrypointHighLevelResultRowsSurface,
   repairPythonEntrypointConditionSeedExecutorBridgeSurface,
@@ -1544,7 +1545,8 @@ describe("ImplementSessionManager", () => {
         "    return rows",
         "",
         "if __name__ == '__main__':",
-        "    rows = _autolabos_entrypoint_rows_from_high_level_result({'condition_states': [{'status': 'completed'}]})",
+        "    shared = [{'status': 'completed'}]",
+        "    rows = _autolabos_entrypoint_rows_from_high_level_result({'condition_states': shared, 'evaluation_ready_states': shared})",
         "    assert rows == [{'status': 'completed'}], rows",
         ""
       ].join("\n"),
@@ -1557,6 +1559,53 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_entrypoint_high_level_result_rows_surface");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect((await repairPythonEntrypointHighLevelResultRowsSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("prioritizes comprehensive data bundles over training-only loaders", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-comprehensive-loader-priority-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "calls = []",
+        "_AUTOLABOS_ENTRYPOINT_DATA_CACHE = {}",
+        "",
+        "def load_instruction_examples(config):",
+        "    calls.append('training_only')",
+        "    return ([{'text': 'train'}], {'loaded_train_examples': 1})",
+        "",
+        "def load_task_bundle(config):",
+        "    calls.append('comprehensive')",
+        "    return {'train_examples': [{'text': 'train'}], 'eval_tasks': {'benchmark_task_a': [{'label': 0}]}}",
+        "",
+        "def _autolabos_entrypoint_loaded_data(config):",
+        "    cache_key = id(config)",
+        "    if cache_key in _AUTOLABOS_ENTRYPOINT_DATA_CACHE:",
+        "        return _AUTOLABOS_ENTRYPOINT_DATA_CACHE[cache_key]",
+        "    for name in ('load_instruction_examples', 'load_task_bundle'):",
+        "        loader = globals().get(name)",
+        "        if callable(loader):",
+        "            loaded = loader(config)",
+        "            _AUTOLABOS_ENTRYPOINT_DATA_CACHE[cache_key] = loaded",
+        "            return loaded",
+        "    return None",
+        "",
+        "if __name__ == '__main__':",
+        "    loaded = _autolabos_entrypoint_loaded_data({})",
+        "    assert calls == ['comprehensive'], calls",
+        "    assert len(loaded['eval_tasks']['benchmark_task_a']) == 1",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow();
+    const repair = await repairPythonEntrypointComprehensiveDataLoaderPrioritySurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    expect(readFileSync(scriptPath, "utf8")).toContain("_autolabos_entrypoint_comprehensive_data_loader_priority_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonEntrypointComprehensiveDataLoaderPrioritySurface(scriptPath)).repaired).toBe(false);
   });
 
   it("fills missing runtime task defaults from neutral task constants before data loading", () => {

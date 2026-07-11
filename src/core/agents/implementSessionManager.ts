@@ -11349,6 +11349,8 @@ export class ImplementSessionManager {
       await repairPythonMappingFirstRecordIndexSurface(executionScriptPath);
     const singleRunnerTrainBundleAliasRepair =
       await repairPythonEntrypointSingleRunnerTrainBundleAliasSurface(executionScriptPath);
+    const comprehensiveDataLoaderPriorityRepair =
+      await repairPythonEntrypointComprehensiveDataLoaderPrioritySurface(executionScriptPath);
     const highLevelRunnerDataBundleAliasRepair =
       await repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface(executionScriptPath);
     const highLevelResultRowsRepair =
@@ -11615,6 +11617,7 @@ export class ImplementSessionManager {
       runtimeNamespaceDeviceAliasesRepair,
       mappingFirstRecordIndexRepair,
         singleRunnerTrainBundleAliasRepair,
+        comprehensiveDataLoaderPriorityRepair,
         highLevelRunnerDataBundleAliasRepair,
         highLevelResultRowsRepair,
         evaluationTaskBundleAliasRepair,
@@ -16490,7 +16493,7 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "    if not isinstance(result, dict):",
     "        return []",
     "    rows = []",
-    "    for key in ('run_records', 'condition_results', 'raw_condition_results', 'rows', 'results', 'per_seed_results', 'condition_seed_rows', 'condition_states', 'evaluation_ready_states'):",
+    "    for key in ('run_records', 'condition_results', 'raw_condition_results', 'rows', 'results', 'per_seed_results', 'condition_seed_rows'):",
     "        value = result.get(key)",
     "        if isinstance(value, list):",
     "            rows.extend(item for item in value if item is not None)",
@@ -16499,6 +16502,13 @@ function buildLocalPythonEntrypointBridgeChunkContent(): string {
     "        value = training.get('condition_execution_aggregates')",
     "        if isinstance(value, list) and not rows:",
     "            rows.extend(item for item in value if item is not None)",
+    "    if not rows:",
+    "        for key in ('evaluation_ready_states', 'condition_states'):",
+    "            value = result.get(key)",
+    "            if isinstance(value, list):",
+    "                rows.extend(item for item in value if item is not None)",
+    "            if rows:",
+    "                break",
     "    return rows",
     "",
     "",
@@ -57844,6 +57854,82 @@ export async function repairPythonEntrypointHighLevelRunnerDataBundleAliasSurfac
   };
 }
 
+export async function repairPythonEntrypointComprehensiveDataLoaderPrioritySurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!source.includes("def _autolabos_entrypoint_loaded_data(")) {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_entrypoint_comprehensive_data_loader_priority_surface";
+  const preferredNames = [
+    "load_task_bundle",
+    "build_task_bundle",
+    "prepare_task_bundle",
+    "load_task_bundles",
+    "build_task_bundles",
+    "prepare_task_bundles",
+    "load_data_bundle",
+    "build_data_bundle",
+    "load_real_data_bundle",
+    "build_real_data_bundle",
+    "load_experiment_data",
+    "load_experiment_dataset",
+    "load_experiment_datasets",
+    "build_experiment_data",
+    "build_experiment_dataset",
+    "build_experiment_datasets",
+    "prepare_experiment_data",
+    "prepare_experiment_dataset",
+    "prepare_experiment_datasets",
+    "load_study_data",
+    "build_study_data",
+    "prepare_study_data",
+    "load_study_dataset",
+    "build_study_dataset",
+    "prepare_study_dataset"
+  ];
+  let repairedAny = false;
+  const nextSource = source.replace(
+    /^([ \t]*)for name in \(([^\n]*'load_instruction_examples'[^\n]*'load_task_bundle'[^\n]*)\):[ \t]*$/gmu,
+    (full: string, indent: string, namesSource: string) => {
+      const existingNames = [...namesSource.matchAll(/'([^']+)'/gu)].map((match) => match[1]);
+      const orderedPreferred = preferredNames.filter((name) => existingNames.includes(name));
+      const remaining = existingNames.filter((name) => !orderedPreferred.includes(name));
+      const ordered = [...orderedPreferred, ...remaining];
+      if (ordered.length === 0 || ordered[0] === existingNames[0]) {
+        return full;
+      }
+      repairedAny = true;
+      return [
+        `${indent}# ${marker}`,
+        `${indent}for name in (${ordered.map((name) => `'${name}'`).join(", ")}):`
+      ].join("\n");
+    }
+  );
+  if (!repairedAny || nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Prioritized comprehensive generated data bundle loaders in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonEntrypointHighLevelResultRowsSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
@@ -57863,19 +57949,31 @@ export async function repairPythonEntrypointHighLevelResultRowsSurface(scriptPat
     return { repaired: false };
   }
 
-  const marker = "_autolabos_entrypoint_high_level_result_rows_surface";
+  const marker = "_autolabos_entrypoint_high_level_result_rows_surface_v2";
   let repairedAny = false;
   const nextSource = source.replace(
-    /^([ \t]*)for key in \(([^\n]*'run_records'[^\n]*)\):[ \t]*$/gmu,
-    (full: string, indent: string, existingNames: string) => {
-      if (existingNames.includes("'condition_states'") && existingNames.includes("'evaluation_ready_states'")) {
+    /(^def _autolabos_entrypoint_rows_from_high_level_result\(result\):\r?\n)([\s\S]*?)(^    return rows[ \t]*$)/gmu,
+    (full: string, header: string, body: string, returnLine: string) => {
+      if (body.includes(marker)) {
         return full;
       }
       repairedAny = true;
-      return [
-        `${indent}# ${marker}`,
-        `${indent}for key in (${existingNames}, 'condition_states', 'evaluation_ready_states'):`
+      const normalizedBody = body.replace(
+        /('condition_seed_rows')(?:, 'condition_states')?(?:, 'evaluation_ready_states')?/u,
+        "$1"
+      );
+      const fallback = [
+        `    # ${marker}`,
+        "    if not rows:",
+        "        for key in ('evaluation_ready_states', 'condition_states'):",
+        "            value = result.get(key)",
+        "            if isinstance(value, list):",
+        "                rows.extend(item for item in value if item is not None)",
+        "            if rows:",
+        "                break",
+        ""
       ].join("\n");
+      return `${header}${normalizedBody}${fallback}${returnLine}`;
     }
   );
   if (!repairedAny || nextSource === source || !nextSource.includes(marker)) {
@@ -57885,7 +57983,7 @@ export async function repairPythonEntrypointHighLevelResultRowsSurface(scriptPat
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Included high-level condition states in generated result aggregation in ${path.basename(scriptPath)} before handoff.`
+    message: `Included non-duplicated high-level condition states in generated result aggregation in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
