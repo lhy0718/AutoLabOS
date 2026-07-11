@@ -28,6 +28,7 @@ import {
 import { buildIntermediateArtifactCaptureManifest } from "../artifacts/intermediateArtifactCapture.js";
 import { supportsRealExecutionBundle, writeRealExecutionBundle } from "../experiments/realExecutionBundle.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
+import { buildErrorFingerprint } from "../experiments/failureMemory.js";
 import { AgentComputerInterface, AciObservation } from "../../tools/aci.js";
 import {
   ExperimentComparisonContract,
@@ -309,6 +310,7 @@ interface ImplementTaskSpec {
     long_term_memory: LongTermMemorySnapshot;
     implementation_contract_feedback?: ImplementationContractFeedback;
     runner_feedback?: RunVerifierReport;
+    prior_run_failure_constraints?: string[];
     paper_critique_feedback?: {
       overall_decision?: string;
       manuscript_type?: string;
@@ -2540,6 +2542,7 @@ export class ImplementSessionManager {
     const promptPreviousRunCommand = stalePreviousImplementation ? undefined : previousRunCommand;
     const promptPreviousScript = stalePreviousImplementation ? undefined : previousScript;
     const runnerFeedback = await this.loadApplicableRunnerFeedback(run, runContext);
+    const priorRunFailureConstraints = await loadPriorRunFailureConstraints(runDir, runnerFeedback);
     const implementationContractFeedback = await this.loadApplicableImplementationContractFeedback(runContext);
     const paperCritique = await runContext.get<{
       overall_decision?: string;
@@ -2630,6 +2633,10 @@ export class ImplementSessionManager {
           this.deps.workspaceRoot
         ),
         runner_feedback: rewriteWorkspacePathsForSandbox(runnerFeedback, this.deps.workspaceRoot),
+        prior_run_failure_constraints: rewriteWorkspacePathsForSandbox(
+          priorRunFailureConstraints,
+          this.deps.workspaceRoot
+        ),
         paper_critique_feedback: rewriteWorkspacePathsForSandbox(
           paperCritiqueFeedback,
           this.deps.workspaceRoot
@@ -2848,6 +2855,16 @@ export class ImplementSessionManager {
         "",
         "Runner feedback from run_experiments:",
         JSON.stringify(promptRunnerFeedback, null, 2)
+      );
+    }
+    if (sandboxTaskSpec.context.prior_run_failure_constraints?.length) {
+      lines.push(
+        "",
+        "Previously observed run_experiments failure constraints:",
+        JSON.stringify(sandboxTaskSpec.context.prior_run_failure_constraints, null, 2),
+        "",
+        "Keep these previously repaired constraints satisfied while fixing the latest runner feedback.",
+        "Do not trade one verifier failure for another or remove controls that a prior run already required."
       );
     }
     if (promptImplementationContractFeedback) {
@@ -18524,6 +18541,52 @@ function extractPrimaryMetricKey(text: string): string | undefined {
   return match?.[0];
 }
 
+async function loadPriorRunFailureConstraints(
+  runDir: string,
+  currentFeedback?: RunVerifierReport
+): Promise<string[]> {
+  const text = await safeRead(path.join(runDir, "failure_memory.jsonl"));
+  const currentFingerprint = currentFeedback?.summary
+    ? buildErrorFingerprint(currentFeedback.summary)
+    : undefined;
+  const records = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as {
+          node_id?: string;
+          failure_class?: string;
+          error_fingerprint?: string;
+          error_message?: string;
+          do_not_retry?: boolean;
+        }];
+      } catch {
+        return [];
+      }
+    })
+    .reverse();
+  const seen = new Set<string>();
+  const constraints: string[] = [];
+  for (const record of records) {
+    if (
+      record.node_id !== "run_experiments" ||
+      record.do_not_retry !== true ||
+      record.failure_class === "transient" ||
+      !record.error_message
+    ) {
+      continue;
+    }
+    const fingerprint = record.error_fingerprint || buildErrorFingerprint(record.error_message);
+    if (fingerprint === currentFingerprint || seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    constraints.push(trimBlock(record.error_message, 600));
+    if (constraints.length >= 4) break;
+  }
+  return constraints;
+}
+
 function compactTaskSpecForStagedLlmPrompt(taskSpec: ImplementTaskSpec): Record<string, unknown> {
   return {
     goal: trimBlock(taskSpec.goal, 160),
@@ -18543,6 +18606,9 @@ function compactTaskSpecForStagedLlmPrompt(taskSpec: ImplementTaskSpec): Record<
       previous_summary: trimBlock(taskSpec.context.previous_summary || "", 120) || undefined,
       previous_run_command: trimBlock(taskSpec.context.previous_run_command || "", 120) || undefined,
       previous_script: taskSpec.context.previous_script,
+      prior_run_failure_constraints: taskSpec.context.prior_run_failure_constraints
+        ?.slice(0, 4)
+        .map((item) => trimBlock(item, 320)),
       implementation_contract_feedback: taskSpec.context.implementation_contract_feedback
         ? {
             summary: trimBlock(taskSpec.context.implementation_contract_feedback.summary, 360),
@@ -18587,6 +18653,9 @@ function compactTaskSpecForBootstrapPrompt(taskSpec: ImplementTaskSpec): Record<
       topic: trimBlock(taskSpec.context.topic, 120),
       objective_metric: trimBlock(taskSpec.context.objective_metric, 100),
       previous_script: taskSpec.context.previous_script,
+      prior_run_failure_constraints: taskSpec.context.prior_run_failure_constraints
+        ?.slice(0, 4)
+        .map((item) => trimBlock(item, 280)),
       implementation_contract_feedback: taskSpec.context.implementation_contract_feedback
         ? {
             summary: trimBlock(taskSpec.context.implementation_contract_feedback.summary, 240),
@@ -18623,6 +18692,9 @@ function compactTaskSpecForChunkPrompt(taskSpec: ImplementTaskSpec): Record<stri
       objective_metric: trimBlock(taskSpec.context.objective_metric, 180),
       previous_script: taskSpec.context.previous_script,
       previous_run_command: trimBlock(taskSpec.context.previous_run_command || "", 160) || undefined,
+      prior_run_failure_constraints: taskSpec.context.prior_run_failure_constraints
+        ?.slice(0, 4)
+        .map((item) => trimBlock(item, 420)),
       implementation_contract_feedback: taskSpec.context.implementation_contract_feedback
         ? {
             summary: trimBlock(taskSpec.context.implementation_contract_feedback.summary, 320),

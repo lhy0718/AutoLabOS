@@ -7871,6 +7871,22 @@ describe("ImplementSessionManager", () => {
       suggested_next_action: "Ensure the experiment writes JSON metrics to the required metrics path before finishing.",
       recorded_at: "2026-03-10T00:00:00.000Z"
     });
+    writeFileSync(
+      path.join(runDir, "failure_memory.jsonl"),
+      `${JSON.stringify({
+        failure_id: "prior_failure",
+        run_id: run.id,
+        node_id: "run_experiments",
+        attempt: 1,
+        timestamp: "2026-03-09T00:00:00.000Z",
+        failure_class: "structural",
+        error_fingerprint: "prior_deadline_guard_failure",
+        error_message:
+          "A long-running experiment declares repeated runs but does not consume its deadline inside executable loops.",
+        do_not_retry: true
+      })}\n`,
+      "utf8"
+    );
 
     let capturedPrompt = "";
     const codex = {
@@ -7954,6 +7970,9 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain("Runner feedback from run_experiments:");
     expect(capturedPrompt).toContain("metrics_runner.py");
     expect(capturedPrompt).toContain("Ensure the experiment writes JSON metrics");
+    expect(capturedPrompt).toContain("Previously observed run_experiments failure constraints:");
+    expect(capturedPrompt).toContain("does not consume its deadline inside executable loops");
+    expect(capturedPrompt).toContain("Do not trade one verifier failure for another");
     expect(capturedPrompt).toContain(targetScript);
     expect(
       eventStream.history().some((event) =>

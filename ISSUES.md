@@ -16,6 +16,33 @@ Path placeholders:
 ---
 
 
+## Issue: LV-573
+
+- Status: reproduced across consecutive same-flow repairs and repaired in source; focused regression, build, public-code sanitation, and harness pass, same-flow retry pending.
+- Validation target: when `implement_experiments` regenerates a runner for the latest verifier failure, it must preserve distinct structural constraints learned from earlier `run_experiments` failures in the same run.
+- Environment/session context: a governed live run first repaired deadline consumption, then advanced to an evaluation-label normalization failure, and finally regenerated a runner that lost the previously required deadline control.
+- Reproduction steps:
+  1. Record a structural run failure in run-scoped failure memory and repair it upstream.
+  2. Reach a different later run failure and feed that latest verifier report back to `implement_experiments`.
+  3. Regenerate the public runner and rerun second-stage verification.
+- Expected behavior: the latest failure should guide the new repair while earlier distinct do-not-retry failures remain explicit acceptance constraints for scaffold, bootstrap, and code-chunk generation.
+- Actual behavior: the task spec exposed only the latest runner feedback; evaluation normalization was targeted, but the regenerated runner dropped executable deadline consumption and returned to the earlier blocker after rollback budget was exhausted.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral regression supplies current metrics feedback plus an earlier structural deadline failure and confirms that both appear in the implement prompt.
+  - Existing session: consecutive live handoffs alternated between deadline enforcement and evaluation normalization instead of preserving both.
+  - Divergence: no UI/state divergence; this was loss of run-scoped repair constraints during prompt projection.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `buildTaskSpec(...)` loaded only the latest RunVerifierReport while the distinct historical structural failures already stored in `failure_memory.jsonl` were used for retry blocking but not for upstream regeneration guidance.
+- Code/test changes:
+  - Load up to four recent distinct non-transient do-not-retry failures for `run_experiments`, excluding the current feedback fingerprint.
+  - Add those failures to the implement task context as prior run failure constraints.
+  - Preserve the constraints in full, compact staged, bootstrap, and per-chunk prompts with an explicit no-cross-regression instruction.
+  - Extended the runner-feedback prompt regression with a prior deadline failure.
+- Regression status: focused prompt regression, TypeScript/web build, public-code sanitation, and harness validation pass; commit and same-flow retry remain pending.
+- Follow-up risks: failure memory can contain obsolete environment-specific failures; bounded distinct selection and non-transient/do-not-retry filtering limit noise, but future work may add explicit supersession metadata.
+
+
 ## Issue: LV-572
 
 - Status: reproduced through installed-plugin packaging and repaired in source; focused regressions, build, public-code sanitation, harness, and same-bundle installed-plugin repack pass.
@@ -69,7 +96,7 @@ Path placeholders:
 
 ## Issue: LV-570
 
-- Status: reproduced in same-flow live execution and repaired in source; focused regressions pass, same-flow resume pending.
+- Status: reproduced in same-flow live execution and repaired in source; focused regressions pass, the original namespace failure did not recur across later handoffs, and execution advanced to deadline/evaluation gates.
 - Validation target: the generated final CLI must pass its constructed model runtime context, rather than the raw CLI namespace, to dependency preflight and downstream model-execution helpers.
 - Environment/session context: an existing governed live run completed `implement_experiments`, advanced into `run_experiments`, and failed before GPU work began.
 - Reproduction steps:
