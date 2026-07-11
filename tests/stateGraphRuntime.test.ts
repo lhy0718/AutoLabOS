@@ -1778,6 +1778,65 @@ describe("StateGraphRuntime", () => {
     expect(applied.graph.transitionHistory.at(-1)?.action).toBe("backtrack_to_design");
   });
 
+  it("routes run_experiments data dependency reports to implementation repair approval", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Data Dependency Routing",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "running";
+    await store.updateRun(run);
+
+    const errorMessage =
+      "Experiment dependency blocked (data_dependency_unavailable): task-specific data materialization failed.";
+    const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "run_experiments_verify_report.json"),
+      JSON.stringify({
+        status: "fail",
+        stage: "metrics",
+        summary: errorMessage,
+        failure_code: "data_dependency_unavailable",
+        repair_target: "implementation",
+        recommended_backtrack_node: "implement_experiments",
+        upstream_repair_hint: "Repair task-specific data materialization without lowering the evidence floor.",
+        operator_action_required: true
+      }, null, 2),
+      "utf8"
+    );
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(run, "run_experiments", errorMessage);
+
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("run_experiments");
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("needs_approval");
+    expect(updated.graph.pendingTransition?.action).toBe("backtrack_to_implement");
+    expect(updated.graph.pendingTransition?.targetNode).toBe("implement_experiments");
+    expect(updated.graph.pendingTransition?.autoExecutable).toBe(false);
+    expect(updated.graph.pendingTransition?.evidence).toContain("failure_code=data_dependency_unavailable");
+    expect(updated.graph.pendingTransition?.evidence).toContain("repair_target=implementation");
+
+    const applied = await runtime.approveCurrent(run.id);
+    expect(applied.currentNode).toBe("implement_experiments");
+    expect(applied.graph.transitionHistory.at(-1)?.action).toBe("backtrack_to_implement");
+  });
+
   it("skips same-node write_paper retries when strict scientific validation needs upstream evidence", async () => {
     const { store, runtime } = await setup(new Registry({}));
 

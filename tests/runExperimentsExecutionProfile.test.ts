@@ -1154,9 +1154,19 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.error).toContain("failure_code=data_dependency_unavailable");
     expect(result.error).toContain("loader_diagnostics=loader=load_task_bundle,stage=data_access,task=benchmark_task_a,allow_dataset_download=false,usable_count=3,required_count=12");
 
-    const feedback = await runContext.get<{ summary: string }>("implement_experiments.runner_feedback");
+    const feedback = await runContext.get<{
+      summary: string;
+      failure_code?: string;
+      repair_target?: string;
+      recommended_backtrack_node?: string;
+      operator_action_required?: boolean;
+    }>("implement_experiments.runner_feedback");
     expect(feedback?.summary).toContain("Experiment dependency blocked (data_dependency_unavailable)");
     expect(feedback?.summary).toContain("loader_diagnostics=loader=load_task_bundle");
+    expect(feedback?.failure_code).toBe("data_dependency_unavailable");
+    expect(feedback?.repair_target).toBe("implementation");
+    expect(feedback?.recommended_backtrack_node).toBe("implement_experiments");
+    expect(feedback?.operator_action_required).toBe(true);
   });
 
   it("includes condition traceback tails when failed metrics omit direct error messages", async () => {

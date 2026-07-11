@@ -1526,7 +1526,11 @@ function isRunVerifierUpstreamRepairReport(report: RunVerifierRoutingReport | un
   }
   const failureCode = stringValue(report.failure_code);
   const repairTarget = stringValue(report.repair_target);
-  return failureCode === "model_dependency_unavailable" || repairTarget === "environment_dependency";
+  return (
+    failureCode === "model_dependency_unavailable" ||
+    failureCode === "data_dependency_unavailable" ||
+    repairTarget === "environment_dependency"
+  );
 }
 
 function normalizeGraphNodeId(value: unknown): GraphNodeId | undefined {

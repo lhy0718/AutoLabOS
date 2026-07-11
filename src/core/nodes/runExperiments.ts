@@ -6633,14 +6633,16 @@ function buildRunVerifierReport(input: {
   upstreamRepairHint?: string;
   operatorActionRequired?: boolean;
 }): RunVerifierReport {
-  const inferredDependencyBlocker = isRunVerifierDependencyBlocker(input.summary, input.stderr, input.suggestedNextAction);
-  const failureCode = input.failureCode || (inferredDependencyBlocker ? "model_dependency_unavailable" : undefined);
-  const repairTarget = input.repairTarget || (inferredDependencyBlocker ? "environment_dependency" : undefined);
-  const recommendedBacktrackNode = input.recommendedBacktrackNode || (inferredDependencyBlocker ? "design_experiments" : undefined);
-  const upstreamRepairHint = input.upstreamRepairHint || (inferredDependencyBlocker
-    ? "If the model/tokenizer assets cannot be made available in this environment, backtrack to design_experiments and select an available local model or explicitly mark the run as dependency-blocked; do not retry the same implementation unchanged."
-    : undefined);
-  const operatorActionRequired = input.operatorActionRequired ?? (inferredDependencyBlocker ? true : undefined);
+  const inferredDependencyRepair = inferRunVerifierDependencyRepair(
+    input.summary,
+    input.stderr,
+    input.suggestedNextAction
+  );
+  const failureCode = input.failureCode || inferredDependencyRepair?.failureCode;
+  const repairTarget = input.repairTarget || inferredDependencyRepair?.repairTarget;
+  const recommendedBacktrackNode = input.recommendedBacktrackNode || inferredDependencyRepair?.recommendedBacktrackNode;
+  const upstreamRepairHint = input.upstreamRepairHint || inferredDependencyRepair?.upstreamRepairHint;
+  const operatorActionRequired = input.operatorActionRequired ?? inferredDependencyRepair?.operatorActionRequired;
   return {
     source: "run_experiments",
     status: input.status,
@@ -6666,9 +6668,35 @@ function buildRunVerifierReport(input: {
   };
 }
 
-function isRunVerifierDependencyBlocker(...parts: Array<string | undefined>): boolean {
+function inferRunVerifierDependencyRepair(...parts: Array<string | undefined>): {
+  failureCode: RunVerifierReport["failure_code"];
+  repairTarget: RunVerifierReport["repair_target"];
+  recommendedBacktrackNode: RunVerifierReport["recommended_backtrack_node"];
+  upstreamRepairHint: string;
+  operatorActionRequired: boolean;
+} | undefined {
   const text = parts.filter((part): part is string => Boolean(part)).join("\n");
-  return /Experiment dependency blocker:/iu.test(text);
+  if (/data_dependency_unavailable|Experiment dependency blocked\s*\(data_dependency|loader_diagnostics=.*stage=data_access/iu.test(text)) {
+    return {
+      failureCode: "data_dependency_unavailable",
+      repairTarget: "implementation",
+      recommendedBacktrackNode: "implement_experiments",
+      upstreamRepairHint:
+        "Repair task-specific data materialization and schema normalization in implement_experiments before rerunning; preserve the approved task, split, and minimum-count contract, and do not lower the evidence floor or fabricate records.",
+      operatorActionRequired: true
+    };
+  }
+  if (/Experiment dependency blocker:/iu.test(text)) {
+    return {
+      failureCode: "model_dependency_unavailable",
+      repairTarget: "environment_dependency",
+      recommendedBacktrackNode: "design_experiments",
+      upstreamRepairHint:
+        "If the model/tokenizer assets cannot be made available in this environment, backtrack to design_experiments and select an available local model or explicitly mark the run as dependency-blocked; do not retry the same implementation unchanged.",
+      operatorActionRequired: true
+    };
+  }
+  return undefined;
 }
 
 async function persistRunVerifierReport(

@@ -280,7 +280,7 @@ function resolveFailureCategory(
   if (stage === "preflight") {
     return "preflight_failure";
   }
-  if (/Experiment dependency blocker:/iu.test(summary)) {
+  if (/Experiment dependency blocker:|Experiment dependency blocked\s*\(data_dependency_unavailable\)/iu.test(summary)) {
     return "dependency_blocker";
   }
   if (stage === "metrics" && /without metrics output|did not produce metrics/iu.test(summary)) {

@@ -22,6 +22,22 @@ describe("run experiments panel triage", () => {
     });
   });
 
+  it("classifies data dependency blockers as non-retryable", () => {
+    const triage = classifyRunExperimentsFailure({
+      attempt: 1,
+      stage: "metrics",
+      summary:
+        "Experiment dependency blocked (data_dependency_unavailable): task-specific data materialization failed.",
+      exitCode: 1
+    });
+
+    expect(triage.category).toBe("dependency_blocker");
+    expect(triage.retryable).toBe(false);
+    expect(decideRunExperimentsRerun({ triage, automaticRerunsUsed: 0 })).toMatchObject({
+      decision: "fail_fast"
+    });
+  });
+
   it("does not treat reusable-output argparse failures as transient", () => {
     const triage = classifyRunExperimentsFailure({
       attempt: 1,

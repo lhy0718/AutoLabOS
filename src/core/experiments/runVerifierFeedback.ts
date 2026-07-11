@@ -2,7 +2,9 @@ export type RunVerifierTrigger = "auto_handoff" | "manual";
 
 export type RunVerifierStage = "preflight_test" | "command" | "metrics" | "policy" | "success";
 
-export type RunVerifierFailureCode = "model_dependency_unavailable";
+export type RunVerifierFailureCode =
+  | "model_dependency_unavailable"
+  | "data_dependency_unavailable";
 
 export type RunVerifierRepairTarget =
   | "implementation"
