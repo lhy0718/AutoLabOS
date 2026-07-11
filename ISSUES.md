@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-07-05
+Last updated: 2026-07-11
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -14,6 +14,147 @@ Path placeholders:
 - `<repo-root>` means the local AutoLabOS implementation checkout.
 
 ---
+
+
+## Issue: LV-565
+
+- Status: reproduced and repaired; focused regressions and installed-plugin same-flow pack validation complete.
+- Validation target: portable research bundles must keep audit timelines reviewable in size while preserving full event/checkpoint counts and autonomy aggregates.
+- Environment/session context: the external live run had accumulated a long durable history across repeated governed retries.
+- Expected behavior: the bundle should include representative first, last, and critical timeline entries plus explicit omission metadata.
+- Actual behavior: `research:pack` produced a valid bundle but copied an audit timeline with more than 830,000 entries and a size of approximately 270 MB.
+- Fresh vs existing session comparison: a domain-neutral regression uses 1,200 events and verifies bounded output with full counts; the installed plugin reduced the live timeline from approximately 270 MB to about 325 KB.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: audit timeline construction treated every durable source event as a required public bundle row instead of separating source evidence cardinality from portable projection size.
+- Code/test changes:
+  - Bounded durable timeline projection to 1,000 entries, preserving first/last, critical, and evenly sampled context.
+  - Added omission metadata and a visible timeline projection entry.
+  - Added full-event aggregates so autonomy span, intervention, rollback, and completion metrics do not depend on sampled rows.
+- Regression status: 24 focused audit tests pass; the live projection retains more than 830,000 source events as counts and aggregates while emitting 1,008 reviewable entries with explicit omission metadata.
+- Follow-up risks: the source event/checkpoint files remain the full audit trail and are not modified by projection.
+
+
+## Issue: LV-564
+
+- Status: reproduced and repaired; deterministic regressions and installed-plugin same-flow pack validation complete.
+- Validation target: governance bundles built from run and output roots outside the current repository must use portable artifact references and exclude raw checkpoint trace text.
+- Environment/session context: a live run was audited from an external validation workspace and then passed through `research:pack`.
+- Expected behavior: audit summary/report/timeline files should be portable inputs to a PaperReadinessBundle without machine-local paths or raw private trace content.
+- Actual behavior: the pack correctly excluded three unsafe files but returned `portability.valid=false`; audit summary/report paths fell back to absolute paths, and checkpoint reasons copied complete error traces into the timeline.
+- Fresh vs existing session comparison: domain-neutral regressions cover external roots and a checkpoint reason containing a private trace path; the installed plugin now includes every required audit file with portable placeholders.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: path relativization returned the original absolute value for roots outside `cwd`, while checkpoint timeline projection treated raw diagnostic reason text as a public decision field.
+- Code/test changes:
+  - External run and output roots now project to `<run-artifact-root>` and `<output>`.
+  - Public checkpoint timeline entries retain node, phase, timestamp, and sequence but omit raw reason traces.
+  - Added focused portability regressions for both surfaces.
+- Regression status: 24 focused audit tests pass; the installed plugin returns `portability.valid=true`, reports no issues, and the bundle contains no machine-local home path.
+- Follow-up risks: source run records remain auditable in place; portability sanitization must not be mistaken for deleting source evidence.
+
+
+## Issue: LV-563
+
+- Status: reproduced and repaired; end-to-end regression and installed-plugin same-flow revalidation complete.
+- Validation target: an active or failed run must not pass research governance by reusing complete-looking artifacts from an earlier execution state.
+- Environment/session context: a live run was actively regenerating `implement_experiments` while its run root still contained result, figure-audit, and review artifacts from an earlier plan.
+- Expected behavior: `research:audit` should block while `run_record.status` is active, and `research:review`/`research:improve` should route the finding to `run_experiments`.
+- Actual behavior: the installed plugin returned `GateReport.verdict=pass` and `conditionally-ready` even though the run status was `running` and the done condition was unmeasured.
+- Fresh vs existing session comparison: a domain-neutral end-to-end regression recreates an active run with otherwise complete paper-scale artifacts; the installed plugin now blocks the same live run and preserves the finding through review and improve.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: audit scoring inspected artifact completeness and only treated a failed run as problematic when `paper_ready=true`; active and visibly failed run states were not independent governance blockers.
+- Code/test changes:
+  - Added explicit blockers for active and failed top-level run states.
+  - Added actionable next steps for incomplete and failed execution.
+  - Added an `audit -> review -> improve` regression that verifies the blocker remains visible and maps to `run_experiments`.
+- Regression status: 15 focused audit/governance tests pass; the installed plugin returns a blocked GateReport, a blocked-for-paper-scale ReviewReport, and a plan-only MetaHarnessPatchPlan targeting the `run_experiments` validator.
+- Follow-up risks: terminal paused runs require separate policy and should not be classified as active without an explicit contract change.
+
+
+## Issue: LV-562
+
+- Status: reproduced and repaired at handoff; deterministic regression and same-flow import repair confirmation complete, post-handoff process execution pending.
+- Validation target: generated Python dataclass definitions that call `field(...)` must import `dataclasses.field` before process execution.
+- Environment/session context: fresh plan-compatible runner generated after stale resume invalidation and accepted by compile/design validation.
+- Expected behavior: handoff repair should add the missing import before the runner is accepted, and real execution should reach dependency/data preflight or later experiment logic.
+- Actual behavior: `py_compile` passed, but process startup failed while executing a dataclass body with `NameError: name 'field' is not defined`; no new metrics were accepted.
+- Fresh vs existing session comparison: domain-neutral executable regression covers a generated dataclass with a missing field import; same-flow generation logged the import repair before design validation.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the existing field-import helper was only called by a narrow metadata-field repair instead of being a general pre-handoff repair.
+- Code/test changes:
+  - Promoted dataclasses field import normalization to a standalone idempotent Python handoff repair.
+  - Wired it before default-factory normalization and local verification.
+  - Added a regression that executes the repaired Python module, not only `py_compile`.
+- Regression status: focused executable regression passes; same-flow handoff logged `Imported dataclasses.field`; process-level confirmation remains pending behind a later callable-resolver design check.
+- Follow-up risks: compile-only checks cannot detect module-scope name resolution inside executed class bodies.
+
+
+## Issue: LV-561
+
+- Status: reproduced and repaired; automated resume compatibility regression and same-flow stale-plan invalidation complete.
+- Validation target: staged implementation resume artifacts must be reusable only for the experiment-plan contract that produced them.
+- Environment/session context: an existing live run whose selected design changed from an expanded factorial to a narrower fixed-parameter confirmation design.
+- Expected behavior: a plan-contract change should invalidate cached scaffold, decomposition, materialization, and completed section artifacts before generation; bounded retries under the same plan may reuse compatible artifacts.
+- Actual behavior: all three bounded attempts reused 11 completed sections from the earlier design, repeatedly reconstructing the old condition and seed surface and failing the same design validator checks.
+- Fresh vs existing session comparison: domain-neutral manifest compatibility regression passes; same-flow logs confirm stale sections were invalidated when the selected plan changed.
+- Root cause hypothesis:
+  - Type: `resume_reload_bug`
+  - Hypothesis: the resume manifest records artifact completion but no plan fingerprint, so structural validity is mistaken for semantic compatibility after a design change.
+- Code/test changes: staged resume manifests persist a plan hash, the P6 helper writes it from the current implementation task spec, and incompatible cached artifacts are discarded before reuse.
+- Regression status: P6 resume self-test passes; same-flow revalidation logged plan-fingerprint invalidation and generated fresh sections.
+- Follow-up risks: pre-fingerprint manifests should remain reusable for unchanged plans, while a current-plan helper timeout must preserve a matching fingerprint.
+
+## Issue: LV-560
+
+- Status: reproduced and repaired; parser regression and same-flow task-spec projection complete.
+- Validation target: selected-design parsing must preserve explicit fixed-parameter cells, paired-seed totals, named task identities, and comma-formatted full-evaluation counts.
+- Environment/session context: a live selected design with four fixed-parameter cells, seven paired seeds, and two named full-evaluation task floors.
+- Expected behavior: the implementation contract should require four cells, 28 runs, all seven seeds, and the exact named task floors.
+- Actual behavior: one explicitly listed middle cell was dropped, the contract became three cells and 21 runs, and comma-formatted counts were truncated from four/five digits to one/two digits; task keys also retained a prose label prefix.
+- Fresh vs existing session comparison: domain-neutral parser regression preserves explicit cells, comma-formatted counts, task keys, and seed schedules; the current same-flow task spec matches its selected design.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: fixed-parameter extraction recognizes a narrow parameter spelling, repeated-cell parsing misses `parameter cells x paired seeds`, and numeric parsing accepts only digits without thousands separators.
+- Code/test changes: selected-design parsing now handles fixed-factor lists, repeated cell/seed totals, exact seed schedules, normalized task names, and comma-formatted evaluation floors.
+- Regression status: focused parser regression passes; current same-flow projection requires three selected cells, 21 runs, seven seeds, and both exact task floors.
+- Follow-up risks: do not infer a cell count from descriptive low/medium/high prose when an explicit enumerated factor list is available.
+
+
+## Issue: LV-559
+
+- Status: reproduced and repaired; focused validator regression and same-flow design validation complete.
+- Validation target: design-to-implementation validation must detect prefixed scalar evaluation defaults that contract a task-specific full-evaluation floor.
+- Environment/session context: existing full-run validation workspace after task-specific plan contract repair.
+- Expected behavior: a runner that declares one scalar evaluation cap below any approved task minimum should be blocked before handoff.
+- Actual behavior: the contract preserved two different task minima, while the generated runner retained a smaller `DEFAULT_*_EVAL_EXAMPLES_PER_TASK` constant; validation still returned `allow`.
+- Fresh vs existing session comparison: a domain-neutral deterministic regression detects prefixed scalar caps while ignoring minimum declarations; later same-flow runners pass the corrected evaluation-floor checks.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: declared-limit extraction recognizes bare field names but not generated constants with uppercase prefixes.
+- Code/test changes: declared-limit extraction now recognizes prefixed evaluation constants and distinguishes maximum/default caps from minimum evidence floors.
+- Regression status: focused validator tests pass; current same-flow design validation advanced beyond the evaluation-cap gate and reported only an unrelated callable-resolver issue.
+- Follow-up risks: detecting the cap must not imply that a scalar maximum alone satisfies differing task-specific counts or split requirements.
+
+## Issue: LV-558
+
+- Status: reproduced and repaired; automated regression and same-flow post-fix validation complete.
+- Validation target: staged resume must not reuse a bootstrap contract whose dependency class conflicts with the current run verifier feedback.
+- Environment/session context: existing full-run validation workspace after a model dependency repair was superseded by a data dependency repair.
+- Expected behavior: current data repair context should invalidate a cached model/tokenizer prewarm contract and require a dataset/schema-aware bootstrap decision.
+- Actual behavior: the task spec correctly carried `data_dependency_unavailable`, but the reused bootstrap contract retained its previous model-substitute strategy and model-specific remediation, with data repair text only appended afterward.
+- Fresh vs existing session comparison: deterministic regression rejects stale and pre-fingerprint cache contracts when an active dependency repair context conflicts; same-flow artifact comparison reproduced the stale contract reuse.
+- Root cause hypothesis:
+  - Type: `resume_reload_bug`
+  - Hypothesis: reusable bootstrap artifacts are validated structurally but not against the current dependency repair failure code and target.
+- Code/test changes:
+  - Bootstrap contracts now persist the verifier `failure_code` and `repair_target` that governed their construction.
+  - Resume reuse requires that persisted repair fingerprint to match the active dependency repair context; pre-fingerprint contracts remain reusable only when no repair context is active.
+  - Added parser and compatibility regressions for matching, conflicting, pre-fingerprint, and context-free contracts.
+- Regression status: focused bootstrap regressions pass; same-flow revalidation discarded the stale contract, generated a new contract, and persisted the current data-dependency repair fingerprint.
+- Follow-up risks: invalidation should be scoped to incompatible dependency classes so valid resume artifacts remain reusable.
 
 ## Issue: LV-557
 
