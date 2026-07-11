@@ -11364,6 +11364,8 @@ export class ImplementSessionManager {
       await repairPythonDatasetSplitLoaderPreferLabeledSurface(executionScriptPath);
     const evaluationSplitMinimumCoverageRepair =
       await repairPythonEvaluationSplitMinimumCoverageSurface(executionScriptPath);
+    const taskBundleEvalSplitCoverageRepair =
+      await repairPythonTaskBundleEvalSplitCoverageSurface(executionScriptPath);
     const entrypointBuildPathsAdapterRepair =
       await repairPythonEntrypointBuildPathsAdapterSurface(executionScriptPath);
     const entrypointOrderedPlanAdapterRepair =
@@ -11590,6 +11592,7 @@ export class ImplementSessionManager {
         evaluationMetricRowsSeedAliasRepair,
         datasetSplitLoaderPreferLabeledRepair,
         evaluationSplitMinimumCoverageRepair,
+        taskBundleEvalSplitCoverageRepair,
         entrypointBuildPathsAdapterRepair,
         entrypointOrderedPlanAdapterRepair,
         entrypointConditionPathAliasesRepair,
@@ -60343,6 +60346,66 @@ export async function repairPythonEvaluationSplitMinimumCoverageSurface(scriptPa
   return {
     repaired: true,
     message: `Selected the first labeled evaluation split meeting the governed minimum coverage in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonTaskBundleEvalSplitCoverageSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") return { repaired: false };
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+  const marker = "_autolabos_task_bundle_eval_split_coverage_surface";
+  const needle = [
+    "        raw_eval = _load_dataset_split(ds_path, config, eval_split)",
+    "        eval_limit = eval_caps.get(task) if isinstance(eval_caps, Mapping) else None",
+    "        rows = _materialize_records(raw_eval, eval_limit)",
+    "        normalized = [ex for i, row in enumerate(rows) if (ex := normalize_eval_record(row, task, i)) is not None]",
+    "        diagnostics[\"tasks\"][task] = {\"eval_loaded\": len(rows), \"eval_normalized\": len(normalized), \"dataset_len\": len(raw_eval)}",
+    "        min_required = MIN_EVAL_EXAMPLES_PER_TASK[task]",
+    "        if eval_limit is None and len(normalized) < min_required:",
+    "            raise DataAccessError(\"evaluation schema normalization yielded too few usable labeled examples\", diagnostics)",
+    ""
+  ].join("\n");
+  if (source.includes(marker) || !source.includes(needle)) return { repaired: false };
+  const replacement = [
+    `        # ${marker}`,
+    "        eval_limit = eval_caps.get(task) if isinstance(eval_caps, Mapping) else None",
+    "        min_required = MIN_EVAL_EXAMPLES_PER_TASK[task]",
+    "        split_attempts: List[Dict[str, Any]] = []",
+    "        rows: List[Mapping[str, Any]] = []",
+    "        normalized: List[MultipleChoiceExample] = []",
+    "        raw_eval = None",
+    "        for candidate_split in dict.fromkeys((eval_split, 'validation', 'dev', 'test')):",
+    "            try:",
+    "                candidate_eval = _load_dataset_split(ds_path, config, candidate_split)",
+    "            except Exception as exc:",
+    "                split_attempts.append({'split': candidate_split, 'load_error': repr(exc)})",
+    "                continue",
+    "            candidate_rows = _materialize_records(candidate_eval, eval_limit)",
+    "            candidate_normalized = [ex for i, row in enumerate(candidate_rows) if (ex := normalize_eval_record(row, task, i)) is not None]",
+    "            split_attempts.append({'split': candidate_split, 'loaded': len(candidate_rows), 'normalized': len(candidate_normalized)})",
+    "            if eval_limit is not None or len(candidate_normalized) >= min_required:",
+    "                eval_split = candidate_split",
+    "                raw_eval = candidate_eval",
+    "                rows = candidate_rows",
+    "                normalized = candidate_normalized",
+    "                break",
+    "        diagnostics[\"tasks\"][task] = {\"eval_loaded\": len(rows), \"eval_normalized\": len(normalized), \"dataset_len\": len(raw_eval) if raw_eval is not None else 0, \"eval_split\": eval_split, \"split_attempts\": split_attempts}",
+    "        if raw_eval is None or (eval_limit is None and len(normalized) < min_required):",
+    "            raise DataAccessError(\"no labeled evaluation split met the governed minimum coverage\", diagnostics)",
+    ""
+  ].join("\n");
+  const nextSource = source.replace(needle, replacement);
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Selected task-bundle evaluation splits by normalized coverage in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

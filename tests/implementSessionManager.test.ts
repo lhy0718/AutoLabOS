@@ -331,6 +331,7 @@ import {
   repairPythonEarlyMainGuardBeforeGovernedScheduleSurface,
   repairPythonDatasetSplitLoaderPreferLabeledSurface,
   repairPythonEvaluationSplitMinimumCoverageSurface,
+  repairPythonTaskBundleEvalSplitCoverageSurface,
   repairPythonEntrypointBuildPathsAdapterSurface,
   repairPythonEntrypointOrderedPlanAdapterSurface,
   repairPythonEntrypointConditionPathAliasesSurface,
@@ -46344,6 +46345,44 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(repairedSource).toContain("_autolabos_evaluation_split_minimum_coverage_surface");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("selects task-bundle evaluation splits by normalized coverage", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-task-bundle-split-coverage-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(scriptPath, [
+      "from typing import Any, Dict, List, Mapping",
+      "class MultipleChoiceExample: pass",
+      "class DataAccessError(RuntimeError): pass",
+      "MIN_EVAL_EXAMPLES_PER_TASK = {'benchmark_task_a': 4}",
+      "def _load_dataset_split(path, config, split): return list(range({'validation': 2, 'test': 4}.get(split, 0)))",
+      "def _materialize_records(dataset, limit=None): return dataset if limit is None else dataset[:limit]",
+      "def normalize_eval_record(row, task, index): return MultipleChoiceExample()",
+      "def load_task_bundle(eval_caps=None):",
+      "    eval_caps = eval_caps or {}",
+      "    diagnostics = {'tasks': {}}",
+      "    for task in ('benchmark_task_a',):",
+      "        ds_path, config, train_split, eval_split = ('public_dataset_a', None, 'train', 'validation')",
+      "        raw_eval = _load_dataset_split(ds_path, config, eval_split)",
+      "        eval_limit = eval_caps.get(task) if isinstance(eval_caps, Mapping) else None",
+      "        rows = _materialize_records(raw_eval, eval_limit)",
+      "        normalized = [ex for i, row in enumerate(rows) if (ex := normalize_eval_record(row, task, i)) is not None]",
+      "        diagnostics[\"tasks\"][task] = {\"eval_loaded\": len(rows), \"eval_normalized\": len(normalized), \"dataset_len\": len(raw_eval)}",
+      "        min_required = MIN_EVAL_EXAMPLES_PER_TASK[task]",
+      "        if eval_limit is None and len(normalized) < min_required:",
+      "            raise DataAccessError(\"evaluation schema normalization yielded too few usable labeled examples\", diagnostics)",
+      "        if rows and not normalized: raise DataAccessError('no labels')",
+      "    return diagnostics",
+      "if __name__ == '__main__':",
+      "    result = load_task_bundle()",
+      "    assert result['tasks']['benchmark_task_a']['eval_split'] == 'test'",
+      ""
+    ].join("\n"), "utf8");
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/too few/);
+    const repair = await repairPythonTaskBundleEvalSplitCoverageSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
