@@ -927,17 +927,46 @@ function extractGenericCallableResolverWindows(scriptText: string): string[] {
   for (const pattern of resolverPatterns) {
     for (const match of scriptText.matchAll(pattern)) {
       const start = match.index || 0;
-      windows.push(scriptText.slice(start, Math.min(scriptText.length, start + 1600)));
-    }
-  }
-  if (/(?:No callable found for|No orchestration helper found for|No compatible orchestration helper found)\b/iu.test(scriptText)) {
-    const failureMatch = /(?:No callable found for|No orchestration helper found for|No compatible orchestration helper found)\b/iu.exec(scriptText);
-    if (failureMatch?.index !== undefined) {
-      const start = Math.max(0, failureMatch.index - 1600);
-      windows.push(scriptText.slice(start, Math.min(scriptText.length, failureMatch.index + 1600)));
+      windows.push(extractPythonCallableInvocation(scriptText, start));
     }
   }
   return windows;
+}
+
+function extractPythonCallableInvocation(scriptText: string, start: number): string {
+  const openIndex = scriptText.indexOf("(", start);
+  if (openIndex < 0) {
+    return scriptText.slice(start, Math.min(scriptText.length, start + 200));
+  }
+  let depth = 0;
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  for (let index = openIndex; index < scriptText.length; index += 1) {
+    const character = scriptText[index];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (character === "(") {
+      depth += 1;
+    } else if (character === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return scriptText.slice(start, index + 1);
+      }
+    }
+  }
+  return scriptText.slice(start, Math.min(scriptText.length, start + 1600));
 }
 
 function extractGenericCallableResolverPurpose(windowText: string): string | undefined {

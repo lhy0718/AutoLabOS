@@ -1684,6 +1684,66 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("does not treat data literals after a resolver call as callable candidates", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-resolver-boundary-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "current_study_runner.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-resolver-boundary", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = ('baseline_condition', 'candidate_condition')",
+        "REQUIRED_CONDITION_COUNT = 2",
+        "REQUIRED_RUN_COUNT = 2",
+        "SEED_SCHEDULE = [7]",
+        "PRIMARY_METRIC_KEY = 'score_delta'",
+        "def execute_condition():",
+        "    return {'status': 'completed'}",
+        "def _lookup_callable(candidate_names, purpose):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "def main():",
+        "    runner = _lookup_callable(('execute_condition',), 'condition execution')",
+        "    record = {'model_state': None, 'condition_marker': 'baseline_condition', 'execution_start': True}",
+        "    return runner(), record",
+        "if __name__ == '__main__':",
+        "    main()"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 2,
+        required_run_count: 2,
+        seed_schedule: [7],
+        baseline_condition_marker: "baseline_condition",
+        required_condition_markers: ["baseline_condition", "candidate_condition"]
+      },
+      attempt: {
+        runCommand: "python3 " + JSON.stringify(scriptPath) + " --metrics-path " + JSON.stringify(metricsPath),
+        testCommand: "python3 -m py_compile " + JSON.stringify(scriptPath),
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.findings).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "PLANNED_RUNTIME_CALLABLE_RESOLVER_TARGET_MISSING" })
+      ])
+    );
+  });
+
 
   it("does not treat Python dunder attribute strings as missing callable resolver candidates", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-dunder-literal-"));
