@@ -236,11 +236,14 @@ function assertValidArtifact(artifact: unknown): void {
 function uniqueCandidateFiles(
   candidates: Array<{ source: string; relative: string }>
 ): Array<{ source: string; relative: string }> {
-  const seen = new Set<string>();
+  const seenSources = new Set<string>();
+  const seenDestinations = new Set<string>();
   return candidates.filter((candidate) => {
-    const key = path.resolve(candidate.source);
-    if (seen.has(key)) return false;
-    seen.add(key);
+    const sourceKey = path.resolve(candidate.source);
+    const destinationKey = candidate.relative.replace(/\\/gu, "/");
+    if (seenSources.has(sourceKey) || seenDestinations.has(destinationKey)) return false;
+    seenSources.add(sourceKey);
+    seenDestinations.add(destinationKey);
     return true;
   });
 }

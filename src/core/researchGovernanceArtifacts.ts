@@ -594,6 +594,20 @@ function validateArtifactSpecificShape(value: Record<string, unknown>, issues: A
     requireString("review_report_id");
     requireArray("files");
     requireArray("limitations");
+    if (Array.isArray(value.files)) {
+      const seenPaths = new Set<string>();
+      value.files.forEach((file, index) => {
+        if (!isRecord(file) || typeof file.path !== "string") return;
+        if (seenPaths.has(file.path)) {
+          issues.push({
+            code: "invalid_shape",
+            path: `$.files[${index}].path`,
+            message: `PaperReadinessBundle file path must be unique: ${file.path}`
+          });
+        }
+        seenPaths.add(file.path);
+      });
+    }
     if (!isRecord(value.portability)) {
       issues.push({ code: "invalid_shape", path: "$.portability", message: "PaperReadinessBundle requires portability status." });
     }

@@ -9,6 +9,7 @@ import {
   RESEARCH_GOVERNANCE_SCHEMA_VERSION,
   RESEARCH_GOVERNANCE_POSITIONING
 } from "../src/core/researchGovernanceContract.js";
+import { validateResearchGovernanceArtifact } from "../src/core/researchGovernanceArtifacts.js";
 
 describe("research governance contract", () => {
   it("positions AutoLabOS as a plugin-first governance harness", () => {
@@ -45,5 +46,37 @@ describe("research governance contract", () => {
     expect(RESEARCH_GOVERNANCE_ADAPTER_SURFACES.every((surface) => surface.cannotBypassGates)).toBe(true);
     expect(RESEARCH_GOVERNANCE_INVARIANTS.some((item) => item.includes("untrusted evidence"))).toBe(true);
     expect(RESEARCH_GOVERNANCE_INVARIANTS.some((item) => item.includes("Review remains"))).toBe(true);
+  });
+
+  it("rejects paper-readiness bundles with duplicate archive paths", () => {
+    const validation = validateResearchGovernanceArtifact({
+      schema_version: "1.0",
+      artifact_type: "PaperReadinessBundle",
+      artifact_id: "paper_readiness_bundle_fixture",
+      generated_at: "2026-01-01T00:00:00.000Z",
+      command_intent: "research:pack",
+      provenance: {
+        source_mode: "governance_artifact",
+        source_label: "ReviewReport",
+        artifact_refs: []
+      },
+      gate_report_id: "gate_report_fixture",
+      review_report_id: "review_report_fixture",
+      readiness_class: "blocked_for_paper_scale",
+      paper_ready: false,
+      claim_ceiling: "research_memo",
+      files: [
+        { path: "artifacts/review-report.json", sha256: "a", bytes: 1 },
+        { path: "artifacts/review-report.json", sha256: "b", bytes: 2 }
+      ],
+      limitations: [],
+      portability: { valid: true, issues: [] }
+    });
+
+    expect(validation.ok).toBe(false);
+    expect(validation.issues).toContainEqual(expect.objectContaining({
+      path: "$.files[1].path",
+      message: expect.stringContaining("must be unique")
+    }));
   });
 });

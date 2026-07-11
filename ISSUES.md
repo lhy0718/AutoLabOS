@@ -16,9 +16,35 @@ Path placeholders:
 ---
 
 
+## Issue: LV-572
+
+- Status: reproduced through installed-plugin packaging and repaired in source; focused regressions, build, public-code sanitation, harness, and same-bundle installed-plugin repack pass.
+- Validation target: `research:pack` must produce one unambiguous archive entry per portable relative path and reject imported readiness bundles that contain duplicate file paths.
+- Environment/session context: the installed `autolabos` plugin packaged a blocked terminal research bundle using an explicit ReviewReport and a source directory that also contained an older review artifact.
+- Reproduction steps:
+  1. Supply explicit gate and review artifacts to `research:pack`.
+  2. Include a different file with the same `review-report.json` destination name in the allowlisted source directory.
+  3. Inspect the resulting `PaperReadinessBundle.files` and portability status.
+- Expected behavior: explicit artifacts should take precedence, each archive path should appear once, and schema validation should reject any externally supplied duplicate path.
+- Actual behavior: `artifacts/review-report.json` appeared twice with different hashes while portability still reported `valid=true`.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral fixture reproduces the explicit-review versus stale-source collision.
+  - Existing session: the installed plugin emitted the duplicated path in a real terminal bundle package.
+  - Divergence: no run-state divergence; this was a packaging destination-identity defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: candidate deduplication keyed only on absolute source paths and ignored that distinct sources could map to the same archive-relative destination.
+- Code/test changes:
+  - Deduplicate pack candidates by both resolved source path and normalized destination path, preserving explicit gate/review priority.
+  - Reject duplicate `PaperReadinessBundle.files[*].path` values during artifact validation.
+  - Added regressions for stale source collisions and imported duplicate-path bundles.
+- Regression status: both focused governance test files, TypeScript/web build, public-code sanitation, and harness validation pass. The installed plugin repacked the same collision bundle with one `artifacts/review-report.json` entry, the explicit ReviewReport hash, and `portability.valid=true` with no issues.
+- Follow-up risks: archive contents remain allowlist-based; future aliases that intentionally share content must still receive distinct destination names rather than relying on overwrite order.
+
+
 ## Issue: LV-571
 
-- Status: reproduced through installed-plugin review and repaired in source; focused regression passes, live plugin rerun pending.
+- Status: reproduced through installed-plugin review and repaired in source; focused regression and same-bundle installed-plugin review/improve rerun pass.
 - Validation target: research review and improvement must route a concrete experiment implementation failure to `implement_experiments` even when the verifier's remediation sentence also mentions baseline or comparator execution.
 - Environment/session context: an installed plugin audited a terminal governed run whose verifier preserved a Python runtime projection failure and an implementation-focused suggested action.
 - Reproduction steps:
@@ -37,7 +63,7 @@ Path placeholders:
 - Code/test changes:
   - Moved implementation/entrypoint/runner classification ahead of baseline/comparator classification.
   - Strengthened the end-to-end governance operation regression with a remediation sentence containing both signal classes.
-- Regression status: the focused audit-review-improve regression passes; installed-plugin rerun is pending after build and commit.
+- Regression status: the focused audit-review-improve regression passes. The installed plugin rerun classified the mixed runtime/baseline wording as `implement_experiments` and emitted a `plan_only` MetaHarnessPatchPlan for that same node.
 - Follow-up risks: mixed findings without concrete node vocabulary still rely on the broader fallback taxonomy and should remain visible in generated patch plans.
 
 
