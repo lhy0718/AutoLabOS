@@ -331,6 +331,7 @@ import {
   repairPythonDatasetSplitLoaderPreferLabeledSurface,
   repairPythonEvaluationSplitMinimumCoverageSurface,
   repairPythonEntrypointBuildPathsAdapterSurface,
+  repairPythonEntrypointOrderedPlanAdapterSurface,
   repairPythonEntrypointConditionPathAliasesSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonPublicStudyBackendCallableLoaderSurface,
@@ -46401,6 +46402,40 @@ describe("ImplementSessionManager", () => {
       run_artifact_dir: workspace,
       metrics_path: metricsPath
     });
+  });
+
+  it("bridges ordered-plan runtime and model arguments without positional Namespace fallback", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-plan-adapter-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "PREFERRED_MODEL_ID = 'public_model_a'",
+        "class Paths:",
+        "    condition_output_dir = 'conditions'",
+        "class Runtime:",
+        "    def __init__(self, paths): self.paths = paths",
+        "def build_runtime_context(args, paths): return Runtime(paths)",
+        "def build_ordered_run_plan(runtime, model_id):",
+        "    return {'condition_output_dir': runtime.paths.condition_output_dir, 'model_id': model_id}",
+        "def main():",
+        "    args = argparse.Namespace(model_id=None, preferred_model_id='public_model_b')",
+        "    context = argparse.Namespace(paths=Paths())",
+        "    adapter = globals().get('_autolabos_entrypoint_build_run_plan')",
+        "    if adapter is None: raise RuntimeError('adapter missing')",
+        "    result = adapter(args=args, context=context, runtime=context, runtime_context=context)",
+        "    assert result == {'condition_output_dir': 'conditions', 'model_id': 'public_model_b'}",
+        "if __name__ == '__main__': main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/adapter missing/);
+    const repair = await repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
   it("attaches marker-scoped artifact path aliases to generated condition objects", async () => {

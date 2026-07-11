@@ -11364,6 +11364,8 @@ export class ImplementSessionManager {
       await repairPythonEvaluationSplitMinimumCoverageSurface(executionScriptPath);
     const entrypointBuildPathsAdapterRepair =
       await repairPythonEntrypointBuildPathsAdapterSurface(executionScriptPath);
+    const entrypointOrderedPlanAdapterRepair =
+      await repairPythonEntrypointOrderedPlanAdapterSurface(executionScriptPath);
     const entrypointConditionPathAliasesRepair =
       await repairPythonEntrypointConditionPathAliasesSurface(executionScriptPath);
     const publicStudySiblingExperimentBackendRepair =
@@ -11586,6 +11588,7 @@ export class ImplementSessionManager {
         datasetSplitLoaderPreferLabeledRepair,
         evaluationSplitMinimumCoverageRepair,
         entrypointBuildPathsAdapterRepair,
+        entrypointOrderedPlanAdapterRepair,
         entrypointConditionPathAliasesRepair,
         publicStudySiblingExperimentBackendRepair,
         publicStudyBackendCallableLoaderRepair,
@@ -60357,6 +60360,54 @@ export async function repairPythonEntrypointBuildPathsAdapterSurface(scriptPath?
   return {
     repaired: true,
     message: `Bridged generated entrypoint path-builder arguments in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") return { repaired: false };
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+  const marker = "_autolabos_entrypoint_ordered_plan_adapter_surface";
+  if (
+    source.includes(marker) ||
+    /^def _autolabos_entrypoint_build_run_plan\s*\(/mu.test(source) ||
+    !/^def build_ordered_run_plan\s*\(/mu.test(source) ||
+    !source.includes("_autolabos_entrypoint_build_run_plan")
+  ) {
+    return { repaired: false };
+  }
+  const mainIndex = source.lastIndexOf("\ndef main(");
+  if (mainIndex < 0) return { repaired: false };
+  const helper = [
+    `# ${marker}`,
+    "def _autolabos_entrypoint_build_run_plan(args=None, context=None, runtime=None, runtime_context=None, **values):",
+    "    selected_runtime = runtime_context or runtime or context",
+    "    paths = getattr(selected_runtime, 'paths', None)",
+    "    if callable(globals().get('build_runtime_context')) and args is not None and paths is not None:",
+    "        selected_runtime = build_runtime_context(args, paths)",
+    "    def _value(name, default=None):",
+    "        if isinstance(args, dict) and args.get(name) not in (None, ''):",
+    "            return args.get(name)",
+    "        value = getattr(args, name, None) if args is not None else None",
+    "        return default if value in (None, '') else value",
+    "    model_id = _value('model_id', _value('preferred_model_id', globals().get('PREFERRED_MODEL_ID', None)))",
+    "    if model_id is None:",
+    "        raise RuntimeError('ordered-plan adapter could not resolve a model id')",
+    "    return build_ordered_run_plan(selected_runtime, model_id)",
+    ""
+  ].join("\n");
+  const nextSource = `${source.slice(0, mainIndex)}\n\n${helper}${source.slice(mainIndex)}`;
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged generated ordered-plan runtime and model arguments in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
