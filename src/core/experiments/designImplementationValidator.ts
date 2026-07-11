@@ -817,6 +817,7 @@ function findUnresolvedDefaultFactoryBeforeDefinitionEvidence(
     "float",
     "frozenset",
     "int",
+    "lambda",
     "list",
     "set",
     "str",
