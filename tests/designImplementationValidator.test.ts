@@ -2635,6 +2635,75 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("blocks prefixed scalar evaluation defaults below task-specific full-validation floors", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-prefixed-eval-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-prefixed-eval", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "MINIMUM_EVAL_EXAMPLES_PER_TASK = 64",
+        "DEFAULT_EVAL_EXAMPLES_PER_TASK = 1172",
+        "PLANNED_CONDITION_MARKERS = ('baseline_condition', 'candidate_condition_a')",
+        "REQUIRED_RUN_COUNT = 8",
+        "SEED_SCHEDULE = [42, 43, 44, 45]",
+        "print('baseline and comparator runner')"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-prefixed-eval", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "design-prefixed-eval",
+        hypothesis_ids: ["h1"],
+        baselines: ["baseline_condition"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = await validateDesignImplementationAlignment({
+      comparisonContract: contract,
+      plannedConditionContract: {
+        required_condition_count: 2,
+        required_run_count: 8,
+        seed_schedule: [42, 43, 44, 45],
+        baseline_condition_marker: "baseline_condition",
+        required_condition_markers: ["baseline_condition", "candidate_condition_a"],
+        full_evaluation_required: true,
+        minimum_eval_examples_per_task: {
+          benchmark_task_a: 1172,
+          benchmark_task_b: 10042
+        }
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_FULL_EVAL_CONTRACTED",
+          severity: "block",
+          evidence: expect.stringContaining("declared_cap=1172")
+        })
+      ])
+    );
+  });
+
   it("blocks when the full condition grid is present but the locked baseline is not first", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-baseline-order-"));
     tempDirs.push(workspace);

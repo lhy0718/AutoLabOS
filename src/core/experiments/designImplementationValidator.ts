@@ -1411,6 +1411,7 @@ function extractDeclaredEvaluationLimits(text: string): number[] {
   const limits: number[] = [];
   const patterns = [
     /\b(?:max_eval_examples_per_task|max_eval_samples_per_task|max_eval_examples|max_eval_samples|eval_examples_per_task|eval_samples_per_task)\b\s*[:=]\s*(\d+)/giu,
+    /\b(?:(?:DEFAULT|LOCKED|CONFIGURED|RUNTIME)_)+(?:MAX_EVAL_EXAMPLES_PER_TASK|MAX_EVAL_SAMPLES_PER_TASK|MAX_EVAL_EXAMPLES|MAX_EVAL_SAMPLES|EVAL_EXAMPLES_PER_TASK|EVAL_SAMPLES_PER_TASK)\b\s*[:=]\s*(\d+)/gu,
     /\b(?:max[-\s]?eval[-\s]?(?:examples|samples)(?:[-\s]?per[-\s]?task)?)\b\s*[:=]\s*(\d+)/giu
   ];
   for (const pattern of patterns) {
