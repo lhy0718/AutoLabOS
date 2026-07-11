@@ -60372,7 +60372,7 @@ export async function repairPythonTaskBundleEvalSplitCoverageSurface(scriptPath?
     "            raise DataAccessError(\"evaluation schema normalization yielded too few usable labeled examples\", diagnostics)",
     ""
   ].join("\n");
-  if (source.includes(marker) || !source.includes(needle)) return { repaired: false };
+  if (source.includes(marker)) return { repaired: false };
   const replacement = [
     `        # ${marker}`,
     "        eval_limit = eval_caps.get(task) if isinstance(eval_caps, Mapping) else None",
@@ -60401,7 +60401,53 @@ export async function repairPythonTaskBundleEvalSplitCoverageSurface(scriptPath?
     "            raise DataAccessError(\"no labeled evaluation split met the governed minimum coverage\", diagnostics)",
     ""
   ].join("\n");
-  const nextSource = source.replace(needle, replacement);
+  const directSplitNeedle = [
+    "        eval_ds = _load_cached_dataset(ds_name, cfg, \"validation\")",
+    "        eval_rows = _take_records(eval_ds, int(eval_limit) if eval_limit is not None else None)",
+    "        normalized = [ex for i, row in enumerate(eval_rows) if (ex := normalizer(row, i)) is not None]",
+    "        if eval_rows and not normalized:",
+    "            raise DataAccessError(f\"{task} evaluation records normalized to zero usable examples; fields={sorted(_record_to_mapping(eval_rows[0]).keys())}\")",
+    "        min_count = MIN_EVAL_EXAMPLES_PER_TASK[task]",
+    "        if eval_limit is None and len(normalized) < min_count:",
+    "            raise DataAccessError(f\"{task} has {len(normalized)} usable eval examples, below required {min_count}\")",
+    "        eval_examples[task] = normalized",
+    "        diagnostics[\"tasks\"][task] = {\"eval_rows\": len(eval_rows), \"usable_eval\": len(normalized), \"dataset\": ds_name, \"config\": cfg}",
+    ""
+  ].join("\n");
+  const directSplitReplacement = [
+    `        # ${marker}`,
+    "        min_count = MIN_EVAL_EXAMPLES_PER_TASK[task]",
+    "        split_attempts: List[Dict[str, Any]] = []",
+    "        eval_ds = None",
+    "        eval_rows: List[Any] = []",
+    "        normalized: List[Any] = []",
+    "        eval_split = None",
+    "        for candidate_split in ('validation', 'dev', 'test'):",
+    "            try:",
+    "                candidate_ds = _load_cached_dataset(ds_name, cfg, candidate_split)",
+    "            except Exception as exc:",
+    "                split_attempts.append({'split': candidate_split, 'load_error': repr(exc)})",
+    "                continue",
+    "            candidate_rows = _take_records(candidate_ds, int(eval_limit) if eval_limit is not None else None)",
+    "            candidate_normalized = [ex for i, row in enumerate(candidate_rows) if (ex := normalizer(row, i)) is not None]",
+    "            split_attempts.append({'split': candidate_split, 'loaded': len(candidate_rows), 'normalized': len(candidate_normalized)})",
+    "            if eval_limit is not None or len(candidate_normalized) >= min_count:",
+    "                eval_ds = candidate_ds",
+    "                eval_rows = candidate_rows",
+    "                normalized = candidate_normalized",
+    "                eval_split = candidate_split",
+    "                break",
+    "        if eval_ds is None:",
+    "            raise DataAccessError(f\"{task} has no labeled evaluation split meeting required coverage; attempts={split_attempts}\")",
+    "        eval_examples[task] = normalized",
+    "        diagnostics[\"tasks\"][task] = {\"eval_rows\": len(eval_rows), \"usable_eval\": len(normalized), \"dataset\": ds_name, \"config\": cfg, \"eval_split\": eval_split, \"split_attempts\": split_attempts}",
+    ""
+  ].join("\n");
+  let nextSource = source.replace(needle, replacement);
+  if (nextSource === source) {
+    nextSource = source.replace(directSplitNeedle, directSplitReplacement);
+  }
+  if (nextSource === source) return { repaired: false };
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,

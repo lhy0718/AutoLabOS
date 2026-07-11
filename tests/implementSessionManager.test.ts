@@ -46386,6 +46386,64 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("repairs task-bundle loaders with an inline default evaluation split", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-task-bundle-inline-split-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(scriptPath, [
+      "from typing import Any, Dict, List",
+      "class DataAccessError(RuntimeError): pass",
+      "class TaskBundle:",
+      "    def __init__(self, train_examples, eval_examples, diagnostics):",
+      "        self.train_examples = train_examples; self.eval_examples = eval_examples; self.diagnostics = diagnostics",
+      "MIN_EVAL_EXAMPLES_PER_TASK = {'benchmark_task_a': 4}",
+      "DEFAULT_TRAIN_EXAMPLES = 2",
+      "def _get_runtime_value(runtime, name, default): return default",
+      "def _load_cached_dataset(name, config, split): return list(range({'validation': 2, 'test': 4, 'train': 4}.get(split, 0)))",
+      "def _take_records(dataset, limit=None): return dataset if limit is None else dataset[:limit]",
+      "def _record_to_mapping(row): return {'value': row}",
+      "def normalize_record(row, index): return {'index': index}",
+      "def _eval_to_training_text(example): return example",
+      "def _normalize_text_record(row, task): return {'row': row}",
+      "def load_task_bundle(runtime: Any = None, **_: Any) -> TaskBundle:",
+      "    diagnostics: Dict[str, Any] = {'tasks': {}}",
+      "    train_target = int(_get_runtime_value(runtime, 'train_examples', DEFAULT_TRAIN_EXAMPLES))",
+      "    eval_limit = _get_runtime_value(runtime, 'eval_limit', None)",
+      "    task_specs = {'benchmark_task_a': ('public_dataset_a', None, normalize_record)}",
+      "    eval_examples: Dict[str, List[Any]] = {}",
+      "    train_pool: List[Any] = []",
+      "    for task, (ds_name, cfg, normalizer) in task_specs.items():",
+      "        eval_ds = _load_cached_dataset(ds_name, cfg, \"validation\")",
+      "        eval_rows = _take_records(eval_ds, int(eval_limit) if eval_limit is not None else None)",
+      "        normalized = [ex for i, row in enumerate(eval_rows) if (ex := normalizer(row, i)) is not None]",
+      "        if eval_rows and not normalized:",
+      "            raise DataAccessError(f\"{task} evaluation records normalized to zero usable examples; fields={sorted(_record_to_mapping(eval_rows[0]).keys())}\")",
+      "        min_count = MIN_EVAL_EXAMPLES_PER_TASK[task]",
+      "        if eval_limit is None and len(normalized) < min_count:",
+      "            raise DataAccessError(f\"{task} has {len(normalized)} usable eval examples, below required {min_count}\")",
+      "        eval_examples[task] = normalized",
+      "        diagnostics[\"tasks\"][task] = {\"eval_rows\": len(eval_rows), \"usable_eval\": len(normalized), \"dataset\": ds_name, \"config\": cfg}",
+      "        train_ds = _load_cached_dataset(ds_name, cfg, \"train\")",
+      "        train_rows = _take_records(train_ds, max(train_target, 2))",
+      "        task_train = [ex for i, row in enumerate(train_rows) if (ev := normalizer(row, i)) is not None for ex in [_eval_to_training_text(ev)]]",
+      "        if not task_train:",
+      "            task_train = [ex for row in train_rows if (ex := _normalize_text_record(row, task)) is not None]",
+      "        train_pool.extend(task_train)",
+      "        diagnostics[\"tasks\"][task][\"train_rows\"] = len(train_rows)",
+      "        diagnostics[\"tasks\"][task][\"usable_train\"] = len(task_train)",
+      "    return TaskBundle(train_pool[:train_target], eval_examples, diagnostics)",
+      "if __name__ == '__main__':",
+      "    bundle = load_task_bundle()",
+      "    assert bundle.diagnostics['tasks']['benchmark_task_a']['eval_split'] == 'test'",
+      "    assert len(bundle.eval_examples['benchmark_task_a']) == 4",
+      ""
+    ].join("\n"), "utf8");
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/below required/);
+    const repair = await repairPythonTaskBundleEvalSplitCoverageSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("bridges final entrypoint path-builder arguments to an existing generic builder", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-path-builder-"));
     tempDirs.push(workspace);
