@@ -16,6 +16,49 @@ Path placeholders:
 ---
 
 
+## Issue: LV-590
+
+- Status: verifier repair implemented; targeted tests, full CI, build, public sanitization, and harness validation pass; node-owned same-flow retry pending
+- Validation target: failure-like evaluation row statuses must contradict aggregate completion counters and block progression beyond `run_experiments`.
+- Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-588 evaluation handoff exposed LV-589.
+- Reproduction steps:
+  1. Resume the persisted `run_experiments` node through the real TUI helper.
+  2. Allow every planned training run to complete and enter the generated evaluator.
+  3. Observe every condition row return a failure-like evaluation status with no evaluated examples or objective metric.
+  4. Inspect the persisted top-level metrics and graph transition.
+- Expected behavior:
+  - Failure-like statuses such as `evaluation_failed` must count as failed execution evidence.
+  - Aggregate completed counters that contradict those rows must fail verification.
+  - The graph must remain at or backtrack to `run_experiments` instead of progressing to analysis.
+- Actual behavior:
+  - Every planned condition row reports `evaluation_failed` with no evaluated examples and no per-task metric.
+  - Top-level metrics nevertheless report completed status and all planned runs completed.
+  - The verifier accepts the contradictory payload and advances the persisted graph to `analyze_results`.
+- Fresh vs existing session comparison:
+  - Fresh session: not required; fresh node-owned metrics and graph state reproduce the invalid promotion.
+  - Existing session: the persisted run advances to analysis despite all evaluation rows failing.
+  - Divergence: no UI/session divergence observed; the persisted transition reflects the verifier's incorrect failure classification.
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: execution-row aggregation recognizes only a fixed set of exact failure strings, while the broader metrics gate already recognizes compound failure-like statuses.
+- Code/test changes:
+  - Reuse the common failure-like metrics status predicate for condition-result rows.
+  - Extend domain-neutral regression coverage with compound evaluation-failure statuses and contradictory aggregate completion counters.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Automated regression: compound evaluation-failure row coverage passes.
+  - Full CI passes: 195 root test files with 2,671 tests, plus 14 web tests.
+  - Production build and public-code sanitization pass.
+  - Harness validation passes with 497 issue entries checked and no structural violations.
+  - Node-owned same-flow live retry: pending.
+- Follow-up risks:
+  - Once invalid completion is blocked, node-owned retry may expose answer-schema, inference, throughput, deadline, or aggregation failures in the repaired LV-589 evaluator path.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/run_experiments_verify_report.json`
+
+
 ## Issue: LV-589
 
 - Status: repair implemented; targeted tests, full CI, build, harness, public sanitization, and persisted-runner migration checks pass; same-flow live revalidation pending

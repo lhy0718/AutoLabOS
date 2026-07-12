@@ -1912,7 +1912,7 @@ describe("run_experiments execution profile behavior", () => {
     });
   });
 
-  it("rejects aggregate completion counts when execution rows all failed", async () => {
+  it("rejects aggregate completion counts when execution rows report evaluation failures", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-contradictory-row-counts-"));
     process.chdir(root);
     const run = makeRun("run-contradictory-row-counts");
@@ -1950,14 +1950,14 @@ describe("run_experiments execution profile behavior", () => {
                   {
                     condition_marker: "baseline_condition",
                     seed: 1,
-                    status: "failed",
+                    status: "evaluation_failed",
                     accuracy: null,
                     error_message: "No execution helper is available"
                   },
                   {
                     condition_marker: "candidate_condition_a",
                     seed: 1,
-                    status: "failed",
+                    status: "evaluation_failed",
                     accuracy: null,
                     error_message: "No execution helper is available"
                   }

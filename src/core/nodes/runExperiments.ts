@@ -3306,7 +3306,7 @@ function isCompletedConditionStatus(status: string): boolean {
 }
 
 function isFailedConditionStatus(status: string): boolean {
-  return ["failed", "failure", "error", "errored", "exception"].includes(status);
+  return isFailureLikeMetricsStatus(status);
 }
 
 function conditionResultNestedRecords(row: Record<string, unknown>): Array<Record<string, unknown>> {
