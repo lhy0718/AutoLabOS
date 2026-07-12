@@ -98,6 +98,147 @@ describe("run_experiments execution profile behavior", () => {
     expect(aci.runTests).not.toHaveBeenCalled();
   });
 
+  it("repairs ordered-plan fallback model aliases before enforcing do-not-retry", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-ordered-plan-pre-repair-"));
+    process.chdir(root);
+    const run = makeRun("run-ordered-plan-pre-repair");
+    run.objectiveMetric = "accuracy_delta_vs_baseline at least 0.01";
+    run.graph.retryCounters.run_experiments = 1;
+    run.graph.nodeStates.implement_experiments.updatedAt = "1970-01-01T00:00:00.000Z";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "experiment.py");
+    await writeFile(
+      scriptPath,
+      [
+        "import argparse",
+        "def build_ordered_run_plan(model_id): return model_id",
+        "# _autolabos_entrypoint_ordered_plan_adapter_surface",
+        "def _autolabos_entrypoint_build_run_plan(args=None, context=None, runtime=None, runtime_context=None, **values):",
+        "    def _value(name, default=None):",
+        "        value = getattr(args, name, None) if args is not None else None",
+        "        return default if value in (None, '') else value",
+        "    model_id = _value('model_id', _value('preferred_model_id', globals().get('PREFERRED_MODEL_ID', None)))",
+        "    if model_id is None:",
+        "        raise RuntimeError('ordered-plan adapter could not resolve a model id')",
+        "    return build_ordered_run_plan(model_id=model_id)",
+        "def main():",
+        "    args = argparse.Namespace(fallback_base_model='public_model_fallback')",
+        "    return 0 if _autolabos_entrypoint_build_run_plan(args=args) == 'public_model_fallback' else 1",
+        "if __name__ == '__main__': raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", `python3 ${JSON.stringify(scriptPath)}`);
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const errorMessage = "ordered-plan adapter could not resolve a model id";
+    await FailureMemory.forRun(run.id).append({
+      run_id: run.id,
+      node_id: "run_experiments",
+      attempt: 1,
+      failure_class: "structural",
+      error_fingerprint: buildErrorFingerprint(errorMessage),
+      error_message: errorMessage,
+      do_not_retry: true,
+      do_not_retry_reason: "Structural execution failure."
+    });
+
+    let repairedBeforeExecution = false;
+    const eventStream = new InMemoryEventStream();
+    const node = createRunExperimentsNode({
+      config: {
+        experiments: {
+          network_policy: "declared",
+          network_purpose: "model_download"
+        }
+      } as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          const repairedSource = await readFile(scriptPath, "utf8");
+          repairedBeforeExecution =
+            repairedSource.includes("'fallback_base_model'") &&
+            repairedSource.includes("def _source_value(source, name):");
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify({
+              status: "completed",
+              success: true,
+              primary_metric: {
+                name: "accuracy_delta_vs_baseline",
+                value: 0.02,
+                target: 0.01,
+                met: true
+              },
+              condition_results: [
+                {
+                  condition_id: "baseline_condition",
+                  condition_type: "baseline",
+                  status: "completed",
+                  accuracy: 0.4,
+                  correct_count: 40,
+                  total_count: 100
+                },
+                {
+                  condition_id: "candidate_condition",
+                  condition_type: "candidate",
+                  status: "completed",
+                  accuracy: 0.42,
+                  correct_count: 42,
+                  total_count: 100
+                }
+              ],
+              completed_condition_count: 2
+            }),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).not.toBe("failure");
+    expect(repairedBeforeExecution).toBe(true);
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes("before run_experiments retry gate")
+      )
+    ).toBe(true);
+  });
+
   it("allows run_experiments after a newer upstream implementation repair", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-profile-"));
     process.chdir(root);

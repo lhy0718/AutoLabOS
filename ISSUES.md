@@ -41,12 +41,15 @@ Path placeholders:
   - Hypothesis: the ordered-plan adapter used a narrower model identifier vocabulary than the generated CLI/runtime defaults and other entrypoint helpers.
 - Code/test changes:
   - Expanded `repairPythonEntrypointOrderedPlanAdapterSurface(...)` to resolve model identifiers across mapping and attribute runtime sources using selected, preferred, base, direct, and fallback aliases plus generic global defaults.
+  - Connected the repair to the `run_experiments` pre-failure-memory repair pass so a persisted structural failure can be retried only after the node-owned generated runner is upgraded.
   - Added an executable domain-neutral regression fixture where only `fallback_base_model` is available.
+  - Added an execution-node regression proving the repair runs before the do-not-retry gate and preserves actual command execution.
   - The repair does not alter condition markers, seeds, metrics, or experiment outputs.
 - Regression status:
   - Same-flow live reproduction: confirmed on 2026-07-12.
   - Automated regression: targeted and adjacent ordered-plan tests pass; full `implementSessionManager` regression passes.
-  - Full CI passes: 195 root test files with 2,661 tests, plus 14 web tests.
+  - The full `runExperimentsExecutionProfile` regression passes with 77 tests.
+  - Full CI passes: 195 root test files with 2,662 tests, plus 14 web tests.
   - Build, public-code sanitation, and harness validation pass.
   - A copy of the exact live runner was upgraded successfully; Python compilation, fallback model resolution, and repair idempotency pass.
   - Same-flow live revalidation: pending.
