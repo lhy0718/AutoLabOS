@@ -304,6 +304,7 @@ import {
   repairPythonPlannedConditionContractSurface,
   repairPythonPublicStudyEntrypointArgsAliasSurface,
   repairPythonHighLevelWorkloadContextAliasSurface,
+  repairPythonConditionMarkerNumericTokenSurface,
   repairPythonConditionScheduleMarkerParameterSurface,
   repairPythonConditionObjectMarkerParameterAliasSurface,
   repairPythonConditionAsdictJsonableSurface,
@@ -45054,6 +45055,53 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(repairedSource).toContain("_autolabos_condition_schedule_marker_parameter_surface");
     expect(repairedSource).toContain("parsed_marker = _parse_condition_marker");
+  });
+
+  it("aligns generated numeric condition marker tokens with the planned contract", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-marker-token-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const baselineMarker = ["condition", "8", "parameter", "0", "0"].join("_");
+    const candidateMarker = ["condition", "4", "parameter", "0", "05"].join("_");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "",
+        `PLANNED_CONDITION_MARKERS = (${JSON.stringify(baselineMarker)}, ${JSON.stringify(candidateMarker)})`,
+        "BASELINE_CONDITION_MARKER = PLANNED_CONDITION_MARKERS[0]",
+        "",
+        "def _parameter_token(value: float) -> str:",
+        "    text = f\"{value:.3f}\".rstrip(\"0\").rstrip(\".\")",
+        "    return text.replace(\".\", \"_\") if text else \"0\"",
+        "",
+        "@dataclass(frozen=True)",
+        "class ConditionSpec:",
+        "    condition_parameter_x: int",
+        "    condition_parameter_y: float",
+        "",
+        "    @property",
+        "    def marker(self):",
+        "        return f\"condition_{self.condition_parameter_x}_parameter_{_parameter_token(self.condition_parameter_y)}\"",
+        "",
+        "CONDITION_SPECS = (ConditionSpec(8, 0.0), ConditionSpec(4, 0.05))",
+        "",
+        "if __name__ == '__main__':",
+        "    markers = tuple(spec.marker for spec in CONDITION_SPECS)",
+        "    assert markers == PLANNED_CONDITION_MARKERS, (markers, PLANNED_CONDITION_MARKERS)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+    const repair = await repairPythonConditionMarkerNumericTokenSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_condition_marker_numeric_token_surface");
+    expect(repairedSource).toContain('f"{float(value):.4f}".rstrip("0")');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
   it("adds marker-derived parameter aliases to generated condition objects", async () => {

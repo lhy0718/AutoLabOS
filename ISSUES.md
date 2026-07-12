@@ -16,6 +16,32 @@ Path placeholders:
 ---
 
 
+## Issue: LV-576
+
+- Status: reproduced in same-flow live `run_experiments`; source repair, focused and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.
+- Validation target: generated condition objects must serialize numeric marker components exactly as declared by the approved planned-condition contract.
+- Environment/session context: the new shared deadline gate passed, the experiment process executed, and node-owned failure metrics then rejected the baseline marker before any condition run was promoted.
+- Reproduction steps:
+  1. Materialize an approved condition contract whose zero-valued parameter token retains one decimal place.
+  2. Generate condition specs whose marker property strips all trailing zeroes and the decimal point.
+  3. Validate that the baseline marker appears exactly once before running the condition schedule.
+- Expected behavior: runtime condition markers and the explicit planned markers should be identical for zero and fractional parameter values.
+- Actual behavior: the generated numeric token helper collapsed a zero parameter token to an integer-looking token, so the baseline marker count was zero and metrics recorded a top-level failed status.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral executable fixture compares two generated condition markers against explicit planned markers.
+  - Existing session: the live runner passed deadline preflight and failed only at baseline marker validation.
+  - Divergence: no state/UI divergence; this was numeric condition identity serialization drift.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation independently produced the approved marker constants and a float token helper whose trailing-zero normalization used a different canonical format.
+- Code/test changes:
+  - Added a planned-contract-scoped repair for generated numeric marker token helpers.
+  - Preserved one decimal place for integral values and four-decimal bounded formatting for fractional values, matching the existing contract formatter.
+  - Applied the repair before design validation and retained it in late handoff repairs.
+- Regression status: the executable marker-token regression and all 800 `implementSessionManager` tests pass. TypeScript/web build, public-code sanitation, and harness validation also pass.
+- Follow-up risks: the repair only touches generated token helpers that both strip trailing decimals and convert decimal points to underscores inside a planned-condition runner.
+
+
 ## Issue: LV-575
 
 - Status: reproduced in same-flow live implementation attempt 2; source repair, focused and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.

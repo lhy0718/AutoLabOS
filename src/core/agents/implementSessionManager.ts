@@ -1770,6 +1770,30 @@ export class ImplementSessionManager {
           }
         );
       }
+      const earlyConditionMarkerNumericTokenRepair =
+        await repairPythonConditionMarkerNumericTokenSurface(prepared.scriptPath);
+      if (earlyConditionMarkerNumericTokenRepair.repaired) {
+        prepared.changedFiles = dedupeStrings([
+          ...prepared.changedFiles,
+          ...(prepared.scriptPath ? [prepared.scriptPath] : [])
+        ]);
+        prepared.publicArtifacts = dedupeStrings([
+          ...prepared.publicArtifacts,
+          ...(prepared.scriptPath && isSubpath(prepared.scriptPath, prepared.publicDir) ? [prepared.scriptPath] : [])
+        ]);
+        emitImplementObservation(
+          "verify",
+          earlyConditionMarkerNumericTokenRepair.message ||
+            "Aligned generated numeric condition marker tokens with the approved plan before design validation.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: prepared.publicDir,
+            scriptPath: prepared.scriptPath,
+            runCommand: prepared.runCommand
+          }
+        );
+      }
       const earlyModelPreflightAliasRepair = await repairPythonModelPreflightAliasSurface(
         prepared.scriptPath
       );
@@ -11375,6 +11399,8 @@ export class ImplementSessionManager {
       await repairPythonHighLevelWorkloadContextAliasSurface(executionScriptPath);
     const conditionScheduleMarkerParameterRepair =
       await repairPythonConditionScheduleMarkerParameterSurface(executionScriptPath);
+    const conditionMarkerNumericTokenRepair =
+      await repairPythonConditionMarkerNumericTokenSurface(executionScriptPath);
     const conditionObjectMarkerParameterAliasRepair =
       await repairPythonConditionObjectMarkerParameterAliasSurface(executionScriptPath);
     const conditionAsdictJsonableRepair =
@@ -11655,6 +11681,7 @@ export class ImplementSessionManager {
         publicStudyEntrypointArgsAliasRepair,
         highLevelWorkloadContextAliasRepair,
         conditionScheduleMarkerParameterRepair,
+        conditionMarkerNumericTokenRepair,
         conditionObjectMarkerParameterAliasRepair,
       conditionAsdictJsonableRepair,
       singleRunnerSeedDefaultRepair,
@@ -57038,6 +57065,66 @@ export async function repairPythonHighLevelWorkloadContextAliasSurface(scriptPat
   return {
     repaired: true,
     message: `Added context alias to high-level workload invocation in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonConditionMarkerNumericTokenSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_condition_marker_numeric_token_surface";
+  if (
+    source.includes(marker) ||
+    !source.includes("PLANNED_CONDITION_MARKERS") ||
+    !source.includes("CONDITION_SPECS") ||
+    !source.includes("BASELINE_CONDITION_MARKER")
+  ) {
+    return { repaired: false };
+  }
+
+  const tokenFunctionNames = Array.from(
+    source.matchAll(/^def\s+([A-Za-z_][A-Za-z0-9_]*token)\s*\(\s*value(?:\s*:[^)]*)?\)/gmu)
+  ).map((match) => match[1]).filter(Boolean);
+  let nextSource = source;
+  for (const functionName of tokenFunctionNames) {
+    nextSource = replaceAllPythonTopLevelFunctionSources(nextSource, functionName, (functionSource) => {
+      if (
+        !/\.rstrip\(["']0["']\)\.rstrip\(["']\.["']\)/u.test(functionSource) ||
+        !/\.replace\(["']\.["'],\s*["']_["']\)/u.test(functionSource)
+      ) {
+        return functionSource;
+      }
+      return functionSource.replace(
+        /^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*=\s*f["']\{value:\.\d+f\}["']\.rstrip\(["']0["']\)\.rstrip\(["']\.["']\)\s*$/mu,
+        (_match, indent: string, variableName: string) => [
+          `${indent}# ${marker}`,
+          `${indent}${variableName} = f"{float(value):.4f}".rstrip("0")`,
+          `${indent}if ${variableName}.endswith("."):`,
+          `${indent}    ${variableName} += "0"`
+        ].join("\n")
+      );
+    });
+  }
+
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aligned generated numeric condition marker tokens with the approved plan in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
