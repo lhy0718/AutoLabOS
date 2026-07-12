@@ -320,6 +320,7 @@ import {
   repairPythonEntrypointHighLevelRunnerDataBundleAliasSurface,
   repairPythonEntrypointHighLevelResultRowsSurface,
   repairPythonEntrypointConditionSeedExecutorBridgeSurface,
+  repairPythonEvaluationChoiceBatchScoringSurface,
   repairPythonEvaluationTaskBundleAliasSurface,
   repairPythonMultipleChoiceGoldAliasSurface,
   repairPythonNumericChoiceLabelPrecedenceSurface,
@@ -50239,6 +50240,76 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(repairedSource).toContain("_autolabos_evaluation_task_bundle_alias_surface");
     expect(repairedSource).toContain("'gold_index', 'label_index'");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("batches generated multiple-choice option scoring into one model forward", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-eval-choice-batch-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from types import SimpleNamespace",
+        "import torch",
+        "",
+        "class Tokenizer:",
+        "    pad_token_id = 0",
+        "    eos_token_id = 0",
+        "    def __call__(self, text, add_special_tokens=True):",
+        "        return SimpleNamespace(input_ids=[1, 2] if add_special_tokens else [3])",
+        "",
+        "class Model:",
+        "    def __init__(self):",
+        "        self.calls = 0",
+        "    def __call__(self, input_ids, attention_mask=None):",
+        "        self.calls += 1",
+        "        shape = (input_ids.size(0), input_ids.size(1), 8)",
+        "        return SimpleNamespace(logits=torch.zeros(shape, dtype=torch.float32, device=input_ids.device))",
+        "",
+        "def _ev_score_choice(model, tokenizer, prompt, label, device, max_length=768):",
+        "    p_ids = tokenizer(prompt, add_special_tokens=True).input_ids",
+        "    c_ids = tokenizer(' ' + str(label), add_special_tokens=False).input_ids",
+        "    ids = (p_ids + c_ids)[-int(max_length):]",
+        "    masked = len(p_ids)",
+        "    labels = list(ids)",
+        "    for i in range(min(masked, len(labels))):",
+        "        labels[i] = -100",
+        "    input_ids = torch.tensor([ids], dtype=torch.long, device=device)",
+        "    lab = torch.tensor([labels], dtype=torch.long, device=device)",
+        "    with torch.no_grad():",
+        "        logits = model(input_ids=input_ids).logits",
+        "        loss = torch.nn.functional.cross_entropy(logits[:, :-1, :].reshape(-1, logits.size(-1)), lab[:, 1:].reshape(-1), reduction='none', ignore_index=-100)",
+        "    keep = lab[:, 1:].reshape(-1) != -100",
+        "    return float((-loss[keep].mean()).detach().cpu().item())",
+        "",
+        "def score_options(model, tokenizer, prompt, choices):",
+        "    max_len = 32",
+        "    device = torch.device('cpu')",
+        "    scores = [_ev_score_choice(model, tokenizer, prompt, lab, device, max_len) for lab, _ in choices]",
+        "    return scores",
+        "",
+        "if __name__ == '__main__':",
+        "    model = Model()",
+        "    scores = score_options(model, Tokenizer(), 'Question?', [('A', 'alpha'), ('B', 'beta'), ('C', 'gamma')])",
+        "    assert len(scores) == 3",
+        "    assert model.calls == 1, model.calls",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(
+      /AssertionError/
+    );
+    expect((await repairPythonEvaluationChoiceBatchScoringSurface(scriptPath)).repaired).toBe(true);
+    expect((await repairPythonEvaluationChoiceBatchScoringSurface(scriptPath)).repaired).toBe(false);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_evaluation_choice_batch_scoring_surface");
+    expect(repairedSource).toContain("attention_mask=attention_mask");
+    expect(repairedSource).not.toContain(
+      "scores = [_ev_score_choice(model, tokenizer, prompt, lab, device, max_len) for lab, _ in choices]"
+    );
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 

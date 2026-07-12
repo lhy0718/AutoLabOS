@@ -140,6 +140,20 @@ describe("run_experiments execution profile behavior", () => {
         "            gold = value",
         "            break",
         "    return int(gold) if gold is not None else None",
+        "def _ev_score_choice(model, tokenizer, prompt, label, device, max_length=768):",
+        "    p_ids = tokenizer(prompt, add_special_tokens=True).input_ids",
+        "    c_ids = tokenizer(' ' + str(label), add_special_tokens=False).input_ids",
+        "    ids = (p_ids + c_ids)[-int(max_length):]",
+        "    input_ids = torch.tensor([ids], dtype=torch.long, device=device)",
+        "    lab = torch.tensor([ids], dtype=torch.long, device=device)",
+        "    with torch.no_grad():",
+        "        logits = model(input_ids=input_ids).logits",
+        "        loss = torch.nn.functional.cross_entropy(logits[:, :-1, :].reshape(-1, logits.size(-1)), lab[:, 1:].reshape(-1), reduction='none', ignore_index=-100)",
+        "    keep = lab[:, 1:].reshape(-1) != -100",
+        "    return float((-loss[keep].mean()).detach().cpu().item())",
+        "def score_options(model, tokenizer, prompt, choices, device, max_len):",
+        "    scores = [_ev_score_choice(model, tokenizer, prompt, lab, device, max_len) for lab, _ in choices]",
+        "    return scores",
         "def _load_eval_bundle(eval_specs, allow_download, diagnostics):",
         "    eval_tasks = {}",
         "    for task, (jsonl, hf_path, hf_name, split) in eval_specs.items():",
@@ -215,6 +229,7 @@ describe("run_experiments execution profile behavior", () => {
     let dataBundleRepairedBeforeExecution = false;
     let evalSplitCoverageRepairedBeforeExecution = false;
     let evaluationGoldAliasRepairedBeforeExecution = false;
+    let evaluationChoiceBatchRepairedBeforeExecution = false;
     let evaluationBridgeRepairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
@@ -258,6 +273,9 @@ describe("run_experiments execution profile behavior", () => {
           evaluationGoldAliasRepairedBeforeExecution =
             repairedSource.includes("_autolabos_evaluation_task_bundle_alias_surface") &&
             repairedSource.includes("'gold_index', 'label_index'");
+          evaluationChoiceBatchRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_evaluation_choice_batch_scoring_surface") &&
+            repairedSource.includes("attention_mask=attention_mask");
           evaluationBridgeRepairedBeforeExecution =
             repairedSource.includes("_autolabos_entrypoint_completed_training_evaluation_bridge_surface") &&
             repairedSource.includes("evaluation = _autolabos_ep_call(evaluator, evaluation_supplied)");
@@ -328,6 +346,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(dataBundleRepairedBeforeExecution).toBe(true);
     expect(evalSplitCoverageRepairedBeforeExecution).toBe(true);
     expect(evaluationGoldAliasRepairedBeforeExecution).toBe(true);
+    expect(evaluationChoiceBatchRepairedBeforeExecution).toBe(true);
     expect(evaluationBridgeRepairedBeforeExecution).toBe(true);
     expect(
       eventStream.history().some((event) =>

@@ -16,9 +16,56 @@ Path placeholders:
 ---
 
 
+## Issue: LV-592
+
+- Status: generic option-batching repair implemented; targeted tests, full CI, build, public sanitization, harness validation, and persisted-runner migration checks pass; same-flow throughput revalidation pending
+- Validation target: generated multiple-choice evaluators must use bounded batched inference so the governed full evaluation plan can finish within its declared deadline.
+- Environment/session context: existing governed live run in `<validation-workspace>`, safely jumped back and executed through the real TUI after the LV-591 schema repair.
+- Reproduction steps:
+  1. Execute `run_experiments` through the real TUI after applying the explicit-index schema repair.
+  2. Confirm that examples are scored and per-example raw evidence accumulates.
+  3. Compare observed throughput, planned example count, repeated-run count, and the runner deadline.
+  4. Inspect the generated evaluator's option-scoring loop.
+- Expected behavior:
+  - Multiple options for one prompt should be padded and scored in a single model forward.
+  - The projected full-plan wall time should remain below the declared execution deadline with material headroom.
+- Actual behavior:
+  - LV-591 no longer reproduces; thousands of examples are scored with raw prediction evidence.
+  - Observed throughput is approximately 14 examples per second.
+  - The evaluator performs one full-prompt model forward per option, yielding a projected full-plan wall time of roughly 4.5 hours against a 4-hour runner deadline.
+- Fresh vs existing session comparison:
+  - Fresh session: not required; fresh node-owned raw evidence and active GPU utilization reproduce the throughput boundary.
+  - Existing session: the persisted run begins valid scoring but cannot reasonably finish the complete governed plan within its deadline.
+  - Divergence: no UI/session divergence observed; this is a generated evaluator inference-efficiency defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated evaluator serializes option scoring as separate full-prompt forwards instead of one padded option batch per example.
+- Code/test changes:
+  - Add a generic repair that replaces per-option forwards with one padded choice batch.
+  - Preserve per-option mean log-likelihood scoring and raw prediction evidence.
+  - Apply the repair during implement handoff, before the `run_experiments` retry gate, and immediately before execution.
+  - Add domain-neutral unit and execution-node integration regression coverage, including a one-forward assertion.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - The deliberately bounded live attempt was stopped after throughput and raw-evidence integrity were established; no evaluator or TUI process remains.
+  - Automated regression: one-forward option batching and execution-node pre-repair tests pass.
+  - Full CI passes: 195 root test files with 2,673 tests, plus 14 web tests.
+  - Production build and public-code sanitization pass.
+  - Harness validation passes with 499 issue entries checked and no structural violations.
+  - A copy of the exact persisted runner was migrated successfully; Python compilation, migration idempotency, scorer replacement, and call-site replacement checks pass.
+  - Same-flow throughput check and live retry: pending.
+- Follow-up risks:
+  - Per-example batching may still be insufficient if tokenization, JSONL flushing, or model dispatch dominates runtime.
+  - Successful full evaluation may expose aggregation, checkpoint, analysis, or evidence-quality failures.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/outputs/topic-slug/experiment/raw_evidence.jsonl`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-591
 
-- Status: generic schema repair implemented; targeted tests, full CI, build, public sanitization, harness validation, and persisted-runner migration checks pass; same-flow live revalidation pending
+- Status: resolved in same-flow live `run_experiments`; targeted tests, full CI, build, public sanitization, harness validation, and persisted-runner migration checks pass
 - Validation target: generated multiple-choice evaluators must accept object-backed examples whose normalized correct answer is stored under an explicit index alias.
 - Environment/session context: existing governed live run in `<validation-workspace>`, retried through the real TUI after the LV-589 bundle projection and LV-590 verifier repair.
 - Reproduction steps:
@@ -52,7 +99,7 @@ Path placeholders:
   - Production build and public-code sanitization pass.
   - Harness validation passes with 498 issue entries checked and no structural violations.
   - A copy of the exact persisted runner was migrated successfully; Python compilation, migration idempotency, and object-backed zero-index extraction checks pass.
-  - Same-flow live revalidation: pending.
+  - Same-flow live revalidation: passed; thousands of examples produced valid per-example scores and raw prediction evidence before the distinct LV-592 throughput boundary was isolated.
 - Follow-up risks:
   - Successful schema extraction may expose inference throughput, deadline, device placement, answer scoring, or aggregate metric failures.
 - Evidence/artifacts:

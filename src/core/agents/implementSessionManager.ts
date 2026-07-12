@@ -11455,6 +11455,8 @@ export class ImplementSessionManager {
       await repairPythonEntrypointConditionSeedExecutorBridgeSurface(executionScriptPath);
     const evaluationTaskBundleAliasRepair =
       await repairPythonEvaluationTaskBundleAliasSurface(executionScriptPath);
+    const evaluationChoiceBatchScoringRepair =
+      await repairPythonEvaluationChoiceBatchScoringSurface(executionScriptPath);
     const multipleChoiceGoldAliasRepair =
       await repairPythonMultipleChoiceGoldAliasSurface(executionScriptPath);
     const numericChoiceLabelPrecedenceRepair =
@@ -11737,6 +11739,7 @@ export class ImplementSessionManager {
         highLevelRunnerDataBundleAliasRepair,
         highLevelResultRowsRepair,
         evaluationTaskBundleAliasRepair,
+        evaluationChoiceBatchScoringRepair,
         multipleChoiceGoldAliasRepair,
         numericChoiceLabelPrecedenceRepair,
         entrypointSemanticCallAliasRepair,
@@ -58725,6 +58728,106 @@ export async function repairPythonEvaluationTaskBundleAliasSurface(scriptPath?: 
   return {
     repaired: true,
     message: `Aliased generated evaluation task bundles and label-index gold fields in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEvaluationChoiceBatchScoringSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const repairMarker = "_autolabos_evaluation_choice_batch_scoring_surface";
+  const callNeedle =
+    "scores = [_ev_score_choice(model, tokenizer, prompt, lab, device, max_len) for lab, _ in choices]";
+  if (
+    source.includes(repairMarker) ||
+    !source.includes("def _ev_score_choice(") ||
+    !source.includes(callNeedle)
+  ) {
+    return { repaired: false };
+  }
+
+  const functionSource = extractPythonTopLevelFunctionSource(source, "_ev_score_choice");
+  if (!functionSource) {
+    return { repaired: false };
+  }
+  const replacement = [
+    "def _ev_score_choices(model, tokenizer, prompt, choice_labels, device, max_length=768):",
+    `    # ${repairMarker}`,
+    "    encoded_rows = []",
+    "    label_rows = []",
+    "    for choice_label in choice_labels:",
+    "        prompt_ids = tokenizer(prompt, add_special_tokens=True).input_ids",
+    "        choice_ids = tokenizer(' ' + str(choice_label), add_special_tokens=False).input_ids",
+    "        ids = (prompt_ids + choice_ids)[-int(max_length):]",
+    "        cut = max(0, len(prompt_ids) + len(choice_ids) - len(ids))",
+    "        masked = max(0, len(prompt_ids) - cut)",
+    "        labels = list(ids)",
+    "        for index in range(min(masked, len(labels))):",
+    "            labels[index] = -100",
+    "        encoded_rows.append(ids)",
+    "        label_rows.append(labels)",
+    "    if not encoded_rows:",
+    "        return []",
+    "    max_width = max(len(row) for row in encoded_rows)",
+    "    pad_token_id = getattr(tokenizer, 'pad_token_id', None)",
+    "    if pad_token_id is None:",
+    "        pad_token_id = getattr(tokenizer, 'eos_token_id', None)",
+    "    if pad_token_id is None:",
+    "        pad_token_id = 0",
+    "    input_rows = [row + [int(pad_token_id)] * (max_width - len(row)) for row in encoded_rows]",
+    "    attention_rows = [[1] * len(row) + [0] * (max_width - len(row)) for row in encoded_rows]",
+    "    padded_labels = [row + [-100] * (max_width - len(row)) for row in label_rows]",
+    "    input_ids = torch.tensor(input_rows, dtype=torch.long, device=device)",
+    "    attention_mask = torch.tensor(attention_rows, dtype=torch.long, device=device)",
+    "    labels = torch.tensor(padded_labels, dtype=torch.long, device=device)",
+    "    with torch.no_grad():",
+    "        logits = model(input_ids=input_ids, attention_mask=attention_mask).logits",
+    "        token_losses = torch.nn.functional.cross_entropy(",
+    "            logits[:, :-1, :].reshape(-1, logits.size(-1)),",
+    "            labels[:, 1:].reshape(-1),",
+    "            reduction='none',",
+    "            ignore_index=-100,",
+    "        ).view(labels.size(0), -1)",
+    "    keep = labels[:, 1:] != -100",
+    "    scores = []",
+    "    for row_index in range(labels.size(0)):",
+    "        row_keep = keep[row_index]",
+    "        if int(row_keep.sum().item()) == 0:",
+    "            scores.append(float('-inf'))",
+    "        else:",
+    "            scores.append(float((-token_losses[row_index][row_keep].mean()).detach().cpu().item()))",
+    "    return scores"
+  ].join("\n");
+
+  let nextSource = replacePythonTopLevelFunctionSource(
+    source,
+    "_ev_score_choice",
+    replacement,
+    (currentFunction) => currentFunction.includes("model(input_ids=input_ids).logits")
+  );
+  nextSource = nextSource.replaceAll(
+    callNeedle,
+    "scores = _ev_score_choices(model, tokenizer, prompt, [lab for lab, _ in choices], device, max_len)"
+  );
+  if (nextSource === source || !nextSource.includes(repairMarker) || nextSource.includes(callNeedle)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Batched generated multiple-choice evaluation options in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

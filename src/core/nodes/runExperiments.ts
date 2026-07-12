@@ -75,6 +75,7 @@ import {
   repairPythonBenchmarkAccuracyComprehensionSurface,
   repairPythonEvaluationAnswerLabelAliasSurface,
   repairPythonEvaluationArtifactDirReloadSurface,
+  repairPythonEvaluationChoiceBatchScoringSurface,
   repairPythonEvaluationTaskBundleAliasSurface,
   repairPythonEntrypointLookupHelperAliasSurface,
   repairPythonEntrypointParseArgsSingleArgumentSurface,
@@ -464,6 +465,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           await repairPythonAvailableModelSelectorSurface(preFailureMemoryScriptPath),
           await repairPythonTaskBundleEvalSplitCoverageSurface(preFailureMemoryScriptPath),
           await repairPythonEvaluationTaskBundleAliasSurface(preFailureMemoryScriptPath),
+          await repairPythonEvaluationChoiceBatchScoringSurface(preFailureMemoryScriptPath),
           await repairPythonEntrypointOrderedPlanDataBundleSurface(preFailureMemoryScriptPath),
           await repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface(preFailureMemoryScriptPath)
         ]) {
@@ -5069,6 +5071,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
         "before handoff.",
         "before run_experiments execution."
       ) || `Aliased generated evaluation task bundles and gold-index fields in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const evaluationChoiceBatchScoringRepair =
+    await repairPythonEvaluationChoiceBatchScoringSurface(scriptPath);
+  if (evaluationChoiceBatchScoringRepair.repaired) {
+    repaired = true;
+    messages.push(
+      evaluationChoiceBatchScoringRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Batched generated multiple-choice evaluation options in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
   const entrypointCompletedTrainingEvaluationBridgeRepair =
