@@ -89,6 +89,7 @@ import {
   repairPythonEntrypointOrderedPlanDataBundleSurface,
   repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface,
   repairPythonEntrypointRawEvidenceAttemptIsolationSurface,
+  repairPythonEntrypointOneRunRuntimeCleanupSurface,
   repairPythonTaskBundleEvalSplitCoverageSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
   repairPythonMainMetricsRawResultsAliasSurface,
@@ -468,6 +469,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           await repairPythonEvaluationTaskBundleAliasSurface(preFailureMemoryScriptPath),
           await repairPythonEvaluationChoiceBatchScoringSurface(preFailureMemoryScriptPath),
           await repairPythonEntrypointRawEvidenceAttemptIsolationSurface(preFailureMemoryScriptPath),
+          await repairPythonEntrypointOneRunRuntimeCleanupSurface(preFailureMemoryScriptPath),
           await repairPythonEntrypointOrderedPlanDataBundleSurface(preFailureMemoryScriptPath),
           await repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface(preFailureMemoryScriptPath)
         ]) {
@@ -5095,6 +5097,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
         "before handoff.",
         "before run_experiments execution."
       ) || `Isolated generated raw evidence by execution attempt in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const entrypointOneRunRuntimeCleanupRepair =
+    await repairPythonEntrypointOneRunRuntimeCleanupSurface(scriptPath);
+  if (entrypointOneRunRuntimeCleanupRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointOneRunRuntimeCleanupRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Released final one-run runtime handles in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
   const entrypointCompletedTrainingEvaluationBridgeRepair =

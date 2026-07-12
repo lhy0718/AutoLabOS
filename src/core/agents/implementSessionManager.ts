@@ -11459,6 +11459,8 @@ export class ImplementSessionManager {
       await repairPythonEvaluationChoiceBatchScoringSurface(executionScriptPath);
     const entrypointRawEvidenceAttemptIsolationRepair =
       await repairPythonEntrypointRawEvidenceAttemptIsolationSurface(executionScriptPath);
+    const entrypointOneRunRuntimeCleanupRepair =
+      await repairPythonEntrypointOneRunRuntimeCleanupSurface(executionScriptPath);
     const multipleChoiceGoldAliasRepair =
       await repairPythonMultipleChoiceGoldAliasSurface(executionScriptPath);
     const numericChoiceLabelPrecedenceRepair =
@@ -11743,6 +11745,7 @@ export class ImplementSessionManager {
         evaluationTaskBundleAliasRepair,
         evaluationChoiceBatchScoringRepair,
         entrypointRawEvidenceAttemptIsolationRepair,
+        entrypointOneRunRuntimeCleanupRepair,
         multipleChoiceGoldAliasRepair,
         numericChoiceLabelPrecedenceRepair,
         entrypointSemanticCallAliasRepair,
@@ -58887,6 +58890,76 @@ export async function repairPythonEntrypointRawEvidenceAttemptIsolationSurface(s
   return {
     repaired: true,
     message: `Isolated generated raw evidence by execution attempt in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointOneRunRuntimeCleanupSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const repairMarker = "_autolabos_entrypoint_one_run_runtime_cleanup_surface";
+  const helperName = "_autolabos_entrypoint_release_condition_runtime";
+  if (
+    source.includes(repairMarker) ||
+    !source.includes("def _autolabos_entrypoint_one_run(") ||
+    !pythonSourceDefinesOrImportsName(source, helperName)
+  ) {
+    return { repaired: false };
+  }
+
+  const functionSource = extractPythonTopLevelFunctionSource(source, "_autolabos_entrypoint_one_run");
+  if (!functionSource) {
+    return { repaired: false };
+  }
+  const successReturnPattern = /^(\s+)return\s+(record|public)\s*$/mu;
+  if (!successReturnPattern.test(functionSource)) {
+    return { repaired: false };
+  }
+  let repairedFunction = functionSource.replace(
+    successReturnPattern,
+    (_match: string, indent: string, returnName: string) => [
+      `${indent}# ${repairMarker}`,
+      `${indent}if "${helperName}" in globals() and callable(globals()["${helperName}"]):`,
+      `${indent}    globals()["${helperName}"](raw)`,
+      `${indent}return ${returnName}`
+    ].join("\n")
+  );
+  const failureReturnPattern = /^(\s+)return\s+failure\s*$/mu;
+  if (failureReturnPattern.test(repairedFunction)) {
+    repairedFunction = repairedFunction.replace(
+      failureReturnPattern,
+      (_match: string, indent: string) => [
+        `${indent}if 'raw' in locals() and "${helperName}" in globals() and callable(globals()["${helperName}"]):`,
+        `${indent}    globals()["${helperName}"](raw)`,
+        `${indent}return failure`
+      ].join("\n")
+    );
+  }
+  const nextSource = replacePythonTopLevelFunctionSource(
+    source,
+    "_autolabos_entrypoint_one_run",
+    repairedFunction,
+    (currentFunction) => successReturnPattern.test(currentFunction)
+  );
+  if (nextSource === source || !nextSource.includes(repairMarker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Released final one-run runtime handles in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

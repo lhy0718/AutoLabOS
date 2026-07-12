@@ -323,6 +323,7 @@ import {
   repairPythonEvaluationChoiceBatchScoringSurface,
   repairPythonEvaluationTaskBundleAliasSurface,
   repairPythonEntrypointRawEvidenceAttemptIsolationSurface,
+  repairPythonEntrypointOneRunRuntimeCleanupSurface,
   repairPythonMultipleChoiceGoldAliasSurface,
   repairPythonNumericChoiceLabelPrecedenceSurface,
   repairPythonEntrypointSemanticCallAliasSurface,
@@ -50372,6 +50373,57 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(path.join(workspace, "artifacts", "attempt_evidence", "raw_evidence_attempt_0002.jsonl"), "utf8")).toContain(
       "current_attempt"
     );
+  });
+
+  it("releases runtime handles on final one-run success and failure paths", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-one-run-runtime-cleanup-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "RELEASE_CALLS = 0",
+        "",
+        "def _autolabos_entrypoint_release_condition_runtime(row):",
+        "    global RELEASE_CALLS",
+        "    RELEASE_CALLS += 1",
+        "    if hasattr(row, 'pop'):",
+        "        row.pop('model', None)",
+        "    return row",
+        "",
+        "def _autolabos_entrypoint_public_evidence(row):",
+        "    return {key: value for key, value in row.items() if key != 'model'}",
+        "",
+        "def _autolabos_entrypoint_one_run(should_fail=False):",
+        "    try:",
+        "        raw = {'status': 'evaluated', 'model': object()}",
+        "        if should_fail:",
+        "            raise RuntimeError('evaluation failed')",
+        "        public = _autolabos_entrypoint_public_evidence(raw)",
+        "        record = dict(public)",
+        "        return record",
+        "    except Exception as exc:",
+        "        failure = {'status': 'failed', 'error': repr(exc)}",
+        "        return failure",
+        "",
+        "if __name__ == '__main__':",
+        "    assert _autolabos_entrypoint_one_run()['status'] == 'evaluated'",
+        "    assert _autolabos_entrypoint_one_run(True)['status'] == 'failed'",
+        "    assert RELEASE_CALLS == 2, RELEASE_CALLS",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(
+      /AssertionError/
+    );
+    expect((await repairPythonEntrypointOneRunRuntimeCleanupSurface(scriptPath)).repaired).toBe(true);
+    expect((await repairPythonEntrypointOneRunRuntimeCleanupSurface(scriptPath)).repaired).toBe(false);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_entrypoint_one_run_runtime_cleanup_surface");
+    expect(repairedSource).toContain("'raw' in locals()");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
   it("accepts gold-index aliases and zero labels in generated multiple-choice evaluators", async () => {

@@ -16,9 +16,55 @@ Path placeholders:
 ---
 
 
+## Issue: LV-594
+
+- Status: final one-run cleanup repair implemented; targeted tests, full CI, build, public sanitization, harness validation, and persisted-runner migration checks pass; multi-run same-flow revalidation pending
+- Validation target: every selected one-run bridge must release model and tokenizer runtime handles after public evidence is materialized, before the next planned run loads a model.
+- Environment/session context: existing governed live run in `<validation-workspace>`, retried through the real TUI after LV-592 and LV-593.
+- Reproduction steps:
+  1. Retry `run_experiments` through the real TUI.
+  2. Allow the first planned run to complete full training and evaluation.
+  3. Observe the next planned run begin model loading.
+  4. Inspect the selected final one-run bridge and runtime cleanup helper.
+- Expected behavior:
+  - Public evidence should be copied before runtime-only handles are removed.
+  - The selected one-run bridge should invoke the existing cleanup helper on both success and failure paths.
+  - The next planned run should load without retaining the prior model graph.
+- Actual behavior:
+  - The first run completes all requested examples with no schema errors.
+  - The process terminates without metrics while the second run loads model weights.
+  - The runner reports that cleanup support was materialized, but the selected final one-run success path never invokes it.
+- Fresh vs existing session comparison:
+  - Fresh session: the first run loads and evaluates successfully.
+  - Existing session: the second run starts after the first model graph has passed through a one-run bridge without explicit release.
+  - Divergence: no UI projection divergence observed; repeated execution exposes retained runtime handles that a single run does not.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: cleanup was added to generated wrapper variants but omitted from the final one-run bridge selected by the managed entrypoint.
+- Code/test changes:
+  - Add a generic repair that invokes the existing runtime release helper after public evidence materialization on success.
+  - Invoke the same cleanup helper when a raw runtime row exists on the failure path.
+  - Apply the repair during implement handoff, before the `run_experiments` retry gate, and immediately before execution.
+  - Add domain-neutral unit and execution-node integration regression coverage.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Automated regression: success/failure cleanup and execution-node pre-repair tests pass.
+  - Full CI passes: 195 root test files with 2,675 tests, plus 14 web tests.
+  - Production build and public-code sanitization pass.
+  - Harness validation passes with 501 issue entries checked and no structural violations.
+  - A copy of the exact persisted runner was migrated successfully; Python compilation, migration idempotency, and success/failure cleanup placement checks pass.
+  - Multi-run same-flow live retry: pending.
+- Follow-up risks:
+  - If process termination persists after explicit cleanup, subprocess signal fidelity and host/GPU resource telemetry will need separate repair.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-593
 
-- Status: generic attempt-isolation repair implemented; targeted tests, full CI, build, public sanitization, harness validation, and persisted-runner migration checks pass; same-flow live revalidation pending
+- Status: resolved in same-flow live `run_experiments`; targeted tests, full CI, build, public sanitization, harness validation, and persisted-runner migration checks pass
 - Validation target: each generated experiment retry must expose one current raw-evidence stream while preserving prior attempts in an auditable archive.
 - Environment/session context: existing governed live run in `<validation-workspace>`, after a deliberately bounded LV-592 throughput probe was stopped through the TUI helper.
 - Reproduction steps:
@@ -52,7 +98,7 @@ Path placeholders:
   - Production build and public-code sanitization pass.
   - Harness validation passes with 500 issue entries checked and no structural violations.
   - A copy of the exact persisted runner was migrated successfully; Python compilation, migration idempotency, and archive-block insertion checks pass.
-  - Same-flow live revalidation: pending.
+  - Same-flow live revalidation: passed; the prior canonical file was archived with all 3,946 rows and the new canonical evidence stream began from zero before the distinct LV-594 boundary.
 - Follow-up risks:
   - Other mutable attempt-local files may need the same archival policy if later validation shows cross-attempt contamination.
 - Evidence/artifacts:
@@ -63,7 +109,7 @@ Path placeholders:
 
 ## Issue: LV-592
 
-- Status: generic option-batching repair implemented; targeted tests, full CI, build, public sanitization, harness validation, and persisted-runner migration checks pass; same-flow throughput revalidation pending
+- Status: resolved in same-flow live `run_experiments`; targeted tests, full CI, build, public sanitization, harness validation, and persisted-runner migration checks pass
 - Validation target: generated multiple-choice evaluators must use bounded batched inference so the governed full evaluation plan can finish within its declared deadline.
 - Environment/session context: existing governed live run in `<validation-workspace>`, safely jumped back and executed through the real TUI after the LV-591 schema repair.
 - Reproduction steps:
@@ -98,7 +144,7 @@ Path placeholders:
   - Production build and public-code sanitization pass.
   - Harness validation passes with 499 issue entries checked and no structural violations.
   - A copy of the exact persisted runner was migrated successfully; Python compilation, migration idempotency, scorer replacement, and call-site replacement checks pass.
-  - Same-flow throughput check and live retry: pending.
+  - Same-flow throughput check and live retry: passed; one full run scored all requested examples with no schema errors, reduced peak allocation, and a projected full-plan duration below the declared runner deadline before the distinct LV-594 cleanup boundary.
 - Follow-up risks:
   - Per-example batching may still be insufficient if tokenization, JSONL flushing, or model dispatch dominates runtime.
   - Successful full evaluation may expose aggregation, checkpoint, analysis, or evidence-quality failures.

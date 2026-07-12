@@ -178,6 +178,9 @@ describe("run_experiments execution profile behavior", () => {
         "    return fn(**{name: supplied[name] for name in signature.parameters})",
         "def _autolabos_entrypoint_public_evidence(value):",
         "    return dict(value) if hasattr(value, 'items') else value",
+        "def _autolabos_entrypoint_release_condition_runtime(value):",
+        "    if hasattr(value, 'pop'): value.pop('model', None)",
+        "    return value",
         "def _autolabos_entrypoint_one_run(*positional, **kwargs):",
         "    vals = dict(kwargs)",
         "    run_spec = vals.get(\"run_spec\") or vals.get(\"condition\") or vals.get(\"spec\") or {}",
@@ -237,6 +240,7 @@ describe("run_experiments execution profile behavior", () => {
     let evaluationGoldAliasRepairedBeforeExecution = false;
     let evaluationChoiceBatchRepairedBeforeExecution = false;
     let rawEvidenceAttemptIsolationRepairedBeforeExecution = false;
+    let oneRunRuntimeCleanupRepairedBeforeExecution = false;
     let evaluationBridgeRepairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
@@ -286,6 +290,9 @@ describe("run_experiments execution profile behavior", () => {
           rawEvidenceAttemptIsolationRepairedBeforeExecution =
             repairedSource.includes("_autolabos_entrypoint_raw_evidence_attempt_isolation_surface") &&
             repairedSource.includes("attempt_evidence");
+          oneRunRuntimeCleanupRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_entrypoint_one_run_runtime_cleanup_surface") &&
+            repairedSource.includes("_autolabos_entrypoint_release_condition_runtime");
           evaluationBridgeRepairedBeforeExecution =
             repairedSource.includes("_autolabos_entrypoint_completed_training_evaluation_bridge_surface") &&
             repairedSource.includes("evaluation = _autolabos_ep_call(evaluator, evaluation_supplied)");
@@ -358,6 +365,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(evaluationGoldAliasRepairedBeforeExecution).toBe(true);
     expect(evaluationChoiceBatchRepairedBeforeExecution).toBe(true);
     expect(rawEvidenceAttemptIsolationRepairedBeforeExecution).toBe(true);
+    expect(oneRunRuntimeCleanupRepairedBeforeExecution).toBe(true);
     expect(evaluationBridgeRepairedBeforeExecution).toBe(true);
     expect(
       eventStream.history().some((event) =>
