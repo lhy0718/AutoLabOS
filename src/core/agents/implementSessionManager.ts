@@ -11457,6 +11457,8 @@ export class ImplementSessionManager {
       await repairPythonEvaluationTaskBundleAliasSurface(executionScriptPath);
     const evaluationChoiceBatchScoringRepair =
       await repairPythonEvaluationChoiceBatchScoringSurface(executionScriptPath);
+    const entrypointRawEvidenceAttemptIsolationRepair =
+      await repairPythonEntrypointRawEvidenceAttemptIsolationSurface(executionScriptPath);
     const multipleChoiceGoldAliasRepair =
       await repairPythonMultipleChoiceGoldAliasSurface(executionScriptPath);
     const numericChoiceLabelPrecedenceRepair =
@@ -11740,6 +11742,7 @@ export class ImplementSessionManager {
         highLevelResultRowsRepair,
         evaluationTaskBundleAliasRepair,
         evaluationChoiceBatchScoringRepair,
+        entrypointRawEvidenceAttemptIsolationRepair,
         multipleChoiceGoldAliasRepair,
         numericChoiceLabelPrecedenceRepair,
         entrypointSemanticCallAliasRepair,
@@ -58828,6 +58831,62 @@ export async function repairPythonEvaluationChoiceBatchScoringSurface(scriptPath
   return {
     repaired: true,
     message: `Batched generated multiple-choice evaluation options in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointRawEvidenceAttemptIsolationSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const repairMarker = "_autolabos_entrypoint_raw_evidence_attempt_isolation_surface";
+  const setupNeedle = [
+    "    for directory in (paths.public_dir, paths.run_artifact_dir, paths.artifacts_dir):",
+    "        directory.mkdir(parents=True, exist_ok=True)",
+    "    budget = Budget(float(args.get(\"timeout_sec\", DEFAULT_TIMEOUT_SEC)))"
+  ].join("\n");
+  if (
+    source.includes(repairMarker) ||
+    !source.includes(setupNeedle) ||
+    !source.includes("_autolabos_entrypoint_emit(paths.raw_evidence_path")
+  ) {
+    return { repaired: false };
+  }
+
+  const replacement = [
+    "    for directory in (paths.public_dir, paths.run_artifact_dir, paths.artifacts_dir):",
+    "        directory.mkdir(parents=True, exist_ok=True)",
+    `    # ${repairMarker}`,
+    "    if paths.raw_evidence_path.exists() and paths.raw_evidence_path.stat().st_size > 0:",
+    "        attempt_archive_dir = paths.run_artifact_dir / 'attempt_evidence'",
+    "        attempt_archive_dir.mkdir(parents=True, exist_ok=True)",
+    "        attempt_index = 1",
+    "        attempt_archive_path = attempt_archive_dir / f'raw_evidence_attempt_{attempt_index:04d}.jsonl'",
+    "        while attempt_archive_path.exists():",
+    "            attempt_index += 1",
+    "            attempt_archive_path = attempt_archive_dir / f'raw_evidence_attempt_{attempt_index:04d}.jsonl'",
+    "        paths.raw_evidence_path.replace(attempt_archive_path)",
+    "    budget = Budget(float(args.get(\"timeout_sec\", DEFAULT_TIMEOUT_SEC)))"
+  ].join("\n");
+  const nextSource = source.replace(setupNeedle, replacement);
+  if (nextSource === source || !nextSource.includes(repairMarker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Isolated generated raw evidence by execution attempt in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

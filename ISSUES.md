@@ -16,6 +16,51 @@ Path placeholders:
 ---
 
 
+## Issue: LV-593
+
+- Status: generic attempt-isolation repair implemented; targeted tests, full CI, build, public sanitization, harness validation, and persisted-runner migration checks pass; same-flow live revalidation pending
+- Validation target: each generated experiment retry must expose one current raw-evidence stream while preserving prior attempts in an auditable archive.
+- Environment/session context: existing governed live run in `<validation-workspace>`, after a deliberately bounded LV-592 throughput probe was stopped through the TUI helper.
+- Reproduction steps:
+  1. Stop a live `run_experiments` attempt after valid per-example evidence has been written.
+  2. Inspect the generated managed entrypoint and raw-evidence append helper.
+  3. Compare the retained current evidence file with the next retry path.
+- Expected behavior:
+  - Before a new attempt writes evidence, any non-empty prior current evidence should be moved to an attempt-scoped archive.
+  - The current raw-evidence path should contain only the latest attempt.
+  - Prior evidence must remain inspectable rather than being deleted.
+- Actual behavior:
+  - The interrupted attempt leaves thousands of valid per-example rows in the current raw-evidence file.
+  - The generated entrypoint opens the same path only in append mode and has no retry boundary or attempt identifier.
+  - A subsequent complete retry would mix stale partial rows with current evidence.
+- Fresh vs existing session comparison:
+  - Fresh session: a first attempt starts with no stale evidence.
+  - Existing session: a retry inherits prior partial rows at the same current evidence path.
+  - Divergence: persisted artifacts diverge across fresh and retried runs even when the same node-owned workflow is used.
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the managed entrypoint initializes directories but does not rotate non-empty raw evidence before starting a new execution attempt.
+- Code/test changes:
+  - Add a generic entrypoint repair that atomically moves prior current evidence into a numbered attempt archive.
+  - Keep the latest attempt at the canonical raw-evidence path.
+  - Apply the repair during implement handoff, before the `run_experiments` retry gate, and immediately before execution.
+  - Add domain-neutral unit and execution-node integration regression coverage.
+- Regression status:
+  - Artifact-level reproduction: confirmed on 2026-07-12.
+  - Automated regression: two-attempt archive rotation and execution-node pre-repair tests pass.
+  - Full CI passes: 195 root test files with 2,674 tests, plus 14 web tests.
+  - Production build and public-code sanitization pass.
+  - Harness validation passes with 500 issue entries checked and no structural violations.
+  - A copy of the exact persisted runner was migrated successfully; Python compilation, migration idempotency, and archive-block insertion checks pass.
+  - Same-flow live revalidation: pending.
+- Follow-up risks:
+  - Other mutable attempt-local files may need the same archival policy if later validation shows cross-attempt contamination.
+- Evidence/artifacts:
+  - `<validation-workspace>/outputs/topic-slug/experiment/raw_evidence.jsonl`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-592
 
 - Status: generic option-batching repair implemented; targeted tests, full CI, build, public sanitization, harness validation, and persisted-runner migration checks pass; same-flow throughput revalidation pending

@@ -154,6 +154,12 @@ describe("run_experiments execution profile behavior", () => {
         "def score_options(model, tokenizer, prompt, choices, device, max_len):",
         "    scores = [_ev_score_choice(model, tokenizer, prompt, lab, device, max_len) for lab, _ in choices]",
         "    return scores",
+        "def _managed_attempt(paths, args):",
+        "    for directory in (paths.public_dir, paths.run_artifact_dir, paths.artifacts_dir):",
+        "        directory.mkdir(parents=True, exist_ok=True)",
+        "    budget = Budget(float(args.get(\"timeout_sec\", DEFAULT_TIMEOUT_SEC)))",
+        "    _autolabos_entrypoint_emit(paths.raw_evidence_path, 'condition_seed_result')",
+        "    return budget",
         "def _load_eval_bundle(eval_specs, allow_download, diagnostics):",
         "    eval_tasks = {}",
         "    for task, (jsonl, hf_path, hf_name, split) in eval_specs.items():",
@@ -230,6 +236,7 @@ describe("run_experiments execution profile behavior", () => {
     let evalSplitCoverageRepairedBeforeExecution = false;
     let evaluationGoldAliasRepairedBeforeExecution = false;
     let evaluationChoiceBatchRepairedBeforeExecution = false;
+    let rawEvidenceAttemptIsolationRepairedBeforeExecution = false;
     let evaluationBridgeRepairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
@@ -276,6 +283,9 @@ describe("run_experiments execution profile behavior", () => {
           evaluationChoiceBatchRepairedBeforeExecution =
             repairedSource.includes("_autolabos_evaluation_choice_batch_scoring_surface") &&
             repairedSource.includes("attention_mask=attention_mask");
+          rawEvidenceAttemptIsolationRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_entrypoint_raw_evidence_attempt_isolation_surface") &&
+            repairedSource.includes("attempt_evidence");
           evaluationBridgeRepairedBeforeExecution =
             repairedSource.includes("_autolabos_entrypoint_completed_training_evaluation_bridge_surface") &&
             repairedSource.includes("evaluation = _autolabos_ep_call(evaluator, evaluation_supplied)");
@@ -347,6 +357,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(evalSplitCoverageRepairedBeforeExecution).toBe(true);
     expect(evaluationGoldAliasRepairedBeforeExecution).toBe(true);
     expect(evaluationChoiceBatchRepairedBeforeExecution).toBe(true);
+    expect(rawEvidenceAttemptIsolationRepairedBeforeExecution).toBe(true);
     expect(evaluationBridgeRepairedBeforeExecution).toBe(true);
     expect(
       eventStream.history().some((event) =>

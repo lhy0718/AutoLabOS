@@ -322,6 +322,7 @@ import {
   repairPythonEntrypointConditionSeedExecutorBridgeSurface,
   repairPythonEvaluationChoiceBatchScoringSurface,
   repairPythonEvaluationTaskBundleAliasSurface,
+  repairPythonEntrypointRawEvidenceAttemptIsolationSurface,
   repairPythonMultipleChoiceGoldAliasSurface,
   repairPythonNumericChoiceLabelPrecedenceSurface,
   repairPythonEntrypointSemanticCallAliasSurface,
@@ -50311,6 +50312,66 @@ describe("ImplementSessionManager", () => {
       "scores = [_ev_score_choice(model, tokenizer, prompt, lab, device, max_len) for lab, _ in choices]"
     );
     execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("archives prior raw evidence before a generated entrypoint starts a new attempt", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-raw-evidence-attempt-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "",
+        "DEFAULT_TIMEOUT_SEC = 60",
+        "",
+        "class Budget:",
+        "    def __init__(self, timeout_sec):",
+        "        self.timeout_sec = timeout_sec",
+        "",
+        "class RuntimePaths:",
+        "    def __init__(self, root):",
+        "        self.public_dir = root / 'public'",
+        "        self.run_artifact_dir = root / 'artifacts'",
+        "        self.artifacts_dir = root / 'conditions'",
+        "        self.raw_evidence_path = self.public_dir / 'raw_evidence.jsonl'",
+        "",
+        "def _autolabos_entrypoint_emit(path, event, **payload):",
+        "    path.parent.mkdir(parents=True, exist_ok=True)",
+        "    with path.open('a', encoding='utf-8') as handle:",
+        "        handle.write(json.dumps({'event': event, **payload}) + '\\n')",
+        "",
+        "def main():",
+        "    args = {'timeout_sec': 30}",
+        "    paths = RuntimePaths(Path('.'))",
+        "    for directory in (paths.public_dir, paths.run_artifact_dir, paths.artifacts_dir):",
+        "        directory.mkdir(parents=True, exist_ok=True)",
+        "    budget = Budget(float(args.get(\"timeout_sec\", DEFAULT_TIMEOUT_SEC)))",
+        "    _autolabos_entrypoint_emit(paths.raw_evidence_path, 'current_attempt', timeout=budget.timeout_sec)",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    const publicDir = path.join(workspace, "public");
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(path.join(publicDir, "raw_evidence.jsonl"), "{\"event\":\"prior_attempt\"}\n", "utf8");
+
+    expect((await repairPythonEntrypointRawEvidenceAttemptIsolationSurface(scriptPath)).repaired).toBe(true);
+    expect((await repairPythonEntrypointRawEvidenceAttemptIsolationSurface(scriptPath)).repaired).toBe(false);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+
+    expect(readFileSync(path.join(publicDir, "raw_evidence.jsonl"), "utf8")).toContain("current_attempt");
+    expect(readFileSync(path.join(workspace, "artifacts", "attempt_evidence", "raw_evidence_attempt_0001.jsonl"), "utf8")).toContain(
+      "prior_attempt"
+    );
+    expect(readFileSync(path.join(workspace, "artifacts", "attempt_evidence", "raw_evidence_attempt_0002.jsonl"), "utf8")).toContain(
+      "current_attempt"
+    );
   });
 
   it("accepts gold-index aliases and zero labels in generated multiple-choice evaluators", async () => {

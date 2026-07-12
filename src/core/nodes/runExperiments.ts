@@ -88,6 +88,7 @@ import {
   repairPythonEntrypointAggregatePayloadBuilderCandidateSurface,
   repairPythonEntrypointOrderedPlanDataBundleSurface,
   repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface,
+  repairPythonEntrypointRawEvidenceAttemptIsolationSurface,
   repairPythonTaskBundleEvalSplitCoverageSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
   repairPythonMainMetricsRawResultsAliasSurface,
@@ -466,6 +467,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           await repairPythonTaskBundleEvalSplitCoverageSurface(preFailureMemoryScriptPath),
           await repairPythonEvaluationTaskBundleAliasSurface(preFailureMemoryScriptPath),
           await repairPythonEvaluationChoiceBatchScoringSurface(preFailureMemoryScriptPath),
+          await repairPythonEntrypointRawEvidenceAttemptIsolationSurface(preFailureMemoryScriptPath),
           await repairPythonEntrypointOrderedPlanDataBundleSurface(preFailureMemoryScriptPath),
           await repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface(preFailureMemoryScriptPath)
         ]) {
@@ -5082,6 +5084,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
         "before handoff.",
         "before run_experiments execution."
       ) || `Batched generated multiple-choice evaluation options in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const entrypointRawEvidenceAttemptIsolationRepair =
+    await repairPythonEntrypointRawEvidenceAttemptIsolationSurface(scriptPath);
+  if (entrypointRawEvidenceAttemptIsolationRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointRawEvidenceAttemptIsolationRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Isolated generated raw evidence by execution attempt in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
   const entrypointCompletedTrainingEvaluationBridgeRepair =
