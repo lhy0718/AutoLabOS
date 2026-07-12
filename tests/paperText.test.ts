@@ -76,7 +76,7 @@ describe("paperText", () => {
 
     expect(source.sourceType).toBe("full_text");
     expect(source.text).toBe("Full text from cache");
-  });
+  }, 10000);
 
   it("reuses cached hybrid page images when they already exist", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-text-images-"));

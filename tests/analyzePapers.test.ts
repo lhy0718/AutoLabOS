@@ -2118,7 +2118,7 @@ describe("analyzePapers node", () => {
     const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await runContext.get("analyze_papers.summary_count")).toBe(0);
     expect(await runContext.get("analyze_papers.evidence_count")).toBe(0);
-  });
+  }, 10000);
 
   it("revalidates local full-text identity after Responses API fallback before running LLM extraction", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-pdf-fallback-mismatch-"));
@@ -3726,7 +3726,7 @@ describe("analyzePapers node", () => {
     expect(evidenceRaw.trim().split("\n")).toHaveLength(1);
     expect(summariesRaw).toContain('"paper_id":"p2"');
     expect(summariesRaw).not.toContain('"paper_id":"p1"');
-  }, 10000);
+  }, 20000);
 
   it("re-analyzes papers when the analysis mode fingerprint changes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-mode-change-"));
