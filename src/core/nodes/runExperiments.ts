@@ -79,6 +79,7 @@ import {
   repairPythonEntrypointParseArgsSingleArgumentSurface,
   repairPythonEntrypointRuntimePlanBuilderSurface,
   repairPythonEntrypointOrderedPlanAdapterSurface,
+  repairPythonPlannedRunSpecMappingSurface,
   repairPythonEntrypointAggregatePayloadBuilderCandidateSurface,
   repairPythonEntrypointOrderedPlanDataBundleSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
@@ -438,6 +439,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               "before handoff.",
               "before run_experiments retry gate."
             ) || `Expanded ordered-plan model identifier aliases in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const plannedRunSpecMappingPreRepair =
+          await repairPythonPlannedRunSpecMappingSurface(preFailureMemoryScriptPath);
+        if (plannedRunSpecMappingPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            plannedRunSpecMappingPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Projected object-backed planned runs into mapping-oriented condition specs in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
       }

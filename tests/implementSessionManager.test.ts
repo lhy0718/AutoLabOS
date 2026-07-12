@@ -347,6 +347,7 @@ import {
   repairPythonEntrypointBuildPathsAdapterSurface,
   repairPythonEntrypointOrderedPlanPathArgumentSurface,
   repairPythonEntrypointOrderedPlanAdapterSurface,
+  repairPythonPlannedRunSpecMappingSurface,
   repairPythonEntrypointConditionPathAliasesSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonPublicStudyBackendCallableLoaderSurface,
@@ -47356,6 +47357,42 @@ describe("ImplementSessionManager", () => {
     expect((await repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath)).repaired).toBe(true);
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect((await repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("projects dataclass planned runs into mapping-oriented condition specs", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-planned-run-spec-mapping-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, Dict, Mapping",
+        "@dataclass",
+        "class Condition:",
+        "    marker: str",
+        "    parameter_x: int",
+        "@dataclass",
+        "class PlannedRun:",
+        "    condition: Condition",
+        "    seed: int",
+        "    run_index: int",
+        "def execute_one_condition_run(spec: Mapping[str, Any]) -> Dict[str, Any]:",
+        "    return {'marker': spec.get('marker'), 'parameter_x': spec.get('parameter_x'), 'seed': spec.get('seed')}",
+        "def main():",
+        "    planned = PlannedRun(Condition('candidate_condition', 12), 7, 3)",
+        "    assert execute_one_condition_run(planned) == {'marker': 'candidate_condition', 'parameter_x': 12, 'seed': 7}",
+        "if __name__ == '__main__': main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(
+      /object has no attribute 'get'/
+    );
+    expect((await repairPythonPlannedRunSpecMappingSurface(scriptPath)).repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonPlannedRunSpecMappingSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("attaches marker-scoped artifact path aliases to generated condition objects", async () => {

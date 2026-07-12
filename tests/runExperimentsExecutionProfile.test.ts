@@ -113,6 +113,16 @@ describe("run_experiments execution profile behavior", () => {
       scriptPath,
       [
         "import argparse",
+        "from dataclasses import dataclass",
+        "from typing import Any, Mapping",
+        "@dataclass",
+        "class Condition: marker: str",
+        "@dataclass",
+        "class PlannedRun:",
+        "    condition: Condition",
+        "    seed: int",
+        "def execute_one_condition_run(spec: Mapping[str, Any]):",
+        "    return {'marker': spec.get('marker'), 'seed': spec.get('seed')}",
         "def build_ordered_run_plan(model_id): return model_id",
         "# _autolabos_entrypoint_ordered_plan_adapter_surface",
         "def _autolabos_entrypoint_build_run_plan(args=None, context=None, runtime=None, runtime_context=None, **values):",
@@ -151,6 +161,7 @@ describe("run_experiments execution profile behavior", () => {
     });
 
     let repairedBeforeExecution = false;
+    let plannedRunSpecRepairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
       config: {
@@ -172,6 +183,9 @@ describe("run_experiments execution profile behavior", () => {
           repairedBeforeExecution =
             repairedSource.includes("'fallback_base_model'") &&
             repairedSource.includes("def _source_value(source, name):");
+          plannedRunSpecRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_planned_run_spec_mapping_surface") &&
+            repairedSource.includes("spec = _autolabos_planned_run_spec_mapping(spec)");
           await writeFile(
             path.join(runDir, "metrics.json"),
             JSON.stringify({
@@ -232,6 +246,7 @@ describe("run_experiments execution profile behavior", () => {
 
     expect(result.status).not.toBe("failure");
     expect(repairedBeforeExecution).toBe(true);
+    expect(plannedRunSpecRepairedBeforeExecution).toBe(true);
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes("before run_experiments retry gate")

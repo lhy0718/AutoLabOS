@@ -16,9 +16,50 @@ Path placeholders:
 ---
 
 
+## Issue: LV-583
+
+- Status: repair implemented; targeted, execution-node, full CI, build, public-sanitization, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Validation target: generated one-run entrypoint adapters must normalize object/dataclass run-plan items into the flat condition mapping expected by mapping-oriented condition executors.
+- Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-582 ordered-plan path projection repair.
+- Reproduction steps:
+  1. Resume the persisted `run_experiments` node through the real TUI helper.
+  2. Let the node-owned pre-run repair upgrade the ordered-plan adapter and build the complete condition/seed schedule.
+  3. Inspect the 21 fresh condition failures in node-owned metrics and progress evidence.
+- Expected behavior:
+  - A dataclass/object plan item should retain top-level seed metadata and expose its nested condition fields to a mapping-oriented executor.
+  - The complete locked schedule should reach real condition execution with the original markers and seeds.
+- Actual behavior:
+  - The repaired runner builds all 21 planned runs.
+  - `execute_one_condition_run(spec: Mapping[...])` receives a `PlannedRun` dataclass directly and fails at `spec.get("marker")`.
+  - All 21 rows fail as `unknown_condition` with `AttributeError("'PlannedRun' object has no attribute 'get'")`.
+- Fresh vs existing session comparison:
+  - Fresh session: not required; fresh node-owned metrics and progress rows expose the value-shape mismatch.
+  - Existing session: the same persisted run advances past LV-582 and reaches every planned condition/seed row.
+  - Divergence: no UI/session divergence observed; this is a generated entrypoint normalization defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the one-run adapter forwards one object under all plan/spec aliases instead of preserving the original plan item while projecting a flat mapping for mapping-oriented condition parameters.
+- Code/test changes:
+  - Added a generic planned-run-to-condition-mapping boundary repair that flattens nested condition fields while preserving top-level seed and run metadata.
+  - Connected the repair to both implement handoff and the pre-failure-memory execution repair path.
+  - Added domain-neutral dataclass plan and execution-node regressions without experiment-specific identifiers.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Automated regression: targeted mapping and execution-node tests pass; build passes.
+  - Full CI passes: 195 root test files with 2,665 tests, plus 14 web tests.
+  - A copy of the exact live runner was upgraded successfully; Python compilation, condition-field flattening, run metadata preservation, and repair idempotency pass.
+  - Same-flow live revalidation: pending.
+- Follow-up risks:
+  - After plan-item normalization, the real model/data/training/evaluation path may expose a distinct dependency, resource, signature, or metrics-contract failure.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-582
 
-- Status: repair implemented; targeted, adjacent, full CI, build, public-sanitization, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Status: resolved in same-flow live `run_experiments`; targeted, adjacent, full CI, build, public-sanitization, harness, and repaired live-runner copy checks pass
 - Validation target: generated ordered-plan adapters must project the runtime path bundle to ordered-plan builders regardless of whether runtime context uses mapping or attribute access.
 - Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-581 fallback model alias repair.
 - Reproduction steps:
@@ -48,7 +89,7 @@ Path placeholders:
   - Automated regression: six targeted and adjacent ordered-plan tests pass; build passes.
   - Full CI passes: 195 root test files with 2,664 tests, plus 14 web tests.
   - A copy of the exact live runner was upgraded successfully; Python compilation, mapping-backed path projection, fallback model resolution, and repair idempotency pass.
-  - Same-flow live revalidation: pending.
+  - Same-flow live revalidation: passed; all 21 planned condition/seed rows were built and execution advanced to the distinct LV-583 plan-item normalization boundary.
 - Follow-up risks:
   - After path projection, execution may expose a distinct data loading, training, evaluation, resource, or metrics-contract failure.
 - Evidence/artifacts:

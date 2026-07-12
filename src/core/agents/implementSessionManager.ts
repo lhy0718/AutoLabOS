@@ -11513,6 +11513,8 @@ export class ImplementSessionManager {
       await repairPythonEntrypointOrderedPlanPathArgumentSurface(executionScriptPath);
     const entrypointOrderedPlanAdapterRepair =
       await repairPythonEntrypointOrderedPlanAdapterSurface(executionScriptPath);
+    const plannedRunSpecMappingRepair =
+      await repairPythonPlannedRunSpecMappingSurface(executionScriptPath);
     const entrypointConditionPathAliasesRepair =
       await repairPythonEntrypointConditionPathAliasesSurface(executionScriptPath);
     const publicStudySiblingExperimentBackendRepair =
@@ -11754,6 +11756,7 @@ export class ImplementSessionManager {
         entrypointBuildPathsAdapterRepair,
         entrypointOrderedPlanPathArgumentRepair,
         entrypointOrderedPlanAdapterRepair,
+        plannedRunSpecMappingRepair,
         entrypointConditionPathAliasesRepair,
         publicStudySiblingExperimentBackendRepair,
         publicStudyBackendCallableLoaderRepair,
@@ -61833,6 +61836,111 @@ export async function repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath
   return {
     repaired: true,
     message: `Bridged generated ordered-plan runtime and model arguments in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonPlannedRunSpecMappingSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") return { repaired: false };
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+  const marker = "_autolabos_planned_run_spec_mapping_surface";
+  if (source.includes(marker)) return { repaired: false };
+
+  const candidateNames = [
+    "execute_one_condition_run",
+    "run_one_condition",
+    "run_single_condition",
+    "_run_single_condition",
+    "execute_single_condition",
+    "_execute_single_condition",
+    "execute_condition",
+    "_execute_condition",
+    "execute_one_run",
+    "_execute_one_run"
+  ];
+  let nextSource = source;
+  const repairedNames: string[] = [];
+  for (const functionName of candidateNames) {
+    const functionSource = extractPythonTopLevelFunctionSource(nextSource, functionName);
+    if (
+      !functionSource ||
+      !/\bspec\.get\s*\(/u.test(functionSource) ||
+      !new RegExp(String.raw`^def\s+${escapeRegex(functionName)}\s*\([\s\S]*?\bspec\b`, "u").test(
+        functionSource
+      )
+    ) {
+      continue;
+    }
+    const headerPattern = new RegExp(
+      String.raw`^(def\s+${escapeRegex(functionName)}\s*\([\s\S]*?\)(?:\s*->\s*[^:\n]+)?\s*:)`,
+      "u"
+    );
+    const repairedFunction = functionSource.replace(
+      headerPattern,
+      "$1\n    spec = _autolabos_planned_run_spec_mapping(spec)"
+    );
+    if (repairedFunction === functionSource) continue;
+    nextSource = replacePythonTopLevelFunctionSource(
+      nextSource,
+      functionName,
+      repairedFunction,
+      (currentFunction) => /\bspec\.get\s*\(/u.test(currentFunction)
+    );
+    repairedNames.push(functionName);
+  }
+  if (repairedNames.length === 0 || nextSource === source) return { repaired: false };
+
+  const helper = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_planned_run_spec_mapping(value):",
+    "    def _mapping(item):",
+    "        if item is None:",
+    "            return {}",
+    "        if hasattr(item, 'get'):",
+    "            try:",
+    "                return dict(item)",
+    "            except Exception:",
+    "                pass",
+    "        fields = getattr(item, '__dataclass_fields__', None)",
+    "        if fields:",
+    "            return {name: getattr(item, name) for name in fields}",
+    "        attrs = getattr(item, '__dict__', None)",
+    "        if isinstance(attrs, dict):",
+    "            return {name: field_value for name, field_value in attrs.items() if not name.startswith('_')}",
+    "        return {}",
+    "    outer = _mapping(value)",
+    "    if not outer:",
+    "        return value",
+    "    nested = None",
+    "    for name in ('condition', 'condition_spec', 'spec', 'row'):",
+    "        if outer.get(name) is not None:",
+    "            nested = outer.get(name)",
+    "            break",
+    "    condition = _mapping(nested)",
+    "    if not condition:",
+    "        return outer",
+    "    merged = dict(condition)",
+    "    for name, field_value in outer.items():",
+    "        if name not in ('condition', 'condition_spec', 'spec', 'row'):",
+    "            merged[name] = field_value",
+    "    return merged",
+    ""
+  ].join("\n");
+  nextSource = insertPythonTopLevelHelperAfterImports(nextSource, helper);
+  if (nextSource === source || !nextSource.includes(marker)) return { repaired: false };
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Projected object-backed planned runs into mapping-oriented condition specs for ${repairedNames.join(", ")} in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
