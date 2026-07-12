@@ -16,9 +16,35 @@ Path placeholders:
 ---
 
 
+## Issue: LV-579
+
+- Status: reproduced in same-flow live `run_experiments`; source repair, executable and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.
+- Validation target: a generated final entrypoint must invoke concrete staged data, model-execution, and evaluation helpers when no separate top-level runner was materialized.
+- Environment/session context: the implementation node passed static design validation and local compilation, then real execution stopped before data loading with zero required runs completed.
+- Reproduction steps:
+  1. Generate concrete data preparation, model execution, and evaluation stage functions.
+  2. Generate a final entrypoint that searches only high-level runner names absent from the module.
+  3. Run the generated script through the node-owned execution boundary.
+- Expected behavior: handoff repair should compose the existing concrete stages into a discoverable top-level runner without fabricating rows or metrics.
+- Actual behavior: the entrypoint raised `no executable experiment runner was materialized before entrypoint`, and failure metrics reported zero completed runs and conditions.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral executable fixture reproduces the missing top-level runner and passes after composing its concrete staged helpers.
+  - Existing session: the live runner contained all three concrete stages but failed before invoking any of them.
+  - Divergence: no state/UI divergence; this was a disconnected final callable projection.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: existing top-level alias repairs recognize several older orchestration vocabularies, but not a sectioned runner whose final entrypoint advertises generic high-level names while only concrete staged helpers exist.
+- Code/test changes:
+  - Add a narrowly gated repair that detects the exact disconnected staged-runner shape and composes existing data, model, and evaluation helpers under `run_experiment`.
+  - Preserve node-owned execution and derive completion only from completed evaluation records; do not synthesize successful records.
+  - Add an executable regression proving the original entrypoint fails, all three stages execute after repair, and a second repair is idempotent.
+- Regression status: the executable fixture, the repaired live-runner copy compile check, all 803 `implementSessionManager` tests, TypeScript/web build, public-code sanitation, and harness validation pass. Same-flow revalidation remains pending.
+- Follow-up risks: individual staged helpers may expose additional runtime-handle or argument-contract defects once the final entrypoint reaches them.
+
+
 ## Issue: LV-578
 
-- Status: reproduced in same-flow live `run_experiments`; source repair, focused and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.
+- Status: reproduced in same-flow live `run_experiments`; source repair and automated regressions pass; same-flow revalidation advanced to LV-579 without the runtime-default failure recurring.
 - Validation target: generated CLI entrypoints must apply their existing runtime-default normalization before dependency preflight receives a parsed namespace.
 - Environment/session context: the implementation node passed static design validation and local compilation, then the real execution failed before the first planned run.
 - Reproduction steps:
@@ -38,13 +64,13 @@ Path placeholders:
   - Add a narrowly scoped final-main repair that invokes the already generated runtime-default helper before path construction and dependency preflight.
   - Apply it before design validation and retain it in late handoff repairs.
   - Add an executable regression proving the raw namespace fails before repair and reaches preflight after normalization.
-- Regression status: the executable runtime-default ordering fixture and all 802 `implementSessionManager` tests pass. TypeScript/web build, public-code sanitation, and harness validation also pass.
+- Regression status: the executable runtime-default ordering fixture and all 802 `implementSessionManager` tests pass. TypeScript/web build, public-code sanitation, and harness validation also pass. The same live flow reached final entrypoint runner resolution without the missing runtime-default attribute recurring.
 - Follow-up risks: the repair requires an existing generated runtime-default helper and does not invent model-access policy values.
 
 
 ## Issue: LV-577
 
-- Status: reproduced in same-flow live `implement_experiments` attempt 2; source repair, focused and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.
+- Status: reproduced in same-flow live `implement_experiments` attempt 2; source repair and automated regressions pass; same-flow revalidation advanced through model-runner resolution to LV-579.
 - Validation target: pre-design handoff repair must connect every advertised generic per-run resolver vocabulary to an existing concrete sibling without overwriting concrete callables.
 - Environment/session context: attempt 1 exposed a missing per-run helper; attempt 2 generated a concrete sibling but its final resolver advertised a narrower set of names and design validation still blocked before execution.
 - Reproduction steps:
@@ -63,13 +89,13 @@ Path placeholders:
 - Code/test changes:
   - Preserve every existing concrete callable and add aliases only for missing generic searched names.
   - Add an executable regression where an existing concrete sibling previously suppressed required advertised aliases.
-- Regression status: the new executable fixture, all three adjacent resolver alias regressions, and all 801 `implementSessionManager` tests pass. TypeScript/web build, public-code sanitation, and harness validation also pass.
+- Regression status: the new executable fixture, all three adjacent resolver alias regressions, and all 801 `implementSessionManager` tests pass. TypeScript/web build, public-code sanitation, and harness validation also pass. The same live flow passed design validation and entered node-owned execution without the resolver-target failure recurring.
 - Follow-up risks: method-specific resolver names remain outside the public contract; at least one generic advertised candidate must be connected for validation to pass.
 
 
 ## Issue: LV-576
 
-- Status: reproduced in same-flow live `run_experiments`; source repair, focused and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.
+- Status: reproduced in same-flow live `run_experiments`; source repair and automated regressions pass; same-flow revalidation advanced through contract validation to LV-579.
 - Validation target: generated condition objects must serialize numeric marker components exactly as declared by the approved planned-condition contract.
 - Environment/session context: the new shared deadline gate passed, the experiment process executed, and node-owned failure metrics then rejected the baseline marker before any condition run was promoted.
 - Reproduction steps:

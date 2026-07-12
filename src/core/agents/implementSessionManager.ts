@@ -11521,6 +11521,8 @@ export class ImplementSessionManager {
       await repairPythonPublicStudyPlanFinalizationRunnerSurface(executionScriptPath);
     const publicStudyTopLevelRunnerAliasRepair =
       await repairPythonPublicStudyTopLevelRunnerAliasSurface(executionScriptPath);
+    const entrypointComposableStageRunnerRepair =
+      await repairPythonEntrypointComposableStageRunnerSurface(executionScriptPath);
     const finalCliLockedGridResolverRepair =
       await repairPythonFinalCliLockedGridResolverSurface(executionScriptPath);
     const entrypointStudyResultKwargAliasRepair =
@@ -11754,6 +11756,7 @@ export class ImplementSessionManager {
         publicStudyBackendCallableLoaderRepair,
         publicStudyPlanFinalizationRunnerRepair,
         publicStudyTopLevelRunnerAliasRepair,
+        entrypointComposableStageRunnerRepair,
         finalCliLockedGridResolverRepair,
         entrypointStudyResultKwargAliasRepair,
         nestedRunRecordsProjectionRepair,
@@ -62685,6 +62688,150 @@ export async function repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPa
   return {
     repaired: true,
     message: `Added public study top-level runner alias in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointComposableStageRunnerSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_composable_stage_runner_marker";
+  const entrypointNames = [
+    "run_experiment",
+    "run_full_experiment",
+    "execute_experiment",
+    "run_ordered_experiment",
+    "execute_run_plan",
+    "run_all_conditions"
+  ];
+  if (
+    source.includes(marker) ||
+    !source.includes("no executable experiment runner was materialized before entrypoint") ||
+    !source.includes("def _entrypoint_execute(") ||
+    entrypointNames.some((name) => pythonSourceDefinesOrImportsName(source, name)) ||
+    !source.includes("class RunnerPaths") ||
+    !source.includes("def prepare_data_bundle(") ||
+    !source.includes("def run_model_execution_phase(") ||
+    !source.includes("def run_evaluation_stage(")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionPoint = source.match(/\ndef\s+_entrypoint_execute\s*\(/u)?.index;
+  if (insertionPoint === undefined) {
+    return { repaired: false };
+  }
+
+  const bridge = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_composable_stage_call(func, **keyword):",
+    "    import inspect as _autolabos_inspect",
+    "    signature = _autolabos_inspect.signature(func)",
+    "    accepts_kwargs = any(parameter.kind == _autolabos_inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())",
+    "    supported = keyword if accepts_kwargs else {key: value for key, value in keyword.items() if key in signature.parameters}",
+    "    return func(**supported)",
+    "",
+    "def _autolabos_composable_stage_paths(args):",
+    "    import inspect as _autolabos_inspect",
+    "    path_type = globals().get('RunnerPaths')",
+    "    if not callable(path_type):",
+    "        raise RuntimeError('No generated runtime path type is available for staged execution.')",
+    "    path_kwargs = {}",
+    "    try:",
+    "        parameters = _autolabos_inspect.signature(path_type).parameters",
+    "    except (TypeError, ValueError):",
+    "        parameters = {}",
+    "    for name in parameters:",
+    "        if hasattr(args, name) and getattr(args, name) is not None:",
+    "            path_kwargs[name] = getattr(args, name)",
+    "    paths = path_type(**path_kwargs)",
+    "    return paths.ensure() if hasattr(paths, 'ensure') else paths",
+    "",
+    "def _autolabos_composable_stage_records(payload):",
+    "    if not isinstance(payload, dict):",
+    "        return []",
+    "    for key in ('condition_results', 'evaluation_rows', 'run_results', 'records', 'rows'):",
+    "        value = payload.get(key)",
+    "        if isinstance(value, (list, tuple)) and value:",
+    "            return list(value)",
+    "    return []",
+    "",
+    "def _autolabos_composable_stage_runner(args=None, config=None, runtime=None, **keyword):",
+    "    active_args = args if args is not None else config if config is not None else runtime",
+    "    if active_args is None:",
+    "        raise RuntimeError('No parsed runtime arguments were available for staged execution.')",
+    "    paths = _autolabos_composable_stage_paths(active_args)",
+    "    data_bundle = _autolabos_composable_stage_call(",
+    "        prepare_data_bundle,",
+    "        args=active_args, config=active_args, runtime=active_args, paths=paths,",
+    "    )",
+    "    model_result = _autolabos_composable_stage_call(",
+    "        run_model_execution_phase,",
+    "        args=active_args, config=active_args, runtime=active_args, paths=paths,",
+    "        data_bundle=data_bundle, task_bundle=data_bundle,",
+    "    )",
+    "    if isinstance(model_result, dict) and str(model_result.get('status', '')).lower() in {'failed', 'failure', 'error'}:",
+    "        return model_result",
+    "    evaluation_result = _autolabos_composable_stage_call(",
+    "        run_evaluation_stage,",
+    "        train_bundle=model_result, model_result=model_result, execution_result=model_result,",
+    "        data_bundle=data_bundle, task_bundle=data_bundle, args=active_args, config=active_args,",
+    "        paths=paths, deadline=getattr(active_args, 'deadline_monotonic', getattr(active_args, 'deadline_time', None)),",
+    "    )",
+    "    records = _autolabos_composable_stage_records(evaluation_result)",
+    "    aggregate = evaluation_result.get('aggregate', {}) if isinstance(evaluation_result, dict) else {}",
+    "    completed_statuses = {'completed', 'completed_evaluation', 'evaluated', 'success', 'succeeded', 'ok'}",
+    "    completed_records = [row for row in records if isinstance(row, dict) and str(row.get('status', '')).lower() in completed_statuses]",
+    "    completed_run_count = int(aggregate.get('completed_run_count', len(completed_records)) or len(completed_records)) if isinstance(aggregate, dict) else len(completed_records)",
+    "    required_run_count = int(globals().get('REQUIRED_RUN_COUNT', completed_run_count) or completed_run_count)",
+    "    markers = {str(row.get('condition_marker', row.get('marker'))) for row in completed_records if row.get('condition_marker', row.get('marker')) is not None}",
+    "    metrics_builder = globals().get('build_success_metrics_payload')",
+    "    if callable(metrics_builder) and records:",
+    "        payload = _autolabos_composable_stage_call(",
+    "            metrics_builder, records=records, outcomes=records, rows=records,",
+    "            baseline_marker=globals().get('BASELINE_MARKER'),",
+    "            objective_metric=globals().get('PRIMARY_METRIC_KEY', 'primary_metric_value'),",
+    "        )",
+    "    else:",
+    "        payload = {}",
+    "    if not isinstance(payload, dict):",
+    "        payload = {'raw_metrics': payload}",
+    "    payload['completed_run_count'] = completed_run_count",
+    "    payload['required_run_count'] = required_run_count",
+    "    payload['completed_condition_count'] = len(markers)",
+    "    payload['required_condition_count'] = int(globals().get('REQUIRED_CONDITION_COUNT', len(markers)) or len(markers))",
+    "    payload['status'] = 'completed' if required_run_count > 0 and completed_run_count >= required_run_count else 'failed'",
+    "    payload['model_execution'] = model_result",
+    "    payload['evaluation'] = evaluation_result",
+    "    return payload",
+    "",
+    "def run_experiment(*positional, **keyword):",
+    "    if positional and 'args' not in keyword:",
+    "        keyword['args'] = positional[0]",
+    "    return _autolabos_composable_stage_runner(**keyword)",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionPoint)}${bridge}${source.slice(insertionPoint)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Connected generated data, model-execution, and evaluation stages to the final entrypoint in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

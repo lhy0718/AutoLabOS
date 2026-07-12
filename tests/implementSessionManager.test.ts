@@ -352,6 +352,7 @@ import {
   repairPythonPublicStudyBackendCallableLoaderSurface,
   repairPythonPublicStudyPlanFinalizationRunnerSurface,
   repairPythonPublicStudyTopLevelRunnerAliasSurface,
+  repairPythonEntrypointComposableStageRunnerSurface,
   repairPythonFinalCliLockedGridResolverSurface,
   materializePublicPlannedConditionContractArtifact,
   repairPublicPlannedConditionContractDocsSurface,
@@ -15176,6 +15177,73 @@ describe("ImplementSessionManager", () => {
     expect(metrics.required_run_count).toBe(1);
     expect(metrics.condition_results[0].condition_marker).toBe("baseline_condition");
     expect(metrics.experiment_mode).toBe("real_execution");
+  });
+
+  it("connects composable generated stages to a final entrypoint with no top-level runner", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-composable-stage-runner-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "STAGES = []",
+        "REQUIRED_RUN_COUNT = 2",
+        "REQUIRED_CONDITION_COUNT = 2",
+        "BASELINE_MARKER = 'condition_baseline'",
+        "PRIMARY_METRIC_KEY = 'score_delta'",
+        "@dataclass",
+        "class RunnerPaths:",
+        "    public_dir: Path = Path('.')",
+        "    def ensure(self):",
+        "        return self",
+        "def prepare_data_bundle(args, paths=None, runtime=None):",
+        "    STAGES.append('load')",
+        "    return {'rows': [1, 2]}",
+        "def run_model_execution_phase(args, data_bundle, paths=None):",
+        "    STAGES.append('model')",
+        "    return {'status': 'completed', 'condition_results': [{'condition_marker': 'condition_baseline'}, {'condition_marker': 'condition_variant'}]}",
+        "def run_evaluation_stage(train_bundle, data_bundle, args, paths, deadline=None):",
+        "    STAGES.append('evaluate')",
+        "    return {'status': 'completed_evaluation', 'aggregate': {'completed_run_count': 2}, 'condition_results': [",
+        "        {'status': 'completed_evaluation', 'condition_marker': 'condition_baseline', 'score': 0.4},",
+        "        {'status': 'completed_evaluation', 'condition_marker': 'condition_variant', 'score': 0.5},",
+        "    ]}",
+        "def build_success_metrics_payload(records=None, baseline_marker=None, objective_metric=None):",
+        "    return {'score_delta': 0.1, 'primary_metric_value': 0.1}",
+        "def _entrypoint_call(func, args, **extra):",
+        "    return func(args=args, **extra)",
+        "def _entrypoint_execute(args):",
+        "    runner_names = ('run_experiment', 'run_full_experiment', 'execute_experiment', 'run_ordered_experiment', 'execute_run_plan', 'run_all_conditions')",
+        "    result = None",
+        "    for name in runner_names:",
+        "        func = globals().get(name)",
+        "        if callable(func) and func is not _entrypoint_execute:",
+        "            result = _entrypoint_call(func, args)",
+        "            break",
+        "    if result is None:",
+        "        raise RuntimeError('no executable experiment runner was materialized before entrypoint')",
+        "    return result",
+        "if __name__ == '__main__':",
+        "    payload = _entrypoint_execute(argparse.Namespace(public_dir=Path('.'), deadline_monotonic=None))",
+        "    print(f\"{payload['status']}|{payload['completed_run_count']}|{','.join(STAGES)}\")",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { encoding: "utf8" })).toThrow();
+    const repair = await repairPythonEntrypointComposableStageRunnerSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_composable_stage_runner_marker");
+    expect(repairedSource).toContain("def run_experiment(*positional, **keyword):");
+    expect(execFileSync("python3", [scriptPath], { encoding: "utf8" }).trim()).toBe(
+      "completed|2|load,model,evaluate"
+    );
+    expect((await repairPythonEntrypointComposableStageRunnerSurface(scriptPath)).repaired).toBe(false);
   });
 
 
