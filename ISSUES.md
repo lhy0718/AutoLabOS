@@ -16,9 +16,51 @@ Path placeholders:
 ---
 
 
+## Issue: LV-589
+
+- Status: repair implemented; targeted tests, full CI, build, harness, public sanitization, and persisted-runner migration checks pass; same-flow live revalidation pending
+- Validation target: completed-run evaluators must receive the task-to-examples mapping exposed by object-backed task bundles rather than treating the bundle object as a direct task mapping.
+- Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-588 training-to-evaluation bridge.
+- Reproduction steps:
+  1. Resume the persisted `run_experiments` node through the real TUI helper.
+  2. Allow the one-run bridge to invoke the existing completed-run evaluator before public serialization.
+  3. Inspect per-task evaluation diagnostics in the fresh condition rows.
+- Expected behavior:
+  - The bridge should project object-backed `eval_tasks` or equivalent aliases into the evaluator's task-bundle argument.
+  - Each governed task should report the loaded requested count and execute scoring, or fail for a concrete scoring reason.
+- Actual behavior:
+  - LV-588 no longer reproduces; every training-complete row enters the evaluator and returns an explicit evaluation status.
+  - The evaluator reports zero requested examples for every task because it looks up task names directly on the bundle object instead of its nested task mapping.
+- Fresh vs existing session comparison:
+  - Fresh session: not required; fresh node-owned progress rows reproduce zero requested examples after successful data loading.
+  - Existing session: the same persisted run advances through training-to-evaluation handoff for every planned run.
+  - Divergence: no UI/session divergence observed; this is an evaluator input projection defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the completed-run evaluator accepts a task mapping, while the bridge passes a task-bundle object whose evaluation records live under a nested mapping alias.
+- Code/test changes:
+  - Project mapping-valued evaluation aliases before signature-aware evaluator dispatch while preserving the full data bundle under data-oriented aliases.
+  - Upgrade persisted runners that already contain the LV-588 bridge through a separate idempotent alias marker.
+  - Extend domain-neutral regression coverage to use an object-backed task bundle.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Automated regression: object-backed task-bundle projection and execution-node pre-repair tests pass.
+  - Full CI passes: 195 root test files with 2,671 tests, plus 14 web tests.
+  - Production build and public-code sanitization pass.
+  - Harness validation passes with 496 issue entries checked and no structural violations.
+  - A copy of the exact persisted runner was migrated successfully; Python compilation, migration idempotency, nested task mapping projection, requested-count preservation, objective metric merging, and public handle removal checks pass.
+  - Same-flow live revalidation: pending.
+- Follow-up risks:
+  - Real scoring may expose throughput, deadline, device placement, answer extraction, or aggregation failures.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-588
 
-- Status: repair implemented; targeted tests, full CI, build, public sanitization, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Status: resolved in same-flow live `run_experiments`; targeted tests, full CI, build, public sanitization, and repaired live-runner copy checks pass
 - Validation target: successful one-run training rows must pass through an available objective evaluator before runtime handles are removed and final metrics are assembled.
 - Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-587 split-coverage repair.
 - Reproduction steps:
@@ -51,7 +93,7 @@ Path placeholders:
   - Production build and public-code sanitization pass.
   - Harness validation passes with 495 issue entries checked and no structural violations.
   - A copy of the exact live runner was upgraded successfully; Python compilation, repair idempotency, evaluator dispatch, runtime-handle availability, objective metric merging, and public handle removal checks pass.
-  - Same-flow live revalidation: pending.
+  - Same-flow live revalidation: passed; every training-complete row invoked the existing evaluator before public serialization and advanced to the distinct LV-589 object-backed evaluation bundle boundary.
 - Follow-up risks:
   - Full objective evaluation may expose runtime budget, inference throughput, schema, device, artifact reload, or metric aggregation failures.
 - Evidence/artifacts:

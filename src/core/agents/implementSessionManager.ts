@@ -50603,6 +50603,7 @@ export async function repairPythonEntrypointCompletedTrainingEvaluationBridgeSur
   }
 
   const marker = "_autolabos_entrypoint_completed_training_evaluation_bridge_surface";
+  const aliasMarker = "_autolabos_entrypoint_evaluation_bundle_alias_surface";
   const evaluatorNames = [
     "evaluate_completed_run",
     "evaluate_condition_run",
@@ -50611,6 +50612,37 @@ export async function repairPythonEntrypointCompletedTrainingEvaluationBridgeSur
     "evaluate_condition",
     "run_condition_evaluation"
   ];
+  const evaluationBundleAliasLines = (indent: string): string[] => [
+    `${indent}# ${aliasMarker}`,
+    `${indent}evaluation_bundle = data_bundle`,
+    `${indent}for bundle_alias in ('eval_tasks', 'evaluation_tasks', 'eval_examples_by_task', 'evaluation_examples_by_task', 'tasks'):`,
+    `${indent}    try:`,
+    `${indent}        candidate_bundle = data_bundle.get(bundle_alias) if hasattr(data_bundle, 'get') else getattr(data_bundle, bundle_alias, None)`,
+    `${indent}    except Exception:`,
+    `${indent}        candidate_bundle = None`,
+    `${indent}    if hasattr(candidate_bundle, 'items'):`,
+    `${indent}        evaluation_bundle = candidate_bundle`,
+    `${indent}        break`,
+    `${indent}evaluation_supplied.update({'run_state': raw, 'state': raw, 'condition_state': raw, 'completed_run': raw, 'training_result': raw, 'result': raw, 'row': raw, 'task_bundle': evaluation_bundle, 'data_bundle': data_bundle, 'eval_bundle': evaluation_bundle, 'evaluation_bundle': evaluation_bundle, 'eval_tasks': evaluation_bundle, 'evaluation_tasks': evaluation_bundle, 'runtime': runtime, 'runtime_context': runtime, 'run_context': runtime})`
+  ];
+  if (source.includes(marker) && !source.includes(aliasMarker)) {
+    const lines = source.split("\n");
+    const oldAliasIndex = lines.findIndex((line) =>
+      line.includes("evaluation_supplied.update(") &&
+      line.includes("'task_bundle': data_bundle") &&
+      line.includes("'eval_bundle': data_bundle")
+    );
+    if (oldAliasIndex >= 0) {
+      const indent = lines[oldAliasIndex]?.match(/^([ \t]*)/u)?.[1] || "";
+      lines.splice(oldAliasIndex, 1, ...evaluationBundleAliasLines(indent));
+      const nextSource = lines.join("\n");
+      await fs.writeFile(scriptPath, nextSource, "utf8");
+      return {
+        repaired: true,
+        message: "Projected object-backed evaluation bundle aliases into an existing completed-training evaluator bridge in " + path.basename(scriptPath) + " before handoff."
+      };
+    }
+  }
   if (
     source.includes(marker) ||
     !source.includes("def _autolabos_entrypoint_one_run(") ||
@@ -50636,7 +50668,7 @@ export async function repairPythonEntrypointCompletedTrainingEvaluationBridgeSur
     `${indent}        evaluator = next((globals()[name] for name in evaluator_names if name in globals() and callable(globals()[name])), None)`,
     `${indent}        if evaluator is not None:`,
     `${indent}            evaluation_supplied = dict(supplied)`,
-    `${indent}            evaluation_supplied.update({'run_state': raw, 'state': raw, 'condition_state': raw, 'completed_run': raw, 'training_result': raw, 'result': raw, 'row': raw, 'task_bundle': data_bundle, 'data_bundle': data_bundle, 'eval_bundle': data_bundle, 'evaluation_bundle': data_bundle, 'runtime': runtime, 'runtime_context': runtime, 'run_context': runtime})`,
+    ...evaluationBundleAliasLines(`${indent}            `),
     `${indent}            evaluation = _autolabos_ep_call(evaluator, evaluation_supplied)`,
     `${indent}            if hasattr(evaluation, 'items'):`,
     `${indent}                merged = dict(raw)`,
