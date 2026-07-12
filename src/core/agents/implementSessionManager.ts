@@ -30200,10 +30200,6 @@ export async function repairPythonModelExecutionSingleConditionRunnerAliasSurfac
     "train_condition",
     "materialize_condition_state"
   ];
-  if (searchedNames.some((name) => pythonSourceDefinesConcreteCallableCandidate(source, name))) {
-    return { repaired: false };
-  }
-
   const generatedNames = [
     "run_single_condition",
     "execute_single_condition",
@@ -30224,13 +30220,19 @@ export async function repairPythonModelExecutionSingleConditionRunnerAliasSurfac
   if (!targetName) {
     return { repaired: false };
   }
+  const missingSearchedNames = searchedNames.filter(
+    (name) => !pythonSourceDefinesConcreteCallableCandidate(source, name)
+  );
+  if (missingSearchedNames.length === 0) {
+    return { repaired: false };
+  }
 
   const guardRanges = findPythonTopLevelMainGuardRanges(source);
   const insertionIndex = guardRanges[0]?.start ?? source.length;
   const aliasBlock = [
     "",
     `# ${marker}`,
-    ...searchedNames.map((name) => `${name} = ${targetName}`),
+    ...missingSearchedNames.map((name) => `${name} = ${targetName}`),
     ""
   ].join("\n");
   const nextSource = `${source.slice(0, insertionIndex).trimEnd()}${aliasBlock}${source.slice(insertionIndex)}`;
@@ -30238,7 +30240,7 @@ export async function repairPythonModelExecutionSingleConditionRunnerAliasSurfac
   if (
     nextSource === source ||
     !nextSource.includes(marker) ||
-    !searchedNames.every((name) => nextSource.includes(`${name} = ${targetName}`))
+    !missingSearchedNames.every((name) => nextSource.includes(`${name} = ${targetName}`))
   ) {
     return { repaired: false };
   }

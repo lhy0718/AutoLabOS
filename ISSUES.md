@@ -16,6 +16,31 @@ Path placeholders:
 ---
 
 
+## Issue: LV-577
+
+- Status: reproduced in same-flow live `implement_experiments` attempt 2; source repair, focused and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.
+- Validation target: pre-design handoff repair must connect every advertised generic per-run resolver vocabulary to an existing concrete sibling without overwriting concrete callables.
+- Environment/session context: attempt 1 exposed a missing per-run helper; attempt 2 generated a concrete sibling but its final resolver advertised a narrower set of names and design validation still blocked before execution.
+- Reproduction steps:
+  1. Define a concrete generic condition runner under one conventional sibling name.
+  2. Advertise different generic condition-runner names from the required runtime resolver.
+  3. Run the pre-design alias repair and design-to-implementation validation.
+- Expected behavior: missing advertised names should alias the concrete runner, while existing concrete callables remain unchanged.
+- Actual behavior: the repair returned early when any name in its broad searched-name set was already concrete, even when that name was not usable by the final resolver.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral executable fixture defines one concrete condition runner while its resolver advertises two different generic names.
+  - Existing session: live attempt 2 failed with `PLANNED_RUNTIME_CALLABLE_RESOLVER_TARGET_MISSING` after full staged generation.
+  - Divergence: no state/UI divergence; this was an incomplete callable vocabulary projection.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: a broad any-concrete early return conflated “a sibling implementation exists” with “the advertised resolver can reach that implementation.”
+- Code/test changes:
+  - Preserve every existing concrete callable and add aliases only for missing generic searched names.
+  - Add an executable regression where an existing concrete sibling previously suppressed required advertised aliases.
+- Regression status: the new executable fixture, all three adjacent resolver alias regressions, and all 801 `implementSessionManager` tests pass. TypeScript/web build, public-code sanitation, and harness validation also pass.
+- Follow-up risks: method-specific resolver names remain outside the public contract; at least one generic advertised candidate must be connected for validation to pass.
+
+
 ## Issue: LV-576
 
 - Status: reproduced in same-flow live `run_experiments`; source repair, focused and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.
