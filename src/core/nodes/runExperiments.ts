@@ -85,6 +85,7 @@ import {
   repairPythonAvailableModelSelectorSurface,
   repairPythonEntrypointAggregatePayloadBuilderCandidateSurface,
   repairPythonEntrypointOrderedPlanDataBundleSurface,
+  repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface,
   repairPythonTaskBundleEvalSplitCoverageSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
   repairPythonMainMetricsRawResultsAliasSurface,
@@ -461,7 +462,8 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           await repairPythonConditionExecutorRuntimeContextSurface(preFailureMemoryScriptPath),
           await repairPythonAvailableModelSelectorSurface(preFailureMemoryScriptPath),
           await repairPythonTaskBundleEvalSplitCoverageSurface(preFailureMemoryScriptPath),
-          await repairPythonEntrypointOrderedPlanDataBundleSurface(preFailureMemoryScriptPath)
+          await repairPythonEntrypointOrderedPlanDataBundleSurface(preFailureMemoryScriptPath),
+          await repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface(preFailureMemoryScriptPath)
         ]) {
           if (!repair.repaired) continue;
           preFailureMemoryRepairApplied = true;
@@ -5054,6 +5056,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
         "before handoff.",
         "before run_experiments execution."
       ) || `Selected task-bundle evaluation splits by governed normalized coverage in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const entrypointCompletedTrainingEvaluationBridgeRepair =
+    await repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface(scriptPath);
+  if (entrypointCompletedTrainingEvaluationBridgeRepair.repaired) {
+    repaired = true;
+    messages.push(
+      entrypointCompletedTrainingEvaluationBridgeRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Bridged completed training rows through an objective evaluator in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
   const publicStudyTopLevelRunnerAliasRepair =

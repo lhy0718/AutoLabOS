@@ -113,6 +113,7 @@ describe("run_experiments execution profile behavior", () => {
       scriptPath,
       [
         "import argparse",
+        "import inspect",
         "from dataclasses import dataclass",
         "from types import SimpleNamespace",
         "from typing import Any, Mapping",
@@ -127,6 +128,8 @@ describe("run_experiments execution profile behavior", () => {
         "    return SimpleNamespace(args=args, paths=paths, budget=budget)",
         "def load_task_bundle(args, paths, budget):",
         "    return SimpleNamespace(train_examples=['training example'])",
+        "def evaluate_completed_run(run_state, task_bundle, runtime):",
+        "    return {'status': 'evaluated', 'task_metrics': {'benchmark_task_a': {'accuracy': 0.5}}, 'accuracy': 0.5}",
         "def _load_eval_bundle(eval_specs, allow_download, diagnostics):",
         "    eval_tasks = {}",
         "    for task, (jsonl, hf_path, hf_name, split) in eval_specs.items():",
@@ -140,6 +143,11 @@ describe("run_experiments execution profile behavior", () => {
         "    return eval_tasks",
         "def execute_one_condition_run(spec: Mapping[str, Any], runtime):",
         "    return {'marker': spec.get('marker'), 'seed': spec.get('seed'), 'path': runtime.paths, 'model_id': select_available_model(runtime)}",
+        "def _autolabos_ep_call(fn, supplied):",
+        "    signature = inspect.signature(fn)",
+        "    return fn(**{name: supplied[name] for name in signature.parameters})",
+        "def _autolabos_entrypoint_public_evidence(value):",
+        "    return dict(value) if hasattr(value, 'items') else value",
         "def _autolabos_entrypoint_one_run(*positional, **kwargs):",
         "    vals = dict(kwargs)",
         "    run_spec = vals.get(\"run_spec\") or vals.get(\"condition\") or vals.get(\"spec\") or {}",
@@ -147,8 +155,11 @@ describe("run_experiments execution profile behavior", () => {
         "    runtime = vals.get(\"runtime\") or vals.get(\"runtime_context\") or {}",
         "    data_bundle = vals.get(\"data_bundle\") or vals.get(\"task_bundle\") or vals.get(\"datasets\") or {}",
         "    budget = vals.get(\"budget\")",
-        "    supplied = {\"run_spec\": run_spec, \"condition\": run_spec, \"condition_spec\": run_spec, \"spec\": run_spec, \"marker\": 'candidate_condition', \"data_bundle\": data_bundle}",
-        "    return supplied",
+        "    supplied = {\"run_spec\": run_spec, \"condition\": run_spec, \"condition_spec\": run_spec, \"spec\": run_spec, \"marker\": 'candidate_condition', \"data_bundle\": data_bundle, \"runtime\": runtime}",
+        "    runner = execute_one_condition_run",
+        "    raw = _autolabos_ep_call(runner, supplied)",
+        "    public = _autolabos_entrypoint_public_evidence(raw) if \"_autolabos_entrypoint_public_evidence\" in globals() else raw",
+        "    return public",
         "def build_ordered_run_plan(model_id): return model_id",
         "# _autolabos_entrypoint_ordered_plan_adapter_surface",
         "def _autolabos_entrypoint_build_run_plan(args=None, context=None, runtime=None, runtime_context=None, **values):",
@@ -193,6 +204,7 @@ describe("run_experiments execution profile behavior", () => {
     let modelSelectorRepairedBeforeExecution = false;
     let dataBundleRepairedBeforeExecution = false;
     let evalSplitCoverageRepairedBeforeExecution = false;
+    let evaluationBridgeRepairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
       config: {
@@ -232,6 +244,9 @@ describe("run_experiments execution profile behavior", () => {
           evalSplitCoverageRepairedBeforeExecution =
             repairedSource.includes("_autolabos_task_bundle_eval_split_coverage_surface") &&
             repairedSource.includes("for candidate_split in dict.fromkeys((requested_split, 'validation', 'dev', 'test')):");
+          evaluationBridgeRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_entrypoint_completed_training_evaluation_bridge_surface") &&
+            repairedSource.includes("evaluation = _autolabos_ep_call(evaluator, evaluation_supplied)");
           await writeFile(
             path.join(runDir, "metrics.json"),
             JSON.stringify({
@@ -298,6 +313,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(modelSelectorRepairedBeforeExecution).toBe(true);
     expect(dataBundleRepairedBeforeExecution).toBe(true);
     expect(evalSplitCoverageRepairedBeforeExecution).toBe(true);
+    expect(evaluationBridgeRepairedBeforeExecution).toBe(true);
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes("before run_experiments retry gate")

@@ -16,9 +16,53 @@ Path placeholders:
 ---
 
 
+## Issue: LV-588
+
+- Status: repair implemented; targeted tests, full CI, build, public sanitization, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Validation target: successful one-run training rows must pass through an available objective evaluator before runtime handles are removed and final metrics are assembled.
+- Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-587 split-coverage repair.
+- Reproduction steps:
+  1. Resume the persisted `run_experiments` node through the real TUI helper.
+  2. Let the node-owned loader select evaluation splits that meet the governed minimum.
+  3. Allow every planned condition/seed run to complete real GPU training.
+  4. Inspect the final node-owned metrics payload.
+- Expected behavior:
+  - A training-complete row without objective metrics should be passed to an existing generated evaluator while model/tokenizer handles remain available.
+  - The evaluator output should be merged before public evidence serialization removes runtime-only handles.
+  - Evaluation failures should remain explicit failures rather than being promoted to completed conditions.
+- Actual behavior:
+  - All planned runs complete real training, but every row remains `completed_training` with no task metrics.
+  - Final metrics report zero completed conditions and no primary objective value.
+- Fresh vs existing session comparison:
+  - Fresh session: not required; fresh node-owned metrics reproduce the training-only completion state.
+  - Existing session: the same persisted run advances through data loading and all planned training runs before failing final verification.
+  - Divergence: no UI/session divergence observed; this is a generated one-run evaluation handoff defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the one-run adapter only recognizes one evaluator alias and serializes public evidence before invoking the existing completed-run evaluator, discarding the runtime handles needed for scoring.
+- Code/test changes:
+  - Add a generic completed-training evaluation bridge with signature-aware evaluator dispatch and pre-serialization merging.
+  - Apply the repair during implement handoff, before the `run_experiments` failure-memory gate, and immediately before execution.
+  - Add domain-neutral regression coverage proving evaluator access to runtime handles while final public rows remain serializable.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Automated regression: one-run handle ordering and execution-node pre-repair tests pass.
+  - Full CI passes: 195 root test files with 2,671 tests, plus 14 web tests.
+  - Production build and public-code sanitization pass.
+  - Harness validation passes with 495 issue entries checked and no structural violations.
+  - A copy of the exact live runner was upgraded successfully; Python compilation, repair idempotency, evaluator dispatch, runtime-handle availability, objective metric merging, and public handle removal checks pass.
+  - Same-flow live revalidation: pending.
+- Follow-up risks:
+  - Full objective evaluation may expose runtime budget, inference throughput, schema, device, artifact reload, or metric aggregation failures.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-587
 
-- Status: repair implemented; targeted tests, full CI, build, harness, public sanitization, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Status: resolved in same-flow live `run_experiments`; targeted tests, full CI, build, harness, public sanitization, and repaired live-runner copy checks pass
 - Validation target: task-bundle loaders must select a labeled evaluation split that meets the governed minimum coverage instead of failing on a smaller, fully normalized split.
 - Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-586 data-bundle materialization repair.
 - Reproduction steps:
@@ -49,7 +93,7 @@ Path placeholders:
   - Production build and public-code sanitization pass.
   - Harness validation passes with 494 issue entries checked and no structural violations.
   - A copy of the exact live runner was upgraded successfully; Python compilation, repair idempotency, governed candidate traversal, minimum coverage, and per-split selection checks pass.
-  - Same-flow live revalidation: pending.
+  - Same-flow live revalidation: passed; governed evaluation splits loaded at full required coverage and all planned runs advanced through real GPU training before the distinct LV-588 handoff boundary.
 - Follow-up risks:
   - An alternate split may be unlabeled, unavailable, differently sized, or still below the governed minimum.
   - Successful split selection may expose subsequent training, memory, artifact, or evaluator defects.

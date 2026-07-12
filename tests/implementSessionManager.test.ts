@@ -63,6 +63,7 @@ import {
   repairPythonEntrypointRuntimePlanBuilderSurface,
   repairPythonEntrypointAggregatePayloadBuilderCandidateSurface,
   repairPythonEntrypointOrderedPlanDataBundleSurface,
+  repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface,
   repairPythonEntrypointAtomicWriterCallOrderSurface,
   repairPythonEntrypointConditionExecutionBridgeSurface,
   repairPythonAutolabosConditionContextMaterializationSurface,
@@ -47582,6 +47583,57 @@ describe("ImplementSessionManager", () => {
     expect((await repairPythonEntrypointOrderedPlanDataBundleSurface(scriptPath)).repaired).toBe(true);
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect((await repairPythonEntrypointOrderedPlanDataBundleSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("evaluates completed training rows before public evidence removes runtime handles", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-one-run-evaluation-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(scriptPath, [
+      "import inspect",
+      "def _autolabos_ep_call(fn, supplied):",
+      "    signature = inspect.signature(fn)",
+      "    return fn(**{name: supplied[name] for name in signature.parameters})",
+      "def _autolabos_ep_get(source, name, default=None):",
+      "    return source.get(name, default) if hasattr(source, 'get') else getattr(source, name, default)",
+      "def _autolabos_entrypoint_public_evidence(value):",
+      "    return {key: item for key, item in value.items() if key not in {'model', 'tokenizer'}}",
+      "def execute_one_condition_run(spec, data_bundle, runtime):",
+      "    return {'status': 'completed_training', 'condition_marker': spec['marker'], 'model': object(), 'tokenizer': object(), 'train_loss': 0.5}",
+      "def evaluate_completed_run(run_state, task_bundle, runtime):",
+      "    assert run_state.get('model') is not None and run_state.get('tokenizer') is not None",
+      "    assert task_bundle == {'evaluation': ['row']} and runtime == {'device': 'cpu'}",
+      "    return {'status': 'evaluated', 'task_metrics': {'benchmark_task_a': {'accuracy': 0.75}}, 'accuracy': 0.75}",
+      "def _autolabos_entrypoint_one_run(*positional, **kwargs):",
+      "    vals = dict(kwargs)",
+      "    run_spec = vals.get('run_spec') or vals.get('condition') or vals.get('spec') or {}",
+      "    args = vals.get('args') or vals.get('config') or {}",
+      "    runtime = vals.get('runtime') or vals.get('runtime_context') or {}",
+      "    data_bundle = vals.get('data_bundle') or vals.get('task_bundle') or vals.get('datasets') or {}",
+      "    marker = _autolabos_ep_get(run_spec, 'marker', 'unknown_condition')",
+      "    seed = _autolabos_ep_get(run_spec, 'seed', None)",
+      "    supplied = {'run_spec': run_spec, 'condition': run_spec, 'spec': run_spec, 'args': args, 'runtime': runtime, 'data_bundle': data_bundle, 'task_bundle': data_bundle, 'seed': seed}",
+      "    runner = execute_one_condition_run",
+      "    raw = _autolabos_ep_call(runner, supplied)",
+      "    public = _autolabos_entrypoint_public_evidence(raw) if \"_autolabos_entrypoint_public_evidence\" in globals() else raw",
+      "    record = dict(public) if hasattr(public, 'items') else {'result': public}",
+      "    if 'task_metrics' not in record and 'evaluate_condition' in globals() and callable(globals()['evaluate_condition']):",
+      "        record.update(_autolabos_ep_call(globals()['evaluate_condition'], dict(supplied, condition_state=raw)))",
+      "    record.setdefault('status', 'completed' if record.get('task_metrics') else record.get('state', 'completed_training'))",
+      "    record.setdefault('condition_marker', marker)",
+      "    record.setdefault('seed', seed)",
+      "    return record",
+      "def main():",
+      "    record = _autolabos_entrypoint_one_run(run_spec={'marker': 'candidate_condition', 'seed': 7}, runtime={'device': 'cpu'}, data_bundle={'evaluation': ['row']})",
+      "    assert record['status'] == 'evaluated' and record['accuracy'] == 0.75",
+      "    assert 'model' not in record and 'tokenizer' not in record",
+      "if __name__ == '__main__': main()",
+      ""
+    ].join("\n"), "utf8");
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/AssertionError/);
+    expect((await repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface(scriptPath)).repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("attaches marker-scoped artifact path aliases to generated condition objects", async () => {

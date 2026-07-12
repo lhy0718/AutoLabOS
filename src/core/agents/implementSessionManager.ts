@@ -11551,6 +11551,8 @@ export class ImplementSessionManager {
       await repairPythonEntrypointAggregatePayloadBuilderCandidateSurface(executionScriptPath);
     const entrypointOrderedPlanDataBundleRepair =
       await repairPythonEntrypointOrderedPlanDataBundleSurface(executionScriptPath);
+    const entrypointCompletedTrainingEvaluationBridgeRepair =
+      await repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface(executionScriptPath);
     const unresolvedDataclassDefaultFactoryRepair =
       await repairPythonUnresolvedDataclassDefaultFactorySurface(executionScriptPath);
     const earlyMainGuardScheduleRepair =
@@ -11629,6 +11631,7 @@ export class ImplementSessionManager {
       entrypointRuntimePlanBuilderRepair,
       entrypointAggregatePayloadBuilderCandidateRepair,
       entrypointOrderedPlanDataBundleRepair,
+      entrypointCompletedTrainingEvaluationBridgeRepair,
       unresolvedDataclassDefaultFactoryRepair,
       earlyMainGuardScheduleRepair,
       autolabosCliParserBuilderAliasRepair,
@@ -50581,6 +50584,80 @@ export async function repairPythonEntrypointOrderedPlanDataBundleSurface(scriptP
   return {
     repaired: true,
     message: "Materialized data bundle aliases for ordered-plan condition runners in " + path.basename(scriptPath) + " before handoff."
+  };
+}
+
+export async function repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_entrypoint_completed_training_evaluation_bridge_surface";
+  const evaluatorNames = [
+    "evaluate_completed_run",
+    "evaluate_condition_run",
+    "evaluate_completed_condition",
+    "evaluate_condition_state",
+    "evaluate_condition",
+    "run_condition_evaluation"
+  ];
+  if (
+    source.includes(marker) ||
+    !source.includes("def _autolabos_entrypoint_one_run(") ||
+    !evaluatorNames.some((name) => pythonSourceDefinesOrImportsName(source, name))
+  ) {
+    return { repaired: false };
+  }
+
+  const functionSource = extractPythonTopLevelFunctionSource(source, "_autolabos_entrypoint_one_run");
+  const callPattern = /^([ \t]+)raw = _autolabos_ep_call\(runner, supplied\)\n\1public = _autolabos_entrypoint_public_evidence\(raw\) if "_autolabos_entrypoint_public_evidence" in globals\(\) else raw$/mu;
+  if (!functionSource || !callPattern.test(functionSource)) {
+    return { repaired: false };
+  }
+
+  const repairedFunction = functionSource.replace(callPattern, (_full: string, indent: string) => [
+    `${indent}raw = _autolabos_ep_call(runner, supplied)`,
+    `${indent}# ${marker}`,
+    `${indent}if hasattr(raw, 'items'):`,
+    `${indent}    raw_status = str(raw.get('status') or raw.get('state') or '').strip().lower()`,
+    `${indent}    has_objective_metrics = bool(raw.get('task_metrics') or raw.get('evaluation_metrics') or raw.get('accuracy') is not None or raw.get('average_accuracy') is not None)`,
+    `${indent}    if raw_status in {'completed_training', 'training_completed', 'trained'} and not has_objective_metrics:`,
+    `${indent}        evaluator_names = ('evaluate_completed_run', 'evaluate_condition_run', 'evaluate_completed_condition', 'evaluate_condition_state', 'evaluate_condition', 'run_condition_evaluation')`,
+    `${indent}        evaluator = next((globals()[name] for name in evaluator_names if name in globals() and callable(globals()[name])), None)`,
+    `${indent}        if evaluator is not None:`,
+    `${indent}            evaluation_supplied = dict(supplied)`,
+    `${indent}            evaluation_supplied.update({'run_state': raw, 'state': raw, 'condition_state': raw, 'completed_run': raw, 'training_result': raw, 'result': raw, 'row': raw, 'task_bundle': data_bundle, 'data_bundle': data_bundle, 'eval_bundle': data_bundle, 'evaluation_bundle': data_bundle, 'runtime': runtime, 'runtime_context': runtime, 'run_context': runtime})`,
+    `${indent}            evaluation = _autolabos_ep_call(evaluator, evaluation_supplied)`,
+    `${indent}            if hasattr(evaluation, 'items'):`,
+    `${indent}                merged = dict(raw)`,
+    `${indent}                merged.update(dict(evaluation))`,
+    `${indent}                raw = merged`,
+    `${indent}public = _autolabos_entrypoint_public_evidence(raw) if "_autolabos_entrypoint_public_evidence" in globals() else raw`
+  ].join("\n"));
+  const nextSource = replacePythonTopLevelFunctionSource(
+    source,
+    "_autolabos_entrypoint_one_run",
+    repairedFunction,
+    (currentFunction) => callPattern.test(currentFunction)
+  );
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: "Bridged completed training rows through an existing objective evaluator in " + path.basename(scriptPath) + " before handoff."
   };
 }
 
