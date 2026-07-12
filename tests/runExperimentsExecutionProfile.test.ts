@@ -116,6 +116,7 @@ describe("run_experiments execution profile behavior", () => {
         "from dataclasses import dataclass",
         "from types import SimpleNamespace",
         "from typing import Any, Mapping",
+        "MODEL_CANDIDATES = ('model-family-primary', 'model-family-fallback')",
         "@dataclass",
         "class Condition: marker: str",
         "@dataclass",
@@ -125,7 +126,7 @@ describe("run_experiments execution profile behavior", () => {
         "def make_model_runtime_context(args, paths, budget):",
         "    return SimpleNamespace(args=args, paths=paths, budget=budget)",
         "def execute_one_condition_run(spec: Mapping[str, Any], runtime):",
-        "    return {'marker': spec.get('marker'), 'seed': spec.get('seed'), 'path': runtime.paths}",
+        "    return {'marker': spec.get('marker'), 'seed': spec.get('seed'), 'path': runtime.paths, 'model_id': select_available_model(runtime)}",
         "def _autolabos_entrypoint_one_run(*positional, **kwargs):",
         "    vals = dict(kwargs)",
         "    run_spec = vals.get(\"run_spec\") or vals.get(\"condition\") or vals.get(\"spec\") or {}",
@@ -172,6 +173,7 @@ describe("run_experiments execution profile behavior", () => {
     let plannedRunSpecRepairedBeforeExecution = false;
     let plannedRunDispatchRepairedBeforeExecution = false;
     let runtimeContextRepairedBeforeExecution = false;
+    let modelSelectorRepairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
       config: {
@@ -202,6 +204,9 @@ describe("run_experiments execution profile behavior", () => {
           runtimeContextRepairedBeforeExecution =
             repairedSource.includes("_autolabos_condition_executor_runtime_context_surface") &&
             repairedSource.includes("runtime = _autolabos_condition_executor_runtime_context(runtime");
+          modelSelectorRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_available_model_selector_surface") &&
+            repairedSource.includes("def select_available_model(runtime=None):");
           await writeFile(
             path.join(runDir, "metrics.json"),
             JSON.stringify({
@@ -265,6 +270,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(plannedRunSpecRepairedBeforeExecution).toBe(true);
     expect(plannedRunDispatchRepairedBeforeExecution).toBe(true);
     expect(runtimeContextRepairedBeforeExecution).toBe(true);
+    expect(modelSelectorRepairedBeforeExecution).toBe(true);
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes("before run_experiments retry gate")

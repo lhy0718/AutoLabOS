@@ -11519,6 +11519,8 @@ export class ImplementSessionManager {
       await repairPythonEntrypointPlannedRunDispatchSurface(executionScriptPath);
     const conditionExecutorRuntimeRepair =
       await repairPythonConditionExecutorRuntimeContextSurface(executionScriptPath);
+    const availableModelSelectorRepair =
+      await repairPythonAvailableModelSelectorSurface(executionScriptPath);
     const entrypointConditionPathAliasesRepair =
       await repairPythonEntrypointConditionPathAliasesSurface(executionScriptPath);
     const publicStudySiblingExperimentBackendRepair =
@@ -11763,6 +11765,7 @@ export class ImplementSessionManager {
         plannedRunSpecMappingRepair,
         plannedRunDispatchRepair,
         conditionExecutorRuntimeRepair,
+        availableModelSelectorRepair,
         entrypointConditionPathAliasesRepair,
         publicStudySiblingExperimentBackendRepair,
         publicStudyBackendCallableLoaderRepair,
@@ -62071,6 +62074,93 @@ export async function repairPythonConditionExecutorRuntimeContextSurface(scriptP
   return {
     repaired: true,
     message: `Materialized concrete condition executor runtime contexts for ${repairedNames.join(", ")} in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonAvailableModelSelectorSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") return { repaired: false };
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+  const marker = "_autolabos_available_model_selector_surface";
+  if (
+    source.includes(marker) ||
+    !/\bselect_available_model\s*\(/u.test(source) ||
+    pythonSourceDefinesOrImportsName(source, "select_available_model")
+  ) return { repaired: false };
+  const helper = [
+    "",
+    `# ${marker}`,
+    "def select_available_model(runtime=None):",
+    "    def _value(source, name, default=None):",
+    "        if source is None:",
+    "            return default",
+    "        try:",
+    "            value = source.get(name, default) if hasattr(source, 'get') else getattr(source, name, default)",
+    "        except Exception:",
+    "            return default",
+    "        return default if callable(value) or value in (None, '') else value",
+    "    candidates = []",
+    "    def _add(value):",
+    "        if isinstance(value, (list, tuple, set)):",
+    "            for item in value:",
+    "                _add(item)",
+    "            return",
+    "        if value not in (None, ''):",
+    "            text = str(value).strip()",
+    "            if text and text not in candidates:",
+    "                candidates.append(text)",
+    "    aliases = ('model_id', 'selected_model_id', 'selected_model_name', 'base_model_id', 'base_model_name', 'base_model', 'preferred_model_id', 'preferred_model_name', 'preferred_base_model', 'fallback_model_id', 'fallback_model_name', 'fallback_base_model_id', 'fallback_base_model_name', 'fallback_base_model')",
+    "    runtime_args = _value(runtime, 'args')",
+    "    for source in (runtime, runtime_args):",
+    "        for name in aliases:",
+    "            _add(_value(source, name))",
+    "    for name in ('MODEL_CANDIDATES', 'BASE_MODEL_CANDIDATES', 'PREFERRED_MODEL_CANDIDATES', 'SELECTED_MODEL_ID', 'PREFERRED_MODEL_ID', 'PREFERRED_BASE_MODEL', 'BASE_MODEL_ID', 'BASE_MODEL_NAME', 'BASE_MODEL', 'MODEL_ID', 'MODEL_NAME', 'FALLBACK_MODEL_ID', 'FALLBACK_BASE_MODEL_ID', 'FALLBACK_BASE_MODEL_NAME', 'FALLBACK_BASE_MODEL'):",
+    "        _add(globals().get(name))",
+    "    if not candidates:",
+    "        raise RuntimeError('No governed model candidate is available for condition execution.')",
+    "    import os as _autolabos_model_os",
+    "    allow_download = bool(_value(runtime, 'allow_model_download', False)) or _autolabos_model_os.environ.get('AUTOLABOS_ALLOW_MODEL_DOWNLOAD', '0') == '1'",
+    "    local_files_only = bool(_value(runtime, 'local_files_only', not allow_download)) and not allow_download",
+    "    selected = None",
+    "    if not local_files_only:",
+    "        selected = candidates[0]",
+    "    else:",
+    "        try:",
+    "            from transformers import AutoConfig as _AutoLabOSAutoConfig",
+    "        except Exception as exc:",
+    "            raise RuntimeError('Cannot verify local model candidates because transformers is unavailable.') from exc",
+    "        for candidate in candidates:",
+    "            try:",
+    "                _AutoLabOSAutoConfig.from_pretrained(candidate, local_files_only=True, trust_remote_code=True)",
+    "                selected = candidate",
+    "                break",
+    "            except Exception:",
+    "                continue",
+    "    if selected is None:",
+    "        raise RuntimeError('No governed model candidate is available in the local cache.')",
+    "    try:",
+    "        if hasattr(runtime, '__setitem__'):",
+    "            runtime['model_id'] = selected",
+    "        elif runtime is not None:",
+    "            setattr(runtime, 'model_id', selected)",
+    "    except Exception:",
+    "        pass",
+    "    return selected",
+    ""
+  ].join("\n");
+  const nextSource = insertPythonTopLevelHelperAfterImports(source, helper);
+  if (nextSource === source || !nextSource.includes(marker)) return { repaired: false };
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Materialized a governed model selector in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

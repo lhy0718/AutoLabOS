@@ -82,6 +82,7 @@ import {
   repairPythonPlannedRunSpecMappingSurface,
   repairPythonEntrypointPlannedRunDispatchSurface,
   repairPythonConditionExecutorRuntimeContextSurface,
+  repairPythonAvailableModelSelectorSurface,
   repairPythonEntrypointAggregatePayloadBuilderCandidateSurface,
   repairPythonEntrypointOrderedPlanDataBundleSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
@@ -456,7 +457,8 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         }
         for (const repair of [
           await repairPythonEntrypointPlannedRunDispatchSurface(preFailureMemoryScriptPath),
-          await repairPythonConditionExecutorRuntimeContextSurface(preFailureMemoryScriptPath)
+          await repairPythonConditionExecutorRuntimeContextSurface(preFailureMemoryScriptPath),
+          await repairPythonAvailableModelSelectorSurface(preFailureMemoryScriptPath)
         ]) {
           if (!repair.repaired) continue;
           preFailureMemoryRepairApplied = true;

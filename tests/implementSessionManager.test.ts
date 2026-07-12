@@ -350,6 +350,7 @@ import {
   repairPythonPlannedRunSpecMappingSurface,
   repairPythonEntrypointPlannedRunDispatchSurface,
   repairPythonConditionExecutorRuntimeContextSurface,
+  repairPythonAvailableModelSelectorSurface,
   repairPythonEntrypointConditionPathAliasesSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonPublicStudyBackendCallableLoaderSurface,
@@ -47452,6 +47453,41 @@ describe("ImplementSessionManager", () => {
     expect((await repairPythonEntrypointPlannedRunDispatchSurface(scriptPath)).repaired).toBe(true);
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect((await repairPythonEntrypointPlannedRunDispatchSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("materializes governed model selection from generic runtime candidates", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-available-model-selector-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(scriptPath, [
+      "import sys",
+      "import types",
+      "from types import SimpleNamespace",
+      "class FakeAutoConfig:",
+      "    @classmethod",
+      "    def from_pretrained(cls, model_id, **kwargs):",
+      "        if model_id != 'model-family-fallback': raise OSError('not cached')",
+      "        return object()",
+      "module = types.ModuleType('transformers')",
+      "module.AutoConfig = FakeAutoConfig",
+      "sys.modules['transformers'] = module",
+      "MODEL_CANDIDATES = ('model-family-primary', 'model-family-fallback')",
+      "def execute_one_condition_run(runtime):",
+      "    return select_available_model(runtime)",
+      "def main():",
+      "    local_runtime = SimpleNamespace(args=SimpleNamespace(), model_id=None, local_files_only=True, allow_model_download=False)",
+      "    assert execute_one_condition_run(local_runtime) == 'model-family-fallback'",
+      "    assert local_runtime.model_id == 'model-family-fallback'",
+      "    remote_runtime = {'args': {}, 'local_files_only': False, 'allow_model_download': True}",
+      "    assert execute_one_condition_run(remote_runtime) == 'model-family-primary'",
+      "    assert remote_runtime['model_id'] == 'model-family-primary'",
+      "if __name__ == '__main__': main()",
+      ""
+    ].join("\n"), "utf8");
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/select_available_model/);
+    expect((await repairPythonAvailableModelSelectorSurface(scriptPath)).repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonAvailableModelSelectorSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("attaches marker-scoped artifact path aliases to generated condition objects", async () => {
