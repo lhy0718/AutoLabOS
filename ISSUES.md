@@ -16,6 +16,31 @@ Path placeholders:
 ---
 
 
+## Issue: LV-575
+
+- Status: reproduced in same-flow live implementation attempt 2; source repair, focused and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.
+- Validation target: pre-design handoff repair must connect a generated concrete one-condition worker to the generic callable names advertised by the final runtime resolver.
+- Environment/session context: a governed live implementation regenerated a complete multi-run Python runner and reached design-to-implementation validation before local execution.
+- Reproduction steps:
+  1. Generate a concrete one-condition worker under one conventional name.
+  2. Generate a final resolver that searches sibling generic condition-execution names.
+  3. Run design-to-implementation validation before late handoff alias repairs.
+- Expected behavior: the pre-design repair should recognize the resolver vocabulary, alias the existing concrete worker, and let static contract validation inspect an executable target.
+- Actual behavior: validation blocked with `PLANNED_RUNTIME_CALLABLE_RESOLVER_TARGET_MISSING`; every advertised generic candidate appeared undefined even though a concrete one-condition worker had been generated under a sibling name.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral executable fixture defines `execute_one_condition_run` while its resolver searches generic condition-execution sibling names.
+  - Existing session: live attempt 2 was restored and attempt 3 began after the same design gate failure.
+  - Divergence: no state/UI divergence; this was incomplete pre-design callable vocabulary projection.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `repairPythonModelExecutionSingleConditionRunnerAliasSurface(...)` recognized seed-suffixed planned-runtime resolver names but not equally conventional unsuffixed and condition-seed variants.
+- Code/test changes:
+  - Expanded pre-design resolver detection with domain-neutral condition execution candidate names.
+  - Added an executable regression that fails before repair and invokes the existing concrete worker after aliasing.
+- Regression status: both pre-design resolver alias regressions and all 799 `implementSessionManager` tests pass. TypeScript/web build, public-code sanitation, and harness validation also pass; the active attempt 3 still uses the pre-repair process image.
+- Follow-up risks: arbitrary fuzzy callable selection remains disallowed; future resolver vocabularies should be added only when they identify an existing concrete one-condition worker.
+
+
 ## Issue: LV-574
 
 - Status: reproduced in the same live flow; source repair, focused regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.

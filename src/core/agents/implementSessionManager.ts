@@ -30105,6 +30105,14 @@ export async function repairPythonModelExecutionSingleConditionRunnerAliasSurfac
     source.includes("one_run_fn") &&
     source.includes("_callable_named");
   const hasPlannedRuntimeCandidateLookup = [
+    "execute_condition_run",
+    "run_condition_once",
+    "run_single_condition",
+    "run_condition_seed",
+    "train_condition_seed",
+    "run_one_condition",
+    "_run_one_condition",
+    "execute_one_condition",
     "run_single_condition_seed",
     "execute_single_condition_seed",
     "run_one_condition_seed",

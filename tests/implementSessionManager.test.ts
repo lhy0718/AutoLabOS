@@ -58415,6 +58415,60 @@ describe("ImplementSessionManager", () => {
     });
   });
 
+  it("aliases generic condition resolver candidates before design validation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-generic-condition-resolver-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const resultPath = path.join(workspace, "result.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def execute_one_condition_run(run_spec=None, seed=0, **kwargs):",
+        "    return {'status': 'completed', 'marker': run_spec['marker'], 'seed': seed}",
+        "",
+        "def lookup_required_callable():",
+        "    candidate_names = (",
+        "        'execute_condition_run', 'run_condition_once', 'run_single_condition',",
+        "        'run_condition_seed', 'train_condition_seed', 'run_one_condition',",
+        "        '_run_one_condition', 'execute_one_condition',",
+        "    )",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    raise RuntimeError('required condition callable missing')",
+        "",
+        "def main():",
+        "    result = lookup_required_callable()(run_spec={'marker': 'baseline_condition'}, seed=29)",
+        "    Path('result.json').write_text(json.dumps(result, sort_keys=True), encoding='utf-8')",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /required condition callable missing/
+    );
+    const repair = await repairPythonModelExecutionSingleConditionRunnerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("run_condition_seed = execute_one_condition_run");
+    expect(repairedSource).toContain("run_one_condition = execute_one_condition_run");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(resultPath, "utf8"))).toMatchObject({
+      status: "completed",
+      marker: "baseline_condition",
+      seed: 29
+    });
+  });
+
   it("adds conventional one-condition callables to model execution stage dispatch", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-model-execution-direct-runner-"));
     tempDirs.push(workspace);
