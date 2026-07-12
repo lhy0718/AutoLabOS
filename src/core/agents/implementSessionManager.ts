@@ -11515,6 +11515,10 @@ export class ImplementSessionManager {
       await repairPythonEntrypointOrderedPlanAdapterSurface(executionScriptPath);
     const plannedRunSpecMappingRepair =
       await repairPythonPlannedRunSpecMappingSurface(executionScriptPath);
+    const plannedRunDispatchRepair =
+      await repairPythonEntrypointPlannedRunDispatchSurface(executionScriptPath);
+    const conditionExecutorRuntimeRepair =
+      await repairPythonConditionExecutorRuntimeContextSurface(executionScriptPath);
     const entrypointConditionPathAliasesRepair =
       await repairPythonEntrypointConditionPathAliasesSurface(executionScriptPath);
     const publicStudySiblingExperimentBackendRepair =
@@ -11757,6 +11761,8 @@ export class ImplementSessionManager {
         entrypointOrderedPlanPathArgumentRepair,
         entrypointOrderedPlanAdapterRepair,
         plannedRunSpecMappingRepair,
+        plannedRunDispatchRepair,
+        conditionExecutorRuntimeRepair,
         entrypointConditionPathAliasesRepair,
         publicStudySiblingExperimentBackendRepair,
         publicStudyBackendCallableLoaderRepair,
@@ -61941,6 +61947,130 @@ export async function repairPythonPlannedRunSpecMappingSurface(scriptPath?: stri
   return {
     repaired: true,
     message: `Projected object-backed planned runs into mapping-oriented condition specs for ${repairedNames.join(", ")} in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointPlannedRunDispatchSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") return { repaired: false };
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+  const marker = "_autolabos_entrypoint_planned_run_dispatch_surface";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _autolabos_planned_run_spec_mapping(")
+  ) return { repaired: false };
+  const functionSource = extractPythonTopLevelFunctionSource(source, "_autolabos_entrypoint_one_run");
+  if (!functionSource) return { repaired: false };
+  const runSpecPattern =
+    /^(\s*)run_spec = vals\.get\("run_spec"\) or vals\.get\("condition"\) or vals\.get\("spec"\) or \{\}\s*$/mu;
+  if (!runSpecPattern.test(functionSource)) return { repaired: false };
+  let repairedFunction = functionSource.replace(
+    runSpecPattern,
+    (_full: string, indent: string) => [
+      `${indent}# ${marker}`,
+      `${indent}original_run_spec = vals.get("run_spec") or vals.get("condition") or vals.get("spec") or {}`,
+      `${indent}run_spec = _autolabos_planned_run_spec_mapping(original_run_spec)`
+    ].join("\n")
+  );
+  repairedFunction = repairedFunction.replace(
+    /supplied = \{"run_spec": run_spec, "condition": run_spec, "condition_spec": run_spec, "spec": run_spec,/u,
+    'supplied = {"run_spec": run_spec, "condition": run_spec, "condition_spec": run_spec, "spec": run_spec, "planned_run": original_run_spec, "plan_item": original_run_spec, "plan_entry": original_run_spec,'
+  );
+  const nextSource = replacePythonTopLevelFunctionSource(
+    source,
+    "_autolabos_entrypoint_one_run",
+    repairedFunction,
+    (currentFunction) => runSpecPattern.test(currentFunction)
+  );
+  if (nextSource === source || !nextSource.includes(marker)) return { repaired: false };
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Normalized planned-run specs before entrypoint marker extraction in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonConditionExecutorRuntimeContextSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") return { repaired: false };
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+  const marker = "_autolabos_condition_executor_runtime_context_surface";
+  if (source.includes(marker)) return { repaired: false };
+  const candidateNames = [
+    "execute_one_condition_run", "run_one_condition", "run_single_condition",
+    "execute_single_condition", "execute_condition", "execute_one_run"
+  ];
+  let nextSource = source;
+  const repairedNames: string[] = [];
+  for (const functionName of candidateNames) {
+    const functionSource = extractPythonTopLevelFunctionSource(nextSource, functionName);
+    if (
+      !functionSource ||
+      !/\bruntime\.(?:paths|budget|device|model_id|local_files_only)\b/u.test(functionSource) ||
+      !new RegExp(String.raw`^def\s+${escapeRegex(functionName)}\s*\([\s\S]*?\bruntime\b`, "u").test(functionSource)
+    ) continue;
+    const headerPattern = new RegExp(
+      String.raw`^(def\s+${escapeRegex(functionName)}\s*\([\s\S]*?\)(?:\s*->\s*[^:\n]+)?\s*:)`,
+      "u"
+    );
+    const repairedFunction = functionSource.replace(
+      headerPattern,
+      "$1\n    runtime = _autolabos_condition_executor_runtime_context(runtime, spec if 'spec' in locals() else None)"
+    );
+    if (repairedFunction === functionSource) continue;
+    nextSource = replacePythonTopLevelFunctionSource(nextSource, functionName, repairedFunction);
+    repairedNames.push(functionName);
+  }
+  if (repairedNames.length === 0 || nextSource === source) return { repaired: false };
+  const helper = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_condition_executor_runtime_context(runtime, spec=None):",
+    "    if runtime is None or not hasattr(runtime, 'get'):",
+    "        return runtime",
+    "    args = runtime.get('args')",
+    "    paths = runtime.get('paths') or runtime.get('runtime_paths')",
+    "    budget = runtime.get('budget')",
+    "    import inspect as _autolabos_runtime_inspect",
+    "    supplied = {'args': args, 'config': args, 'paths': paths, 'runtime_paths': paths, 'budget': budget, 'runtime': runtime, 'spec': spec, 'condition': spec}",
+    "    for name in ('make_model_runtime_context', 'build_model_runtime_context', 'build_runtime_context', 'make_runtime_context', 'create_runtime_context'):",
+    "        builder = globals().get(name)",
+    "        if not callable(builder):",
+    "            continue",
+    "        try:",
+    "            signature = _autolabos_runtime_inspect.signature(builder)",
+    "            kwargs = {key: value for key, value in supplied.items() if key in signature.parameters and value is not None}",
+    "            missing = [parameter.name for parameter in signature.parameters.values() if parameter.default is parameter.empty and parameter.kind in (_autolabos_runtime_inspect.Parameter.POSITIONAL_OR_KEYWORD, _autolabos_runtime_inspect.Parameter.KEYWORD_ONLY) and parameter.name not in kwargs]",
+    "            if missing:",
+    "                continue",
+    "            materialized = builder(**kwargs)",
+    "            if materialized is not None:",
+    "                return materialized",
+    "        except Exception:",
+    "            continue",
+    "    return runtime",
+    ""
+  ].join("\n");
+  nextSource = insertPythonTopLevelHelperAfterImports(nextSource, helper);
+  if (nextSource === source || !nextSource.includes(marker)) return { repaired: false };
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Materialized concrete condition executor runtime contexts for ${repairedNames.join(", ")} in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

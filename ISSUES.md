@@ -16,9 +16,51 @@ Path placeholders:
 ---
 
 
+## Issue: LV-584
+
+- Status: repair implemented; targeted, execution-node, full CI, build, public-sanitization, harness, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Validation target: generated one-run adapters must materialize the concrete runtime context required by condition executors and derive marker metadata from normalized planned-run specs.
+- Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-583 planned-run spec mapping repair.
+- Reproduction steps:
+  1. Resume the persisted `run_experiments` node through the real TUI helper.
+  2. Let the node-owned pre-run repair flatten dataclass planned runs.
+  3. Inspect the fresh 21-row metrics and traceback after the mapping-oriented executor starts.
+- Expected behavior:
+  - The adapter should invoke an available runtime-context builder with existing args, paths, and budget values.
+  - Progress and failure rows should preserve the normalized condition marker and seed.
+- Actual behavior:
+  - The prior `PlannedRun.get` failure no longer occurs.
+  - The executor receives a mapping runtime and fails at `runtime.paths` with `AttributeError("'dict' object has no attribute 'paths'")` for all 21 rows.
+  - Adapter-level failure rows still report `unknown_condition` because marker extraction precedes planned-run normalization.
+- Fresh vs existing session comparison:
+  - Fresh session: not required; fresh node-owned metrics and tracebacks reproduce both projection gaps.
+  - Existing session: the same persisted run advances past LV-583 and enters the concrete executor.
+  - Divergence: no UI/session divergence observed; this is a generated entrypoint runtime/spec projection defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the one-run adapter does not reuse the generated concrete runtime builder and derives marker metadata from the unnormalized outer plan object.
+- Code/test changes:
+  - Normalize the dispatch spec before marker extraction while preserving the original plan object under plan-item aliases.
+  - Invoke compatible concrete runtime builders before mapping-backed runtime reaches attribute-oriented executors.
+  - Apply both repairs during implementation handoff and before the `run_experiments` failure-memory retry gate.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Automated regression: targeted helper and execution-node pre-repair tests pass; build passes.
+  - Full CI passes: 195 root test files with 2,667 tests, plus 14 web tests.
+  - Harness validation passes with 491 issue entries checked and no structural violations.
+  - A copy of the exact live runner was upgraded successfully; Python compilation, repair idempotency, and concrete `ModelRuntimeContext` materialization pass.
+  - Same-flow live revalidation: pending.
+- Follow-up risks:
+  - After runtime materialization, real model loading or training may run long and expose dependency, CUDA, memory, or evaluation failures.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-583
 
-- Status: repair implemented; targeted, execution-node, full CI, build, public-sanitization, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Status: resolved in same-flow live `run_experiments`; targeted, execution-node, full CI, build, public-sanitization, harness, and repaired live-runner copy checks pass
 - Validation target: generated one-run entrypoint adapters must normalize object/dataclass run-plan items into the flat condition mapping expected by mapping-oriented condition executors.
 - Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-582 ordered-plan path projection repair.
 - Reproduction steps:
@@ -48,7 +90,7 @@ Path placeholders:
   - Automated regression: targeted mapping and execution-node tests pass; build passes.
   - Full CI passes: 195 root test files with 2,665 tests, plus 14 web tests.
   - A copy of the exact live runner was upgraded successfully; Python compilation, condition-field flattening, run metadata preservation, and repair idempotency pass.
-  - Same-flow live revalidation: pending.
+  - Same-flow live revalidation: passed; the mapping-oriented executor received the flattened spec and advanced to the distinct LV-584 concrete runtime-context boundary.
 - Follow-up risks:
   - After plan-item normalization, the real model/data/training/evaluation path may expose a distinct dependency, resource, signature, or metrics-contract failure.
 - Evidence/artifacts:

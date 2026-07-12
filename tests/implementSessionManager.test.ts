@@ -348,6 +348,8 @@ import {
   repairPythonEntrypointOrderedPlanPathArgumentSurface,
   repairPythonEntrypointOrderedPlanAdapterSurface,
   repairPythonPlannedRunSpecMappingSurface,
+  repairPythonEntrypointPlannedRunDispatchSurface,
+  repairPythonConditionExecutorRuntimeContextSurface,
   repairPythonEntrypointConditionPathAliasesSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonPublicStudyBackendCallableLoaderSurface,
@@ -47393,6 +47395,63 @@ describe("ImplementSessionManager", () => {
     expect((await repairPythonPlannedRunSpecMappingSurface(scriptPath)).repaired).toBe(true);
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect((await repairPythonPlannedRunSpecMappingSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("materializes concrete runtime contexts for attribute-oriented condition executors", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-runtime-context-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(scriptPath, [
+      "from types import SimpleNamespace",
+      "def make_model_runtime_context(args, paths, budget):",
+      "    return SimpleNamespace(args=args, paths=paths, budget=budget)",
+      "def execute_one_condition_run(spec, runtime):",
+      "    return (spec.get('marker'), runtime.paths.name, runtime.budget)",
+      "def main():",
+      "    runtime = {'args': object(), 'paths': SimpleNamespace(name='condition_artifacts'), 'budget': 30}",
+      "    assert execute_one_condition_run({'marker': 'candidate_condition'}, runtime) == ('candidate_condition', 'condition_artifacts', 30)",
+      "if __name__ == '__main__': main()",
+      ""
+    ].join("\n"), "utf8");
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/has no attribute 'paths'/);
+    expect((await repairPythonConditionExecutorRuntimeContextSurface(scriptPath)).repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonConditionExecutorRuntimeContextSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("normalizes planned-run dispatch before marker extraction", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-planned-run-dispatch-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(scriptPath, [
+      "from dataclasses import dataclass",
+      "@dataclass",
+      "class Condition: marker: str",
+      "@dataclass",
+      "class PlannedRun:",
+      "    condition: Condition",
+      "    seed: int",
+      "def _autolabos_planned_run_spec_mapping(value):",
+      "    return {'marker': value.condition.marker, 'seed': value.seed}",
+      "def _autolabos_ep_get(value, name, default=None):",
+      "    return value.get(name, default) if hasattr(value, 'get') else getattr(value, name, default)",
+      "def _autolabos_entrypoint_one_run(*positional, **kwargs):",
+      "    vals = dict(kwargs)",
+      "    run_spec = vals.get(\"run_spec\") or vals.get(\"condition\") or vals.get(\"spec\") or {}",
+      "    marker = _autolabos_ep_get(run_spec, \"marker\", \"unknown_condition\")",
+      "    supplied = {\"run_spec\": run_spec, \"condition\": run_spec, \"condition_spec\": run_spec, \"spec\": run_spec, \"marker\": marker}",
+      "    return supplied",
+      "def main():",
+      "    result = _autolabos_entrypoint_one_run(run_spec=PlannedRun(Condition('candidate_condition'), 7))",
+      "    assert result['marker'] == 'candidate_condition'",
+      "    assert result['planned_run'].condition.marker == 'candidate_condition'",
+      "if __name__ == '__main__': main()",
+      ""
+    ].join("\n"), "utf8");
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/AssertionError/);
+    expect((await repairPythonEntrypointPlannedRunDispatchSurface(scriptPath)).repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonEntrypointPlannedRunDispatchSurface(scriptPath)).repaired).toBe(false);
   });
 
   it("attaches marker-scoped artifact path aliases to generated condition objects", async () => {

@@ -114,6 +114,7 @@ describe("run_experiments execution profile behavior", () => {
       [
         "import argparse",
         "from dataclasses import dataclass",
+        "from types import SimpleNamespace",
         "from typing import Any, Mapping",
         "@dataclass",
         "class Condition: marker: str",
@@ -121,8 +122,15 @@ describe("run_experiments execution profile behavior", () => {
         "class PlannedRun:",
         "    condition: Condition",
         "    seed: int",
-        "def execute_one_condition_run(spec: Mapping[str, Any]):",
-        "    return {'marker': spec.get('marker'), 'seed': spec.get('seed')}",
+        "def make_model_runtime_context(args, paths, budget):",
+        "    return SimpleNamespace(args=args, paths=paths, budget=budget)",
+        "def execute_one_condition_run(spec: Mapping[str, Any], runtime):",
+        "    return {'marker': spec.get('marker'), 'seed': spec.get('seed'), 'path': runtime.paths}",
+        "def _autolabos_entrypoint_one_run(*positional, **kwargs):",
+        "    vals = dict(kwargs)",
+        "    run_spec = vals.get(\"run_spec\") or vals.get(\"condition\") or vals.get(\"spec\") or {}",
+        "    supplied = {\"run_spec\": run_spec, \"condition\": run_spec, \"condition_spec\": run_spec, \"spec\": run_spec, \"marker\": 'candidate_condition'}",
+        "    return supplied",
         "def build_ordered_run_plan(model_id): return model_id",
         "# _autolabos_entrypoint_ordered_plan_adapter_surface",
         "def _autolabos_entrypoint_build_run_plan(args=None, context=None, runtime=None, runtime_context=None, **values):",
@@ -162,6 +170,8 @@ describe("run_experiments execution profile behavior", () => {
 
     let repairedBeforeExecution = false;
     let plannedRunSpecRepairedBeforeExecution = false;
+    let plannedRunDispatchRepairedBeforeExecution = false;
+    let runtimeContextRepairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
       config: {
@@ -186,6 +196,12 @@ describe("run_experiments execution profile behavior", () => {
           plannedRunSpecRepairedBeforeExecution =
             repairedSource.includes("_autolabos_planned_run_spec_mapping_surface") &&
             repairedSource.includes("spec = _autolabos_planned_run_spec_mapping(spec)");
+          plannedRunDispatchRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_entrypoint_planned_run_dispatch_surface") &&
+            repairedSource.includes("run_spec = _autolabos_planned_run_spec_mapping(original_run_spec)");
+          runtimeContextRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_condition_executor_runtime_context_surface") &&
+            repairedSource.includes("runtime = _autolabos_condition_executor_runtime_context(runtime");
           await writeFile(
             path.join(runDir, "metrics.json"),
             JSON.stringify({
@@ -247,6 +263,8 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.status).not.toBe("failure");
     expect(repairedBeforeExecution).toBe(true);
     expect(plannedRunSpecRepairedBeforeExecution).toBe(true);
+    expect(plannedRunDispatchRepairedBeforeExecution).toBe(true);
+    expect(runtimeContextRepairedBeforeExecution).toBe(true);
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes("before run_experiments retry gate")

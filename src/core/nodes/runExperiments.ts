@@ -80,6 +80,8 @@ import {
   repairPythonEntrypointRuntimePlanBuilderSurface,
   repairPythonEntrypointOrderedPlanAdapterSurface,
   repairPythonPlannedRunSpecMappingSurface,
+  repairPythonEntrypointPlannedRunDispatchSurface,
+  repairPythonConditionExecutorRuntimeContextSurface,
   repairPythonEntrypointAggregatePayloadBuilderCandidateSurface,
   repairPythonEntrypointOrderedPlanDataBundleSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
@@ -450,6 +452,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               "before handoff.",
               "before run_experiments retry gate."
             ) || `Projected object-backed planned runs into mapping-oriented condition specs in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        for (const repair of [
+          await repairPythonEntrypointPlannedRunDispatchSurface(preFailureMemoryScriptPath),
+          await repairPythonConditionExecutorRuntimeContextSurface(preFailureMemoryScriptPath)
+        ]) {
+          if (!repair.repaired) continue;
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            repair.message?.replace("before handoff.", "before run_experiments retry gate.") ||
+              `Normalized generated condition dispatch context in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
       }
