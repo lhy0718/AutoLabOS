@@ -1794,6 +1794,30 @@ export class ImplementSessionManager {
           }
         );
       }
+      const earlyMainRuntimeDefaultsBeforePreflightRepair =
+        await repairPythonMainRuntimeDefaultsBeforePreflightSurface(prepared.scriptPath);
+      if (earlyMainRuntimeDefaultsBeforePreflightRepair.repaired) {
+        prepared.changedFiles = dedupeStrings([
+          ...prepared.changedFiles,
+          ...(prepared.scriptPath ? [prepared.scriptPath] : [])
+        ]);
+        prepared.publicArtifacts = dedupeStrings([
+          ...prepared.publicArtifacts,
+          ...(prepared.scriptPath && isSubpath(prepared.scriptPath, prepared.publicDir) ? [prepared.scriptPath] : [])
+        ]);
+        emitImplementObservation(
+          "verify",
+          earlyMainRuntimeDefaultsBeforePreflightRepair.message ||
+            "Applied generated runtime defaults before dependency preflight and design validation.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: prepared.publicDir,
+            scriptPath: prepared.scriptPath,
+            runCommand: prepared.runCommand
+          }
+        );
+      }
       const earlyModelPreflightAliasRepair = await repairPythonModelPreflightAliasSurface(
         prepared.scriptPath
       );
@@ -11401,6 +11425,8 @@ export class ImplementSessionManager {
       await repairPythonConditionScheduleMarkerParameterSurface(executionScriptPath);
     const conditionMarkerNumericTokenRepair =
       await repairPythonConditionMarkerNumericTokenSurface(executionScriptPath);
+    const mainRuntimeDefaultsBeforePreflightRepair =
+      await repairPythonMainRuntimeDefaultsBeforePreflightSurface(executionScriptPath);
     const conditionObjectMarkerParameterAliasRepair =
       await repairPythonConditionObjectMarkerParameterAliasSurface(executionScriptPath);
     const conditionAsdictJsonableRepair =
@@ -11682,6 +11708,7 @@ export class ImplementSessionManager {
         highLevelWorkloadContextAliasRepair,
         conditionScheduleMarkerParameterRepair,
         conditionMarkerNumericTokenRepair,
+        mainRuntimeDefaultsBeforePreflightRepair,
         conditionObjectMarkerParameterAliasRepair,
       conditionAsdictJsonableRepair,
       singleRunnerSeedDefaultRepair,
@@ -57372,6 +57399,54 @@ export async function repairPythonEntrypointSingleRunnerSeedDefaultSurface(scrip
   return {
     repaired: true,
     message: `Defaulted missing single-runner seed arguments from the planned seed schedule in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonMainRuntimeDefaultsBeforePreflightSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_main_runtime_defaults_before_preflight_surface";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _autolabos_entrypoint_runtime_defaults(") ||
+    !source.includes("_al_ep_call(pre_fn") ||
+    !source.includes("ExperimentPaths.from_args(args).ensure()")
+  ) {
+    return { repaired: false };
+  }
+
+  const nextSource = replaceAllPythonTopLevelFunctionSources(source, "main", (functionSource) =>
+    functionSource.replace(
+      /^(\s*)paths\s*=\s*ExperimentPaths\.from_args\(args\)\.ensure\(\)\s*$/mu,
+      (_match, indent: string) => [
+        `${indent}# ${marker}`,
+        `${indent}_autolabos_runtime_defaults = globals().get('_autolabos_entrypoint_runtime_defaults')`,
+        `${indent}if callable(_autolabos_runtime_defaults):`,
+        `${indent}    args = _autolabos_runtime_defaults(args)`,
+        `${indent}paths = ExperimentPaths.from_args(args).ensure()`
+      ].join("\n")
+    )
+  );
+
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Applied generated runtime defaults before dependency preflight in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

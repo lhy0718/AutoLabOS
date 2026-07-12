@@ -16,6 +16,32 @@ Path placeholders:
 ---
 
 
+## Issue: LV-578
+
+- Status: reproduced in same-flow live `run_experiments`; source repair, focused and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.
+- Validation target: generated CLI entrypoints must apply their existing runtime-default normalization before dependency preflight receives a parsed namespace.
+- Environment/session context: the implementation node passed static design validation and local compilation, then the real execution failed before the first planned run.
+- Reproduction steps:
+  1. Parse a minimal CLI namespace that omits an optional model-access policy field.
+  2. Keep a generated runtime-default helper that can materialize the missing field.
+  3. Pass the raw namespace directly to dependency preflight before calling that helper.
+- Expected behavior: the final entrypoint should normalize parsed runtime arguments before path construction and dependency preflight.
+- Actual behavior: dependency preflight accessed the missing namespace attribute directly, so metrics recorded a failed status with zero of the required runs completed.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral executable fixture passes a minimal namespace through a generic preflight dispatcher.
+  - Existing session: the live runner failed in dependency preflight before condition execution.
+  - Divergence: no state/UI divergence; this was final-entrypoint runtime-default ordering drift.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the existing path/default repair recognized only the managed `_autolabos_entrypoint_run` shape, while a generated final `main` used another generic dispatcher vocabulary.
+- Code/test changes:
+  - Add a narrowly scoped final-main repair that invokes the already generated runtime-default helper before path construction and dependency preflight.
+  - Apply it before design validation and retain it in late handoff repairs.
+  - Add an executable regression proving the raw namespace fails before repair and reaches preflight after normalization.
+- Regression status: the executable runtime-default ordering fixture and all 802 `implementSessionManager` tests pass. TypeScript/web build, public-code sanitation, and harness validation also pass.
+- Follow-up risks: the repair requires an existing generated runtime-default helper and does not invent model-access policy values.
+
+
 ## Issue: LV-577
 
 - Status: reproduced in same-flow live `implement_experiments` attempt 2; source repair, focused and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.

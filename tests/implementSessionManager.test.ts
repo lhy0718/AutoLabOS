@@ -305,6 +305,7 @@ import {
   repairPythonPublicStudyEntrypointArgsAliasSurface,
   repairPythonHighLevelWorkloadContextAliasSurface,
   repairPythonConditionMarkerNumericTokenSurface,
+  repairPythonMainRuntimeDefaultsBeforePreflightSurface,
   repairPythonConditionScheduleMarkerParameterSurface,
   repairPythonConditionObjectMarkerParameterAliasSurface,
   repairPythonConditionAsdictJsonableSurface,
@@ -45102,6 +45103,70 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_condition_marker_numeric_token_surface");
     expect(repairedSource).toContain('f"{float(value):.4f}".rstrip("0")');
     execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("applies generated runtime defaults before dependency preflight", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-main-runtime-defaults-preflight-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const resultPath = path.join(workspace, "result.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def _autolabos_entrypoint_runtime_defaults(value):",
+        "    if not hasattr(value, 'local_files_only'):",
+        "        setattr(value, 'local_files_only', True)",
+        "    return value",
+        "",
+        "class ExperimentPaths:",
+        "    @classmethod",
+        "    def from_args(cls, args):",
+        "        return cls()",
+        "    def ensure(self):",
+        "        return self",
+        "",
+        "def _al_ep_call(fn, **kwargs):",
+        "    parameters = inspect.signature(fn).parameters",
+        "    return fn(**{key: value for key, value in kwargs.items() if key in parameters})",
+        "",
+        "def run_dependency_preflight(runtime):",
+        "    return {'status': 'completed', 'local_files_only': runtime.local_files_only}",
+        "",
+        "def main():",
+        "    args = argparse.Namespace()",
+        "    paths = ExperimentPaths.from_args(args).ensure()",
+        "    pre_fn = run_dependency_preflight",
+        "    preflight = _al_ep_call(pre_fn, args=args, paths=paths, runtime=args, config=args)",
+        "    Path('result.json').write_text(json.dumps(preflight, sort_keys=True), encoding='utf-8')",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /local_files_only/
+    );
+    const repair = await repairPythonMainRuntimeDefaultsBeforePreflightSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_main_runtime_defaults_before_preflight_surface");
+    expect(repairedSource.indexOf("args = _autolabos_runtime_defaults(args)")).toBeLessThan(
+      repairedSource.indexOf("preflight = _al_ep_call(pre_fn")
+    );
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(resultPath, "utf8"))).toEqual({
+      status: "completed",
+      local_files_only: true
+    });
   });
 
   it("adds marker-derived parameter aliases to generated condition objects", async () => {
