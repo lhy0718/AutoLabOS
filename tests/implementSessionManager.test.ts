@@ -47224,6 +47224,74 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("resolves ordered-plan model ids from fallback runtime aliases", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-plan-fallback-model-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "class Paths: condition_output_dir = 'conditions'",
+        "class Runtime:",
+        "    def __init__(self, paths): self.paths = paths",
+        "def build_runtime_context(args, paths): return Runtime(paths)",
+        "def build_ordered_run_plan(runtime, model_id):",
+        "    return {'condition_output_dir': runtime.paths.condition_output_dir, 'model_id': model_id}",
+        "def main():",
+        "    args = argparse.Namespace(fallback_base_model='public_model_fallback')",
+        "    context = argparse.Namespace(paths=Paths())",
+        "    adapter = globals().get('_autolabos_entrypoint_build_run_plan')",
+        "    if adapter is None: raise RuntimeError('adapter missing')",
+        "    result = adapter(args=args, context=context, runtime=context, runtime_context=context)",
+        "    assert result == {'condition_output_dir': 'conditions', 'model_id': 'public_model_fallback'}",
+        "if __name__ == '__main__': main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/adapter missing/);
+    const repair = await repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("upgrades a previously repaired ordered-plan adapter with fallback model aliases", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-plan-model-upgrade-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "def build_ordered_run_plan(model_id): return model_id",
+        "# _autolabos_entrypoint_ordered_plan_adapter_surface",
+        "def _autolabos_entrypoint_build_run_plan(args=None, context=None, runtime=None, runtime_context=None, **values):",
+        "    def _value(name, default=None):",
+        "        value = getattr(args, name, None) if args is not None else None",
+        "        return default if value in (None, '') else value",
+        "    model_id = _value('model_id', _value('preferred_model_id', globals().get('PREFERRED_MODEL_ID', None)))",
+        "    if model_id is None:",
+        "        raise RuntimeError('ordered-plan adapter could not resolve a model id')",
+        "    return build_ordered_run_plan(model_id=model_id)",
+        "def main():",
+        "    args = argparse.Namespace(fallback_base_model='public_model_fallback')",
+        "    assert _autolabos_entrypoint_build_run_plan(args=args) == 'public_model_fallback'",
+        "if __name__ == '__main__': main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(
+      /could not resolve a model id/
+    );
+    const repair = await repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath)).repaired).toBe(false);
+  });
+
   it("attaches marker-scoped artifact path aliases to generated condition objects", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-path-alias-"));
     tempDirs.push(workspace);

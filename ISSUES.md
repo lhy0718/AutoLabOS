@@ -16,6 +16,48 @@ Path placeholders:
 ---
 
 
+## Issue: LV-581
+
+- Status: repair implemented; targeted, adjacent, full implement, full CI, build, public-sanitization, harness, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Validation target: generated ordered-plan entrypoint adapters must resolve a model identifier from the runtime's supported model aliases before executing a real condition schedule.
+- Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-580 namespace compatibility repair.
+- Reproduction steps:
+  1. Regenerate `implement_experiments` from saved real runner feedback and let local verification pass.
+  2. Allow the workflow to hand off to `run_experiments` with model downloads explicitly approved.
+  3. Inspect the node-owned failure metrics after the ordered-plan adapter starts.
+- Expected behavior:
+  - The adapter should resolve the configured model from any supported selected, preferred, base, direct, or fallback model alias.
+  - The resolved identifier should be passed to the existing generated ordered-plan builder without changing the planned condition or seed schedule.
+- Actual behavior:
+  - The runtime contains a concrete `fallback_base_model` value.
+  - `_autolabos_entrypoint_build_run_plan(...)` checks only `model_id`, `preferred_model_id`, and `PREFERRED_MODEL_ID`.
+  - Execution stops before the first condition with `RuntimeError('ordered-plan adapter could not resolve a model id')`, producing zero completed conditions.
+- Fresh vs existing session comparison:
+  - Fresh session: not required; the defect is reproduced by the generated runner and persisted node-owned metrics.
+  - Existing session: the persisted run advanced past implementation verification and failed immediately in the real execution handoff.
+  - Divergence: no UI/session divergence observed; this is a generated runtime alias projection defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the ordered-plan adapter used a narrower model identifier vocabulary than the generated CLI/runtime defaults and other entrypoint helpers.
+- Code/test changes:
+  - Expanded `repairPythonEntrypointOrderedPlanAdapterSurface(...)` to resolve model identifiers across mapping and attribute runtime sources using selected, preferred, base, direct, and fallback aliases plus generic global defaults.
+  - Added an executable domain-neutral regression fixture where only `fallback_base_model` is available.
+  - The repair does not alter condition markers, seeds, metrics, or experiment outputs.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Automated regression: targeted and adjacent ordered-plan tests pass; full `implementSessionManager` regression passes.
+  - Full CI passes: 195 root test files with 2,661 tests, plus 14 web tests.
+  - Build, public-code sanitation, and harness validation pass.
+  - A copy of the exact live runner was upgraded successfully; Python compilation, fallback model resolution, and repair idempotency pass.
+  - Same-flow live revalidation: pending.
+- Follow-up risks:
+  - After model resolution, execution may expose a distinct data loading, training, evaluation, resource, or metrics-contract failure.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-580
 
 - Status: reproduced in same-flow live `run_experiments`; source repair, executable and full implement regressions, build, and repaired live-runner copy checks pass; same-flow revalidation pending.

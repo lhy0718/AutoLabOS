@@ -61723,11 +61723,14 @@ export async function repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath
     return { repaired: false };
   }
   const marker = "_autolabos_entrypoint_ordered_plan_adapter_surface";
+  const existingAdapter = /^def _autolabos_entrypoint_build_run_plan\s*\(/mu.test(source);
+  const existingAdapterSource = existingAdapter
+    ? extractPythonTopLevelFunctionSource(source, "_autolabos_entrypoint_build_run_plan")
+    : undefined;
   if (
-    source.includes(marker) ||
-    /^def _autolabos_entrypoint_build_run_plan\s*\(/mu.test(source) ||
     !/^def build_ordered_run_plan\s*\(/mu.test(source) ||
-    !source.includes("_autolabos_entrypoint_build_run_plan")
+    (!existingAdapter && !source.includes("_autolabos_entrypoint_build_run_plan")) ||
+    (existingAdapter && existingAdapterSource?.includes("'fallback_base_model'"))
   ) {
     return { repaired: false };
   }
@@ -61740,12 +61743,36 @@ export async function repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath
     "    paths = getattr(selected_runtime, 'paths', None)",
     "    if callable(globals().get('build_runtime_context')) and args is not None and paths is not None:",
     "        selected_runtime = build_runtime_context(args, paths)",
-    "    def _value(name, default=None):",
-    "        if isinstance(args, dict) and args.get(name) not in (None, ''):",
-    "            return args.get(name)",
-    "        value = getattr(args, name, None) if args is not None else None",
-    "        return default if value in (None, '') else value",
-    "    model_id = _value('model_id', _value('preferred_model_id', globals().get('PREFERRED_MODEL_ID', None)))",
+    "    def _source_value(source, name):",
+    "        if source is None:",
+    "            return None",
+    "        try:",
+    "            value = source.get(name) if hasattr(source, 'get') else getattr(source, name, None)",
+    "        except Exception:",
+    "            return None",
+    "        return None if callable(value) or value in (None, '') else value",
+    "    model_aliases = (",
+    "        'selected_model_id', 'selected_model_name', 'preferred_model_id', 'preferred_model_name',",
+    "        'base_model_id', 'base_model_name', 'model_id', 'model_name', 'model_name_or_path',",
+    "        'fallback_model_id', 'fallback_model_name', 'fallback_base_model_id', 'fallback_base_model_name',",
+    "        'fallback_base_model',",
+    "    )",
+    "    model_id = next((",
+    "        value",
+    "        for source in (args, selected_runtime, context, runtime, runtime_context, values)",
+    "        for name in model_aliases",
+    "        for value in (_source_value(source, name),)",
+    "        if value is not None",
+    "    ), None)",
+    "    if model_id is None:",
+    "        model_id = next((",
+    "            globals().get(name)",
+    "            for name in (",
+    "                'SELECTED_MODEL_ID', 'PREFERRED_MODEL_ID', 'BASE_MODEL_ID', 'MODEL_ID',",
+    "                'FALLBACK_MODEL_ID', 'FALLBACK_BASE_MODEL_ID', 'FALLBACK_BASE_MODEL',",
+    "            )",
+    "            if globals().get(name) not in (None, '') and not callable(globals().get(name))",
+    "        ), None)",
     "    if model_id is None:",
     "        raise RuntimeError('ordered-plan adapter could not resolve a model id')",
     "    import inspect",
@@ -61770,7 +61797,19 @@ export async function repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath
     "    return build_ordered_run_plan(**kwargs)",
     ""
   ].join("\n");
-  const nextSource = `${source.slice(0, mainIndex)}\n\n${helper}${source.slice(mainIndex)}`;
+  const nextSource = existingAdapter
+    ? replacePythonTopLevelFunctionSource(
+        source,
+        "_autolabos_entrypoint_build_run_plan",
+        helper,
+        (functionSource) =>
+          functionSource.includes("ordered-plan adapter could not resolve a model id") &&
+          !functionSource.includes("'fallback_base_model'")
+      )
+    : `${source.slice(0, mainIndex)}\n\n${helper}${source.slice(mainIndex)}`;
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
