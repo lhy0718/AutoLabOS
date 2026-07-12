@@ -47490,6 +47490,52 @@ describe("ImplementSessionManager", () => {
     expect((await repairPythonAvailableModelSelectorSurface(scriptPath)).repaired).toBe(false);
   });
 
+  it("materializes and caches data bundles for one-run entrypoint dispatch", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-one-run-data-bundle-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(scriptPath, [
+      "import argparse",
+      "import inspect",
+      "from dataclasses import dataclass",
+      "from types import SimpleNamespace",
+      "@dataclass",
+      "class TaskBundle:",
+      "    train_examples: list",
+      "load_count = 0",
+      "def load_task_bundle(args, paths, budget):",
+      "    global load_count",
+      "    load_count += 1",
+      "    return TaskBundle(train_examples=['training example'])",
+      "def execute_one_condition_run(spec, data_bundle, runtime):",
+      "    return {'marker': spec.get('marker'), 'train_count': len(data_bundle.train_examples), 'path': runtime.get('paths').name}",
+      "def _autolabos_ep_call(fn, supplied):",
+      "    signature = inspect.signature(fn)",
+      "    return fn(**{name: supplied[name] for name in signature.parameters})",
+      "def _autolabos_entrypoint_one_run(*positional, **kwargs):",
+      "    vals = dict(kwargs)",
+      "    run_spec = vals.get(\"run_spec\") or vals.get(\"condition\") or vals.get(\"spec\") or {}",
+      "    args = vals.get(\"args\") or vals.get(\"config\") or argparse.Namespace()",
+      "    runtime = vals.get(\"runtime\") or vals.get(\"runtime_context\") or {}",
+      "    data_bundle = vals.get(\"data_bundle\") or vals.get(\"task_bundle\") or vals.get(\"datasets\") or {}",
+      "    budget = vals.get(\"budget\")",
+      "    supplied = {\"run_spec\": run_spec, \"condition\": run_spec, \"condition_spec\": run_spec, \"spec\": run_spec, \"data_bundle\": data_bundle, \"runtime\": runtime}",
+      "    return _autolabos_ep_call(execute_one_condition_run, supplied)",
+      "def main():",
+      "    runtime = {'paths': SimpleNamespace(name='artifact-root')} ",
+      "    first = _autolabos_entrypoint_one_run(run_spec={'marker': 'candidate_condition'}, args=argparse.Namespace(), runtime=runtime, budget=object())",
+      "    second = _autolabos_entrypoint_one_run(run_spec={'marker': 'candidate_condition'}, args=argparse.Namespace(), runtime=runtime, budget=object())",
+      "    assert first == second == {'marker': 'candidate_condition', 'train_count': 1, 'path': 'artifact-root'}",
+      "    assert load_count == 1",
+      "if __name__ == '__main__': main()",
+      ""
+    ].join("\n"), "utf8");
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/train_examples/);
+    expect((await repairPythonEntrypointOrderedPlanDataBundleSurface(scriptPath)).repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonEntrypointOrderedPlanDataBundleSurface(scriptPath)).repaired).toBe(false);
+  });
+
   it("attaches marker-scoped artifact path aliases to generated condition objects", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-path-alias-"));
     tempDirs.push(workspace);

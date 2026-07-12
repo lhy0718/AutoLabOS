@@ -50423,9 +50423,14 @@ export async function repairPythonEntrypointOrderedPlanDataBundleSurface(scriptP
     "prepare_task_bundle",
     "_autolabos_entrypoint_loaded_data"
   ];
+  const positionalSurface = source.includes("run_fn, args, condition, seed, runtime,");
+  const oneRunSurface =
+    source.includes("def _autolabos_entrypoint_one_run(") &&
+    source.includes('data_bundle = vals.get("data_bundle")') &&
+    source.includes('budget = vals.get("budget")');
   if (
     source.includes(marker) ||
-    !source.includes("run_fn, args, condition, seed, runtime,") ||
+    (!positionalSurface && !oneRunSurface) ||
     !source.includes("data_bundle") ||
     !loaderNames.some((name) => pythonSourceDefinesOrImportsName(source, name))
   ) {
@@ -50434,7 +50439,7 @@ export async function repairPythonEntrypointOrderedPlanDataBundleSurface(scriptP
 
   let repaired = false;
   let nextSource = source;
-  if (!nextSource.includes("data_loader = _entrypoint_find_callable(")) {
+  if (positionalSurface && !nextSource.includes("data_loader = _entrypoint_find_callable(")) {
     const dataBlockNeedles = [
       "        start = time.time()\n",
       "        start = 0\n",
@@ -50484,10 +50489,87 @@ export async function repairPythonEntrypointOrderedPlanDataBundleSurface(scriptP
         "        run_context=runtime, condition=condition, condition_spec=condition, seed=seed,\n        data_bundle=data_bundle, loaded_data=data_bundle, dataset_bundle=data_bundle,\n        task_bundle=data_bundle, train_bundle=data_bundle, training_bundle=data_bundle,\n"
     }
   ];
-  for (const { needle, replacement } of runKwargNeedles) {
-    if (nextSource.includes(needle) && !nextSource.includes("data_bundle=data_bundle")) {
-      nextSource = nextSource.replace(needle, replacement);
-      repaired = true;
+  if (positionalSurface) {
+    for (const { needle, replacement } of runKwargNeedles) {
+      if (nextSource.includes(needle) && !nextSource.includes("data_bundle=data_bundle")) {
+        nextSource = nextSource.replace(needle, replacement);
+        repaired = true;
+      }
+    }
+  }
+
+  if (oneRunSurface) {
+    const functionSource = extractPythonTopLevelFunctionSource(nextSource, "_autolabos_entrypoint_one_run");
+    const budgetPattern = /^(\s*)budget = vals\.get\("budget"\)\s*$/mu;
+    if (functionSource && budgetPattern.test(functionSource)) {
+      const repairedFunction = functionSource.replace(
+        budgetPattern,
+        (_full: string, indent: string) => [
+          `${indent}budget = vals.get("budget")`,
+          `${indent}if not data_bundle:`,
+          `${indent}    data_bundle = _autolabos_entrypoint_materialize_data_bundle(args=args, runtime=runtime, budget=budget)`
+        ].join("\n")
+      );
+      nextSource = replacePythonTopLevelFunctionSource(
+        nextSource,
+        "_autolabos_entrypoint_one_run",
+        repairedFunction,
+        (currentFunction) => budgetPattern.test(currentFunction)
+      );
+      repaired = repaired || repairedFunction !== functionSource;
+    }
+    if (!nextSource.includes("def _autolabos_entrypoint_materialize_data_bundle(")) {
+      const helper = [
+        "",
+        "# " + marker,
+        "def _autolabos_entrypoint_materialize_data_bundle(args=None, runtime=None, budget=None):",
+        "    def _value(source, name, default=None):",
+        "        if source is None:",
+        "            return default",
+        "        try:",
+        "            value = source.get(name, default) if hasattr(source, 'get') else getattr(source, name, default)",
+        "        except Exception:",
+        "            return default",
+        "        return default if callable(value) else value",
+        "    for alias in ('data_bundle', 'loaded_data', 'dataset_bundle', 'task_bundle'):",
+        "        existing = _value(runtime, alias)",
+        "        if existing is not None and existing != {}:",
+        "            return existing",
+        "    paths = _value(runtime, 'paths') or _value(runtime, 'runtime_paths')",
+        "    import inspect as _autolabos_data_inspect",
+        "    supplied = {'args': args, 'config': args, 'runtime': runtime, 'runtime_context': runtime, 'run_context': runtime, 'paths': paths, 'runtime_paths': paths, 'budget': budget}",
+        "    for name in ('load_experiment_data', 'load_experiment_dataset', 'load_experiment_datasets', 'build_experiment_data', 'build_experiment_dataset', 'build_experiment_datasets', 'prepare_experiment_data', 'load_data_bundle', 'build_data_bundle', 'prepare_data_bundle', 'load_task_bundle', 'build_task_bundle', 'prepare_task_bundle', '_autolabos_entrypoint_loaded_data'):",
+        "        loader = globals().get(name)",
+        "        if not callable(loader):",
+        "            continue",
+        "        try:",
+        "            signature = _autolabos_data_inspect.signature(loader)",
+        "            kwargs = {key: value for key, value in supplied.items() if key in signature.parameters and value is not None}",
+        "            missing = [parameter.name for parameter in signature.parameters.values() if parameter.default is parameter.empty and parameter.kind in (_autolabos_data_inspect.Parameter.POSITIONAL_OR_KEYWORD, _autolabos_data_inspect.Parameter.KEYWORD_ONLY) and parameter.name not in kwargs]",
+        "            if missing:",
+        "                continue",
+        "            bundle = loader(**kwargs)",
+        "        except TypeError:",
+        "            continue",
+        "        if bundle is None:",
+        "            continue",
+        "        for alias in ('data_bundle', 'loaded_data', 'dataset_bundle', 'task_bundle'):",
+        "            try:",
+        "                if hasattr(runtime, '__setitem__'):",
+        "                    runtime[alias] = bundle",
+        "                elif runtime is not None:",
+        "                    setattr(runtime, alias, bundle)",
+        "            except Exception:",
+        "                pass",
+        "        return bundle",
+        "    raise RuntimeError('No compatible data-bundle loader is available for one-run condition dispatch.')",
+        ""
+      ].join("\n");
+      const withHelper = insertPythonTopLevelHelperAfterImports(nextSource, helper);
+      if (withHelper !== nextSource) {
+        nextSource = withHelper;
+        repaired = true;
+      }
     }
   }
 

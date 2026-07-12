@@ -458,7 +458,8 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         for (const repair of [
           await repairPythonEntrypointPlannedRunDispatchSurface(preFailureMemoryScriptPath),
           await repairPythonConditionExecutorRuntimeContextSurface(preFailureMemoryScriptPath),
-          await repairPythonAvailableModelSelectorSurface(preFailureMemoryScriptPath)
+          await repairPythonAvailableModelSelectorSurface(preFailureMemoryScriptPath),
+          await repairPythonEntrypointOrderedPlanDataBundleSurface(preFailureMemoryScriptPath)
         ]) {
           if (!repair.repaired) continue;
           preFailureMemoryRepairApplied = true;

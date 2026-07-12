@@ -16,9 +16,51 @@ Path placeholders:
 ---
 
 
+## Issue: LV-586
+
+- Status: repair implemented; targeted tests, full CI, build, harness, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Validation target: generated one-run entrypoints must materialize and cache the real data bundle before dispatching condition executors that consume training and evaluation records.
+- Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-585 governed model-selector repair.
+- Reproduction steps:
+  1. Resume the persisted `run_experiments` node through the real TUI helper.
+  2. Let the node-owned pre-run repair materialize the model selector and enter model/tokenizer setup.
+  3. Inspect the fresh 21-row metrics after the condition executor requests normalized training texts.
+- Expected behavior:
+  - The entrypoint should invoke an available data-bundle loader with args, paths, budget, and runtime aliases.
+  - The loaded bundle should be cached on the shared runtime and passed to every one-run executor.
+- Actual behavior:
+  - The prior missing model-selector failure no longer occurs.
+  - All 21 rows fail with `ValueError: no usable training texts after normalization` because the one-run adapter defaults `data_bundle` to an empty mapping and never invokes the generated loader.
+- Fresh vs existing session comparison:
+  - Fresh session: not required; fresh node-owned metrics reproduce the empty data projection.
+  - Existing session: the same persisted run advances past LV-585 and reaches training-record extraction.
+  - Divergence: no UI/session divergence observed; this is a generated entrypoint data projection defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the existing ordered-plan data-bundle repair only recognizes the earlier positional scaffold and misses the generated `_autolabos_entrypoint_one_run` dispatch surface.
+- Code/test changes:
+  - Extend the ordered-plan data-bundle repair to materialize a signature-compatible loader for one-run entrypoints and cache aliases on shared runtime state.
+  - Preserve the existing positional ordered-plan repair path.
+  - Apply the widened repair before the `run_experiments` failure-memory retry gate.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Automated regression: positional, one-run cache, and execution-node pre-repair tests pass.
+  - Full CI passes: 195 root test files with 2,669 tests, plus 14 web tests.
+  - Production build passes.
+  - Harness validation passes with 493 issue entries checked and no structural violations.
+  - A copy of the exact live runner was upgraded successfully; Python compilation, repair idempotency, loader invocation, alias caching, and one-time bundle reuse pass.
+  - Same-flow live revalidation: pending.
+- Follow-up risks:
+  - Real dataset loading may expose access, download, normalization, budget, or evaluation-coverage failures.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-585
 
-- Status: repair implemented; targeted, execution-node, full CI, build, public-sanitization, harness, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Status: resolved in same-flow live `run_experiments`; targeted, execution-node, full CI, build, public-sanitization, harness, and repaired live-runner copy checks pass
 - Validation target: generated condition executors that call a model selector must resolve a concrete model identifier from runtime, argument, or generated candidate aliases before loading model assets.
 - Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-584 runtime-context materialization repair.
 - Reproduction steps:
@@ -48,7 +90,7 @@ Path placeholders:
   - Full CI passes: 195 root test files with 2,668 tests, plus 14 web tests.
   - Harness validation passes with 492 issue entries checked and no structural violations.
   - A copy of the exact live runner was upgraded successfully; Python compilation, repair idempotency, governed-candidate selection, and runtime assignment pass.
-  - Same-flow live revalidation: pending.
+  - Same-flow live revalidation: passed; model selection and runtime assignment advanced to the distinct LV-586 empty data-bundle boundary.
 - Follow-up risks:
   - After model selection, the real model load may expose dependency, download, CUDA, memory, data, or training failures.
 - Evidence/artifacts:

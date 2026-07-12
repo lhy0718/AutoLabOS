@@ -125,12 +125,18 @@ describe("run_experiments execution profile behavior", () => {
         "    seed: int",
         "def make_model_runtime_context(args, paths, budget):",
         "    return SimpleNamespace(args=args, paths=paths, budget=budget)",
+        "def load_task_bundle(args, paths, budget):",
+        "    return SimpleNamespace(train_examples=['training example'])",
         "def execute_one_condition_run(spec: Mapping[str, Any], runtime):",
         "    return {'marker': spec.get('marker'), 'seed': spec.get('seed'), 'path': runtime.paths, 'model_id': select_available_model(runtime)}",
         "def _autolabos_entrypoint_one_run(*positional, **kwargs):",
         "    vals = dict(kwargs)",
         "    run_spec = vals.get(\"run_spec\") or vals.get(\"condition\") or vals.get(\"spec\") or {}",
-        "    supplied = {\"run_spec\": run_spec, \"condition\": run_spec, \"condition_spec\": run_spec, \"spec\": run_spec, \"marker\": 'candidate_condition'}",
+        "    args = vals.get(\"args\") or vals.get(\"config\") or argparse.Namespace()",
+        "    runtime = vals.get(\"runtime\") or vals.get(\"runtime_context\") or {}",
+        "    data_bundle = vals.get(\"data_bundle\") or vals.get(\"task_bundle\") or vals.get(\"datasets\") or {}",
+        "    budget = vals.get(\"budget\")",
+        "    supplied = {\"run_spec\": run_spec, \"condition\": run_spec, \"condition_spec\": run_spec, \"spec\": run_spec, \"marker\": 'candidate_condition', \"data_bundle\": data_bundle}",
         "    return supplied",
         "def build_ordered_run_plan(model_id): return model_id",
         "# _autolabos_entrypoint_ordered_plan_adapter_surface",
@@ -174,6 +180,7 @@ describe("run_experiments execution profile behavior", () => {
     let plannedRunDispatchRepairedBeforeExecution = false;
     let runtimeContextRepairedBeforeExecution = false;
     let modelSelectorRepairedBeforeExecution = false;
+    let dataBundleRepairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
       config: {
@@ -207,6 +214,9 @@ describe("run_experiments execution profile behavior", () => {
           modelSelectorRepairedBeforeExecution =
             repairedSource.includes("_autolabos_available_model_selector_surface") &&
             repairedSource.includes("def select_available_model(runtime=None):");
+          dataBundleRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_entrypoint_ordered_plan_data_bundle_surface") &&
+            repairedSource.includes("data_bundle = _autolabos_entrypoint_materialize_data_bundle(");
           await writeFile(
             path.join(runDir, "metrics.json"),
             JSON.stringify({
@@ -271,6 +281,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(plannedRunDispatchRepairedBeforeExecution).toBe(true);
     expect(runtimeContextRepairedBeforeExecution).toBe(true);
     expect(modelSelectorRepairedBeforeExecution).toBe(true);
+    expect(dataBundleRepairedBeforeExecution).toBe(true);
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes("before run_experiments retry gate")
