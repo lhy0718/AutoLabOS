@@ -16,9 +16,52 @@ Path placeholders:
 ---
 
 
+## Issue: LV-587
+
+- Status: repair implemented; targeted tests, full CI, build, harness, public sanitization, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Validation target: task-bundle loaders must select a labeled evaluation split that meets the governed minimum coverage instead of failing on a smaller, fully normalized split.
+- Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-586 data-bundle materialization repair.
+- Reproduction steps:
+  1. Resume the persisted `run_experiments` node through the real TUI helper.
+  2. Let the node-owned entrypoint materialize the data bundle through the generated loader.
+  3. Observe the loader normalize every row from its requested evaluation split and then reject that split because its cardinality is below the configured full-coverage minimum.
+- Expected behavior:
+  - The loader should try available labeled split candidates when the requested split is smaller than the governed minimum.
+  - It should retain per-split load and normalization diagnostics and fail if no candidate meets the minimum.
+- Actual behavior:
+  - LV-586 no longer reproduces; the generated loader is invoked for every planned run.
+  - Every planned run fails before training because the requested split is fully normalized but smaller than the configured minimum.
+- Fresh vs existing session comparison:
+  - Fresh session: not required; fresh node-owned metrics and progress artifacts reproduce the split-coverage mismatch.
+  - Existing session: the same persisted run advances through data-bundle materialization and fails inside evaluation split validation.
+  - Divergence: no UI/session divergence observed; this is a generated data-loader coverage-selection defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated task-bundle loader binds one evaluation split before checking a minimum derived from a different split cardinality and does not attempt alternate labeled splits.
+- Code/test changes:
+  - Extend the generic task-bundle split-coverage repair to try governed split candidates and preserve attempt diagnostics.
+  - Apply the repair during implement handoff, before the `run_experiments` failure-memory gate, and immediately before execution.
+  - Add domain-neutral regression coverage for a requested split that is fully normalized but below the governed minimum.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Automated regression: fixed-split selection, adjacent split repairs, and execution-node pre-repair tests pass.
+  - Full CI passes: 195 root test files with 2,670 tests, plus 14 web tests.
+  - Production build and public-code sanitization pass.
+  - Harness validation passes with 494 issue entries checked and no structural violations.
+  - A copy of the exact live runner was upgraded successfully; Python compilation, repair idempotency, governed candidate traversal, minimum coverage, and per-split selection checks pass.
+  - Same-flow live revalidation: pending.
+- Follow-up risks:
+  - An alternate split may be unlabeled, unavailable, differently sized, or still below the governed minimum.
+  - Successful split selection may expose subsequent training, memory, artifact, or evaluator defects.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-586
 
-- Status: repair implemented; targeted tests, full CI, build, harness, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Status: resolved in same-flow live `run_experiments`; targeted tests, full CI, build, harness, and repaired live-runner copy checks pass
 - Validation target: generated one-run entrypoints must materialize and cache the real data bundle before dispatching condition executors that consume training and evaluation records.
 - Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-585 governed model-selector repair.
 - Reproduction steps:
@@ -49,7 +92,7 @@ Path placeholders:
   - Production build passes.
   - Harness validation passes with 493 issue entries checked and no structural violations.
   - A copy of the exact live runner was upgraded successfully; Python compilation, repair idempotency, loader invocation, alias caching, and one-time bundle reuse pass.
-  - Same-flow live revalidation: pending.
+  - Same-flow live revalidation: passed; the loader was invoked and advanced to the distinct LV-587 evaluation split-coverage boundary.
 - Follow-up risks:
   - Real dataset loading may expose access, download, normalization, budget, or evaluation-coverage failures.
 - Evidence/artifacts:

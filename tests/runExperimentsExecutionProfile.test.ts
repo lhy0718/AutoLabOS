@@ -127,6 +127,17 @@ describe("run_experiments execution profile behavior", () => {
         "    return SimpleNamespace(args=args, paths=paths, budget=budget)",
         "def load_task_bundle(args, paths, budget):",
         "    return SimpleNamespace(train_examples=['training example'])",
+        "def _load_eval_bundle(eval_specs, allow_download, diagnostics):",
+        "    eval_tasks = {}",
+        "    for task, (jsonl, hf_path, hf_name, split) in eval_specs.items():",
+        "        source = _clean(jsonl) or f\"{hf_path}/{hf_name or '-'}:{split}\"",
+        "        rows = _load_jsonl(Path(jsonl)) if _clean(jsonl) else list(_hf_dataset(hf_path, hf_name, split, allow_download))",
+        "        examples = [x for i, r in enumerate(rows) if (x := normalize_eval_record(r, task, source, i))]",
+        "        diagnostics[\"sources\"][task] = {\"source\": source, \"raw_count\": len(rows), \"usable_count\": len(examples), \"required_count\": MINIMUM_EVAL_EXAMPLES_PER_TASK[task]}",
+        "        if len(examples) < MINIMUM_EVAL_EXAMPLES_PER_TASK[task]:",
+        "            raise _normalization_failure(task, source, len(rows), len(examples), rows[0] if rows else None)",
+        "        eval_tasks[task] = examples",
+        "    return eval_tasks",
         "def execute_one_condition_run(spec: Mapping[str, Any], runtime):",
         "    return {'marker': spec.get('marker'), 'seed': spec.get('seed'), 'path': runtime.paths, 'model_id': select_available_model(runtime)}",
         "def _autolabos_entrypoint_one_run(*positional, **kwargs):",
@@ -181,6 +192,7 @@ describe("run_experiments execution profile behavior", () => {
     let runtimeContextRepairedBeforeExecution = false;
     let modelSelectorRepairedBeforeExecution = false;
     let dataBundleRepairedBeforeExecution = false;
+    let evalSplitCoverageRepairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
       config: {
@@ -217,6 +229,9 @@ describe("run_experiments execution profile behavior", () => {
           dataBundleRepairedBeforeExecution =
             repairedSource.includes("_autolabos_entrypoint_ordered_plan_data_bundle_surface") &&
             repairedSource.includes("data_bundle = _autolabos_entrypoint_materialize_data_bundle(");
+          evalSplitCoverageRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_task_bundle_eval_split_coverage_surface") &&
+            repairedSource.includes("for candidate_split in dict.fromkeys((requested_split, 'validation', 'dev', 'test')):");
           await writeFile(
             path.join(runDir, "metrics.json"),
             JSON.stringify({
@@ -282,6 +297,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(runtimeContextRepairedBeforeExecution).toBe(true);
     expect(modelSelectorRepairedBeforeExecution).toBe(true);
     expect(dataBundleRepairedBeforeExecution).toBe(true);
+    expect(evalSplitCoverageRepairedBeforeExecution).toBe(true);
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes("before run_experiments retry gate")

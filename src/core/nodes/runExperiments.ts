@@ -85,6 +85,7 @@ import {
   repairPythonAvailableModelSelectorSurface,
   repairPythonEntrypointAggregatePayloadBuilderCandidateSurface,
   repairPythonEntrypointOrderedPlanDataBundleSurface,
+  repairPythonTaskBundleEvalSplitCoverageSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
   repairPythonMainMetricsRawResultsAliasSurface,
   repairPythonMainMetricsPayloadBuilderCallSurface,
@@ -459,6 +460,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           await repairPythonEntrypointPlannedRunDispatchSurface(preFailureMemoryScriptPath),
           await repairPythonConditionExecutorRuntimeContextSurface(preFailureMemoryScriptPath),
           await repairPythonAvailableModelSelectorSurface(preFailureMemoryScriptPath),
+          await repairPythonTaskBundleEvalSplitCoverageSurface(preFailureMemoryScriptPath),
           await repairPythonEntrypointOrderedPlanDataBundleSurface(preFailureMemoryScriptPath)
         ]) {
           if (!repair.repaired) continue;
@@ -5041,6 +5043,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
         "before handoff.",
         "before run_experiments execution."
       ) || `Materialized data bundle aliases for ordered-plan condition runners in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const taskBundleEvalSplitCoverageRepair =
+    await repairPythonTaskBundleEvalSplitCoverageSurface(scriptPath);
+  if (taskBundleEvalSplitCoverageRepair.repaired) {
+    repaired = true;
+    messages.push(
+      taskBundleEvalSplitCoverageRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Selected task-bundle evaluation splits by governed normalized coverage in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
   const publicStudyTopLevelRunnerAliasRepair =

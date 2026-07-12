@@ -47043,6 +47043,54 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("selects an alternate labeled split when a fixed requested split is below the governed minimum", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-task-bundle-fixed-split-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(scriptPath, [
+      "from pathlib import Path",
+      "from typing import Any, Dict, List",
+      "class DataAccessError(RuntimeError): pass",
+      "class EvalExample: pass",
+      "class TaskBundle:",
+      "    def __init__(self, eval_tasks, diagnostics): self.eval_tasks = eval_tasks; self.diagnostics = diagnostics",
+      "MINIMUM_EVAL_EXAMPLES_PER_TASK = {'benchmark_task_a': 4}",
+      "def _clean(value): return '' if value is None else str(value).strip()",
+      "def _load_jsonl(path): return []",
+      "def _hf_dataset(path, name, split, allow_download):",
+      "    sizes = {'validation': 2, 'test': 4}",
+      "    if split not in sizes: raise KeyError(split)",
+      "    return list(range(sizes[split]))",
+      "def normalize_eval_record(record, task, source, index): return EvalExample()",
+      "def _normalization_failure(task, source, raw_count, good_count, sample):",
+      "    return DataAccessError(f'{task} normalization produced {good_count}/{raw_count} usable rows from {source}')",
+      "def load_task_bundle():",
+      "    allow_download = False",
+      "    diagnostics: Dict[str, Any] = {'sources': {}}",
+      "    eval_specs = {'benchmark_task_a': ('', 'public_dataset_a', None, 'validation')}",
+      "    eval_tasks: Dict[str, List[EvalExample]] = {}",
+      "    for task, (jsonl, hf_path, hf_name, split) in eval_specs.items():",
+      "        source = _clean(jsonl) or f\"{hf_path}/{hf_name or '-'}:{split}\"",
+      "        rows = _load_jsonl(Path(jsonl)) if _clean(jsonl) else list(_hf_dataset(hf_path, hf_name, split, allow_download))",
+      "        examples = [x for i, r in enumerate(rows) if (x := normalize_eval_record(r, task, source, i))]",
+      "        diagnostics[\"sources\"][task] = {\"source\": source, \"raw_count\": len(rows), \"usable_count\": len(examples), \"required_count\": MINIMUM_EVAL_EXAMPLES_PER_TASK[task]}",
+      "        if len(examples) < MINIMUM_EVAL_EXAMPLES_PER_TASK[task]:",
+      "            raise _normalization_failure(task, source, len(rows), len(examples), rows[0] if rows else None)",
+      "        eval_tasks[task] = examples",
+      "    return TaskBundle(eval_tasks, diagnostics)",
+      "if __name__ == '__main__':",
+      "    bundle = load_task_bundle()",
+      "    assert len(bundle.eval_tasks['benchmark_task_a']) == 4",
+      "    assert bundle.diagnostics['sources']['benchmark_task_a']['requested_split'] == 'validation'",
+      "    assert bundle.diagnostics['sources']['benchmark_task_a']['selected_split'] == 'test'",
+      ""
+    ].join("\n"), "utf8");
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(/below|normalization produced/);
+    expect((await repairPythonTaskBundleEvalSplitCoverageSurface(scriptPath)).repaired).toBe(true);
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect((await repairPythonTaskBundleEvalSplitCoverageSurface(scriptPath)).repaired).toBe(false);
+  });
+
   it("bridges final entrypoint path-builder arguments to an existing generic builder", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-path-builder-"));
     tempDirs.push(workspace);

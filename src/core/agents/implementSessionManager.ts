@@ -61668,9 +61668,58 @@ export async function repairPythonTaskBundleEvalSplitCoverageSurface(scriptPath?
     "        diagnostics[\"tasks\"][task] = {\"eval_rows\": len(eval_rows), \"usable_eval\": len(normalized), \"dataset\": ds_name, \"config\": cfg, \"eval_split\": eval_split, \"split_attempts\": split_attempts}",
     ""
   ].join("\n");
+  const fixedSplitNeedle = [
+    "        source = _clean(jsonl) or f\"{hf_path}/{hf_name or '-'}:{split}\"",
+    "        rows = _load_jsonl(Path(jsonl)) if _clean(jsonl) else list(_hf_dataset(hf_path, hf_name, split, allow_download))",
+    "        examples = [x for i, r in enumerate(rows) if (x := normalize_eval_record(r, task, source, i))]",
+    "        diagnostics[\"sources\"][task] = {\"source\": source, \"raw_count\": len(rows), \"usable_count\": len(examples), \"required_count\": MINIMUM_EVAL_EXAMPLES_PER_TASK[task]}",
+    "        if len(examples) < MINIMUM_EVAL_EXAMPLES_PER_TASK[task]:",
+    "            raise _normalization_failure(task, source, len(rows), len(examples), rows[0] if rows else None)",
+    "        eval_tasks[task] = examples",
+    ""
+  ].join("\n");
+  const fixedSplitReplacement = [
+    `        # ${marker}`,
+    "        requested_split = split",
+    "        min_required = MINIMUM_EVAL_EXAMPLES_PER_TASK[task]",
+    "        split_attempts: List[Dict[str, Any]] = []",
+    "        rows: List[Any] = []",
+    "        examples: List[EvalExample] = []",
+    "        selected_split = requested_split",
+    "        source = _clean(jsonl) or f\"{hf_path}/{hf_name or '-'}:{requested_split}\"",
+    "        if _clean(jsonl):",
+    "            rows = _load_jsonl(Path(jsonl))",
+    "            examples = [x for i, r in enumerate(rows) if (x := normalize_eval_record(r, task, source, i))]",
+    "            split_attempts.append({'split': 'jsonl', 'raw_count': len(rows), 'usable_count': len(examples)})",
+    "        else:",
+    "            for candidate_split in dict.fromkeys((requested_split, 'validation', 'dev', 'test')):",
+    "                candidate_source = f\"{hf_path}/{hf_name or '-'}:{candidate_split}\"",
+    "                try:",
+    "                    candidate_rows = list(_hf_dataset(hf_path, hf_name, candidate_split, allow_download))",
+    "                except Exception as exc:",
+    "                    split_attempts.append({'split': candidate_split, 'load_error': repr(exc)})",
+    "                    continue",
+    "                candidate_examples = [x for i, r in enumerate(candidate_rows) if (x := normalize_eval_record(r, task, candidate_source, i))]",
+    "                split_attempts.append({'split': candidate_split, 'raw_count': len(candidate_rows), 'usable_count': len(candidate_examples)})",
+    "                if len(candidate_examples) > len(examples):",
+    "                    rows = candidate_rows",
+    "                    examples = candidate_examples",
+    "                    selected_split = candidate_split",
+    "                    source = candidate_source",
+    "                if len(candidate_examples) >= min_required:",
+    "                    break",
+    "        diagnostics[\"sources\"][task] = {\"source\": source, \"raw_count\": len(rows), \"usable_count\": len(examples), \"required_count\": min_required, \"requested_split\": requested_split, \"selected_split\": selected_split, \"split_attempts\": split_attempts}",
+    "        if len(examples) < min_required:",
+    "            raise _normalization_failure(task, source, len(rows), len(examples), rows[0] if rows else None)",
+    "        eval_tasks[task] = examples",
+    ""
+  ].join("\n");
   let nextSource = source.replace(needle, replacement);
   if (nextSource === source) {
     nextSource = source.replace(directSplitNeedle, directSplitReplacement);
+  }
+  if (nextSource === source) {
+    nextSource = source.replace(fixedSplitNeedle, fixedSplitReplacement);
   }
   if (nextSource === source) return { repaired: false };
   await fs.writeFile(scriptPath, nextSource, "utf8");
