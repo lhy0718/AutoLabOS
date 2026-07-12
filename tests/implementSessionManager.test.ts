@@ -353,6 +353,7 @@ import {
   repairPythonPublicStudyPlanFinalizationRunnerSurface,
   repairPythonPublicStudyTopLevelRunnerAliasSurface,
   repairPythonEntrypointComposableStageRunnerSurface,
+  repairPythonEntrypointNamespaceMappingSurface,
   repairPythonFinalCliLockedGridResolverSurface,
   materializePublicPlannedConditionContractArtifact,
   repairPublicPlannedConditionContractDocsSurface,
@@ -15244,6 +15245,70 @@ describe("ImplementSessionManager", () => {
       "completed|2|load,model,evaluate"
     );
     expect((await repairPythonEntrypointComposableStageRunnerSurface(scriptPath)).repaired).toBe(false);
+  });
+
+  it("makes final entrypoint Namespace values compatible with mapping-style generated helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-namespace-mapping-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "def parse_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    parser.add_argument('--local-files-only', action='store_true')",
+        "    return parser.parse_args(argv)",
+        "def ensure_runtime_aliases(args):",
+        "    args.runtime_ready = True",
+        "    return args",
+        "def run_dependency_preflight(runtime=None, **keyword):",
+        "    local_only = runtime.get('local_files_only', False)",
+        "    runtime['mapping_write'] = 'visible'",
+        "    return {'status': 'ok', 'local_only': local_only, 'attribute_read': runtime.mapping_write}",
+        "def _autolabos_ep_call(names, **kwargs):",
+        "    for name in names:",
+        "        fn = globals().get(name)",
+        "        if not callable(fn):",
+        "            continue",
+        "        params = inspect.signature(fn).parameters",
+        "        if any(parameter.kind == parameter.VAR_KEYWORD for parameter in params.values()):",
+        "            return fn(**kwargs)",
+        "        return fn(**{key: value for key, value in kwargs.items() if key in params})",
+        "    raise RuntimeError('no compatible helper found')",
+        "def main(argv=None):",
+        "    args = parse_args(argv)",
+        "    args = ensure_runtime_aliases(args)",
+        "    preflight = _autolabos_ep_call(['run_dependency_preflight'], args=args, runtime=args, config=args, paths=args)",
+        "    Path(args.metrics_path).write_text(json.dumps(preflight), encoding='utf8')",
+        "    return 0",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath, "--metrics-path", metricsPath])).toThrow(
+      /Namespace.*get/
+    );
+    const repair = await repairPythonEntrypointNamespaceMappingSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_ep_namespace_mapping_surface");
+    expect(repairedSource).toContain("args = _autolabos_ep_namespace_mapping(args)");
+    execFileSync("python3", [scriptPath, "--metrics-path", metricsPath]);
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toEqual({
+      status: "ok",
+      local_only: false,
+      attribute_read: "visible"
+    });
+    expect((await repairPythonEntrypointNamespaceMappingSurface(scriptPath)).repaired).toBe(false);
   });
 
 

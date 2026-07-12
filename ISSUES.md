@@ -16,9 +16,35 @@ Path placeholders:
 ---
 
 
+## Issue: LV-580
+
+- Status: reproduced in same-flow live `run_experiments`; source repair, executable and full implement regressions, build, and repaired live-runner copy checks pass; same-flow revalidation pending.
+- Validation target: a generated final entrypoint must preserve both attribute-style and mapping-style access when one parsed runtime object is passed under `args`, `runtime`, `config`, and `paths` aliases.
+- Environment/session context: the implementation node passed design validation and local compilation, then real execution failed inside dependency preflight before the first planned run.
+- Reproduction steps:
+  1. Parse runtime arguments into an `argparse.Namespace` and apply generated runtime defaults.
+  2. Dispatch that same object to a compatible helper under the `runtime` alias.
+  3. Let the generated helper read a runtime option with `runtime.get(...)`.
+- Expected behavior: the final handoff should provide a runtime object that supports generated attribute and mapping access without changing the approved experiment contract.
+- Actual behavior: dependency preflight raised `AttributeError: 'Namespace' object has no attribute 'get'`; metrics reported failed status with zero completed runs and conditions.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral executable fixture reproduces the same dispatcher-to-helper contract failure.
+  - Existing session: the live runner failed at dependency preflight after the latest implementation handoff.
+  - Divergence: no UI/state divergence caused the failure; this is a generated runtime-object compatibility gap.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: final dispatch projected one `argparse.Namespace` through mapping-oriented aliases without normalizing it to a dual attribute/mapping surface.
+- Code/test changes:
+  - Add a narrowly gated final-dispatcher repair that upgrades the parsed Namespace to a `MutableMapping`-compatible Namespace after existing runtime defaults run.
+  - Preserve one shared runtime object across all aliases and do not alter experiment identifiers, schedules, rows, or metrics.
+  - Add an executable regression proving the original failure, bidirectional attribute/mapping access after repair, and idempotency.
+- Regression status: the focused executable fixture, all 804 `implementSessionManager` tests, TypeScript/web build, repaired live-runner copy compile check, dual attribute/mapping access check, and idempotency check pass. Same-flow revalidation remains pending.
+- Follow-up risks: the same-flow retry must confirm that dependency preflight advances into real data/model execution and that no later helper assumes an incompatible runtime representation.
+
+
 ## Issue: LV-579
 
-- Status: reproduced in same-flow live `run_experiments`; source repair, executable and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation pending.
+- Status: reproduced in same-flow live `run_experiments`; source repair, executable and full implement regressions, build, public-code sanitation, and harness pass; same-flow revalidation advanced to LV-580 without the missing-runner failure recurring.
 - Validation target: a generated final entrypoint must invoke concrete staged data, model-execution, and evaluation helpers when no separate top-level runner was materialized.
 - Environment/session context: the implementation node passed static design validation and local compilation, then real execution stopped before data loading with zero required runs completed.
 - Reproduction steps:
@@ -38,7 +64,7 @@ Path placeholders:
   - Add a narrowly gated repair that detects the exact disconnected staged-runner shape and composes existing data, model, and evaluation helpers under `run_experiment`.
   - Preserve node-owned execution and derive completion only from completed evaluation records; do not synthesize successful records.
   - Add an executable regression proving the original entrypoint fails, all three stages execute after repair, and a second repair is idempotent.
-- Regression status: the executable fixture, the repaired live-runner copy compile check, all 803 `implementSessionManager` tests, TypeScript/web build, public-code sanitation, and harness validation pass. Same-flow revalidation remains pending.
+- Regression status: the executable fixture, the repaired live-runner copy compile check, all 803 `implementSessionManager` tests, TypeScript/web build, public-code sanitation, and harness validation pass. The same live flow entered dependency preflight through a concrete runner and exposed LV-580 instead of recurring.
 - Follow-up risks: individual staged helpers may expose additional runtime-handle or argument-contract defects once the final entrypoint reaches them.
 
 

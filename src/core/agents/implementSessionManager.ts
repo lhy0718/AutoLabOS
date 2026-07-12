@@ -11427,6 +11427,8 @@ export class ImplementSessionManager {
       await repairPythonConditionMarkerNumericTokenSurface(executionScriptPath);
     const mainRuntimeDefaultsBeforePreflightRepair =
       await repairPythonMainRuntimeDefaultsBeforePreflightSurface(executionScriptPath);
+    const entrypointNamespaceMappingRepair =
+      await repairPythonEntrypointNamespaceMappingSurface(executionScriptPath);
     const conditionObjectMarkerParameterAliasRepair =
       await repairPythonConditionObjectMarkerParameterAliasSurface(executionScriptPath);
     const conditionAsdictJsonableRepair =
@@ -11711,6 +11713,7 @@ export class ImplementSessionManager {
         conditionScheduleMarkerParameterRepair,
         conditionMarkerNumericTokenRepair,
         mainRuntimeDefaultsBeforePreflightRepair,
+        entrypointNamespaceMappingRepair,
         conditionObjectMarkerParameterAliasRepair,
       conditionAsdictJsonableRepair,
       singleRunnerSeedDefaultRepair,
@@ -62832,6 +62835,92 @@ export async function repairPythonEntrypointComposableStageRunnerSurface(scriptP
   return {
     repaired: true,
     message: `Connected generated data, model-execution, and evaluation stages to the final entrypoint in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointNamespaceMappingSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_ep_namespace_mapping_surface";
+  const dispatcherStart = source.indexOf("\ndef _autolabos_ep_call(");
+  const finalMainStart = dispatcherStart >= 0
+    ? source.indexOf("\ndef main(", dispatcherStart + 1)
+    : -1;
+  if (
+    source.includes(marker) ||
+    dispatcherStart < 0 ||
+    finalMainStart < 0 ||
+    !/\b(?:args|runtime|config|paths)\.get\(/u.test(source) ||
+    !source.slice(finalMainStart).includes("runtime=args")
+  ) {
+    return { repaired: false };
+  }
+
+  const finalMainSource = source.slice(finalMainStart);
+  const runtimeAliasMatch = finalMainSource.match(
+    /^(?<indent>\s*)args\s*=\s*ensure_runtime_aliases\(args\)\s*$/mu
+  );
+  if (!runtimeAliasMatch?.groups?.indent || runtimeAliasMatch.index == null) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_ep_namespace_mapping(value):",
+    "    import argparse as _autolabos_argparse",
+    "    from collections.abc import MutableMapping as _autolabos_mutable_mapping",
+    "    if not isinstance(value, _autolabos_argparse.Namespace) or hasattr(value, 'get'):",
+    "        return value",
+    "    class _AutoLabOSEntrypointNamespace(_autolabos_argparse.Namespace, _autolabos_mutable_mapping):",
+    "        def __getitem__(self, key):",
+    "            if not hasattr(self, key):",
+    "                raise KeyError(key)",
+    "            return getattr(self, key)",
+    "        def __setitem__(self, key, item):",
+    "            setattr(self, key, item)",
+    "        def __delitem__(self, key):",
+    "            if not hasattr(self, key):",
+    "                raise KeyError(key)",
+    "            delattr(self, key)",
+    "        def __iter__(self):",
+    "            return iter(vars(self))",
+    "        def __len__(self):",
+    "            return len(vars(self))",
+    "        def get(self, key, default=None):",
+    "            return getattr(self, key, default)",
+    "    return _AutoLabOSEntrypointNamespace(**vars(value))",
+    ""
+  ].join("\n");
+
+  let nextSource = `${source.slice(0, dispatcherStart)}${helper}${source.slice(dispatcherStart)}`;
+  const shiftedMainStart = finalMainStart + helper.length;
+  const shiftedMainSource = nextSource.slice(shiftedMainStart);
+  const shiftedRuntimeAliasMatch = shiftedMainSource.match(
+    /^(?<indent>\s*)args\s*=\s*ensure_runtime_aliases\(args\)\s*$/mu
+  );
+  if (!shiftedRuntimeAliasMatch?.groups?.indent || shiftedRuntimeAliasMatch.index == null) {
+    return { repaired: false };
+  }
+  const runtimeAliasEnd = shiftedMainStart + shiftedRuntimeAliasMatch.index + shiftedRuntimeAliasMatch[0].length;
+  nextSource = `${nextSource.slice(0, runtimeAliasEnd)}\n${shiftedRuntimeAliasMatch.groups.indent}args = _autolabos_ep_namespace_mapping(args)${nextSource.slice(runtimeAliasEnd)}`;
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Made final entrypoint Namespace values mapping-compatible in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
