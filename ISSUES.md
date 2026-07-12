@@ -16,9 +16,50 @@ Path placeholders:
 ---
 
 
+## Issue: LV-582
+
+- Status: repair implemented; targeted, adjacent, full CI, build, public-sanitization, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Validation target: generated ordered-plan adapters must project the runtime path bundle to ordered-plan builders regardless of whether runtime context uses mapping or attribute access.
+- Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-581 fallback model alias repair.
+- Reproduction steps:
+  1. Resume the persisted failed `run_experiments` node through the real TUI helper.
+  2. Let the node-owned pre-failure-memory repair upgrade the ordered-plan adapter.
+  3. Inspect the fresh node-owned metrics after the adapter resolves the fallback model identifier.
+- Expected behavior:
+  - The adapter should resolve `paths` from mapping-backed or object-backed runtime context.
+  - The ordered-plan builder should receive the existing runtime path bundle without changing the condition or seed schedule.
+- Actual behavior:
+  - The fresh retry advances past model identifier resolution.
+  - Runtime context is a mapping containing a concrete `paths` value.
+  - The adapter uses only `getattr(selected_runtime, 'paths', None)`, then fails with `TypeError("ordered-plan adapter cannot satisfy required arguments: ['paths']")`.
+- Fresh vs existing session comparison:
+  - Fresh session: not required; the generated runner and fresh node-owned metrics reproduce the contract mismatch directly.
+  - Existing session: the same persisted run applied the LV-581 pre-run repair and exposed this next boundary.
+  - Divergence: no UI/session divergence observed; this is a generated runtime projection defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the ordered-plan adapter supports attribute-backed runtime paths but not the mapping-backed runtime shape created by the generated main entrypoint.
+- Code/test changes:
+  - Resolve path aliases from mapping and attribute runtime sources and pass only compatible path aliases to the ordered-plan builder.
+  - Upgrade previously repaired model-aware adapters when path projection is absent while preserving repair idempotency.
+  - Added domain-neutral mapping-runtime and previously repaired adapter regressions; the existing pre-failure-memory execution regression exercises the same repair invocation path.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Automated regression: six targeted and adjacent ordered-plan tests pass; build passes.
+  - Full CI passes: 195 root test files with 2,664 tests, plus 14 web tests.
+  - A copy of the exact live runner was upgraded successfully; Python compilation, mapping-backed path projection, fallback model resolution, and repair idempotency pass.
+  - Same-flow live revalidation: pending.
+- Follow-up risks:
+  - After path projection, execution may expose a distinct data loading, training, evaluation, resource, or metrics-contract failure.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-581
 
-- Status: repair implemented; targeted, adjacent, full implement, full CI, build, public-sanitization, harness, and repaired live-runner copy checks pass; same-flow live revalidation pending
+- Status: resolved in same-flow live `run_experiments`; targeted, adjacent, full implement, full run-experiments, full CI, build, public-sanitization, harness, and repaired live-runner copy checks pass
 - Validation target: generated ordered-plan entrypoint adapters must resolve a model identifier from the runtime's supported model aliases before executing a real condition schedule.
 - Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-580 namespace compatibility repair.
 - Reproduction steps:
@@ -52,7 +93,7 @@ Path placeholders:
   - Full CI passes: 195 root test files with 2,662 tests, plus 14 web tests.
   - Build, public-code sanitation, and harness validation pass.
   - A copy of the exact live runner was upgraded successfully; Python compilation, fallback model resolution, and repair idempotency pass.
-  - Same-flow live revalidation: pending.
+  - Same-flow live revalidation: passed; the node applied the pre-run ordered-plan adapter repair, resolved the fallback model identifier, and advanced to the distinct LV-582 path projection boundary.
 - Follow-up risks:
   - After model resolution, execution may expose a distinct data loading, training, evaluation, resource, or metrics-contract failure.
 - Evidence/artifacts:

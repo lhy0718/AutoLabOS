@@ -61727,10 +61727,15 @@ export async function repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath
   const existingAdapterSource = existingAdapter
     ? extractPythonTopLevelFunctionSource(source, "_autolabos_entrypoint_build_run_plan")
     : undefined;
+  const existingAdapterSupportsRuntimePaths =
+    existingAdapterSource?.includes("'paths': paths") === true &&
+    existingAdapterSource.includes("'runtime_paths': paths");
   if (
     !/^def build_ordered_run_plan\s*\(/mu.test(source) ||
     (!existingAdapter && !source.includes("_autolabos_entrypoint_build_run_plan")) ||
-    (existingAdapter && existingAdapterSource?.includes("'fallback_base_model'"))
+    (existingAdapter &&
+      existingAdapterSource?.includes("'fallback_base_model'") &&
+      existingAdapterSupportsRuntimePaths)
   ) {
     return { repaired: false };
   }
@@ -61740,9 +61745,6 @@ export async function repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath
     `# ${marker}`,
     "def _autolabos_entrypoint_build_run_plan(args=None, context=None, runtime=None, runtime_context=None, **values):",
     "    selected_runtime = runtime_context or runtime or context",
-    "    paths = getattr(selected_runtime, 'paths', None)",
-    "    if callable(globals().get('build_runtime_context')) and args is not None and paths is not None:",
-    "        selected_runtime = build_runtime_context(args, paths)",
     "    def _source_value(source, name):",
     "        if source is None:",
     "            return None",
@@ -61751,6 +61753,16 @@ export async function repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath
     "        except Exception:",
     "            return None",
     "        return None if callable(value) or value in (None, '') else value",
+    "    path_aliases = ('paths', 'output_paths', 'artifact_paths', 'experiment_paths', 'runtime_paths')",
+    "    paths = next((",
+    "        value",
+    "        for name in path_aliases",
+    "        for source in (selected_runtime, context, runtime, runtime_context, values, args)",
+    "        for value in (_source_value(source, name),)",
+    "        if value is not None",
+    "    ), None)",
+    "    if callable(globals().get('build_runtime_context')) and args is not None and paths is not None:",
+    "        selected_runtime = build_runtime_context(args, paths)",
     "    model_aliases = (",
     "        'selected_model_id', 'selected_model_name', 'preferred_model_id', 'preferred_model_name',",
     "        'base_model_id', 'base_model_name', 'model_id', 'model_name', 'model_name_or_path',",
@@ -61781,11 +61793,16 @@ export async function repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath
     "        'runtime': selected_runtime,",
     "        'runtime_context': selected_runtime,",
     "        'context': selected_runtime,",
+    "        'paths': paths,",
+    "        'output_paths': paths,",
+    "        'artifact_paths': paths,",
+    "        'experiment_paths': paths,",
+    "        'runtime_paths': paths,",
     "        'model_id': model_id,",
     "        'base_model_id': model_id,",
     "        'base_model_name': model_id,",
     "    }",
-    "    kwargs = {name: available[name] for name in signature.parameters if name in available}",
+    "    kwargs = {name: available[name] for name in signature.parameters if name in available and available[name] is not None}",
     "    missing = [",
     "        parameter.name for parameter in signature.parameters.values()",
     "        if parameter.default is parameter.empty",
@@ -61804,7 +61821,9 @@ export async function repairPythonEntrypointOrderedPlanAdapterSurface(scriptPath
         helper,
         (functionSource) =>
           functionSource.includes("ordered-plan adapter could not resolve a model id") &&
-          !functionSource.includes("'fallback_base_model'")
+          (!functionSource.includes("'fallback_base_model'") ||
+            !functionSource.includes("'paths': paths") ||
+            !functionSource.includes("'runtime_paths': paths"))
       )
     : `${source.slice(0, mainIndex)}\n\n${helper}${source.slice(mainIndex)}`;
   if (nextSource === source || !nextSource.includes(marker)) {
