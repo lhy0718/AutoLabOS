@@ -16,9 +16,54 @@ Path placeholders:
 ---
 
 
+## Issue: LV-591
+
+- Status: generic schema repair implemented; targeted tests, full CI, build, public sanitization, harness validation, and persisted-runner migration checks pass; same-flow live revalidation pending
+- Validation target: generated multiple-choice evaluators must accept object-backed examples whose normalized correct answer is stored under an explicit index alias.
+- Environment/session context: existing governed live run in `<validation-workspace>`, retried through the real TUI after the LV-589 bundle projection and LV-590 verifier repair.
+- Reproduction steps:
+  1. Retry `run_experiments` through the real TUI helper.
+  2. Allow the completed-training bridge to pass each object-backed task mapping to the evaluator.
+  3. Inspect per-task requested, evaluated, and schema-error counts.
+- Expected behavior:
+  - A normalized example with a valid explicit correct-answer index should be scored.
+  - Zero-valued correct-answer indices must remain valid.
+  - Schema errors should represent malformed examples, not an unrecognized field alias.
+- Actual behavior:
+  - Every task reports its full requested example count, confirming that LV-589 no longer reproduces.
+  - Every requested example is rejected as a schema error, leaving zero evaluated examples.
+  - The evaluator searches several raw-answer fields but omits the explicit index field emitted by the generated normalization dataclass.
+- Fresh vs existing session comparison:
+  - Fresh session: not required; fresh node-owned evaluation rows reproduce full requested coverage and full schema rejection.
+  - Existing session: the persisted run invokes the evaluator for every planned row with the same result.
+  - Divergence: no UI/session divergence observed; this is a generated evaluator schema-alias defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the evaluator's gold-index extractor does not recognize normalized object attributes for explicit label or gold indices.
+- Code/test changes:
+  - Extend the generic evaluation task-bundle alias repair to cover generated gold-index extractor helpers.
+  - Preserve explicit zero-valued index labels and support common explicit index aliases.
+  - Apply the repair during implement handoff, before the `run_experiments` retry gate, and immediately before execution.
+  - Add domain-neutral unit and execution-node integration regression coverage.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Automated regression: object-backed explicit index aliases, zero-valued labels, and execution-node pre-repair tests pass.
+  - Full CI passes: 195 root test files with 2,672 tests, plus 14 web tests.
+  - Production build and public-code sanitization pass.
+  - Harness validation passes with 498 issue entries checked and no structural violations.
+  - A copy of the exact persisted runner was migrated successfully; Python compilation, migration idempotency, and object-backed zero-index extraction checks pass.
+  - Same-flow live revalidation: pending.
+- Follow-up risks:
+  - Successful schema extraction may expose inference throughput, deadline, device placement, answer scoring, or aggregate metric failures.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/progress.jsonl`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
 ## Issue: LV-590
 
-- Status: verifier repair implemented; targeted tests, full CI, build, public sanitization, and harness validation pass; node-owned same-flow retry pending
+- Status: resolved in same-flow live `run_experiments`; targeted tests, full CI, build, public sanitization, and harness validation pass
 - Validation target: failure-like evaluation row statuses must contradict aggregate completion counters and block progression beyond `run_experiments`.
 - Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-588 evaluation handoff exposed LV-589.
 - Reproduction steps:
@@ -50,7 +95,7 @@ Path placeholders:
   - Full CI passes: 195 root test files with 2,671 tests, plus 14 web tests.
   - Production build and public-code sanitization pass.
   - Harness validation passes with 497 issue entries checked and no structural violations.
-  - Node-owned same-flow live retry: pending.
+  - Node-owned same-flow live retry: passed; all failure-like evaluation rows contradicted aggregate completion counters and failed metrics verification instead of being accepted as completed evidence.
 - Follow-up risks:
   - Once invalid completion is blocked, node-owned retry may expose answer-schema, inference, throughput, deadline, or aggregation failures in the repaired LV-589 evaluator path.
 - Evidence/artifacts:
@@ -61,7 +106,7 @@ Path placeholders:
 
 ## Issue: LV-589
 
-- Status: repair implemented; targeted tests, full CI, build, harness, public sanitization, and persisted-runner migration checks pass; same-flow live revalidation pending
+- Status: resolved in same-flow live `run_experiments`; targeted tests, full CI, build, harness, public sanitization, and persisted-runner migration checks pass
 - Validation target: completed-run evaluators must receive the task-to-examples mapping exposed by object-backed task bundles rather than treating the bundle object as a direct task mapping.
 - Environment/session context: existing governed live run in `<validation-workspace>`, resumed through the real TUI flow after the LV-588 training-to-evaluation bridge.
 - Reproduction steps:
@@ -92,7 +137,7 @@ Path placeholders:
   - Production build and public-code sanitization pass.
   - Harness validation passes with 496 issue entries checked and no structural violations.
   - A copy of the exact persisted runner was migrated successfully; Python compilation, migration idempotency, nested task mapping projection, requested-count preservation, objective metric merging, and public handle removal checks pass.
-  - Same-flow live revalidation: pending.
+  - Same-flow live revalidation: passed; every task reported the full node-loaded requested count and advanced to the distinct LV-591 answer-schema boundary.
 - Follow-up risks:
   - Real scoring may expose throughput, deadline, device placement, answer extraction, or aggregation failures.
 - Evidence/artifacts:

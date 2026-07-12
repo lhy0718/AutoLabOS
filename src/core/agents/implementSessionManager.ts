@@ -58676,10 +58676,12 @@ export async function repairPythonEvaluationTaskBundleAliasSurface(scriptPath?: 
   }
 
   const repairMarker = "_autolabos_evaluation_task_bundle_alias_surface";
+  const hasTaskBundleHelpers =
+    source.includes("def _task_examples(") && source.includes("def _choice_texts_and_gold(");
+  const hasEvaluationGoldHelper = source.includes("def _ev_gold_index(");
   if (
     source.includes(repairMarker) ||
-    !source.includes("def _task_examples(") ||
-    !source.includes("def _choice_texts_and_gold(")
+    (!hasTaskBundleHelpers && !hasEvaluationGoldHelper)
   ) {
     return { repaired: false };
   }
@@ -58697,11 +58699,22 @@ export async function repairPythonEvaluationTaskBundleAliasSurface(scriptPath?: 
     'gold = _get(ex, "label", _get(ex, "answer_index", _get(ex, "correct_index", _get(ex, "answerKey", _get(ex, "answer", None)))))',
     'gold = _get(ex, "label", _get(ex, "label_index", _get(ex, "gold_index", _get(ex, "answer_index", _get(ex, "correct_index", _get(ex, "answerKey", _get(ex, "answer", None)))))))'
   );
+  nextSource = nextSource.replace(
+    "for k in ('gold', 'label', 'answer_index', 'correct_index', 'answerKey', 'answer'):",
+    "for k in ('gold_index', 'label_index', 'gold', 'label', 'answer_index', 'correct_index', 'answerKey', 'answer', 'target_index'):"
+  );
+  nextSource = nextSource.replace(
+    'for k in ("gold", "label", "answer_index", "correct_index", "answerKey", "answer"):',
+    'for k in ("gold_index", "label_index", "gold", "label", "answer_index", "correct_index", "answerKey", "answer", "target_index"):'
+  );
 
   if (nextSource === source) {
     return { repaired: false };
   }
-  nextSource = nextSource.replace(/^(\s*)def\s+_task_examples\(/mu, (match: string, indent: string) =>
+  const markerTarget = nextSource.includes("def _task_examples(")
+    ? /^(\s*)def\s+_task_examples\(/mu
+    : /^(\s*)def\s+_ev_gold_index\(/mu;
+  nextSource = nextSource.replace(markerTarget, (match: string, indent: string) =>
     `${indent}# ${repairMarker}\n${match}`
   );
   if (!nextSource.includes(repairMarker)) {

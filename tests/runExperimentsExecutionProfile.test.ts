@@ -130,6 +130,16 @@ describe("run_experiments execution profile behavior", () => {
         "    return SimpleNamespace(train_examples=['training example'])",
         "def evaluate_completed_run(run_state, task_bundle, runtime):",
         "    return {'status': 'evaluated', 'task_metrics': {'benchmark_task_a': {'accuracy': 0.5}}, 'accuracy': 0.5}",
+        "def _ev_get(example, key):",
+        "    return example.get(key) if isinstance(example, dict) else getattr(example, key, None)",
+        "def _ev_gold_index(ex, choices):",
+        "    gold = None",
+        "    for k in ('gold', 'label', 'answer_index', 'correct_index', 'answerKey', 'answer'):",
+        "        value = _ev_get(ex, k)",
+        "        if value is not None:",
+        "            gold = value",
+        "            break",
+        "    return int(gold) if gold is not None else None",
         "def _load_eval_bundle(eval_specs, allow_download, diagnostics):",
         "    eval_tasks = {}",
         "    for task, (jsonl, hf_path, hf_name, split) in eval_specs.items():",
@@ -204,6 +214,7 @@ describe("run_experiments execution profile behavior", () => {
     let modelSelectorRepairedBeforeExecution = false;
     let dataBundleRepairedBeforeExecution = false;
     let evalSplitCoverageRepairedBeforeExecution = false;
+    let evaluationGoldAliasRepairedBeforeExecution = false;
     let evaluationBridgeRepairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
@@ -244,6 +255,9 @@ describe("run_experiments execution profile behavior", () => {
           evalSplitCoverageRepairedBeforeExecution =
             repairedSource.includes("_autolabos_task_bundle_eval_split_coverage_surface") &&
             repairedSource.includes("for candidate_split in dict.fromkeys((requested_split, 'validation', 'dev', 'test')):");
+          evaluationGoldAliasRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_evaluation_task_bundle_alias_surface") &&
+            repairedSource.includes("'gold_index', 'label_index'");
           evaluationBridgeRepairedBeforeExecution =
             repairedSource.includes("_autolabos_entrypoint_completed_training_evaluation_bridge_surface") &&
             repairedSource.includes("evaluation = _autolabos_ep_call(evaluator, evaluation_supplied)");
@@ -313,6 +327,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(modelSelectorRepairedBeforeExecution).toBe(true);
     expect(dataBundleRepairedBeforeExecution).toBe(true);
     expect(evalSplitCoverageRepairedBeforeExecution).toBe(true);
+    expect(evaluationGoldAliasRepairedBeforeExecution).toBe(true);
     expect(evaluationBridgeRepairedBeforeExecution).toBe(true);
     expect(
       eventStream.history().some((event) =>

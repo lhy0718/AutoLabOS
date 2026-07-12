@@ -75,6 +75,7 @@ import {
   repairPythonBenchmarkAccuracyComprehensionSurface,
   repairPythonEvaluationAnswerLabelAliasSurface,
   repairPythonEvaluationArtifactDirReloadSurface,
+  repairPythonEvaluationTaskBundleAliasSurface,
   repairPythonEntrypointLookupHelperAliasSurface,
   repairPythonEntrypointParseArgsSingleArgumentSurface,
   repairPythonEntrypointRuntimePlanBuilderSurface,
@@ -462,6 +463,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           await repairPythonConditionExecutorRuntimeContextSurface(preFailureMemoryScriptPath),
           await repairPythonAvailableModelSelectorSurface(preFailureMemoryScriptPath),
           await repairPythonTaskBundleEvalSplitCoverageSurface(preFailureMemoryScriptPath),
+          await repairPythonEvaluationTaskBundleAliasSurface(preFailureMemoryScriptPath),
           await repairPythonEntrypointOrderedPlanDataBundleSurface(preFailureMemoryScriptPath),
           await repairPythonEntrypointCompletedTrainingEvaluationBridgeSurface(preFailureMemoryScriptPath)
         ]) {
@@ -5056,6 +5058,17 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
         "before handoff.",
         "before run_experiments execution."
       ) || `Selected task-bundle evaluation splits by governed normalized coverage in ${path.basename(scriptPath)} before run_experiments execution.`
+    );
+  }
+  const evaluationTaskBundleAliasRepair =
+    await repairPythonEvaluationTaskBundleAliasSurface(scriptPath);
+  if (evaluationTaskBundleAliasRepair.repaired) {
+    repaired = true;
+    messages.push(
+      evaluationTaskBundleAliasRepair.message?.replace(
+        "before handoff.",
+        "before run_experiments execution."
+      ) || `Aliased generated evaluation task bundles and gold-index fields in ${path.basename(scriptPath)} before run_experiments execution.`
     );
   }
   const entrypointCompletedTrainingEvaluationBridgeRepair =

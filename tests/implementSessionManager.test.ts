@@ -50195,6 +50195,53 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("label_index");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
+
+  it("aliases object-backed label indices in generated evaluator gold extractors", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-eval-gold-index-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "",
+        "@dataclass",
+        "class EvaluationExample:",
+        "    prompt: str",
+        "    choices: list[str]",
+        "    label_index: int",
+        "",
+        "def _ev_get(example, key):",
+        "    return example.get(key) if isinstance(example, dict) else getattr(example, key, None)",
+        "",
+        "def _ev_gold_index(ex, choices):",
+        "    gold = None",
+        "    for k in ('gold', 'label', 'answer_index', 'correct_index', 'answerKey', 'answer'):",
+        "        value = _ev_get(ex, k)",
+        "        if value is not None:",
+        "            gold = value",
+        "            break",
+        "    return int(gold) if gold is not None else None",
+        "",
+        "if __name__ == '__main__':",
+        "    example = EvaluationExample('Question?', ['A', 'B'], 0)",
+        "    assert _ev_gold_index(example, example.choices) == 0",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace, stdio: "pipe" })).toThrow(
+      /AssertionError/
+    );
+    expect((await repairPythonEvaluationTaskBundleAliasSurface(scriptPath)).repaired).toBe(true);
+    expect((await repairPythonEvaluationTaskBundleAliasSurface(scriptPath)).repaired).toBe(false);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_evaluation_task_bundle_alias_surface");
+    expect(repairedSource).toContain("'gold_index', 'label_index'");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("accepts gold-index aliases and zero labels in generated multiple-choice evaluators", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-mc-gold-alias-"));
     tempDirs.push(workspace);
