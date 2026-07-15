@@ -600,13 +600,31 @@ export class StateGraphRuntime {
     const target = node || run.currentNode;
     const maxAttempts = Math.max(1, run.graph.retryPolicy.maxAttemptsPerNode);
     const nextAttempt = Math.min((run.graph.retryCounters[target] ?? 0) + 1, maxAttempts);
+    const supersededActiveNodes: GraphNodeId[] = [];
+    const updatedAt = new Date().toISOString();
+    for (const graphNode of GRAPH_NODE_ORDER) {
+      if (graphNode === target) {
+        continue;
+      }
+      const state = run.graph.nodeStates[graphNode];
+      if (state.status !== "running" && state.status !== "needs_approval") {
+        continue;
+      }
+      supersededActiveNodes.push(graphNode);
+      run.graph.nodeStates[graphNode] = {
+        ...state,
+        status: "pending",
+        updatedAt,
+        note: `Manual retry of ${target} superseded this ${state.status} pointer; the node remains unresolved.`
+      };
+    }
     run.graph.pendingTransition = undefined;
     run.currentNode = target;
     run.graph.currentNode = target;
     run.graph.nodeStates[target] = {
       ...run.graph.nodeStates[target],
       status: "running",
-      updatedAt: new Date().toISOString(),
+      updatedAt,
       note: "manual retry",
       lastError: undefined
     };
@@ -624,6 +642,16 @@ export class StateGraphRuntime {
       node: target,
       payload: { attempts: nextAttempt, checkpoint: checkpoint.seq }
     });
+    if (supersededActiveNodes.length > 0) {
+      this.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: target,
+        payload: {
+          text: `Manual retry of ${target} deactivated stale active node pointer(s): ${supersededActiveNodes.join(", ")}.`
+        }
+      });
+    }
 
     return this.getRunOrThrow(runId);
   }

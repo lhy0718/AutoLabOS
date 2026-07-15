@@ -1449,6 +1449,58 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.graph.nodeStates.write_paper.lastError).toBeUndefined();
   });
 
+  it("keeps a manual retry as the only active node when an upstream approval pointer is stale", async () => {
+    const registry = new Registry({
+      run_experiments: {
+        id: "run_experiments",
+        execute: async () => ({
+          status: "success",
+          summary: "Execution evidence was persisted.",
+          needsApproval: true,
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Single Active Retry",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.status = "paused";
+    run.graph.nodeStates.design_experiments.status = "needs_approval";
+    run.graph.nodeStates.design_experiments.note = "An earlier design gate remains unresolved.";
+    await store.updateRun(run);
+
+    const retried = await runtime.retryNode(run.id, "run_experiments");
+
+    expect(retried.currentNode).toBe("run_experiments");
+    expect(retried.graph.nodeStates.run_experiments.status).toBe("running");
+    expect(retried.graph.nodeStates.design_experiments.status).toBe("pending");
+    expect(retried.graph.nodeStates.design_experiments.note).toContain("node remains unresolved");
+    expect(
+      Object.entries(retried.graph.nodeStates)
+        .filter(([, state]) => state.status === "running" || state.status === "needs_approval")
+        .map(([node]) => node)
+    ).toEqual(["run_experiments"]);
+
+    const executed = await runtime.step(run.id);
+    expect(executed.currentNode).toBe("run_experiments");
+    expect(executed.graph.nodeStates.run_experiments.status).toBe("needs_approval");
+
+    const approved = await runtime.approveCurrent(run.id, { continueAfterApprove: false });
+    expect(approved.currentNode).toBe("analyze_results");
+    expect(approved.graph.currentNode).toBe("analyze_results");
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.currentNode).toBe("analyze_results");
+    expect(persisted?.graph.currentNode).toBe("analyze_results");
+  });
+
   it("clears downstream stale lastError values when backward jump resets later nodes", async () => {
     const { store, runtime } = await setup(new Registry({}));
 
