@@ -161,7 +161,7 @@ describe("review node", () => {
           analysis_version: 1,
           generated_at: new Date().toISOString(),
           mean_score: 0.91,
-          metrics: { accuracy: 0.91 },
+          metrics: { accuracy: 0.91, seeds: [101, 102, 103] },
           objective_metric: {
             raw: "accuracy at least 0.9",
             evaluation: {
@@ -1429,7 +1429,7 @@ describe("review node", () => {
       analysis_version: 1,
       generated_at: new Date().toISOString(),
       mean_score: 25,
-      metrics: { accuracy_delta_vs_baseline: 0.0448 },
+      metrics: { accuracy_delta_vs_baseline: 0.0448, seeds: [101, 102, 103, 104, 105] },
       objective_metric: {
         raw: "accuracy_delta_vs_baseline >= 0.01",
         evaluation: { status: "met", summary: "Objective metric met." },
@@ -1693,7 +1693,13 @@ describe("review node", () => {
 
     const critique = JSON.parse(await readFile(path.join(runDir, "review", "paper_critique.json"), "utf8")) as {
       manuscript_type: string;
+      claim_ceiling_applied: boolean;
+      needs_additional_experiments: boolean;
+      needs_additional_statistics: boolean;
     };
     expect(critique.manuscript_type).toBe("blocked_for_paper_scale");
+    expect(critique.claim_ceiling_applied).toBe(true);
+    expect(critique.needs_additional_experiments).toBe(true);
+    expect(critique.needs_additional_statistics).toBe(true);
   });
 });

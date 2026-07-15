@@ -263,6 +263,146 @@ describe("figure_audit node integration", () => {
     await expect(readFile(path.join(runDir, "figure_audit", "per_figure", "plot.json"), "utf8")).resolves.toContain("figure_caption_incomplete");
   });
 
+  it("refreshes cached deterministic issues and blocks unsupported comparative figures", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-figure-evidence-scale-"));
+    process.chdir(root);
+
+    const run = makeRun("run-figure-evidence-scale", "figure_audit");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "paper", "figures"), { recursive: true });
+    await mkdir(path.join(runDir, "figure_audit"), { recursive: true });
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "paper", "main.tex"),
+      [
+        "\\begin{figure}",
+        "\\includegraphics{figures/performance.svg}",
+        "\\caption{Candidate and baseline performance.}",
+        "\\end{figure}"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "paper", "figures", "performance.svg"),
+      "<svg><text>candidate vs baseline</text></svg>\n",
+      "utf8"
+    );
+    await writeFile(path.join(runDir, "figure_audit", "gate1_gate2_issues.json"), "[]\n", "utf8");
+    await writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify({
+        analysis_version: 1,
+        generated_at: new Date().toISOString(),
+        mean_score: 0.7,
+        metrics: {
+          run_config: {
+            max_steps: 30,
+            max_train_samples: 60
+          },
+          condition_results: [
+            { condition_marker: "baseline_condition", seeds: [], seed_count: 0 },
+            { condition_marker: "candidate_condition_a", seeds: [], seed_count: 0 }
+          ]
+        },
+        objective_metric: {
+          raw: "accuracy_delta_vs_baseline >= 0.01",
+          evaluation: { status: "not_met", summary: "Observed gain stays below the target." },
+          profile: { source: "default", preferred_metric_keys: ["accuracy_delta_vs_baseline"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
+        },
+        overview: {
+          objective_status: "not_met",
+          objective_summary: "Observed gain stays below the target.",
+          observed_value: 0.004,
+          selected_design_title: "Paired condition comparison",
+          execution_runs: 2
+        },
+        plan_context: {
+          selected_design: {
+            id: "design_a",
+            title: "Paired condition comparison",
+            summary: "Use 600 training examples for each run.",
+            selected_hypothesis_ids: ["hypothesis_a"],
+            metrics: ["accuracy_delta_vs_baseline"],
+            baselines: ["baseline_condition"],
+            implementation_notes: ["Keep 600 training examples fixed across conditions."],
+            evaluation_steps: ["Execute all 6 planned training runs."],
+            risks: [],
+            resource_notes: ["Expected planned training runs: 2 conditions x 3 seeds = 6 completed runs."]
+          },
+          shortlisted_designs: [],
+          design_notes: [],
+          implementation_notes: [],
+          evaluation_notes: [],
+          assumptions: []
+        },
+        condition_comparisons: [
+          {
+            id: "candidate_vs_baseline",
+            label: "candidate vs baseline",
+            source: "metrics.condition_results",
+            metrics: [{ key: "accuracy_delta_vs_baseline", value: 0.004, primary_value: 0.704, baseline_value: 0.7 }],
+            hypothesis_supported: true,
+            summary: "The candidate has a small positive delta."
+          }
+        ],
+        primary_findings: [],
+        paper_claims: [],
+        figure_specs: [
+          {
+            id: "performance",
+            title: "Performance comparison",
+            path: "figures/performance.svg",
+            metric_keys: ["accuracy_delta_vs_baseline"],
+            summary: "Compares candidate and baseline accuracy."
+          }
+        ],
+        statistical_summary: {
+          total_trials: 2,
+          executed_trials: 2,
+          cached_trials: 0,
+          confidence_intervals: [],
+          stability_metrics: [],
+          effect_estimates: [],
+          notes: []
+        },
+        limitations: [],
+        warnings: [],
+        shortlisted_designs: [],
+        recommendations: []
+      }, null, 2),
+      "utf8"
+    );
+
+    const node = createFigureAuditNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: {} as any,
+      pdfTextLlm: {} as any,
+      codex: {} as any,
+      aci: {} as any
+    });
+
+    await node.execute({ run, graph: run.graph });
+    const summary = JSON.parse(
+      await readFile(path.join(runDir, "figure_audit", "figure_audit_summary.json"), "utf8")
+    ) as FigureAuditSummary;
+    const cachedIssues = await readFile(path.join(runDir, "figure_audit", "gate1_gate2_issues.json"), "utf8");
+
+    expect(summary.review_block_required).toBe(true);
+    expect(summary.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issue_type: "performance_figure_evidence_scale_mismatch",
+          severity: "severe"
+        })
+      ])
+    );
+    expect(cachedIssues).toContain("performance_figure_evidence_scale_mismatch");
+  });
+
   it("passes through with an empty summary when figure_auditor.enabled is false", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-figure-audit-pass-through-"));
     process.chdir(root);
@@ -431,6 +571,13 @@ describe("figure_audit node integration", () => {
       },
       report: {
         overview: { objective_status: "met", objective_summary: "Objective met.", execution_runs: 1 },
+        metrics: {
+          run_config: { seed: 11, max_steps: 40 },
+          condition_results: [
+            { condition_marker: "baseline_condition", seeds: [11, 12], seed_count: 2 },
+            { condition_marker: "candidate_condition_a", seeds: [11, 12], seed_count: 2 }
+          ]
+        },
         condition_comparisons: [{ id: "cmp", label: "cmp", source: "metrics.comparison", metrics: [], hypothesis_supported: true, summary: "ok" }],
         primary_findings: [{ id: "f1", title: "Finding", finding: "Finding", confidence: 0.9, source: "analysis" }],
         paper_claims: [{ claim: "Claim", evidence: [{ type: "metric", reference: "accuracy", detail: "+0.04" }] }],

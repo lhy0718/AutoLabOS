@@ -7,6 +7,7 @@ export type PaperScaleDiagnosticCategory =
   | "evaluation_sample_size"
   | "statistical_adequacy"
   | "training_budget"
+  | "execution_coverage"
   | "related_work_depth"
   | "resource_claim";
 
@@ -54,11 +55,11 @@ export function evaluatePaperScaleDiagnostics(input: {
     });
   }
 
+  const positiveComparisonSignal = detectPositiveComparisonSignal(input.report);
   const seedSummary = extractSeedSummary(input.report);
   if (
-    seedSummary.seedEvidencePresent &&
-    seedSummary.distinctSeeds < GATE_THRESHOLDS.minDistinctSeedsForPaperScale
-    && input.report.overview?.objective_status === "met"
+    positiveComparisonSignal
+    && seedSummary.distinctSeeds < GATE_THRESHOLDS.minDistinctSeedsForPaperScale
   ) {
     diagnostics.push({
       id: "missing_seed_replication",
@@ -66,10 +67,29 @@ export function evaluatePaperScaleDiagnostics(input: {
       category: "statistical_adequacy",
       source_node: "run_experiments",
       target_node: "run_experiments",
-      summary: "Positive objective status has no repeated-seed support.",
-      evidence: `Observed distinct seed count is ${seedSummary.distinctSeeds || 0}; seeds: ${seedSummary.seeds.join(", ") || "none"}.`,
+      summary: "Positive comparative signal has no repeated-seed support.",
+      evidence: `${positiveComparisonSignal} Observed distinct seed count is ${seedSummary.distinctSeeds || 0}; ${seedSummary.seedEvidencePresent ? `seeds: ${seedSummary.seeds.join(", ") || "none"}` : "seed fields are absent or empty"}.`,
       recommended_action: "Run repeated seeds for the baseline and leading condition, then report seed-level variance or paired uncertainty.",
       recheck_condition: `At least ${GATE_THRESHOLDS.minDistinctSeedsForPaperScale} distinct seeds are present for the comparison or the claim is downgraded.`
+    });
+  }
+
+  const executionCoverage = extractExecutionCoverage(input.report);
+  if (
+    executionCoverage.expectedRuns !== undefined
+    && executionCoverage.executedRuns !== undefined
+    && executionCoverage.executedRuns < executionCoverage.expectedRuns
+  ) {
+    diagnostics.push({
+      id: "incomplete_planned_runs",
+      severity: "blocking",
+      category: "execution_coverage",
+      source_node: "run_experiments",
+      target_node: "run_experiments",
+      summary: "Executed runs do not cover the approved experiment plan.",
+      evidence: `Executed ${executionCoverage.executedRuns} of ${executionCoverage.expectedRuns} planned run(s) (${formatRatio(executionCoverage.executedRuns, executionCoverage.expectedRuns)} coverage).`,
+      recommended_action: "Execute the missing conditions or repetitions, or explicitly downgrade the design and all dependent claims before review.",
+      recheck_condition: "Executed run coverage reaches the approved plan, or the plan and claim ceiling are governed down to the completed scope."
     });
   }
 
@@ -103,6 +123,25 @@ export function evaluatePaperScaleDiagnostics(input: {
       evidence: `Maximum observed optimizer steps is ${stepSummary.maximumSteps}; condition steps: ${stepSummary.stepValues.join(", ") || "none"}.`,
       recommended_action: "Increase the train budget or restrict claims to pipeline/preflight validation.",
       recheck_condition: `Optimizer steps are at least ${GATE_THRESHOLDS.minOptimizerStepsForTuningClaim} for paper-scale tuning claims, or the manuscript genre is downgraded.`
+    });
+  }
+
+  const trainingSampleBudget = extractTrainingSampleBudget(input.report);
+  if (
+    trainingSampleBudget.plannedSamples !== undefined
+    && trainingSampleBudget.actualSamples !== undefined
+    && trainingSampleBudget.actualSamples < trainingSampleBudget.plannedSamples
+  ) {
+    diagnostics.push({
+      id: "training_budget_mismatch",
+      severity: "blocking",
+      category: "training_budget",
+      source_node: "implement_experiments",
+      target_node: "implement_experiments",
+      summary: "Executed training sample budget is below the approved design budget.",
+      evidence: `Run configuration used at most ${trainingSampleBudget.actualSamples} training sample(s), while the selected design specifies ${trainingSampleBudget.plannedSamples} (${formatRatio(trainingSampleBudget.actualSamples, trainingSampleBudget.plannedSamples)} coverage).`,
+      recommended_action: "Regenerate and rerun the implementation with the approved training budget, or govern the result down to a preflight/system-validation claim.",
+      recheck_condition: "The executed training sample budget matches the selected design, or the design and claim ceiling explicitly adopt the smaller budget."
     });
   }
 
@@ -198,6 +237,7 @@ function extractSeedSummary(report: AnalysisReport): { seeds: string[]; distinct
   let reportedSeedCount = 0;
   const metrics = asRecord(report.metrics);
   seedEvidencePresent = addSeed(seeds, asRecord(metrics.run_config).seed) || seedEvidencePresent;
+  seedEvidencePresent = addSeeds(seeds, asArray(metrics.seeds)) || seedEvidencePresent;
   for (const condition of [
     ...asArray(metrics.conditions),
     ...asArray(metrics.condition_results),
@@ -207,21 +247,10 @@ function extractSeedSummary(report: AnalysisReport): { seeds: string[]; distinct
     seedEvidencePresent = addSeed(seeds, record.seed) || seedEvidencePresent;
     seedEvidencePresent = addSeed(seeds, record.random_seed) || seedEvidencePresent;
     seedEvidencePresent = addSeeds(seeds, asArray(record.seeds)) || seedEvidencePresent;
-    seedEvidencePresent = addSeeds(seeds, asArray(record.planned_seeds)) || seedEvidencePresent;
     const seedCount = asNumber(record.seed_count);
     if (seedCount !== undefined && seedCount > 0) {
       seedEvidencePresent = true;
       reportedSeedCount = Math.max(reportedSeedCount, seedCount);
-    }
-  }
-  for (const group of report.experiment_portfolio?.trial_groups ?? []) {
-    for (const note of group.notes ?? []) {
-      const matches = note.matchAll(/\bseed(?:s)?\s*[:=]\s*([0-9,\s-]+)/giu);
-      for (const match of matches) {
-        for (const seed of match[1]?.split(/[\s,]+/u) ?? []) {
-          seedEvidencePresent = addSeed(seeds, seed) || seedEvidencePresent;
-        }
-      }
     }
   }
   const distinctSeeds = Math.max(seeds.size, reportedSeedCount);
@@ -230,6 +259,74 @@ function extractSeedSummary(report: AnalysisReport): { seeds: string[]; distinct
     seedLabels.push(`reported_seed_count=${reportedSeedCount}`);
   }
   return { seeds: seedLabels, distinctSeeds, seedEvidencePresent };
+}
+
+function detectPositiveComparisonSignal(report: AnalysisReport): string | undefined {
+  if (report.overview?.objective_status === "met") {
+    return "The objective status is met.";
+  }
+
+  const positiveComparison = (report.condition_comparisons ?? []).find((comparison) =>
+    comparison.metrics.some((metric) => Number.isFinite(metric.value) && metric.value > 0)
+  );
+  if (positiveComparison) {
+    return `Condition comparison ${positiveComparison.id || "unknown"} contains a positive delta.`;
+  }
+
+  const metrics = asRecord(report.metrics);
+  const summary = asRecord(metrics.summary);
+  const observedDelta =
+    asNumber(summary.best_accuracy_delta_vs_baseline)
+    ?? asNumber(metrics.accuracy_delta_vs_baseline)
+    ?? report.overview?.observed_value;
+  if (observedDelta !== undefined && observedDelta > 0 && (report.condition_comparisons?.length ?? 0) > 0) {
+    return `A baseline-relative comparative delta of ${observedDelta} is reported.`;
+  }
+  return undefined;
+}
+
+function extractExecutionCoverage(report: AnalysisReport): { expectedRuns?: number; executedRuns?: number } {
+  const portfolio = report.experiment_portfolio;
+  const structuredExpected = [
+    portfolio?.total_expected_trials,
+    ...(portfolio?.trial_groups ?? []).map((group) => group.expected_trials)
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+  const structuredExecuted = [
+    portfolio?.executed_trials,
+    report.statistical_summary?.executed_trials,
+    report.overview?.execution_runs,
+    ...(portfolio?.trial_groups ?? []).map((group) => group.executed_trials)
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
+
+  const planTexts = [
+    report.plan_context?.selected_design?.summary,
+    ...(report.plan_context?.selected_design?.evaluation_steps ?? []),
+    ...(report.plan_context?.selected_design?.resource_notes ?? []),
+    ...(portfolio?.trial_groups ?? []).flatMap((group) => group.notes ?? [])
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const textualExpected = planTexts.flatMap(extractExpectedRunCounts);
+
+  return {
+    expectedRuns: maximumDefined([...structuredExpected, ...textualExpected]),
+    executedRuns: maximumDefined(structuredExecuted)
+  };
+}
+
+function extractExpectedRunCounts(value: string): number[] {
+  const counts: number[] = [];
+  for (const match of value.matchAll(/\b(\d[\d,]*)\s+(?:(?:planned|completed|training|full|total|expected)\s+){0,4}runs?\b/giu)) {
+    const count = parseCount(match[1]);
+    if (count !== undefined) {
+      counts.push(count);
+    }
+  }
+  for (const match of value.matchAll(/\b(\d[\d,]*)\s*(?:conditions?|cells?)\s*[x×]\s*(\d[\d,]*)\s*seeds?\s*=\s*(\d[\d,]*)\s*(?:completed\s+)?runs?\b/giu)) {
+    const statedTotal = parseCount(match[3]);
+    if (statedTotal !== undefined) {
+      counts.push(statedTotal);
+    }
+  }
+  return counts;
 }
 
 function detectOneItemGain(report: AnalysisReport): string | undefined {
@@ -288,11 +385,18 @@ function detectOneItemGain(report: AnalysisReport): string | undefined {
 function extractOptimizerStepSummary(report: AnalysisReport): { stepValues: number[]; maximumSteps?: number } {
   const metrics = asRecord(report.metrics);
   const stepValues: number[] = [];
-  const maxSteps = asNumber(asRecord(metrics.run_config).max_steps);
-  if (maxSteps !== undefined) {
-    stepValues.push(maxSteps);
+  const runConfig = asRecord(metrics.run_config);
+  for (const value of [runConfig.max_steps, runConfig.optimizer_steps, runConfig.steps_completed]) {
+    const steps = asNumber(value);
+    if (steps !== undefined) {
+      stepValues.push(steps);
+    }
   }
-  for (const condition of asArray(metrics.conditions)) {
+  for (const condition of [
+    ...asArray(metrics.conditions),
+    ...asArray(metrics.condition_results),
+    ...asArray(metrics.condition_summaries)
+  ]) {
     const steps = asNumber(asRecord(condition).steps_completed);
     if (steps !== undefined) {
       stepValues.push(steps);
@@ -302,6 +406,31 @@ function extractOptimizerStepSummary(report: AnalysisReport): { stepValues: numb
     stepValues,
     maximumSteps: stepValues.length > 0 ? Math.max(...stepValues) : undefined
   };
+}
+
+function extractTrainingSampleBudget(report: AnalysisReport): { plannedSamples?: number; actualSamples?: number } {
+  const runConfig = asRecord(asRecord(report.metrics).run_config);
+  const actualSamples = maximumDefined([
+    asNumber(runConfig.max_train_samples),
+    asNumber(runConfig.train_samples),
+    asNumber(runConfig.training_examples),
+    asNumber(runConfig.max_training_examples)
+  ].filter((value): value is number => value !== undefined));
+  const planTexts = [
+    report.plan_context?.selected_design?.summary,
+    ...(report.plan_context?.selected_design?.implementation_notes ?? [])
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const plannedSamples = maximumDefined(planTexts.flatMap((value) => {
+    const counts: number[] = [];
+    for (const match of value.matchAll(/\b(\d[\d,]*)\s+(?:training\s+)?examples?\b/giu)) {
+      const count = parseCount(match[1]);
+      if (count !== undefined) {
+        counts.push(count);
+      }
+    }
+    return counts;
+  }));
+  return { plannedSamples, actualSamples };
 }
 
 function detectWeakInteractionClaim(report: AnalysisReport): string | undefined {
@@ -378,6 +507,22 @@ function detectResourceClaimRisk(report: AnalysisReport): string | undefined {
 
 function formatTaskCounts(taskCounts: Array<{ task: string; count: number }>): string {
   return taskCounts.slice(0, 8).map((entry) => `${entry.task}=${entry.count}`).join(", ") || "none";
+}
+
+function formatRatio(numerator: number, denominator: number): string {
+  return denominator > 0 ? `${((numerator / denominator) * 100).toFixed(1)}%` : "unknown";
+}
+
+function parseCount(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number(value.replace(/,/gu, ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function maximumDefined(values: number[]): number | undefined {
+  return values.length > 0 ? Math.max(...values) : undefined;
 }
 
 function addSeed(target: Set<string>, value: unknown): boolean {

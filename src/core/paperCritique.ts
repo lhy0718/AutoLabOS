@@ -165,6 +165,7 @@ export interface PreDraftCritiqueInput {
   findings: ReviewFinding[];
   presence: ReviewArtifactPresence;
   minimumGateCeiling?: MinimumGateCeiling;
+  minimumGateFailedChecks?: string[];
 }
 
 export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritique {
@@ -181,10 +182,30 @@ export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritiq
   );
 
   // Upstream deficit flags
+  const failedChecks = new Set(input.minimumGateFailedChecks ?? []);
   const needsExperiments = blockingIssues.some(
     (i) => i.category === "result_table_quality" || i.category === "statistical_adequacy"
-  );
-  const needsStatistics = blockingIssues.some((i) => i.category === "statistical_adequacy");
+  ) || hasAnyFailedCheck(failedChecks, [
+    "baseline_or_comparator",
+    "executed_result",
+    "evidence_depth",
+    "evaluation_sample_size",
+    "seed_replication",
+    "effect_granularity",
+    "planned_execution_coverage",
+    "training_budget_depth",
+    "result_artifacts",
+    "results_table_schema"
+  ]);
+  const needsStatistics =
+    blockingIssues.some((i) => i.category === "statistical_adequacy")
+    || hasAnyFailedCheck(failedChecks, [
+      "evidence_depth",
+      "evaluation_sample_size",
+      "seed_replication",
+      "effect_granularity",
+      "planned_execution_coverage"
+    ]);
   const needsRelatedWork = categoryScores.find((c) => c.category === "related_work_depth")?.score_1_to_5 ?? 3;
   const needsDesign = blockingIssues.some((i) => i.category === "methodological_completeness");
 
@@ -215,13 +236,19 @@ export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritiq
       manuscriptType,
       input.minimumGateCeiling
     ),
-    claim_ceiling_applied: false,
+    claim_ceiling_applied:
+      input.minimumGateCeiling !== undefined
+      && input.minimumGateCeiling !== "unrestricted",
     manuscript_claim_risk_summary: claimRisk,
     needs_additional_experiments: needsExperiments,
     needs_additional_statistics: needsStatistics,
     needs_additional_related_work: needsRelatedWork < 2,
     needs_design_revision: needsDesign
   };
+}
+
+function hasAnyFailedCheck(failedChecks: Set<string>, candidates: string[]): boolean {
+  return candidates.some((candidate) => failedChecks.has(candidate));
 }
 
 // ---------------------------------------------------------------------------

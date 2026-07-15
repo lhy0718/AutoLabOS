@@ -1,7 +1,11 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
+import type { AnalysisReport } from "../resultAnalysis.js";
 import type { FigureAuditIssue, FigureAuditSummary } from "../exploration/types.js";
+import { evaluatePaperScaleDiagnostics } from "./paperScaleDiagnostics.js";
+
+export const FIGURE_EVIDENCE_SCALE_ISSUE_TYPE = "performance_figure_evidence_scale_mismatch";
 
 export interface FigureAuditInput {
   run_dir: string;
@@ -173,6 +177,59 @@ export async function checkCaptionConsistency(input: FigureAuditInput): Promise<
   return issues;
 }
 
+export async function checkFigureEvidenceScale(input: FigureAuditInput): Promise<FigureAuditIssue[]> {
+  const report = await loadResultAnalysisReport(input.result_analysis_path);
+  if (!report || (report.figure_specs?.length ?? 0) === 0) {
+    return [];
+  }
+
+  const diagnosticSummary = evaluatePaperScaleDiagnostics({
+    report,
+    topic:
+      report.plan_context?.selected_design?.title
+      || report.overview?.selected_design_title
+      || report.objective_metric?.raw
+      || ""
+  });
+  const relevantDiagnostics = diagnosticSummary.diagnostics.filter((diagnostic) =>
+    [
+      "missing_seed_replication",
+      "single_item_gain",
+      "incomplete_planned_runs",
+      "thin_training_budget",
+      "training_budget_mismatch"
+    ].includes(diagnostic.id)
+  );
+  if (relevantDiagnostics.length === 0) {
+    return [];
+  }
+
+  const issues: FigureAuditIssue[] = [];
+  for (const spec of report.figure_specs ?? []) {
+    if (!spec.metric_keys?.some(isComparativePerformanceMetric)) {
+      continue;
+    }
+    const caveatText = [spec.title, spec.summary].filter(Boolean).join(" ");
+    const explicitlyDescriptive = /\b(?:descriptive|exploratory|pilot|single[- ]run|unreplicated|not replicated|incomplete)\b/iu.test(caveatText);
+    const hasBlockingDiagnostic = relevantDiagnostics.some((diagnostic) => diagnostic.severity === "blocking");
+    const figureId = stripFigureExtension(path.basename(spec.path || spec.id || "performance_figure"));
+    issues.push(
+      createIssue({
+        figureId,
+        issueType: FIGURE_EVIDENCE_SCALE_ISSUE_TYPE,
+        severity: hasBlockingDiagnostic && !explicitlyDescriptive ? "severe" : "warning",
+        description: `Figure ${figureId} presents comparative performance metrics beyond the supported evidence scale: ${relevantDiagnostics.map((diagnostic) => diagnostic.summary).join(" ")}`,
+        recommendedAction: "Add valid repetition-level uncertainty and complete the approved execution scope, or label the figure as descriptive/incomplete and move it out of the main-result role.",
+        evidenceAlignmentStatus: "misaligned",
+        empiricalValidityImpact: hasBlockingDiagnostic ? "major" : "minor",
+        publicationReadiness: hasBlockingDiagnostic ? "not_ready" : "needs_revision",
+        manuscriptPlacementRecommendation: "appendix"
+      })
+    );
+  }
+  return issues;
+}
+
 export async function critiqueFiguresVision(
   input: FigureAuditInput,
   priorIssues: FigureAuditIssue[]
@@ -205,8 +262,9 @@ export async function critiqueFiguresVision(
 export async function runAllGates(input: FigureAuditInput): Promise<FigureAuditSummary> {
   const gate1 = await lintFigures(input);
   const gate2 = await checkCaptionConsistency(input);
-  const gate3 = await critiqueFiguresVision(input, [...gate1, ...gate2]);
-  const issues = [...gate1, ...gate2, ...gate3];
+  const evidenceScale = await checkFigureEvidenceScale(input);
+  const gate3 = await critiqueFiguresVision(input, [...gate1, ...gate2, ...evidenceScale]);
+  const issues = [...gate1, ...gate2, ...evidenceScale, ...gate3];
   const severeMismatchCount = issues.filter((issue) => issue.severity === "severe").length;
   const figureCount = (await listFigureFiles(resolveFigureDir(input))).length;
 
@@ -364,6 +422,22 @@ async function loadResultAnalysisFigureSpecs(resultAnalysisPath: string | null):
   } catch {
     return new Set();
   }
+}
+
+async function loadResultAnalysisReport(resultAnalysisPath: string | null): Promise<AnalysisReport | null> {
+  if (!resultAnalysisPath) {
+    return null;
+  }
+  try {
+    const raw = await fs.readFile(resultAnalysisPath, "utf8");
+    return JSON.parse(raw) as AnalysisReport;
+  } catch {
+    return null;
+  }
+}
+
+function isComparativePerformanceMetric(metricKey: string): boolean {
+  return /(?:accuracy|score|delta|improvement|f1|bleu|rouge|perplexity|loss|performance)/iu.test(metricKey);
 }
 
 async function runVisionCritiqueWithTimeout(input: {

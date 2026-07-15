@@ -171,7 +171,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         decision: effectivePanel.decision,
         findings: effectivePanel.findings,
         presence,
-        minimumGateCeiling: minimumGate.ceiling_type
+        minimumGateCeiling: minimumGate.ceiling_type,
+        minimumGateFailedChecks: minimumGate.failed_checks
       });
 
       // --- Layer 2: LLM paper-quality evaluation ---

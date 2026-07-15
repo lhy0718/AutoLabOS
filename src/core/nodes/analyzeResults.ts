@@ -77,6 +77,7 @@ import {
 } from "../analysis/riskSignals.js";
 import {
   checkCaptionConsistency,
+  checkFigureEvidenceScale,
   lintFigures,
   type FigureAuditInput
 } from "../analysis/figureAuditor.js";
@@ -499,7 +500,8 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         });
         const gateOneTwoIssues = [
           ...(await lintFigures(figureAuditInput)),
-          ...(await checkCaptionConsistency(figureAuditInput))
+          ...(await checkCaptionConsistency(figureAuditInput)),
+          ...(await checkFigureEvidenceScale(figureAuditInput))
         ];
         await writeRunArtifact(
           run,
@@ -1200,6 +1202,10 @@ function enrichMetricsWithDetailedResults(
   if (typeof protocol.cpu_only === "boolean" && next.cpu_only === undefined) {
     next.cpu_only = protocol.cpu_only;
   }
+  const observedSeeds = collectObservedDetailedSeeds(detailedResults);
+  if (observedSeeds.length > 0) {
+    next.seeds = uniqueSeedValues([...asArray(next.seeds), ...observedSeeds]);
+  }
 
   const meanImprovement = asNumber(globalMetrics.mean_macro_f1_improvement_over_logreg);
   if (typeof meanImprovement === "number") {
@@ -1260,6 +1266,37 @@ function enrichMetricsWithDetailedResults(
   }
 
   return next;
+}
+
+function collectObservedDetailedSeeds(detailedResults: Record<string, unknown>): Array<string | number> {
+  const seeds: Array<string | number> = [];
+  const addFromRecords = (records: unknown[]): void => {
+    for (const item of records) {
+      const record = asRecord(item);
+      const seed = record.seed ?? record.random_seed;
+      if ((typeof seed === "string" && seed.trim()) || (typeof seed === "number" && Number.isFinite(seed))) {
+        seeds.push(seed);
+      }
+    }
+  };
+
+  addFromRecords(asArray(detailedResults.repeat_records));
+  for (const summary of asArray(detailedResults.dataset_summaries)) {
+    const record = asRecord(summary);
+    addFromRecords(asArray(record.seed_records));
+    addFromRecords(asArray(record.repeat_records));
+  }
+  return uniqueSeedValues(seeds);
+}
+
+function uniqueSeedValues(values: unknown[]): Array<string | number> {
+  const seeds = new Map<string, string | number>();
+  for (const value of values) {
+    if ((typeof value === "string" && value.trim()) || (typeof value === "number" && Number.isFinite(value))) {
+      seeds.set(String(value), typeof value === "string" ? value.trim() : value);
+    }
+  }
+  return [...seeds.values()];
 }
 
 function deriveWorkflowAnalysisMetrics(detailedResults: Record<string, unknown>): {

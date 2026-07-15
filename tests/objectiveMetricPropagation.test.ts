@@ -554,6 +554,7 @@ describe("objective metric propagation", () => {
                 executed_trials: 12,
                 cached_trials: 0
               },
+              seeds: [101, 102, 103],
               primary_condition: "shared_state_schema",
               baseline_condition: "free_form_chat",
               condition_metrics: {
@@ -1578,6 +1579,10 @@ describe("objective metric propagation", () => {
       action: "advance",
       targetNode: "figure_audit"
     });
+    const hydratedAnalysis = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as { metrics: { seeds?: Array<string | number> } };
+    expect(hydratedAnalysis.metrics.seeds).toEqual([100, 101, 102, 103, 104]);
 
     const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
       overview: { objective_status: string; execution_runs: number };

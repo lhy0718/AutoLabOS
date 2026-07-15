@@ -326,6 +326,23 @@ describe("pre-draft critique", () => {
 
     expect(critique.manuscript_type).toBe("research_memo");
     expect(critique.downgrade_reason).toContain("Minimum evidence gate capped");
+    expect(critique.claim_ceiling_applied).toBe(true);
+  });
+
+  it("projects deterministic evidence failures into experiment and statistics requirements", () => {
+    const critique = buildPreDraftCritique(makePreDraftInput({
+      minimumGateCeiling: "blocked_for_paper_scale",
+      minimumGateFailedChecks: [
+        "seed_replication",
+        "planned_execution_coverage",
+        "training_budget_depth"
+      ]
+    }));
+
+    expect(critique.manuscript_type).toBe("blocked_for_paper_scale");
+    expect(critique.claim_ceiling_applied).toBe(true);
+    expect(critique.needs_additional_experiments).toBe(true);
+    expect(critique.needs_additional_statistics).toBe(true);
   });
 });
 

@@ -5,7 +5,9 @@ import { promises as fs } from "node:fs";
 import type { TransitionRecommendation } from "../../types.js";
 import {
   checkCaptionConsistency,
+  checkFigureEvidenceScale,
   critiqueFiguresVision,
+  FIGURE_EVIDENCE_SCALE_ISSUE_TYPE,
   lintFigures,
   type FigureAuditInput
 } from "../analysis/figureAuditor.js";
@@ -31,13 +33,17 @@ export function createFigureAuditNode(deps: NodeExecutionDeps): GraphNodeHandler
 
       let gate1Gate2Issues: FigureAuditIssue[] = [];
       const cachedGateOneTwo = await readIssueArray(path.join(runDir, "figure_audit", "gate1_gate2_issues.json"));
-      if (cachedGateOneTwo) {
-        gate1Gate2Issues = cachedGateOneTwo;
-      } else if (config.figure_auditor.enabled) {
-        gate1Gate2Issues = [
-          ...(await lintFigures(input)),
-          ...(await checkCaptionConsistency(input))
-        ];
+      if (config.figure_auditor.enabled) {
+        const structuralIssues = cachedGateOneTwo
+          ? cachedGateOneTwo.filter((issue) => issue.issue_type !== FIGURE_EVIDENCE_SCALE_ISSUE_TYPE)
+          : [
+              ...(await lintFigures(input)),
+              ...(await checkCaptionConsistency(input))
+            ];
+        gate1Gate2Issues = deduplicateIssues([
+          ...structuralIssues,
+          ...(await checkFigureEvidenceScale(input))
+        ]);
         await writeRunArtifact(
           run,
           "figure_audit/gate1_gate2_issues.json",
@@ -153,6 +159,14 @@ function countDistinctFigureIds(issues: FigureAuditIssue[]): number {
     return 0;
   }
   return new Set(issues.map((issue) => issue.figure_id)).size;
+}
+
+function deduplicateIssues(issues: FigureAuditIssue[]): FigureAuditIssue[] {
+  const unique = new Map<string, FigureAuditIssue>();
+  for (const issue of issues) {
+    unique.set(`${issue.figure_id}:${issue.issue_type}`, issue);
+  }
+  return [...unique.values()];
 }
 
 async function countFigureFiles(dir: string): Promise<number> {

@@ -34,6 +34,24 @@ function minimalReport(): AnalysisReport {
       objective_summary: "Test objective met",
       execution_runs: 3
     },
+    metrics: {
+      run_config: {
+        seed: 11,
+        max_steps: 40
+      },
+      condition_results: [
+        {
+          condition_marker: "baseline_condition",
+          seeds: [11, 12, 13],
+          seed_count: 3
+        },
+        {
+          condition_marker: "candidate_condition_a",
+          seeds: [11, 12, 13],
+          seed_count: 3
+        }
+      ]
+    },
     condition_comparisons: [
       {
         id: "c1",
@@ -120,7 +138,7 @@ describe("paperMinimumGate", () => {
 
   it("has the expected deterministic checks", () => {
     const result = evaluateMinimumGate(fullInput());
-    expect(result.checks).toHaveLength(14);
+    expect(result.checks).toHaveLength(15);
     const checkIds = result.checks.map(c => c.id);
     expect(checkIds).toContain("objective_metric");
     expect(checkIds).toContain("experiment_plan");
@@ -129,6 +147,7 @@ describe("paperMinimumGate", () => {
     expect(checkIds).toContain("evidence_depth");
     expect(checkIds).toContain("evaluation_sample_size");
     expect(checkIds).toContain("seed_replication");
+    expect(checkIds).toContain("planned_execution_coverage");
     expect(checkIds).toContain("effect_granularity");
     expect(checkIds).toContain("training_budget_depth");
     expect(checkIds).toContain("result_artifacts");
@@ -398,6 +417,106 @@ describe("paperMinimumGate", () => {
     expect(result.paper_scale_diagnostics?.map((diagnostic) => diagnostic.id)).toEqual(
       expect.arrayContaining(["tiny_eval_sample", "missing_seed_replication", "single_item_gain", "thin_training_budget"])
     );
+  });
+
+  it("rejects positive incomplete comparisons when seed, execution, and training coverage are missing", () => {
+    const input = fullInput();
+    input.report.overview = {
+      objective_status: "not_met",
+      objective_summary: "Observed gain stays below the target.",
+      observed_value: 0.004,
+      execution_runs: 2
+    };
+    input.report.condition_comparisons = [
+      {
+        id: "candidate_vs_baseline",
+        label: "candidate vs baseline",
+        source: "metrics.condition_results",
+        metrics: [
+          {
+            key: "accuracy_delta_vs_baseline",
+            value: 0.004,
+            primary_value: 0.704,
+            baseline_value: 0.7
+          }
+        ],
+        hypothesis_supported: true,
+        summary: "The candidate has a small positive delta."
+      }
+    ];
+    input.report.metrics = {
+      run_config: {
+        max_steps: 30,
+        optimizer_steps: 30,
+        max_train_samples: 60
+      },
+      condition_results: [
+        { condition_marker: "baseline_condition", seeds: [], seed_count: 0 },
+        { condition_marker: "candidate_condition_a", seeds: [], seed_count: 0 }
+      ]
+    };
+    input.report.plan_context = {
+      selected_design: {
+        id: "design_a",
+        title: "Paired condition comparison",
+        summary: "Use 600 training examples for each run.",
+        selected_hypothesis_ids: ["hypothesis_a"],
+        metrics: ["accuracy_delta_vs_baseline"],
+        baselines: ["baseline_condition"],
+        implementation_notes: ["Keep the 600 training examples fixed across conditions."],
+        evaluation_steps: ["Execute all 6 planned training runs with planned seeds: 11, 12, 13."],
+        risks: [],
+        resource_notes: ["Expected planned training runs: 2 conditions x 3 seeds = 6 completed runs."]
+      },
+      shortlisted_designs: [],
+      design_notes: [],
+      implementation_notes: [],
+      evaluation_notes: [],
+      assumptions: []
+    };
+    input.report.statistical_summary = {
+      total_trials: 2,
+      executed_trials: 2,
+      cached_trials: 0,
+      confidence_intervals: [
+        {
+          metric_key: "candidate_condition_a.accuracy",
+          label: "candidate accuracy",
+          lower: 0.68,
+          upper: 0.73,
+          level: 0.95,
+          sample_size: 120,
+          source: "condition_metrics",
+          summary: "Item-level interval."
+        }
+      ],
+      stability_metrics: [],
+      effect_estimates: [
+        {
+          comparison_id: "candidate_vs_baseline",
+          metric_key: "accuracy_delta_vs_baseline",
+          delta: 0.004,
+          direction: "positive",
+          summary: "Small positive delta."
+        }
+      ],
+      notes: []
+    };
+
+    const result = evaluateMinimumGate(input);
+    const diagnosticIds = result.paper_scale_diagnostics?.map((diagnostic) => diagnostic.id) ?? [];
+
+    expect(diagnosticIds).toEqual(
+      expect.arrayContaining([
+        "missing_seed_replication",
+        "incomplete_planned_runs",
+        "training_budget_mismatch"
+      ])
+    );
+    expect(result.checks.find((check) => check.id === "evidence_depth")?.passed).toBe(false);
+    expect(result.checks.find((check) => check.id === "seed_replication")?.passed).toBe(false);
+    expect(result.checks.find((check) => check.id === "planned_execution_coverage")?.passed).toBe(false);
+    expect(result.checks.find((check) => check.id === "training_budget_depth")?.passed).toBe(false);
   });
 
   it("includes ISO timestamp in evaluated_at", () => {
