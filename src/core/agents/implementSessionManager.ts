@@ -5778,6 +5778,31 @@ export class ImplementSessionManager {
       return report;
     }
 
+    const preVerificationRunCommandArgparseAliasRepair = await repairPythonRunCommandArgparseAliases(
+      executionScriptPath,
+      attempt.runCommand
+    );
+    if (preVerificationRunCommandArgparseAliasRepair.repaired) {
+      onProgress?.(
+        preVerificationRunCommandArgparseAliasRepair.message ||
+          "Repaired runner run_command argparse aliases before the first verification execution.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            preVerificationRunCommandArgparseAliasRepair.message ||
+            "Repaired runner run_command argparse aliases before the first verification execution."
+        }
+      });
+    }
+
     onProgress?.(`Starting local verification via ${command}.`, {
       verificationCommand: command
     });
@@ -11387,6 +11412,12 @@ export class ImplementSessionManager {
       await repairPythonTrainingTargetAliasSurface(executionScriptPath);
     const choiceStyleTrainingRecordRepair =
       await repairPythonChoiceStyleTrainingRecordSurface(executionScriptPath);
+    const rootTrainingSequenceCollectorRepair =
+      await repairPythonRootTrainingSequenceCollectorSurface(executionScriptPath);
+    const boundedBatchedLowLevelChoiceEvaluationRepair =
+      await repairPythonBoundedBatchedLowLevelChoiceEvaluationSurface(executionScriptPath);
+    const singleConditionCoreResolverRepair =
+      await repairPythonSingleConditionCoreResolverSurface(executionScriptPath);
     const rawTaskDataBundleBridgeRepair =
       await repairPythonRawTaskDataBundleBridgeSurface(executionScriptPath);
     const taskTrainSplitFallbackRepair =
@@ -11525,6 +11556,10 @@ export class ImplementSessionManager {
       await repairPythonEntrypointPlannedRunDispatchSurface(executionScriptPath);
     const conditionExecutorRuntimeRepair =
       await repairPythonConditionExecutorRuntimeContextSurface(executionScriptPath);
+    const broadTaskLoaderRuntimeDispatchRepair =
+      await repairPythonBroadTaskLoaderRuntimeDispatchSurface(executionScriptPath);
+    const stagedFinalCliHandoffRepair =
+      await repairPythonStagedFinalCliHandoffSurface(executionScriptPath);
     const availableModelSelectorRepair =
       await repairPythonAvailableModelSelectorSurface(executionScriptPath);
     const entrypointConditionPathAliasesRepair =
@@ -11710,6 +11745,9 @@ export class ImplementSessionManager {
         dataclassTrainingExampleCoercionRepair,
         trainingTargetAliasRepair,
         choiceStyleTrainingRecordRepair,
+        rootTrainingSequenceCollectorRepair,
+        boundedBatchedLowLevelChoiceEvaluationRepair,
+        singleConditionCoreResolverRepair,
         rawTaskDataBundleBridgeRepair,
         taskTrainSplitFallbackRepair,
         conditionMarkerDefaultKwargRepair,
@@ -11777,6 +11815,8 @@ export class ImplementSessionManager {
         plannedRunSpecMappingRepair,
         plannedRunDispatchRepair,
         conditionExecutorRuntimeRepair,
+        broadTaskLoaderRuntimeDispatchRepair,
+        stagedFinalCliHandoffRepair,
         availableModelSelectorRepair,
         entrypointConditionPathAliasesRepair,
         publicStudySiblingExperimentBackendRepair,
@@ -19870,6 +19910,10 @@ async function applyRecoverableBundleDeterministicRepairs(params: {
     await repairPythonEntrypointLockedConditionSeedSweepCandidateSurface(params.scriptPath),
     await repairPythonBaselineFirstConditionRuntimeInputSurface(params.scriptPath),
     await repairPythonDataclassTrainingExampleCoercionSurface(params.scriptPath),
+    await repairPythonChoiceStyleTrainingRecordSurface(params.scriptPath),
+    await repairPythonRootTrainingSequenceCollectorSurface(params.scriptPath),
+    await repairPythonBoundedBatchedLowLevelChoiceEvaluationSurface(params.scriptPath),
+    await repairPythonSingleConditionCoreResolverSurface(params.scriptPath),
     await repairPythonConditionSuccessStatusAliasSurface(params.scriptPath),
     await repairPythonMetricsPayloadProjectionSurface(params.scriptPath),
     await repairPythonCompletedMetricsReplayEntrypointSurface(
@@ -28374,6 +28418,48 @@ export async function repairPythonChoiceStyleTrainingRecordSurface(
   if (
     !source.includes(marker) &&
     source.includes("def normalize_training_text(") &&
+    source.includes("def _field(") &&
+    source.includes("def _choice_payload(") &&
+    source.includes("def _label_to_index(")
+  ) {
+    let repairedChoiceHelperTrainingText = false;
+    const choiceStyleFallback = [
+      `    # ${marker}`,
+      "    choice_prompt = _field(record, 'question', 'prompt', 'ctx', 'context', 'text', 'content')",
+      "    choice_context = _field(record, 'activity_label', 'ctx_a', 'ctx_b')",
+      "    if choice_context and str(choice_context).strip() not in str(choice_prompt or ''):",
+      "        choice_prompt = f'{choice_context}\\n{choice_prompt or \"\"}'.strip()",
+      "    choice_texts, choice_labels = _choice_payload(record)",
+      "    raw_label = _field(record, 'gold', 'label', 'answer_index', 'correct_index', 'answerKey', 'answer', 'target')",
+      "    label_index = _label_to_index(raw_label, choice_labels, len(choice_texts))",
+      "    if choice_prompt and len(choice_texts) >= 2 and label_index is not None:",
+      "        rendered_choices = '\\n'.join(f'{chr(65 + idx)}. {choice}' for idx, choice in enumerate(choice_texts))",
+      "        return f'Instruction: {choice_prompt}\\nChoices:\\n{rendered_choices}\\nResponse: {choice_texts[label_index]}'",
+      ""
+    ].join("\n");
+    const nextSource = replaceAllPythonTopLevelFunctionSources(source, "normalize_training_text", (functionSource) => {
+      if (functionSource.includes(marker)) {
+        return functionSource;
+      }
+      const finalReturnPattern = /\n(\s{4})return\s+(["'])\2\s*$/u;
+      if (!finalReturnPattern.test(functionSource)) {
+        return functionSource;
+      }
+      repairedChoiceHelperTrainingText = true;
+      return functionSource.replace(finalReturnPattern, `\n${choiceStyleFallback}$1return ""`);
+    });
+    if (repairedChoiceHelperTrainingText && nextSource !== source && nextSource.includes(marker)) {
+      await fs.writeFile(scriptPath, nextSource, "utf8");
+      return {
+        repaired: true,
+        message: `Converted helper-composed choice-style training records into supervised texts in ${path.basename(scriptPath)} before handoff.`
+      };
+    }
+  }
+
+  if (
+    !source.includes(marker) &&
+    source.includes("def normalize_training_text(") &&
     /\breturn\s+text\s+or\s+None\b/u.test(source)
   ) {
     let repairedPlainOptionalTrainingText = false;
@@ -28598,6 +28684,459 @@ export async function repairPythonChoiceStyleTrainingRecordSurface(
   return {
     repaired: true,
     message: `Converted labeled choice-style training records into supervised texts in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonRootTrainingSequenceCollectorSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_root_training_sequence_collector_surface";
+  if (source.includes(marker)) {
+    return { repaired: false };
+  }
+
+  const candidates = collectPythonTopLevelFunctionDefinitions(source)
+    .filter((definition) => /(?:collect.*train.*text|train.*text.*collect)/iu.test(definition.name))
+    .map((definition) => {
+      const functionSource = source.slice(definition.startOffset, definition.endOffset);
+      const rootParameter = extractPythonParameterNames(definition.signature)[0];
+      if (
+        !rootParameter ||
+        !functionSource.includes("def visit(") ||
+        !functionSource.includes("visit(pools)")
+      ) {
+        return undefined;
+      }
+      return { definition, functionSource, rootParameter };
+    })
+    .filter(
+      (
+        candidate
+      ): candidate is {
+        definition: PythonTopLevelFunctionDefinition;
+        functionSource: string;
+        rootParameter: string;
+      } => Boolean(candidate)
+    )
+    .sort((left, right) => right.definition.startOffset - left.definition.startOffset);
+  if (candidates.length === 0) {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  const repairedNames: string[] = [];
+  for (const candidate of candidates) {
+    const visitPoolsPattern = /\n([ \t]+)visit\(pools\)/u;
+    if (!visitPoolsPattern.test(candidate.functionSource)) {
+      continue;
+    }
+    const repairedFunction = candidate.functionSource.replace(
+      visitPoolsPattern,
+      (_full: string, indent: string) =>
+        [
+          "",
+          `${indent}# ${marker}`,
+          `${indent}if isinstance(${candidate.rootParameter}, (str, list, tuple)):`,
+          `${indent}    visit(${candidate.rootParameter})`,
+          `${indent}visit(pools)`
+        ].join("\n")
+    );
+    if (repairedFunction === candidate.functionSource) {
+      continue;
+    }
+    nextSource =
+      nextSource.slice(0, candidate.definition.startOffset) +
+      repairedFunction +
+      nextSource.slice(candidate.definition.endOffset);
+    repairedNames.push(candidate.definition.name);
+  }
+
+  if (nextSource === source || repairedNames.length === 0 || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Enabled flat root training sequences in generated collectors (${repairedNames.join(", ")}) in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonBoundedBatchedLowLevelChoiceEvaluationSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_bounded_batched_low_level_choice_evaluation_surface";
+  if (source.includes(marker)) {
+    const previousDefault =
+      "choice_batch_size = max(1, int(os.environ.get('AUTOLABOS_EVAL_CHOICE_BATCH_SIZE', '8')))";
+    const currentDefault =
+      "choice_batch_size = max(1, int(os.environ.get('AUTOLABOS_EVAL_CHOICE_BATCH_SIZE', '16')))";
+    const tunedSource = source
+      .replace(previousDefault, currentDefault)
+      .replace(
+        "    except Exception:\n        choice_batch_size = 8\n    prepared = []",
+        "    except Exception:\n        choice_batch_size = 16\n    prepared = []"
+      );
+    if (tunedSource !== source && tunedSource.includes(currentDefault)) {
+      await fs.writeFile(scriptPath, tunedSource, "utf8");
+      return {
+        repaired: true,
+        message: `Raised the default low-level choice batch while preserving its environment override in ${path.basename(scriptPath)} before handoff.`
+      };
+    }
+    return { repaired: false };
+  }
+
+  const definition = collectPythonTopLevelFunctionDefinitions(source).find(
+    (candidate) => candidate.name === "_autolabos_entrypoint_low_level_choice_metric_rows"
+  );
+  if (!definition) {
+    return { repaired: false };
+  }
+  const functionSource = source.slice(definition.startOffset, definition.endOffset);
+  if (
+    !functionSource.includes("for choice_key, choice_text in choice_pairs:") ||
+    !functionSource.includes("model(**batch)") ||
+    !functionSource.includes("_autolabos_entrypoint_loss_float")
+  ) {
+    return { repaired: false };
+  }
+
+  const scoringStart = functionSource.indexOf("    max_length = int(");
+  const rowsReturnNeedle = "\n    if rows:\n        return rows";
+  const rowsReturnStart = functionSource.indexOf(rowsReturnNeedle, scoringStart);
+  if (scoringStart < 0 || rowsReturnStart < 0) {
+    return { repaired: false };
+  }
+  const rowsReturnEnd = rowsReturnStart + rowsReturnNeedle.length;
+
+  const helperSource = [
+    `# ${marker}`,
+    "_AUTOLABOS_LOW_LEVEL_EVAL_STARTED_MONOTONIC = time.monotonic()",
+    "",
+    "def _autolabos_batched_choice_metric_rows(model, tokenizer, prepared_examples, device, torch_mod, max_length, choice_batch_size, deadline_monotonic, marker, seed_value):",
+    "    encoded = []",
+    "    failures = []",
+    "    for example_index, item in enumerate(list(prepared_examples or [])):",
+    "        prompt = str(item.get('prompt') or '')",
+    "        try:",
+    "            prompt_ids = list(tokenizer(prompt, add_special_tokens=True)['input_ids'])",
+    "        except Exception as exc:",
+    "            failures.append(f\"{item.get('task')}:{item.get('example_id')}:prompt_tokenization_failed:{type(exc).__name__}:{exc}\")",
+    "            continue",
+    "        for choice_key, choice_text in list(item.get('choice_pairs') or []):",
+    "            try:",
+    "                choice_ids = list(tokenizer(' ' + str(choice_text), add_special_tokens=False)['input_ids'])",
+    "                input_ids = prompt_ids + choice_ids",
+    "                mask_prefix = len(prompt_ids)",
+    "                if len(input_ids) > max_length:",
+    "                    trim = len(input_ids) - max_length",
+    "                    input_ids = input_ids[trim:]",
+    "                    mask_prefix = max(0, mask_prefix - trim)",
+    "                labels = [-100] * mask_prefix + input_ids[mask_prefix:]",
+    "                if not input_ids or all(label == -100 for label in labels):",
+    "                    raise ValueError('choice produced no scoreable target tokens')",
+    "                encoded.append({'example_index': example_index, 'choice_key': choice_key, 'input_ids': input_ids, 'labels': labels})",
+    "            except Exception as exc:",
+    "                failures.append(f\"{item.get('task')}:{item.get('example_id')}:{choice_key}:tokenization_failed:{type(exc).__name__}:{exc}\")",
+    "    losses_by_example = {}",
+    "    pad_id = getattr(tokenizer, 'pad_token_id', None)",
+    "    if pad_id is None:",
+    "        pad_id = getattr(tokenizer, 'eos_token_id', None)",
+    "    if pad_id is None:",
+    "        pad_id = 0",
+    "    batch_size = max(1, int(choice_batch_size or 1))",
+    "    no_grad = getattr(torch_mod, 'no_grad', None)",
+    "    for offset in range(0, len(encoded), batch_size):",
+    "        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:",
+    "            return [], failures, True",
+    "        chunk = encoded[offset:offset + batch_size]",
+    "        width = max(len(item['input_ids']) for item in chunk)",
+    "        input_rows = []",
+    "        attention_rows = []",
+    "        label_rows = []",
+    "        for item in chunk:",
+    "            padding = width - len(item['input_ids'])",
+    "            input_rows.append(item['input_ids'] + [int(pad_id)] * padding)",
+    "            attention_rows.append([1] * len(item['input_ids']) + [0] * padding)",
+    "            label_rows.append(item['labels'] + [-100] * padding)",
+    "        try:",
+    "            input_tensor = torch_mod.tensor(input_rows, dtype=getattr(torch_mod, 'long', None)).to(device)",
+    "            attention_tensor = torch_mod.tensor(attention_rows, dtype=getattr(torch_mod, 'long', None)).to(device)",
+    "            label_tensor = torch_mod.tensor(label_rows, dtype=getattr(torch_mod, 'long', None)).to(device)",
+    "            if callable(no_grad):",
+    "                with no_grad():",
+    "                    output = model(input_ids=input_tensor, attention_mask=attention_tensor)",
+    "            else:",
+    "                output = model(input_ids=input_tensor, attention_mask=attention_tensor)",
+    "            logits = getattr(output, 'logits', None)",
+    "            if logits is None:",
+    "                raise RuntimeError('batched choice scoring model output did not expose logits')",
+    "            shift_logits = logits[:, :-1, :].contiguous().float()",
+    "            shift_labels = label_tensor[:, 1:].contiguous()",
+    "            token_losses = torch_mod.nn.functional.cross_entropy(",
+    "                shift_logits.view(-1, shift_logits.size(-1)),",
+    "                shift_labels.view(-1),",
+    "                reduction='none',",
+    "                ignore_index=-100,",
+    "            ).view(shift_labels.size(0), -1)",
+    "            valid = shift_labels.ne(-100)",
+    "            denominators = valid.sum(dim=1).clamp(min=1)",
+    "            sequence_losses = (token_losses * valid.to(token_losses.dtype)).sum(dim=1) / denominators",
+    "            loss_values = sequence_losses.detach().cpu().tolist()",
+    "            for item, loss_value in zip(chunk, loss_values):",
+    "                losses_by_example.setdefault(item['example_index'], []).append((item['choice_key'], float(loss_value)))",
+    "        except Exception as exc:",
+    "            for item in chunk:",
+    "                example = prepared_examples[item['example_index']]",
+    "                failures.append(f\"{example.get('task')}:{example.get('example_id')}:{item.get('choice_key')}:batched_score_failed:{type(exc).__name__}:{exc}\")",
+    "    rows = []",
+    "    for example_index, item in enumerate(list(prepared_examples or [])):",
+    "        losses = losses_by_example.get(example_index) or []",
+    "        if not losses:",
+    "            continue",
+    "        prediction = min(losses, key=lambda pair: pair[1])[0]",
+    "        gold_key = item.get('gold_key')",
+    "        correct = str(prediction) == str(gold_key)",
+    "        rows.append({'condition_marker': marker, 'status': 'completed', 'accuracy': 1.0 if correct else 0.0, 'seed': seed_value, 'seed_id': seed_value, 'correct': bool(correct), 'task': item.get('task'), 'example_id': item.get('example_id'), 'prediction': prediction, 'gold_key': gold_key, 'raw_evidence': {'condition_marker': marker, 'seed': seed_value, 'seed_id': seed_value, 'task': item.get('task'), 'example_id': item.get('example_id'), 'prediction': prediction, 'gold_key': gold_key, 'correct': bool(correct), 'choice_losses': {str(key): float(loss) for key, loss in losses}}})",
+    "    return rows, failures, False",
+    ""
+  ].join("\n");
+
+  const scoringBlock = [
+    "    max_length = int(_autolabos_entrypoint_get(runtime_context, 'max_seq_length', _autolabos_entrypoint_get(runtime_context, 'max_length', 256)) or 256)",
+    "    rows = []",
+    "    failures = []",
+    "    runtime_budget = _autolabos_entrypoint_budget(config, config)",
+    "    timeout_sec = _autolabos_entrypoint_metric_float(_autolabos_entrypoint_get(runtime_budget, 'timeout_sec', globals().get('DEFAULT_TIMEOUT_SEC', 1800)), 1800.0)",
+    "    timeout_sec = max(1.0, float(timeout_sec or 1800.0))",
+    "    reserve_sec = min(180.0, max(1.0, timeout_sec * 0.1))",
+    "    deadline_monotonic = _AUTOLABOS_LOW_LEVEL_EVAL_STARTED_MONOTONIC + max(1.0, timeout_sec - reserve_sec)",
+    "    try:",
+    "        example_batch_size = max(1, int(os.environ.get('AUTOLABOS_EVAL_EXAMPLE_BATCH_SIZE', '8')))",
+    "    except Exception:",
+    "        example_batch_size = 8",
+    "    try:",
+    "        choice_batch_size = max(1, int(os.environ.get('AUTOLABOS_EVAL_CHOICE_BATCH_SIZE', '16')))",
+    "    except Exception:",
+    "        choice_batch_size = 16",
+    "    prepared = []",
+    "    timed_out = False",
+    "    def flush_prepared():",
+    "        nonlocal prepared, timed_out",
+    "        if not prepared or timed_out:",
+    "            return",
+    "        batch_rows, batch_failures, batch_timed_out = _autolabos_batched_choice_metric_rows(",
+    "            model, tokenizer, prepared, device, torch_mod, max_length, choice_batch_size,",
+    "            deadline_monotonic, marker, seed_value,",
+    "        )",
+    "        rows.extend(batch_rows)",
+    "        failures.extend(batch_failures)",
+    "        timed_out = bool(batch_timed_out)",
+    "        prepared = []",
+    "    for task_name, examples in task_items:",
+    "        for example_index, example in enumerate(list(examples or [])):",
+    "            if time.monotonic() >= deadline_monotonic:",
+    "                timed_out = True",
+    "                break",
+    "            prompt = _autolabos_entrypoint_prompt_text(example)",
+    "            choice_pairs = _autolabos_entrypoint_choice_pairs(example)",
+    "            gold_key = _autolabos_entrypoint_gold_key(example, choice_pairs)",
+    "            example_id = str(_autolabos_entrypoint_example_value(example, ('example_id', 'id', 'source_index', 'index'), example_index))",
+    "            if not prompt or len(choice_pairs) < 2 or not gold_key:",
+    "                failures.append(f'{task_name}:{example_id}:unusable_multiple_choice_example')",
+    "                continue",
+    "            prepared.append({'task': task_name, 'example_id': example_id, 'prompt': prompt, 'choice_pairs': choice_pairs, 'gold_key': gold_key})",
+    "            if len(prepared) >= example_batch_size:",
+    "                flush_prepared()",
+    "                if timed_out:",
+    "                    break",
+    "        flush_prepared()",
+    "        if timed_out:",
+    "            break",
+    "    if timed_out:",
+    "        return [{'condition_marker': marker, 'status': 'failed', 'failure_stage': 'evaluation_timeout', 'failure_reason': 'evaluation deadline exhausted before full required evidence', 'raw_evidence': {'partial_evaluated_count': len(rows), 'required_evaluation_count': preflight_usable_count, 'deadline_monotonic': deadline_monotonic}}]",
+    "    if len(rows) != preflight_usable_count:",
+    "        return [{'condition_marker': marker, 'status': 'failed', 'failure_stage': 'evaluation_incomplete', 'failure_reason': '; '.join(failures[-3:] or [f'batched evaluation produced {len(rows)} of {preflight_usable_count} required rows']), 'raw_evidence': {'partial_evaluated_count': len(rows), 'required_evaluation_count': preflight_usable_count}}]",
+    "    if rows:",
+    "        return rows"
+  ].join("\n");
+
+  const repairedFunction =
+    functionSource.slice(0, scoringStart) +
+    scoringBlock +
+    functionSource.slice(rowsReturnEnd);
+  const nextSource =
+    source.slice(0, definition.startOffset) +
+    helperSource +
+    "\n" +
+    repairedFunction +
+    source.slice(definition.endOffset);
+  if (
+    nextSource === source ||
+    !nextSource.includes(marker) ||
+    !nextSource.includes("evaluation deadline exhausted before full required evidence")
+  ) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Batched low-level choice scoring and enforced the governed evaluation deadline in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonSingleConditionCoreResolverSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_single_condition_core_resolver_surface";
+  const definitions = collectPythonTopLevelFunctionDefinitions(source);
+  const wrapperDefinition = definitions.find((definition) => definition.name === "run_single_condition");
+  const wrapperSource = wrapperDefinition
+    ? source.slice(wrapperDefinition.startOffset, wrapperDefinition.endOffset)
+    : undefined;
+  if (
+    !wrapperSource ||
+    wrapperSource.includes(marker) ||
+    !wrapperSource.includes("single-condition core flow helper is not available") ||
+    !wrapperSource.includes("globals().get(\"_run_single_condition_core\")") ||
+    !wrapperSource.includes('"shared_context": runtime,')
+  ) {
+    return { repaired: false };
+  }
+
+  const runtimeAliases = new Set(["runtime", "runtime_config", "config", "ctx", "context"]);
+  const conditionAliases = new Set(["condition", "condition_spec", "spec", "row"]);
+  const dataAliases = new Set([
+    "task_bundle", "data_bundle", "dataset_bundle", "bundle", "train_bundle", "training_bundle"
+  ]);
+  const compatibleNames = definitions
+    .filter((definition) => {
+      if (definition.name === "run_single_condition") return false;
+      if (!/(?:run|execute|train).*(?:condition)/iu.test(definition.name)) return false;
+      const parameters = new Set(extractPythonParameterNames(definition.signature));
+      return (
+        [...runtimeAliases].some((name) => parameters.has(name)) &&
+        [...conditionAliases].some((name) => parameters.has(name)) &&
+        [...dataAliases].some((name) => parameters.has(name))
+      );
+    })
+    .map((definition) => definition.name);
+  const preferredNames = [
+    "execute_condition_once",
+    "execute_single_condition_once",
+    "run_condition_once",
+    "run_single_condition_once",
+    "run_condition_model_execution",
+    "execute_condition_model_execution"
+  ];
+  const candidateNames = [
+    ...preferredNames.filter((name) => compatibleNames.includes(name)),
+    ...compatibleNames.filter((name) => !preferredNames.includes(name))
+  ].filter((name, index, names) => names.indexOf(name) === index);
+  if (candidateNames.length === 0) {
+    return { repaired: false };
+  }
+
+  const corePattern = /(\n    core = \(\n)([\s\S]*?)(\n    \)\n)/u;
+  const coreMatch = wrapperSource.match(corePattern);
+  if (!coreMatch) {
+    return { repaired: false };
+  }
+  const existingCoreBlock = coreMatch[2] || "";
+  const missingCandidates = candidateNames.filter(
+    (name) => !new RegExp(`globals\\(\\)\\.get\\(["']${escapeRegExpLiteral(name)}["']\\)`, "u").test(existingCoreBlock)
+  );
+  if (missingCandidates.length === 0) {
+    return { repaired: false };
+  }
+
+  const runtimeModelBlock = [
+    `    # ${marker}`,
+    "    def _autolabos_single_condition_runtime_value(*names):",
+    "        for name in names:",
+    "            if runtime is None:",
+    "                continue",
+    "            try:",
+    "                value = runtime.get(name) if hasattr(runtime, 'get') else getattr(runtime, name, None)",
+    "            except Exception:",
+    "                value = None",
+    "            if value not in (None, '') and not callable(value):",
+    "                return value",
+    "        return None",
+    "    selected_model_id = _autolabos_single_condition_runtime_value(",
+    "        'selected_model_id', 'selected_model_name', 'model_id', 'model_name',",
+    "        'preferred_model_id', 'preferred_model_name', 'base_model_id', 'base_model_name',",
+    "        'fallback_model_id', 'fallback_model_name',",
+    "    )",
+    ""
+  ].join("\n");
+  const candidateLines = missingCandidates
+    .map((name) => `        or globals().get(\"${name}\")`)
+    .join("\n");
+  let repairedWrapper = wrapperSource.replace(
+    corePattern,
+    (_full: string, opening: string, body: string, closing: string) =>
+      `${opening}${body}\n${candidateLines}${closing}${runtimeModelBlock}`
+  );
+  repairedWrapper = repairedWrapper.replace(
+    '            "shared_context": runtime,',
+    [
+      '            "shared_context": runtime,',
+      '            "model_id": selected_model_id,',
+      '            "model_name": selected_model_id,',
+      '            "selected_model_id": selected_model_id,'
+    ].join("\n")
+  );
+  if (repairedWrapper === wrapperSource || !repairedWrapper.includes(marker)) {
+    return { repaired: false };
+  }
+
+  const nextSource = wrapperDefinition
+    ? `${source.slice(0, wrapperDefinition.startOffset)}${repairedWrapper}${source.slice(wrapperDefinition.endOffset)}`
+    : source;
+  if (nextSource === source || !nextSource.includes(marker)) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Connected the public single-condition wrapper to compatible concrete workers (${missingCandidates.join(", ")}) in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -53142,6 +53681,10 @@ export async function repairPythonRunCommandArgparseAliases(
     {
       commandFlag: "--baseline-marker",
       parserFlag: "--baseline"
+    },
+    {
+      commandFlag: "--full-eval",
+      parserFlag: "--full-evaluation"
     }
   ].filter((pair) => commandFlags.has(pair.commandFlag));
   let runtimeOptions = [
@@ -53220,6 +53763,14 @@ export async function repairPythonRunCommandArgparseAliases(
     {
       commandFlag: "--full-evaluation",
       line: "parser.add_argument('--full-evaluation', action='store_true', default=False, help='Require the full evaluation path for AutoLabOS handoff.')"
+    },
+    {
+      commandFlag: "--full-eval",
+      line: "parser.add_argument('--full-evaluation', \"--full-eval\", dest='full_evaluation', action='store_true', default=False, help='Require the full evaluation path for AutoLabOS handoff.')"
+    },
+    {
+      commandFlag: "--baseline-first",
+      line: "parser.add_argument('--baseline-first', action='store_true', default=False, help='Require governed baseline-first execution for AutoLabOS handoff.')"
     },
     {
       commandFlag: "--tuned-only",
@@ -59169,14 +59720,10 @@ export async function repairPythonNumericChoiceLabelPrecedenceSurface(scriptPath
   }
 
   const repairMarker = "_autolabos_numeric_choice_label_precedence_surface";
-  if (source.includes(repairMarker)) {
-    return { repaired: false };
-  }
-
   const numericBeforeLabelPattern =
     /^([ \t]*)if\s+([A-Za-z_]\w*)\.isdigit\(\):\r?\n([ \t]+)([A-Za-z_]\w*)\s*=\s*int\(\2\)\r?\n\1elif\s+\2\s+in\s+([A-Za-z_]\w*):\r?\n\3\4\s*=\s*\5\.index\(\2\)/gmu;
   let repaired = false;
-  const nextSource = source.replace(
+  let nextSource = source.replace(
     numericBeforeLabelPattern,
     (_match: string, indent: string, rawLabel: string, bodyIndent: string, goldIndex: string, choiceLabels: string) => {
       repaired = true;
@@ -59189,6 +59736,40 @@ export async function repairPythonNumericChoiceLabelPrecedenceSurface(scriptPath
       ].join("\n");
     }
   );
+
+  const directReturnNumericPattern =
+    /^([ \t]*)if\s+([A-Za-z_]\w*)\.isdigit\(\):\r?\n([ \t]+)([A-Za-z_]\w*)\s*=\s*int\(\2\)\r?\n\3return\s+\4\s+if\s+[^\r\n]+\s+else\s+None/gmu;
+  const labelParameterAliases = new Set(["choice_labels", "labels", "option_labels"]);
+  for (const definition of collectPythonTopLevelFunctionDefinitions(nextSource)) {
+    const labelParameter = extractPythonParameterNames(definition.signature)
+      .find((parameter) => labelParameterAliases.has(parameter));
+    if (!labelParameter) continue;
+    const functionSource = extractPythonTopLevelFunctionSource(nextSource, definition.name);
+    if (
+      !functionSource ||
+      functionSource.includes(repairMarker) ||
+      !new RegExp(`enumerate\\(\\s*${escapeRegex(labelParameter)}\\s*\\)`, "u").test(functionSource) ||
+      !directReturnNumericPattern.test(functionSource)
+    ) continue;
+    directReturnNumericPattern.lastIndex = 0;
+    const repairedFunction = functionSource.replace(
+      directReturnNumericPattern,
+      (match: string, indent: string, rawLabel: string, bodyIndent: string) => {
+        repaired = true;
+        return [
+          `${indent}# ${repairMarker}`,
+          `${indent}for _autolabos_choice_index, _autolabos_choice_label in enumerate(${labelParameter}):`,
+          `${bodyIndent}if ${rawLabel}.upper() == str(_autolabos_choice_label).strip().upper():`,
+          `${bodyIndent}    return _autolabos_choice_index`,
+          match
+        ].join("\n");
+      }
+    );
+    if (repairedFunction !== functionSource) {
+      nextSource = replacePythonTopLevelFunctionSource(nextSource, definition.name, repairedFunction);
+    }
+    directReturnNumericPattern.lastIndex = 0;
+  }
   if (!repaired || nextSource === source || !nextSource.includes(repairMarker)) {
     return { repaired: false };
   }
@@ -62074,12 +62655,53 @@ export async function repairPythonTaskBundleEvalSplitCoverageSurface(scriptPath?
     "        eval_tasks[task] = examples",
     ""
   ].join("\n");
+  const normalizedTaskLoopNeedle = [
+    "        ds = _load_hf_split(name, cfg, eval_split, allow_download)",
+    "        examples, diag = _normalize_task(task, ds, eval_split)",
+    "        report[f\"{task}_eval\"] = diag",
+    "        required = MINIMUM_EVAL_EXAMPLES_PER_TASK[task]",
+    "        if len(examples) < required:",
+    "            raise DataAccessError(\"schema_normalization_failed\", f\"{task} produced {len(examples)} usable evaluation examples; required {required}\", report)",
+    "        eval_examples[task] = examples",
+    ""
+  ].join("\n");
+  const normalizedTaskLoopReplacement = [
+    `        # ${marker}`,
+    "        required = MINIMUM_EVAL_EXAMPLES_PER_TASK[task]",
+    "        split_attempts: List[Dict[str, Any]] = []",
+    "        examples: List[MultipleChoiceExample] = []",
+    "        diag: Dict[str, Any] = {}",
+    "        selected_split = eval_split",
+    "        for candidate_split in dict.fromkeys((eval_split, 'validation', 'dev', 'test')):",
+    "            try:",
+    "                candidate_ds = _load_hf_split(name, cfg, candidate_split, allow_download)",
+    "            except Exception as exc:",
+    "                split_attempts.append({'split': candidate_split, 'load_error': repr(exc)})",
+    "                continue",
+    "            candidate_examples, candidate_diag = _normalize_task(task, candidate_ds, candidate_split)",
+    "            split_attempts.append({'split': candidate_split, 'raw_seen': candidate_diag.get('raw_seen'), 'normalized': len(candidate_examples)})",
+    "            if len(candidate_examples) > len(examples):",
+    "                examples = candidate_examples",
+    "                diag = dict(candidate_diag)",
+    "                selected_split = candidate_split",
+    "            if len(candidate_examples) >= required:",
+    "                break",
+    "        diag.update({'requested_split': eval_split, 'selected_split': selected_split, 'split_attempts': split_attempts, 'required': required})",
+    "        report[f\"{task}_eval\"] = diag",
+    "        if len(examples) < required:",
+    "            raise DataAccessError(\"schema_normalization_failed\", f\"{task} has no labeled evaluation split meeting required {required}; attempts={split_attempts}\", report)",
+    "        eval_examples[task] = examples",
+    ""
+  ].join("\n");
   let nextSource = source.replace(needle, replacement);
   if (nextSource === source) {
     nextSource = source.replace(directSplitNeedle, directSplitReplacement);
   }
   if (nextSource === source) {
     nextSource = source.replace(fixedSplitNeedle, fixedSplitReplacement);
+  }
+  if (nextSource === source) {
+    nextSource = source.replace(normalizedTaskLoopNeedle, normalizedTaskLoopReplacement);
   }
   if (nextSource === source) return { repaired: false };
   await fs.writeFile(scriptPath, nextSource, "utf8");
@@ -62503,33 +63125,48 @@ export async function repairPythonConditionExecutorRuntimeContextSurface(scriptP
     return { repaired: false };
   }
   const marker = "_autolabos_condition_executor_runtime_context_surface";
-  if (source.includes(marker)) return { repaired: false };
   const candidateNames = [
     "execute_one_condition_run", "run_one_condition", "run_single_condition",
     "execute_single_condition", "execute_condition", "execute_one_run"
   ];
   let nextSource = source;
   const repairedNames: string[] = [];
+  const selfHealedNames: string[] = [];
+  const injectedRuntimeLine =
+    "    runtime = _autolabos_condition_executor_runtime_context(runtime, spec if 'spec' in locals() else None)";
   for (const functionName of candidateNames) {
     const functionSource = extractPythonTopLevelFunctionSource(nextSource, functionName);
+    if (!functionSource) continue;
+    const definition = collectPythonTopLevelFunctionDefinitions(nextSource)
+      .find((candidate) => candidate.name === functionName);
+    const parameterNames = new Set(extractPythonParameterNames(definition?.signature || ""));
+    if (!parameterNames.has("runtime")) {
+      if (!functionSource.includes(injectedRuntimeLine)) continue;
+      const healedFunction = functionSource.replace(`${injectedRuntimeLine}\n`, "");
+      if (healedFunction === functionSource) continue;
+      nextSource = replacePythonTopLevelFunctionSource(nextSource, functionName, healedFunction);
+      selfHealedNames.push(functionName);
+      continue;
+    }
     if (
-      !functionSource ||
-      !/\bruntime\.(?:paths|budget|device|model_id|local_files_only)\b/u.test(functionSource) ||
-      !new RegExp(String.raw`^def\s+${escapeRegex(functionName)}\s*\([\s\S]*?\bruntime\b`, "u").test(functionSource)
+      source.includes(marker) ||
+      functionSource.includes(injectedRuntimeLine) ||
+      !/\bruntime\.(?:paths|budget|device|model_id|local_files_only)\b/u.test(functionSource)
     ) continue;
     const headerPattern = new RegExp(
       String.raw`^(def\s+${escapeRegex(functionName)}\s*\([\s\S]*?\)(?:\s*->\s*[^:\n]+)?\s*:)`,
       "u"
     );
+    const specExpression = parameterNames.has("spec") ? "spec" : "None";
     const repairedFunction = functionSource.replace(
       headerPattern,
-      "$1\n    runtime = _autolabos_condition_executor_runtime_context(runtime, spec if 'spec' in locals() else None)"
+      `$1\n    runtime = _autolabos_condition_executor_runtime_context(runtime, ${specExpression})`
     );
     if (repairedFunction === functionSource) continue;
     nextSource = replacePythonTopLevelFunctionSource(nextSource, functionName, repairedFunction);
     repairedNames.push(functionName);
   }
-  if (repairedNames.length === 0 || nextSource === source) return { repaired: false };
+  if (repairedNames.length === 0 && selfHealedNames.length === 0) return { repaired: false };
   const helper = [
     "",
     `# ${marker}`,
@@ -62559,12 +63196,268 @@ export async function repairPythonConditionExecutorRuntimeContextSurface(scriptP
     "    return runtime",
     ""
   ].join("\n");
-  nextSource = insertPythonTopLevelHelperAfterImports(nextSource, helper);
-  if (nextSource === source || !nextSource.includes(marker)) return { repaired: false };
+  if (repairedNames.length > 0 && !nextSource.includes(marker)) {
+    nextSource = insertPythonTopLevelHelperAfterImports(nextSource, helper);
+  }
+  if (nextSource === source) return { repaired: false };
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  const actions = [
+    repairedNames.length > 0 ? `materialized runtime contexts for ${repairedNames.join(", ")}` : undefined,
+    selfHealedNames.length > 0 ? `removed invalid runtime normalization from ${selfHealedNames.join(", ")}` : undefined
+  ].filter((value): value is string => Boolean(value));
+  return {
+    repaired: true,
+    message: `Aligned condition executor runtime contexts (${actions.join("; ")}) in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonBroadTaskLoaderRuntimeDispatchSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") return { repaired: false };
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_broad_task_loader_runtime_dispatch_surface";
+  if (source.includes(marker) || !source.includes("_call_boundary")) return { repaired: false };
+
+  const runtimeParameterNames = new Set(["args", "config", "runtime", "runtime_config"]);
+  const disallowedBroadParameters = new Set(["source_spec", "spec", "task", "task_name", "task_spec"]);
+  const definitions = collectPythonTopLevelFunctionDefinitions(source);
+  const broadLoaders = definitions
+    .map((definition) => ({
+      definition,
+      parameters: extractPythonParameterNames(definition.signature)
+    }))
+    .filter(({ definition, parameters }) =>
+      /^(?:load|materialize).*(?:data|dataset|task)/iu.test(definition.name) &&
+      parameters.length > 0 &&
+      runtimeParameterNames.has(parameters[0] || "") &&
+      parameters.every((parameter) => !disallowedBroadParameters.has(parameter))
+    );
+  if (broadLoaders.length === 0) return { repaired: false };
+
+  const broadLoaderNames = new Set(broadLoaders.map(({ definition }) => definition.name));
+  for (const prepareDefinition of definitions) {
+    const prepareFunction = extractPythonTopLevelFunctionSource(source, prepareDefinition.name);
+    if (!prepareFunction || !prepareFunction.includes("_call_boundary")) continue;
+    const prepareParameters = new Set(extractPythonParameterNames(prepareDefinition.signature));
+
+    for (const { definition: loaderDefinition } of broadLoaders) {
+      if (!prepareFunction.includes(JSON.stringify(loaderDefinition.name))) continue;
+      const callPattern = new RegExp(
+        String.raw`^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*=\s*_call_boundary\(\(\s*([^\n]*${escapeRegex(loaderDefinition.name)}[^\n]*)\)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*runtime\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$`,
+        "mu"
+      );
+      const callMatch = callPattern.exec(prepareFunction);
+      if (!callMatch || callMatch.index === undefined) continue;
+      const [callSource, callIndent = "", rawVariable = "raw", tupleSource = "", specVariable = "spec", runtimeVariable = "config"] = callMatch;
+      if (!prepareParameters.has(runtimeVariable)) continue;
+
+      const fallbackNames = Array.from(
+        new Set(
+          Array.from(tupleSource.matchAll(/["']([A-Za-z_][A-Za-z0-9_]*)["']/gu), (match) => match[1] || "")
+            .filter((name) => name.length > 0 && !broadLoaderNames.has(name))
+        )
+      );
+      if (fallbackNames.length === 0) continue;
+
+      const beforeCall = prepareFunction.slice(0, callMatch.index);
+      const loopPattern = /^(\s*)for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+[^:\n]+:\s*$/gmu;
+      let loopMatch: RegExpExecArray | null = null;
+      for (const candidate of beforeCall.matchAll(loopPattern)) {
+        if ((candidate[1] || "").length < callIndent.length) {
+          loopMatch = candidate;
+        }
+      }
+      if (!loopMatch || loopMatch.index === undefined) continue;
+      const loopIndent = loopMatch[1] || "";
+      const taskVariable = loopMatch[2] || "task_name";
+      const specAssignmentPattern = new RegExp(
+        String.raw`^\s*${escapeRegex(specVariable)}\s*=\s*[^\n]*\[\s*${escapeRegex(taskVariable)}\s*\]`,
+        "mu"
+      );
+      if (!specAssignmentPattern.test(beforeCall.slice(loopMatch.index))) continue;
+
+      const fallbackTuple = fallbackNames.length === 1
+        ? `(${JSON.stringify(fallbackNames[0])},)`
+        : `(${fallbackNames.map((name) => JSON.stringify(name)).join(", ")})`;
+      const setup = [
+        `${loopIndent}# ${marker}`,
+        `${loopIndent}_autolabos_raw_task_map = None`,
+        `${loopIndent}_autolabos_raw_task_loader = globals().get(${JSON.stringify(loaderDefinition.name)})`,
+        `${loopIndent}if callable(_autolabos_raw_task_loader):`,
+        `${loopIndent}    _autolabos_raw_task_map = _autolabos_raw_task_loader(${runtimeVariable})`
+      ].join("\n") + "\n";
+      const dispatch = [
+        `${callIndent}${rawVariable} = None`,
+        `${callIndent}if hasattr(_autolabos_raw_task_map, "get"):`,
+        `${callIndent}    ${rawVariable} = _autolabos_raw_task_map.get(${taskVariable})`,
+        `${callIndent}elif _autolabos_raw_task_map is not None:`,
+        `${callIndent}    ${rawVariable} = _autolabos_raw_task_map`,
+        `${callIndent}if ${rawVariable} is None:`,
+        `${callIndent}    ${rawVariable} = _call_boundary(${fallbackTuple}, ${specVariable}, runtime=${runtimeVariable})`
+      ].join("\n");
+
+      let repairedFunction = `${prepareFunction.slice(0, loopMatch.index)}${setup}${prepareFunction.slice(loopMatch.index)}`;
+      repairedFunction = repairedFunction.replace(callSource, dispatch);
+      const nextSource = replacePythonTopLevelFunctionSource(
+        source,
+        prepareDefinition.name,
+        repairedFunction
+      );
+      if (nextSource === source || !nextSource.includes(marker)) continue;
+      await fs.writeFile(scriptPath, nextSource, "utf8");
+      return {
+        repaired: true,
+        message: `Dispatched broad task loader ${loaderDefinition.name} once with runtime configuration before ${prepareDefinition.name} task selection in ${path.basename(scriptPath)}.`
+      };
+    }
+  }
+
+  return { repaired: false };
+}
+
+export async function repairPythonStagedFinalCliHandoffSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") return { repaired: false };
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_staged_final_cli_handoff_surface";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _ep_find(") ||
+    !source.includes("def _ep_runtime(") ||
+    !source.includes('raise RuntimeError("no condition execution helper is available")')
+  ) return { repaired: false };
+
+  const loaderCandidates = ["load_task_data", "load_experiment_data", "load_data_bundle"]
+    .filter((name) => pythonSourceDefinesConcreteCallableCandidate(source, name));
+  const runnerCandidates = [
+    "run_condition_model_execution",
+    "execute_model_condition",
+    "execute_condition_model_execution"
+  ].filter((name) => pythonSourceDefinesConcreteCallableCandidate(source, name));
+  const evaluatorCandidates = [
+    "evaluate_condition_run",
+    "evaluate_single_condition_run",
+    "evaluate_condition_state"
+  ].filter((name) => pythonSourceDefinesConcreteCallableCandidate(source, name));
+  const aggregatorCandidates = [
+    "build_success_metrics_payload",
+    "build_completed_metrics_payload"
+  ].filter((name) => pythonSourceDefinesConcreteCallableCandidate(source, name));
+  if (
+    loaderCandidates.length === 0 ||
+    runnerCandidates.length === 0 ||
+    evaluatorCandidates.length === 0 ||
+    aggregatorCandidates.length === 0
+  ) return { repaired: false };
+
+  let repaired = false;
+  const nextSource = replaceAllPythonTopLevelFunctionSources(source, "main", (functionSource) => {
+    if (
+      !functionSource.includes("runtime = _ep_runtime(args)") ||
+      !functionSource.includes('raise RuntimeError("no condition execution helper is available")')
+    ) return functionSource;
+
+    let nextFunction = functionSource;
+    const loaderLine =
+      '        loader = _ep_find("load_task_bundle", "load_datasets_for_experiment", "materialize_task_bundle")';
+    const runnerLine =
+      '        runner = _ep_find("execute_one_run", "run_one_condition_seed", "run_condition_seed", "execute_condition")';
+    const aggregatorLine =
+      '        aggregator = _ep_find("aggregate_entrypoint_metrics", "aggregate_final_metrics", "aggregate_metrics", "build_final_metrics")';
+    if (!nextFunction.includes(loaderLine) || !nextFunction.includes(runnerLine) || !nextFunction.includes(aggregatorLine)) {
+      return functionSource;
+    }
+    nextFunction = nextFunction.replace(
+      loaderLine,
+      `        loader = _ep_find(${[...loaderCandidates, "load_task_bundle", "load_datasets_for_experiment", "materialize_task_bundle"].map((name) => JSON.stringify(name)).join(", ")})`
+    );
+    nextFunction = nextFunction.replace(
+      runnerLine,
+      `        runner = _ep_find(${[...runnerCandidates, "execute_one_run", "run_one_condition_seed", "run_condition_seed", "execute_condition"].map((name) => JSON.stringify(name)).join(", ")})`
+    );
+    nextFunction = nextFunction.replace(
+      aggregatorLine,
+      `        aggregator = _ep_find(${[...aggregatorCandidates, "aggregate_entrypoint_metrics", "aggregate_final_metrics", "aggregate_metrics", "build_final_metrics"].map((name) => JSON.stringify(name)).join(", ")})`
+    );
+
+    const rowsLine = "        rows = []";
+    const appendBlock = [
+      "            rows.append(row)",
+      '            _ep_write_json(runtime.partial_metrics_path, {"status": "running", "completed_rows": len(rows), "condition_results": rows})'
+    ].join("\n");
+    if (!nextFunction.includes(rowsLine) || !nextFunction.includes(appendBlock)) return functionSource;
+    nextFunction = nextFunction.replace(
+      rowsLine,
+      [
+        `        # ${marker}`,
+        `        evaluator = _ep_find(${evaluatorCandidates.map((name) => JSON.stringify(name)).join(", ")})`,
+        '        release_runtime = globals().get("_autolabos_entrypoint_release_condition_runtime")',
+        rowsLine
+      ].join("\n")
+    );
+    nextFunction = nextFunction.replace(
+      appendBlock,
+      [
+        "            try:",
+        "                evaluated_row = _ep_call(evaluator, args=args, runtime=runtime, runtime_context=runtime, condition_state=row, state=row, row=row, task_bundle=task_bundle, data_bundle=task_bundle, seed=seed, condition_spec=spec, spec=spec) if evaluator else row",
+        "            finally:",
+        "                if callable(release_runtime):",
+        "                    release_runtime(row)",
+        "                else:",
+        "                    for live_handle in ('model', 'tokenizer'):",
+        "                        if hasattr(row, live_handle):",
+        "                            setattr(row, live_handle, None)",
+        "            rows.append(evaluated_row)",
+        '            _ep_write_json(runtime.partial_metrics_path, {"status": "running", "completed_rows": len(rows), "condition_results": rows})'
+      ].join("\n")
+    );
+
+    const metricsLine =
+      '        metrics = _ep_call(aggregator, args=args, runtime=runtime, runtime_context=runtime, records=rows, condition_results=rows, task_bundle=task_bundle) if aggregator else {"status": "failed", "reason": "no metrics aggregator available", "condition_results": rows}';
+    if (!nextFunction.includes(metricsLine)) return functionSource;
+    nextFunction = nextFunction.replace(
+      metricsLine,
+      [
+        '        metrics = _ep_call(aggregator, args=args, runtime=runtime, runtime_context=runtime, records=rows, condition_results=rows, task_bundle=task_bundle, baseline_marker=globals().get("BASELINE_MARKER"), objective_metric=globals().get("PRIMARY_METRIC_KEY", "objective_delta")) if aggregator else {"status": "failed", "reason": "no metrics aggregator available", "condition_results": rows}',
+        '        metrics = dict(metrics) if hasattr(metrics, "items") else {"status": "failed", "reason": "metrics aggregator returned a non-mapping payload", "result": _ep_jsonable(metrics)}',
+        "        required_run_count = len(plan) if hasattr(plan, '__len__') else len(rows)",
+        "        completed_run_count = sum(1 for item in rows if hasattr(item, 'get') and str(item.get('status', '')).lower() in {'evaluated', 'completed', 'complete', 'success', 'succeeded', 'ok'})",
+        '        metrics["required_run_count"] = required_run_count',
+        '        metrics["completed_run_count"] = completed_run_count',
+        "        if required_run_count <= 0 or completed_run_count < required_run_count:",
+        '            metrics["status"] = "failed"',
+        '            metrics["success"] = False',
+        '            metrics["reason"] = f"evaluation coverage incomplete: {completed_run_count}/{required_run_count} planned runs completed"',
+        "        else:",
+        '            metrics.setdefault("status", "completed")',
+        '            metrics.setdefault("success", True)'
+      ].join("\n")
+    );
+    repaired = nextFunction !== functionSource;
+    return nextFunction;
+  });
+
+  if (!repaired || nextSource === source || !nextSource.includes(marker)) return { repaired: false };
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Materialized concrete condition executor runtime contexts for ${repairedNames.join(", ")} in ${path.basename(scriptPath)} before handoff.`
+    message: `Connected staged loader, condition execution, immediate evaluation, handle release, and metrics coverage in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
