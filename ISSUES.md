@@ -15,10 +15,656 @@ Path placeholders:
 
 ---
 
+## Issue: LV-610
+
+- Status: resolved; focused objective/review regressions, build, and full repository suite pass
+- Validation target: observed seeds in detailed repeated-run artifacts must survive analysis hydration so scientific review does not misclassify a repeated experiment as a seedless comparison.
+- Environment/session context: deterministic CI fixtures exercising `latest_results.json -> result_analysis.json -> review`; no live generated metrics were edited.
+- Reproduction steps:
+  1. Provide detailed real-execution results with multiple `repeat_records`, each carrying an observed seed.
+  2. Keep the compact metrics file pointed at the detailed results.
+  3. Run `analyze_results` and then `review`.
+  4. Inspect `result_analysis.json`, `review/minimum_gate.json`, and `review/decision.json`.
+- Expected behavior:
+  - Canonical analysis metrics preserve the distinct seeds observed in executed repeat records.
+  - Review counts those observed seeds as replication evidence.
+  - Planned seed schedules alone remain insufficient.
+- Actual behavior:
+  - Analysis derived repeated confidence intervals, stability metrics, and an executed-trial count from the detailed results.
+  - It omitted the observed seed values from canonical metrics.
+  - Review therefore emitted `missing_seed_replication` and backtracked an otherwise complete repeated comparison.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral detailed-results fixture reproduced the omission and the false backtrack.
+  - Existing session: the same deterministic path is used by persisted runs that reference a detailed results artifact.
+  - Divergence: no refresh or resume divergence is involved; the loss occurred during in-memory analysis projection.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: detailed-result hydration copied aggregate metrics, sampling counts, and condition statistics but not `repeat_records[].seed` or dataset-level executed seed records.
+- Code/test changes:
+  - Collect seeds only from executed repeat/seed records and preserve their original string or numeric representation in canonical metrics.
+  - Teach paper-scale diagnostics to consume the canonical observed `metrics.seeds` field.
+  - Keep the rule that plan-only seed schedules do not count as execution evidence.
+  - Add an integration assertion for hydrated seed preservation and update positive review fixtures to declare the observed seed evidence they already claimed.
+- Regression status:
+  - Focused objective/review regressions: 4/4 pass on 2026-07-15.
+  - Production build: pass on 2026-07-15.
+  - Full repository suite: 195 files and 2694 tests pass on 2026-07-15.
+- Follow-up risks:
+  - New detailed-result schemas must expose executed seed records rather than only planned schedules or aggregate trial counts.
+  - Item-level confidence intervals must continue to remain distinct from seed-level replication evidence.
+- Evidence/artifacts:
+  - `<temporary-output>/latest_results.json`
+  - `<temporary-output>/result_analysis.json`
+  - `<temporary-output>/review/minimum_gate.json`
+  - `<temporary-output>/review/decision.json`
+
+
+## Issue: LV-609
+
+- Status: resolved; focused regression, build, installed-plugin pack retry, independent leak scan, and trace-preservation check pass
+- Validation target: a public `PaperReadinessBundle` must preserve governance evidence without exposing machine-local run identifiers or concrete one-off model, task, and condition labels.
+- Environment/session context: bundle produced by the installed plugin from the same governed live run used for LV-608.
+- Reproduction steps:
+  1. Run research pack with the live audit `GateReport`, `ReviewReport`, and audit output directory.
+  2. Confirm the bundle's own portability result.
+  3. Independently scan every packed text artifact for private paths, credentials, run UUIDs, and concrete experiment identifiers.
+- Expected behavior:
+  - Private paths and credentials are excluded.
+  - Public copies redact run-specific identifiers using domain-neutral placeholders.
+  - The bundle records which copied files were redacted.
+  - Original audit and run artifacts remain unchanged.
+- Actual behavior:
+  - The bundle reported `portability.valid=true` and contained no private paths or credential-like text.
+  - A copied audit summary retained the live run UUID.
+  - Copied claim evidence and promotion history retained concrete task labels.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral pack fixture reproduces the missing identifier-redaction boundary.
+  - Existing session: the installed plugin pack exposes the same issue in copied live audit artifacts.
+  - Divergence: no runtime state divergence is involved; the defect is isolated to public bundle materialization.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: pack portability checked absolute paths and credential assignments only, then copied allowlisted artifacts byte-for-byte. It did not distinguish immutable source evidence from the public portable copy.
+- Code/test changes:
+  - Keep explicit gate and review artifacts unchanged.
+  - Redact structured run/task/model/benchmark/condition fields and common free-text identifier shapes only in copied public source artifacts.
+  - Record redacted file paths in bundle portability metadata and hash the redacted bytes.
+  - Add a domain-neutral pack regression for UUID, model, task, and condition identifiers.
+- Regression status:
+  - Initial installed-plugin reproduction: confirmed on 2026-07-15.
+  - Focused research-governance regressions: 13/13 pass on 2026-07-15.
+  - Production build: pass on 2026-07-15.
+  - Same-command installed pack retry: pass; the bundle remains blocked_for_paper_scale and reports the redacted public copies.
+  - Independent scan: pass; no private path, credential assignment, live run UUID, or concrete model/task/condition identifier is present.
+  - Trace-preservation check: pass; audit event IDs and done-condition contract paths remain intact.
+- Follow-up risks:
+  - Redaction must not mutate source artifacts or hide a blocking governance finding.
+  - Explicit contract identifiers and governed node names must remain readable.
+- Evidence/artifacts:
+  - `<temporary-output>/pack/paper-readiness-bundle.json`
+  - `<temporary-output>/pack/artifacts/audit-summary.json`
+  - `<temporary-output>/pack/artifacts/claim-evidence-table.json`
+
+
+## Issue: LV-608
+
+- Status: resolved; focused regression, build, and installed-plugin same-bundle audit/review/improve revalidation pass
+- Validation target: the installed research-governance plugin must carry review-owned paper-scale diagnostics and node-strengthening recommendations through audit, review, and improve instead of collapsing an upstream evidence failure into a figure-only repair.
+- Environment/session context: existing governed live run in `<validation-workspace>`, after same-flow execution, analysis, figure audit, and review produced a blocked paper-scale decision.
+- Reproduction steps:
+  1. Run the installed `autolabos` plugin's research audit against the completed live run root.
+  2. Feed the emitted `GateReport` into research review.
+  3. Feed the emitted `ReviewReport` into research improve.
+  4. Compare the resulting repair targets with `review/paper_scale_diagnostics.json` and `review/node_strengthening_recommendations.json`.
+- Expected behavior:
+  - Audit must preserve blocking statistical, execution-coverage, and training-budget diagnostics as traceable findings.
+  - Review must preserve the governed target node and recheck condition selected by the live review artifact.
+  - Improve must produce a plan-only patch plan for every evidenced weak upstream node.
+  - No generated metric or experiment artifact may be rewritten by the plugin chain.
+- Actual behavior:
+  - The core review correctly routed evidence weaknesses to `run_experiments`, `implement_experiments`, `generate_hypotheses`, and `design_experiments`.
+  - The installed plugin audit read the severe figure mismatch but ignored the two review-owned scientific-governance artifacts.
+  - Review and improve consequently targeted only `figure_audit`.
+- Fresh vs existing session comparison:
+  - Fresh session: a domain-neutral operation-level regression reproduces the artifact-handoff gap.
+  - Existing session: the installed bridge and CLI execute correctly, but their audit output omits persisted upstream-node recommendations.
+  - Divergence: no TUI refresh or resume divergence is indicated; the omission occurs in artifact intake and governance projection.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: paper-readiness audit loaded the final review decision and figure summary but did not load paper-scale diagnostics or node-strengthening recommendations. `GateFinding` also lacked optional target-node and recheck metadata, so exact review routing could not survive the plugin boundary.
+- Code/test changes:
+  - Load and safely normalize both review-owned scientific-governance artifacts.
+  - Add their source paths to the evidence bundle and their findings to the gate report.
+  - Preserve governed target node, target surface, and recheck condition through review and improve.
+  - Add domain-neutral end-to-end operation coverage for the four upstream target classes.
+- Regression status:
+  - Initial installed-plugin reproduction: confirmed on 2026-07-15.
+  - Focused research-governance regressions: 13/13 pass on 2026-07-15.
+  - Production build: pass on 2026-07-15.
+  - Installed same-bundle audit retry: pass; statistical, execution-coverage, training-budget, figure, and review-owned node-strengthening findings are all present.
+  - Installed review/improve retry: pass; plan-only repair targets include run_experiments, implement_experiments, generate_hypotheses, design_experiments, and figure_audit with preserved recheck conditions.
+  - Public bundle portability was revalidated under LV-609; full repository and plugin validation remains tracked by the acceptance ledger.
+- Follow-up risks:
+  - Review artifacts are untrusted input to the plugin audit; node names and severity must be allowlisted and normalized.
+  - Public governance artifacts must retain traceability without copying machine-local paths or one-off experiment identifiers.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/review/paper_scale_diagnostics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/review/node_strengthening_recommendations.json`
+  - `<temporary-output>/audit/gate-report.json`
+  - `<temporary-output>/review/review-report.json`
+  - `<temporary-output>/improve/meta-harness-patch-plan.json`
+
+
+## Issue: LV-607
+
+- Status: resolved; generalized scientific-gate and pre-draft critique repairs, focused regressions, build, public sanitization, read-only live-artifact evaluation, and same-flow figure/review revalidation pass
+- Validation target: figure_audit and review must reject positive comparative figures and paper-scale claims when repeated-seed evidence is absent, approved runs are incomplete, or the executed training budget is below the selected design.
+- Environment/session context: existing governed live run in <validation-workspace>, after real execution completed and the workflow reached analyze_results -> figure_audit -> review.
+- Reproduction steps:
+  1. Analyze a completed condition comparison whose objective remains below threshold but whose leading condition has a small positive delta.
+  2. Keep the approved plan's repeated-run and training-sample requirements in the analysis report while the executed metrics contain no observed seed identifiers and a smaller runtime budget.
+  3. Run figure_audit and review.
+  4. Inspect figure_audit_summary.json, review/minimum_gate.json, and review/paper_scale_diagnostics.json.
+- Expected behavior:
+  - A positive comparative signal requires observed repeated-seed evidence even when the objective is not_met.
+  - Planned seed lists or plan prose must not count as executed seed evidence.
+  - Planned-versus-executed run coverage and training-sample coverage must be explicit deterministic gates.
+  - Item-level condition confidence intervals must not make evidence_depth pass while blocking statistical or execution-coverage gaps remain.
+  - A comparative performance figure without defensible repetition-level uncertainty must be marked as an evidence-scale mismatch and handed to review.
+- Actual behavior:
+  - Review blocked paper drafting for other reasons but marked seed replication, evidence depth, training budget depth, and statistical adequacy as passed.
+  - Paper-scale diagnostics were empty despite absent observed seeds and an incomplete approved run matrix.
+  - Figure audit reused an empty deterministic cache and reported no issue for a performance overview without repetition-level uncertainty.
+- Fresh vs existing session comparison:
+  - Fresh session: domain-neutral regressions reproduce missing observed seeds, incomplete plan coverage, a reduced training sample budget, and a cached empty figure audit.
+  - Existing session: persisted live artifacts show a positive baseline-relative delta, zero observed condition seeds, fewer executed runs than the selected design, and a reduced training sample cap.
+  - Divergence: no refresh/resume divergence is indicated; deterministic analysis and figure-gate logic under-classified persisted evidence.
+- Root-cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: seed diagnostics required both an existing seed field and objective_status=met; evidence depth treated condition-level item intervals as generic robustness; execution/training coverage were not compared with the selected design; figure audit trusted an earlier empty cache and did not re-evaluate evidence scale.
+- Code/test changes:
+  - Trigger repeated-seed diagnostics from any positive condition comparison and count only observed seed fields, never planned seed lists or plan notes.
+  - Add deterministic incomplete_planned_runs and training_budget_mismatch diagnostics using structured fields first and generic plan-text fallbacks.
+  - Fail evidence_depth when blocking statistical or execution-coverage diagnostics remain, and expose a separate planned-execution coverage check.
+  - Recompute figure evidence-scale alignment on every figure-audit pass, replace stale cached issues of that type, and mark unsupported comparative figures as severe unless explicitly labeled descriptive/incomplete.
+  - Project deterministic minimum-gate failures into pre-draft claim-ceiling, additional-experiment, and additional-statistics metadata.
+  - Add domain-neutral minimum-gate and cached-figure regressions.
+- Regression status:
+  - Same-flow live reproduction: confirmed from persisted review and figure artifacts.
+  - Focused regressions: 26/26 pass across tests/paperMinimumGate.test.ts and tests/figureAuditNode.test.ts; 32/32 paper-critique tests and the targeted blocked-review node regression also pass.
+  - Production build, public-code sanitization, and diff checks: pass.
+  - Read-only live-artifact evaluation: pass; the repaired diagnostics report zero observed seeds, incomplete run coverage, reduced training-sample coverage, and one severe figure evidence-scale mismatch.
+  - Same-flow live figure/review retry: pass without manual artifact edits; figure audit records one severe evidence-scale mismatch, review fails evidence depth, seed replication, planned execution coverage, and training budget depth, and the node-strengthening artifact routes repairs to run_experiments, implement_experiments, generate_hypotheses, and design_experiments.
+  - Final pre-draft critique consistency retry: pass; manuscript type remains blocked_for_paper_scale, write_paper remains blocked, and claim_ceiling_applied, needs_additional_experiments, and needs_additional_statistics are all true.
+- Follow-up risks:
+  - Text-derived planned budgets remain a compatibility fallback; future plan schemas should persist expected run and training-sample counts structurally.
+  - Confidence intervals need source semantics so item-level intervals cannot be confused with seed-level uncertainty elsewhere.
+  - The review/meta-harness rerun must preserve node-owned artifacts and must not repair the scientific result by editing generated metrics.
+- Evidence/artifacts:
+  - <validation-workspace>/.autolabos/runs/<run-id>/result_analysis.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/figure_audit/figure_audit_summary.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/review/minimum_gate.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/review/paper_scale_diagnostics.json
+  - <validation-workspace>/.autolabos/runs/<run-id>/review/node_strengthening_recommendations.json
+
+
+## Issue: LV-606
+
+- Status: resolved; generalized single-active-node repair, focused/full state-graph regressions, build, public sanitization, and same-flow analyze/figure/review handoff revalidation pass
+- Validation target: a manual retry of a named workflow node must make that node the only active graph pointer so later persistence cannot revive an unrelated earlier approval gate.
+- Environment/session context: existing governed live run in `<validation-workspace>`, immediately after a repaired `run_experiments` completed with real evidence and paused for approval.
+- Reproduction steps:
+  1. Begin with an earlier workflow node still marked `needs_approval` from a prior backtrack cycle.
+  2. Manually retry a later execution node and let it complete with `needs_approval`.
+  3. Approve the later node to advance to `analyze_results`.
+  4. Reload the persisted run and observe which node is selected as current.
+- Expected behavior:
+  - The explicit retry target should be the only `running` or `needs_approval` node.
+  - Approval should persist `analyze_results` as current and execute the scientific analysis gate.
+  - The earlier unresolved gate may remain auditable, but it must not become an active pointer again.
+- Actual behavior:
+  - `retryNode` marked the later target `running` but preserved the earlier node as `needs_approval`.
+  - The later node completed and an approval checkpoint correctly pointed to `analyze_results`.
+  - RunStore normalization then selected the older active approval state, so the next live command executed `design_experiments` instead of `analyze_results`; the design panel failed and rolled back further upstream.
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic runtime coverage reproduces the competing active states and verifies the repaired persisted handoff.
+  - Existing session: checkpoint and event evidence show the correct analysis pointer immediately after approval followed by an incorrect design-node start after persistence.
+  - Divergence: the in-memory approval checkpoint is correct; reloaded persisted state diverges because two nodes remain active.
+- Root-cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `retryNode` did not deactivate other `running` or `needs_approval` states. `normalizeCurrentRunPointer` legitimately chose the most recently updated active state, exposing the invalid multi-active graph.
+- Code/test changes:
+  - Before a manual retry, demote every non-target active pointer to `pending`, preserve its prior evidence, and record that it remains unresolved.
+  - Emit an observation naming superseded node pointers for auditability.
+  - Add a runtime regression that retries a later node with a stale upstream approval pointer, executes it, approves it, and verifies persisted advancement to `analyze_results`.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-16.
+  - Focused and full state-graph regressions, build, public sanitization, and diff check: passed on 2026-07-16.
+  - Same-flow live analysis retry: passed; persisted and in-memory pointers both selected analyze_results, which completed before the workflow advanced in order through figure_audit and review.
+- Follow-up risks:
+  - Manual retry intentionally bypasses an unresolved earlier gate; keeping that node `pending` preserves the governance gap for later review instead of silently completing it.
+  - Other manual handoff paths should continue to enforce the same single-active-node invariant through their existing jump/reset logic.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/checkpoints/*-run_experiments-after.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/checkpoints/*-design_experiments-before.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/events.jsonl`
+
+
+## Issue: LV-605
+
+- Status: resolved; generalized raw-evidence summary repair, verifier defenses, focused/full execution regressions, build, public sanitization, and same-flow live revalidation pass
+- Validation target: `run_experiments` must derive condition/task summaries and objective comparisons from the richest completed evidence, and it must reject contradictory or undersized summaries before marking the node verified.
+- Environment/session context: existing governed live run in `<validation-workspace>`, after every planned condition completed and persisted full per-example evaluation evidence.
+- Reproduction steps:
+  1. Complete all planned condition executions with per-example predictions, gold labels, correctness values, and task markers.
+  2. Inspect `metrics.json` before downstream analysis.
+  3. Compare `raw_condition_results` counts and computed accuracy with `condition_results`, `condition_summaries`, the top-level objective value, and the verifier report.
+- Expected behavior:
+  - Rich per-example rows should be the source of truth when they outnumber lossy condition rows, even when seed identifiers are absent.
+  - Canonical condition summaries should preserve all evaluated examples and task-level accuracy.
+  - Redundant accuracy fields and total counts should agree with raw evidence before verification passes.
+- Actual behavior:
+  - The live run persisted 89,712 complete per-example rows across eight conditions, but the projection chose eight lossy condition rows because both sources lacked usable seed identifiers.
+  - Every canonical summary consequently reported `accuracy=1`, `correct_count=1`, and `total_count=1`, while nested task evidence showed substantially different aggregate accuracy.
+  - The objective comparison was evaluated from the corrupted summaries and the verifier persisted a passing status.
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic execution-node coverage now exercises the repaired generic path with domain-neutral conditions and tasks.
+  - Existing session: the completed live run reproduced the summary corruption in persisted metrics and public summary artifacts.
+  - Divergence: no refresh/resume split is indicated; the defect occurs during in-memory post-execution projection and is then persisted.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: raw evidence was preferred only when it contained more non-null seed identifiers than `condition_results`; row cardinality and example-level evidence richness were ignored. Existing `condition_summaries` were also preserved after projection, and the verifier compared only the first available accuracy/count fields.
+- Code/test changes:
+  - Prefer projectable example-level raw evidence when it is richer than condition-level rows, without treating seed-level aggregate rows as examples.
+  - Replace existing canonical summaries only when projectable example evidence is demonstrably richer, preserving seed-summary contracts.
+  - Reject disagreement among redundant accuracy fields and reject `total_count` values smaller than clearly identified raw per-example evidence.
+  - Add execution-node regressions for seedless raw-evidence repair and verifier rejection of contradictory/undersized summaries.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-15.
+  - Automated regressions: two focused cases, all 78 execution-node cases, production build, public sanitization, and diff checks pass on 2026-07-15.
+  - Same-flow live retry: passed on 2026-07-16 without manual artifact edits; 89,712 per-example rows were projected into eight condition summaries, each summary matched its 11,214 raw rows, and the objective comparison was recalculated from the repaired evidence.
+- Follow-up risks:
+  - Seed-level aggregate rows and per-example rows can coexist; evidence classification must not silently reinterpret aggregate metrics as examples.
+  - A same-flow retry will rerun the real experiment unless a node-owned artifact revalidation path is proven to preserve the execution contract.
+  - Downstream analysis/review must still expose the historical design-budget mismatch and the evidence limits of a single run per condition.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/topic-slug/experiment/summary.json`
+
+
+## Issue: LV-604
+
+- Status: generalized design-budget propagation repair implemented; targeted regressions pass; same-flow downstream governance revalidation pending
+- Validation target: `design_experiments` must lock the configured runtime budget consistently into the plan, comparison contract, evaluator-contract identity, and later execution audit surface.
+- Environment/session context: existing governed live run in `<validation-workspace>`, while the LV-603 retry was executing with a workspace-configured extended runtime budget.
+- Reproduction steps:
+  1. Configure a positive experiment timeout that differs from the historical fallback.
+  2. Complete `design_experiments` and inspect `experiment_governance/comparison_contract.json`.
+  3. Start `run_experiments` and inspect `run_experiments_panel/execution_plan.json` plus the emitted process command.
+- Expected behavior:
+  - `experiment_plan.yaml`, the immutable comparison contract, the execution plan, and the runner command should agree on the configured runtime budget.
+  - Later analysis and review gates should be able to audit the real execution against the same locked budget.
+- Actual behavior:
+  - The runner command correctly received the configured timeout after LV-603, but the comparison contract and execution-plan `budget_profile` retained a fixed 1800-second value.
+  - The mismatch existed even though the workspace configuration predated the comparison contract.
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun through a new research session; deterministic design-node coverage exercises the corrected path.
+  - Existing session: the persisted run reproduced the disagreement between its historical comparison contract and current runner command.
+  - Divergence: no refresh/resume divergence is indicated; the same hardcoded design-time profile affected all sessions created before the repair.
+- Root-cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `buildBudgetProfile` and `buildPlanYaml` independently serialized 1800 seconds instead of the configured node budget, while `run_experiments` correctly resolved the configuration later.
+- Code/test changes:
+  - Code: normalize the positive configured timeout in `src/core/nodes/designExperiments.ts` and pass it into the plan renderer plus `src/core/experimentGovernance.ts` contract builder, retaining 1800 only as a missing/invalid-value fallback.
+  - Tests: `tests/experimentGovernance.test.ts` covers non-default contract locking and `tests/constraintPropagation.test.ts` checks plan/contract agreement through the design node.
+- Regression status:
+  - Automated regression test linked: yes; the two focused cases and their adjacent 24-test suites pass, together with production build, public sanitization, and diff checks on 2026-07-15.
+  - Re-validation result: same-flow downstream governance pending; the in-flight historical run remains intentionally unmodified so analysis/review must expose or backtrack on the mismatch.
+- Follow-up risks:
+  - A changed timeout intentionally changes the evaluator-contract hash and may require a governed design backtrack rather than silent contract mutation.
+  - Supplemental profiles need an explicit profile-specific budget if they should not inherit the primary configured timeout.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/config.yaml`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/experiment_governance/comparison_contract.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/run_experiments_panel/execution_plan.json`
+
+
+## Issue: LV-603
+
+- Status: parser-boundary repair implemented; command-level and timeout-family regressions, build, and public sanitization pass; same-flow live retry pending
+- Validation target: `run_experiments` must append the workspace's governed experiment timeout to compatible Python runners, including runners whose parser exposes multiple timeout aliases.
+- Environment/session context: existing governed live run in `<validation-workspace>`, where the workspace config declares a 14,400-second experiment timeout and the generated runner exposes compatible timeout flags.
+- Reproduction steps:
+  1. Start the same `run_experiments` retry after the LV-602 batch repair.
+  2. Inspect the persisted execution plan and the operating-system process arguments.
+  3. Compare them with the workspace `experiments.timeout_sec` setting and the runner's argparse surface.
+- Expected behavior:
+  - The primary command should include the governed timeout through a supported flag.
+  - The generated runtime budget and LV-602 absolute deadline should therefore use the same governed value.
+  - The persisted execution plan should reflect the actual command.
+- Actual behavior:
+  - The workspace config declares 14,400 seconds.
+  - The persisted execution plan retained a 1,800-second locked profile and the live Python process had no timeout flag.
+  - The runner therefore fell back to its 1,800-second source default despite exposing `--timeout-sec` and related aliases.
+- Fresh vs existing session comparison:
+  - Fresh session: not yet run as a separate `/new` research session.
+  - Existing session: the persisted run reproduced the omitted flag in both execution-plan evidence and live process arguments.
+  - Divergence: no refresh or resume divergence is indicated; this is a command-projection defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated timeout repair marker was an unindented comment inside `build_arg_parser`; the command flag extractor treated any unindented nonempty line, including comments, as the function boundary and therefore never inspected the timeout aliases below it.
+- Code/test changes:
+  - Added a domain-neutral command-level regression with a multi-alias parser and the same unindented generated-comment boundary.
+  - Updated parser-body extraction to skip unindented comment lines and stop only at a real top-level statement.
+  - Preserved explicit user-provided timeout flags and all existing fallback-parser/non-parser safety behavior.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-15.
+  - Command-level integration regression, six timeout-family regressions, production build, and public sanitization: passed on 2026-07-15.
+  - Same-flow live retry: pending.
+- Follow-up risks:
+  - Supplemental profile commands must inherit the same governed timeout policy or declare a deliberately smaller profile-specific budget.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/config.yaml`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/run_experiments_panel/execution_plan.json`
+  - live process arguments captured during the retry
+
+
+## Issue: LV-602
+
+- Status: bounded batched fallback evaluation repair implemented; targeted/integration regressions, exact-runner torch validation, build, and public sanitization pass; same-flow live retry pending
+- Validation target: fallback multiple-choice evaluation must remain within the governed execution deadline while preserving the required full-evidence contract or failing explicitly as budget-blocked.
+- Environment/session context: existing governed live run in `<validation-workspace>`, after LV-601 allowed every concrete worker to consume the managed flat training sequence and the first condition completed training.
+- Reproduction steps:
+  1. Retry `run_experiments` after the node-owned LV-601 repair.
+  2. Let the first condition train and persist its adapter.
+  3. Enter the managed entrypoint's low-level multiple-choice fallback because no higher-level evaluator alias is available.
+  4. Observe per-choice forward calls, elapsed time, GPU utilization, generated artifacts, and the governed execution timeout.
+- Expected behavior:
+  - Evaluation should batch compatible choice sequences to use the available accelerator efficiently.
+  - The fallback should derive and check an absolute deadline from the governed runtime budget.
+  - Full required evidence should be produced within budget; otherwise the run should stop with explicit partial/budget-blocked evidence rather than silently overrun.
+- Actual behavior:
+  - The first condition completed training and persisted a real adapter.
+  - The fallback preflighted the full evaluation corpus, then issued one model forward per choice with no deadline check or bounded partial-evidence handoff.
+  - After more than 12 minutes of active CPU and dual-GPU use, the first condition had not completed evaluation and no next-condition adapter existed; projected total runtime exceeded the 30-minute execution budget.
+- Fresh vs existing session comparison:
+  - Fresh session: not yet run as a separate `/new` research session.
+  - Existing session: the persisted run applied LV-601, reached real training and adapter persistence, and exposed the unbounded fallback evaluation path.
+  - Divergence: no refresh or resume divergence is indicated; this is an execution-budget propagation and batching defect.
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: the generic low-level evaluator was generated as a correctness fallback but omitted both vectorized choice scoring and the runtime budget's absolute deadline, so its sequential full-corpus loop cannot satisfy the governed wall-time contract.
+- Code/test changes:
+  - Added an idempotent generated-source repair for batched masked-loss choice scoring in compatible low-level evaluators.
+  - Derived an absolute deadline from module start and the existing runtime budget, reserved handoff time, and return explicit timeout/incomplete evidence without presenting partial rows as complete.
+  - Applied the repair during implement verification, recoverable-bundle repair, and the `run_experiments` pre-failure retry gate; added domain-neutral executable and integration regressions.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-15.
+  - Targeted unit/integration regressions, production build, and public sanitization: passed on 2026-07-15.
+  - Exact generated-runner copy: repair applies once, remains idempotent, compiles, and a real CPU torch check batches four choice sequences into one model call while preserving per-example masked-loss predictions.
+  - Same-flow live retry: pending.
+- Follow-up risks:
+  - Batched scoring must preserve per-choice masked-loss semantics, variable-length padding, device placement, and full-evidence counts; throughput alone cannot lower the research evidence floor.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/topic-slug/experiment/artifacts/condition-marker/adapter/`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
+## Issue: LV-601
+
+- Status: resolved; generalized collector repair, targeted/integration regressions, exact-runner validation, build, public sanitization, and same-flow live revalidation pass
+- Validation target: a concrete condition worker must consume either a structured task bundle or the flat training-example sequence projected by the managed entrypoint.
+- Environment/session context: existing governed live run in `<validation-workspace>`, after LV-600 connected the late public condition wrapper to the earlier concrete training worker.
+- Reproduction steps:
+  1. Retry `run_experiments` after the node-owned LV-600 repair connects the concrete condition worker.
+  2. Let the managed entrypoint extract the loaded bundle's training examples and pass that flat sequence through the public single-condition wrapper.
+  3. Let the concrete worker call its generated training-text collector before optimizer setup.
+- Expected behavior:
+  - A root list or tuple of usable training texts/records should be visited directly.
+  - Structured bundle attributes and mapping fields should continue to work unchanged.
+  - Every planned condition should reach real training or expose a later condition-specific failure.
+- Actual behavior:
+  - The data loader materialized nonempty training texts and the managed entrypoint projected them as a flat list.
+  - The generated collector inspected bundle attributes for every non-mapping root but never visited the root sequence itself.
+  - All eight condition workers loaded the model, then failed before optimizer setup with `no usable training texts after schema normalization`.
+- Fresh vs existing session comparison:
+  - Fresh session: not yet run as a separate `/new` research session.
+  - Existing session: the persisted run applied LV-600, loaded the model for every planned condition, and reproduced the same collector boundary in all condition rows.
+  - Divergence: no state, refresh, or resume divergence is indicated; this is a staged data-contract projection defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated worker's collector supports structured bundle fields and nested lists, while the managed entrypoint intentionally supplies the already-extracted training sequence to the public wrapper. The collector omits only the root sequence from traversal.
+- Code/test changes:
+  - Added an idempotent generated-source repair that visits flat root training sequences without changing structured bundle traversal.
+  - Applied it during implement verification, recoverable-bundle repair, and the `run_experiments` pre-failure retry gate.
+  - Added domain-neutral executable unit and execution-node integration regressions and validated the exact generated runner through a `/tmp` copy.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-15.
+  - Targeted unit/integration regressions, production build, and public sanitization: passed on 2026-07-15.
+  - Exact generated-runner copy: repair applies once, remains idempotent, compiles, and returns the expected texts for both a flat root sequence and a structured bundle.
+  - Same-flow live retry: passed on 2026-07-15; the first condition consumed the flat training sequence, completed real optimizer work, and persisted its adapter before execution advanced into the separate LV-602 evaluation-throughput boundary.
+- Follow-up risks:
+  - Once optimizer setup is reached, device placement, training, adapter persistence, evaluation, cleanup, or evidence aggregation may expose separate runtime boundaries.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
+## Issue: LV-600
+
+- Status: resolved; generalized resolver repair, targeted/integration regressions, exact-runner dispatch validation, build, and same-flow live revalidation pass
+- Validation target: when staged generation defines a concrete per-condition training callable and later redefines the public single-condition wrapper, the wrapper must retain a callable path to the concrete worker with all required runtime, data, condition, and model inputs.
+- Environment/session context: existing governed live run in `<validation-workspace>`, after the LV-599 pre-run repair materialized real cached data and execution advanced through GPU discovery into all planned condition rows.
+- Reproduction steps:
+  1. Retry `run_experiments` after the generated training-data normalizer is repaired by the node-owned retry gate.
+  2. Let the managed entrypoint select the late public `run_single_condition` wrapper for each planned condition.
+  3. Inspect its core resolver against earlier top-level concrete per-condition workers and the resulting node-owned metrics payload.
+- Expected behavior:
+  - The late public wrapper should resolve an earlier concrete per-condition worker by callable shape.
+  - Runtime, condition, task bundle, and selected model identifier should be passed through compatible keyword aliases.
+  - Each condition should produce real training evidence or a condition-specific runtime failure from the concrete worker.
+- Actual behavior:
+  - An earlier chunk defined a concrete worker accepting runtime, condition, task bundle, and model identifier.
+  - A later chunk redefined `run_single_condition` and searched only three absent `*_core` names.
+  - All eight condition rows failed before model loading with `single-condition core flow helper is not available`.
+- Fresh vs existing session comparison:
+  - Fresh session: not yet run as a separate `/new` research session.
+  - Existing session: the persisted run applied the LV-599 repair, passed data loading and GPU discovery, and reproduced the missing resolver edge for every planned condition.
+  - Divergence: no state, refresh, or resume divergence is indicated; this is a staged callable-projection defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation preserved both implementations in source but projected the final public wrapper through a fixed core-name list and omitted both the concrete callable and its required model-id alias. The first repair revision also relied on a one-line function extractor, so exact-runner validation exposed and closed a multiline typed-signature detection gap before live retry.
+- Code/test changes:
+  - Discover concrete single-condition candidates by generated function signature and append only compatible definitions to the late resolver.
+  - Derive model-id aliases from the existing runtime object and include them in signature-filtered invocation.
+  - Resolve and replace the late wrapper by collected top-level definition offsets so multiline typed signatures remain intact.
+  - Apply the idempotent repair during implement verification, recoverable-bundle repair, and the `run_experiments` retry gate; add domain-neutral executable unit and execution-node integration regressions.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-15.
+  - Targeted unit and execution-node integration regressions and production build: passed on 2026-07-15.
+  - Exact generated-runner copy: repair applies once, remains idempotent, compiles, and routes runtime, condition, task bundle, and selected model identifier to the earlier concrete worker.
+  - Same-flow live retry: passed on 2026-07-15; the repair was applied before the retry gate, all planned conditions resolved the concrete worker and loaded the model, and execution advanced into the separate LV-601 root training-sequence collector boundary.
+- Follow-up risks:
+  - Once the concrete worker is reached, model loading, training memory, evaluation, per-condition cleanup, or evidence aggregation may expose separate runtime boundaries.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
+## Issue: LV-599
+
+- Status: resolved; generalized normalization repair, unit/integration regressions, exact-runner cached-data validation, build, and same-flow live revalidation pass
+- Validation target: generated data loaders must convert labeled multiple-choice training records into supervised training text when instruction/response and plain-text fields are absent.
+- Environment/session context: existing governed live run in `<validation-workspace>`, after a regenerated runner incorporated the LV-597 dispatch and LV-598 evaluation-contract repairs and `run_experiments` reached real cached training-data normalization.
+- Reproduction steps:
+  1. Complete `implement_experiments` through the governed node and retry `run_experiments` with the regenerated runner.
+  2. Load a cached task training split whose records expose context, candidate endings, and a gold label rather than instruction/response fields.
+  3. Run the generated `normalize_training_text` function before the per-task usable-training-count gate.
+- Expected behavior:
+  - A labeled choice-style record should become a supervised text containing the prompt/context, rendered choices, and the selected answer text.
+  - Declared choice labels should retain precedence through the existing label-index helper.
+  - Empty or unlabeled records should remain rejected rather than being fabricated.
+- Actual behavior:
+  - The generated normalizer accepted messages, instruction/response pairs, plain text, or instruction-only rows but had no choice-style fallback.
+  - Every sampled record from one configured training split normalized to an empty string.
+  - `run_experiments` failed before model loading with `data_access schema failure: train records normalized to zero usable texts`.
+- Fresh vs existing session comparison:
+  - Fresh session: not yet run as a separate `/new` research session.
+  - Existing session: the same persisted run regenerated and compiled the runner, then reproduced the new boundary during node-owned execution.
+  - Divergence: no state, refresh, or resume divergence is indicated; this is a generated training-record projection defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the existing generic choice-style repair recognizes several generated normalizer shapes, but not a direct-string normalizer composed from field, choice-payload, and label-index helpers with a final empty-string return.
+- Code/test changes:
+  - Extended the existing choice-style training-record repair to the newly generated helper composition without changing valid message, instruction/response, text, or instruction-only paths.
+  - Render only labeled choice records and use the generated label-index helper rather than adding dataset-specific label rules.
+  - Applied the idempotent repair during implement handoff, recoverable-bundle repair, and the `run_experiments` retry gate.
+  - Added domain-neutral executable unit and execution-node integration regressions and verified the exact generated runner through a `/tmp` copy.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-15.
+  - Targeted unit/integration regressions and production build pass on 2026-07-15.
+  - Exact generated-runner copy: all sampled training rows normalized, choice-style rows include supervised answers, and unchanged evaluation minimums materialize from cache.
+  - Same-flow live retry: passed on 2026-07-15; AutoLabOS applied the repair before its retry gate, the prior zero-usable-training-text error did not recur, and execution advanced through GPU discovery into the separate LV-600 condition-worker resolver boundary.
+- Follow-up risks:
+  - Once training records materialize, the real run may expose model loading, multi-condition runtime, evaluation, resource cleanup, or evidence-completion defects; those remain separate validation gates.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
+## Issue: LV-598
+
+- Status: generalized label-precedence and split-coverage repairs implemented; targeted/full regressions and exact-runner cached-data validation pass; same-flow execution is currently blocked earlier by LV-599
+- Validation target: generated evaluation loading must preserve the governed minimum coverage by selecting a labeled split that can meet it, and numeric answer tokens must be matched against declared choice labels before being interpreted as zero-based indices.
+- Environment/session context: existing governed live run in `<validation-workspace>`, after LV-597 repair allowed `run_experiments` to reach real cached dataset loading and schema normalization.
+- Reproduction steps:
+  1. Regenerate the experiment runner through the real `implement_experiments` node and allow automatic handoff to `run_experiments`.
+  2. Load the configured evaluation split in local-cache-only mode.
+  3. Compare raw split size, normalized size, declared minimum, and alternative labeled split coverage using the generated normalizer.
+- Expected behavior:
+  - The requested split should be accepted only if normalized labeled coverage meets the governed minimum.
+  - If it does not, the loader should inspect bounded labeled split alternatives and select the first one that meets the same minimum.
+  - A numeric answer token that exactly matches a declared choice label should resolve to that label's position.
+- Actual behavior:
+  - The generated loader requested a 299-row split while enforcing a 1,172-row minimum, then failed immediately instead of checking a cached 1,172-row labeled alternative.
+  - The generated label coercer interpreted numeric strings as zero-based indices before comparing declared labels, rejecting the final declared numeric label.
+  - The configured split normalized 298/299 rows; the larger alternative normalized 1,170/1,172 until numeric-label precedence is corrected.
+- Fresh vs existing session comparison:
+  - Fresh session: not yet run as a separate `/new` research session.
+  - Existing session: the same persisted governed run regenerated a new runner, passed compilation, and failed at this newly reached real-data schema boundary.
+  - Divergence: no state or refresh divergence is indicated; this is a generated evaluation-contract projection defect.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation combined a split literal and a minimum-count constant from incompatible split contracts, while the existing generic repairs recognized older loader and label-coercion shapes but not the newly generated early-return and task-loop forms.
+- Code/test changes:
+  - Extended numeric choice-label precedence repair to direct-return coercers without changing nonnumeric index semantics.
+  - Extended task-bundle split coverage repair to task-loop loaders that call a generic split loader and normalizer before enforcing per-task minimums.
+  - Added domain-neutral executable regressions for both new source shapes and verified an exact generated-runner copy only through `/tmp` plus node-owned regeneration.
+- Regression status:
+  - Same-flow live reproduction and cached split diagnostics: confirmed on 2026-07-15.
+  - Targeted automated regressions, full implement-session manager tests, build, and public sanitization pass on 2026-07-15.
+  - Exact generated-runner copy: both configured evaluation splits meet their unchanged governed minimums after repair, with all cached rows retaining usable labels.
+  - Same-flow live retry: the node-owned runner was regenerated with correct split/minimum and declared-label precedence contracts, but execution stopped in earlier training-data normalization at LV-599 before reaching evaluation loading.
+- Follow-up risks:
+  - A corrected loader may advance into model availability, training budget, evaluation runtime, or evidence-completion failures; those remain separate gates.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
+## Issue: LV-597
+
+- Status: resolved; generalized dispatch repair, targeted/full regressions, exact-runner validation, and same-flow live revalidation pass
+- Validation target: a broad task-data loader whose signature accepts the runner configuration must be invoked once with that configuration, and the bundle preparer must select each task's returned raw data instead of passing a per-task source specification as the loader's configuration.
+- Environment/session context: existing governed live run in `<validation-workspace>`, after LV-596 repairs advanced `run_experiments` into real data materialization.
+- Reproduction steps:
+  1. Regenerate the staged experiment runner through `implement_experiments` with the LV-596 handoff repairs enabled.
+  2. Retry `run_experiments` through the governed node transition.
+  3. Inspect the generated broad loader signature, bundle-preparation call site, node log, and metrics payload.
+- Expected behavior:
+  - A broad loader such as `load_raw_task_data(config)` should receive the runner configuration once and return a task-keyed mapping.
+  - The bundle preparer should select the current task from that mapping.
+  - Only genuinely task-scoped fallback loaders should receive the per-task source specification.
+- Actual behavior:
+  - The generated bundle preparer called `_call_boundary(...)` with the per-task source specification as the first positional argument while listing the broad loader first.
+  - Callable resolution selected the broad loader and bound that specification to its configuration parameter.
+  - Real data materialization failed with `AttributeError` when the loader attempted to read a runtime download-policy field that is intentionally absent from the task source specification.
+- Fresh vs existing session comparison:
+  - Fresh session: not yet run as a separate `/new` research session.
+  - Existing session: a newly rebuilt runtime retried the persisted governed run and reproduced the generated dispatch mismatch at data materialization.
+  - Divergence: no persisted-state or refresh divergence is currently indicated; the generated in-memory call projection is wrong before data access begins.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation merged a broad all-task loader and task-scoped loaders into one positional resolver tuple without reconciling their incompatible input contracts.
+- Code/test changes:
+  - Detect broad task loaders through their concrete top-level signature and rewrite only affected bundle preparers.
+  - Call the broad loader once with its runtime/configuration argument, select task-keyed rows in the loop, and preserve task-scoped fallbacks.
+  - Added a domain-neutral executable regression that fails before repair, succeeds after repair, verifies one broad-loader call, and proves idempotence.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-15.
+  - Targeted automated regression, full implement-session manager tests, build, and public sanitization pass on 2026-07-15.
+  - Same-flow live retry: passed on 2026-07-15; the previous task-source/runtime attribute error did not recur and execution advanced through broad-loader dispatch into the distinct LV-599 training-record schema boundary.
+- Follow-up risks:
+  - After dispatch repair, the real environment may expose an honest dataset availability, model availability, training, evaluation, or evidence-coverage boundary; those should remain separate from this generated call-contract defect.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
+
+## Issue: LV-596
+
+- Status: resolved for the reported helper-resolution and runtime-normalization defects; targeted and full manager regressions, build, public sanitization, and same-flow live revalidation pass
+- Validation target: a staged generated experiment runner must connect its final CLI to the data loader, condition executor, evaluator, and metrics builder that earlier chunks actually materialized, while runtime-context repair must inspect function signatures rather than body-local names.
+- Environment/session context: existing governed live run in `<validation-workspace>`, immediately after a repaired `implement_experiments` handoff passed node-owned Python compilation.
+- Reproduction steps:
+  1. Complete `implement_experiments` through the real TUI with a staged generated Python runner.
+  2. Retry `run_experiments` through the governed node transition.
+  3. Inspect the node-owned metrics payload and generated final CLI resolver.
+- Expected behavior:
+  - The final CLI should resolve the generated data-loading, per-condition execution, evaluation, and aggregation helpers.
+  - A function should receive runtime-context normalization only when `runtime` is an actual signature parameter.
+  - Each completed training state should be evaluated and its live model handles released before the next condition accumulates in memory.
+  - Missing or failed evaluation coverage should remain a failed metrics payload rather than a completed result.
+- Actual behavior:
+  - The final CLI searched a fixed helper-name subset that excluded the stage-produced condition executor.
+  - The runner exited before training with `RuntimeError: no condition execution helper is available` and wrote `metrics_status=failed`.
+  - Runtime-context repair had also inserted a normalization statement into a context-based helper whose signature did not contain `runtime`; Python compilation could not detect that semantic defect.
+- Fresh vs existing session comparison:
+  - Fresh session: the newly generated runner passes `py_compile`, but its final staged CLI cannot resolve the helper surface produced by earlier chunks.
+  - Existing session: the persisted failed metrics payload activates failure memory and the node rolls back instead of repeating a known-bad execution.
+  - Divergence: the fresh generation failure is a semantic handoff defect; the resumed run correctly preserves and acts on that failure evidence.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged helper contracts were projected into the final CLI through literal candidate lists, while runtime normalization used a body-wide regular expression instead of parsed signature parameters.
+- Code/test changes:
+  - Connected the final staged CLI to concrete loader, executor, evaluator, and metrics-builder aliases discovered from generated source without embedding experiment-specific names.
+  - Added immediate evaluation, model/tokenizer handle release, and required/completed coverage gating before successful metrics are accepted.
+  - Made runtime-context normalization signature-aware and self-healing when a previously injected body statement refers to a nonexistent `runtime` parameter.
+  - Moved generated run-command argparse repair before first verification and added compatible aliases for the emitted full-evaluation and baseline-order controls.
+  - Added domain-neutral executable regressions for runtime self-healing, staged final handoff, coverage gating, handle cleanup, and emitted CLI flags.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-15.
+  - Targeted automated regression: three focused tests pass on 2026-07-15.
+  - Full implement-session manager regression: 823 tests pass on 2026-07-15.
+  - Production build and public-code sanitization pass on 2026-07-15.
+  - Same-flow live retry: passed for the reported defects on 2026-07-15; pre-verification argparse repair accepted the emitted flags, the prior missing condition-executor error did not recur, and execution advanced into real data materialization before stopping at the separate LV-597 boundary.
+- Follow-up risks:
+  - After resolver repair, real dependency loading, training budget enforcement, immediate evaluation, handle release, and quantitative completion gates remain live validation boundaries.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/events.jsonl`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/metrics.json`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
+
 
 ## Issue: LV-595
 
-- Status: helper-signature separator repair implemented; targeted regression, full CI, production build, harness validation, and exact persisted-runner copy migration pass; same-flow live revalidation pending
+- Status: resolved; helper-signature separator repair passed targeted regression, full CI, production build, harness validation, exact persisted-runner copy migration, and same-flow live revalidation
 - Validation target: generated helper call-arity repairs must preserve valid Python syntax for multiline signatures that already end with a trailing comma, and a later retry must be able to recover an already-corrupted signature.
 - Environment/session context: existing governed live run in `<validation-workspace>`, after `implement_experiments` exhausted its candidates and rolled back to `design_experiments`.
 - Reproduction steps:
@@ -51,7 +697,7 @@ Path placeholders:
   - Production build and public-code sanitization pass.
   - Harness validation passes with 502 issue entries checked and no structural violations.
   - A copy of the exact persisted runner was repaired successfully and passes `python3 -m py_compile`.
-  - Same-flow live retry: pending.
+  - Same-flow live retry: passed on 2026-07-15; `implement_experiments` completed and its node-owned `python3 -m py_compile` verification passed without recreating the duplicate separator.
 - Follow-up risks:
   - Once syntax verification advances, the implementation node may expose the previously observed budget-deadline or missing-callable contract boundary; those must remain separate evidence-backed failures.
 - Evidence/artifacts:

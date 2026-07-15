@@ -37,7 +37,7 @@ Public contract: artifact and gate schema, not a fixed promise that every run be
 - `GateReport`: deterministic and structured findings about traceability, missing evidence, and done-condition drift.
 - `ReviewReport`: claim-evidence alignment, readiness class, downgrade decision, and repair target.
 - `MetaHarnessPatchPlan`: smallest safe node, prompt, skill, or validator strengthening plan with rollback expectations.
-- `PaperReadinessBundle`: portable public bundle with provenance, claim evidence, downgrade decisions, and limitations.
+- `PaperReadinessBundle`: portable public bundle with provenance, claim evidence, downgrade decisions, limitations, and an explicit list of source copies redacted for public portability.
 
 ## Adapter Strategy
 
@@ -65,7 +65,10 @@ meta-harness logic.
 
 All normalized artifacts use schema version `1.0`. Paths in public artifacts
 are workspace-relative or placeholder-based, and `research:improve` defaults
-to `plan_only`.
+to `plan_only`. Packaging never rewrites source evidence: it excludes copied
+artifacts containing private paths or credential assignments, redacts
+run-specific identifiers only in public copies, records those copied paths in
+portability metadata, and hashes the resulting public bytes.
 
 ## Self-Dogfood Loop
 
