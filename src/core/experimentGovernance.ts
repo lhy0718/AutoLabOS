@@ -306,6 +306,7 @@ export function buildExperimentComparisonContract(input: {
   };
   objectiveProfile: ObjectiveMetricProfile;
   managedBundleSupported: boolean;
+  budgetTimeoutSec?: number;
   createdAt?: string;
 }): ExperimentComparisonContract {
   const createdAt = input.createdAt || new Date().toISOString();
@@ -323,7 +324,7 @@ export function buildExperimentComparisonContract(input: {
     baseline_first_required: baselineIds.length > 0,
     baseline_candidate_ids: baselineIds,
     comparison_mode: comparisonMode,
-    budget_profile: buildBudgetProfile(input.managedBundleSupported),
+    budget_profile: buildBudgetProfile(input.managedBundleSupported, input.budgetTimeoutSec),
     objective_profile: freezeObjectiveProfile(input.objectiveProfile),
     evaluator_contract_id: "",
     created_at: createdAt
@@ -1046,18 +1047,22 @@ export async function validateManagedBundleLock(input: {
   };
 }
 
-function buildBudgetProfile(managedBundleSupported: boolean): ExperimentBudgetProfile {
+function buildBudgetProfile(managedBundleSupported: boolean, budgetTimeoutSec?: number): ExperimentBudgetProfile {
+  const timeoutSec =
+    typeof budgetTimeoutSec === "number" && Number.isFinite(budgetTimeoutSec) && budgetTimeoutSec > 0
+      ? Math.max(1, Math.floor(budgetTimeoutSec))
+      : 1800;
   if (!managedBundleSupported) {
     return {
       mode: "single_run_locked",
       locked: true,
-      timeout_sec: 1800
+      timeout_sec: timeoutSec
     };
   }
   return {
     mode: "managed_standard",
     locked: true,
-    timeout_sec: 1800,
+    timeout_sec: timeoutSec,
     profile_name: "standard",
     max_workers: 2,
     repeats: 2,

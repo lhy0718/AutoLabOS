@@ -94,6 +94,27 @@ function buildNodeDeps(overrides?: {
 }
 
 describe("experiment governance", () => {
+  it("locks the configured runtime budget into comparison contracts", () => {
+    const run = makeRun("run-configured-budget", "design_experiments", "validation score");
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "design_configured_budget",
+        hypothesis_ids: ["h_1"],
+        baselines: ["reference_runner"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: false,
+      budgetTimeoutSec: 7200
+    });
+
+    expect(contract.budget_profile).toMatchObject({
+      mode: "single_run_locked",
+      locked: true,
+      timeout_sec: 7200
+    });
+  });
+
   it("writes a baseline snapshot and rejects candidates that do not beat the locked baseline", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-experiment-governance-analyze-"));
     process.chdir(root);

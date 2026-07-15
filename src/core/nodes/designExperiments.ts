@@ -202,6 +202,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         objectiveMetric: run.objectiveMetric,
         constraints: run.constraints
       });
+      const budgetTimeoutSec = resolveDesignBudgetTimeoutSec(deps.config.experiments?.timeout_sec);
       const panelResult = runDesignExperimentsPanel({
         candidates: normalizedCandidates,
         objectiveProfile: objectiveMetricProfile,
@@ -217,7 +218,8 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         constraintProfile,
         objectiveProfile: objectiveMetricProfile,
         source: design.source,
-        retryContext
+        retryContext,
+        budgetTimeoutSec
       });
 
       const outputPath = await writeRunArtifact(run, "experiment_plan.yaml", planYaml);
@@ -261,7 +263,8 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         run,
         selectedDesign: panelResult.selected,
         objectiveProfile: objectiveMetricProfile,
-        managedBundleSupported
+        managedBundleSupported,
+        budgetTimeoutSec
       });
       await storeExperimentGovernanceDecision(run, runContextMemory, {
         contract: comparisonContract,
@@ -673,6 +676,7 @@ function buildPlanYaml(args: {
   objectiveProfile: Awaited<ReturnType<typeof resolveObjectiveMetricProfile>>;
   source: "llm" | "fallback";
   retryContext?: DesignRetryContext;
+  budgetTimeoutSec: number;
 }): string {
   const collectDefaults = args.constraintProfile.collect;
   const paperProfile = args.constraintProfile.writing;
@@ -777,8 +781,13 @@ function buildPlanYaml(args: {
     ...renderShortlistedDesigns(args.candidates),
     "execution:",
     "  container: local",
-    "  timeout_sec: 1800"
+    `  timeout_sec: ${args.budgetTimeoutSec}`
   ].join("\n");
+}
+
+function resolveDesignBudgetTimeoutSec(value: unknown): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.max(1, Math.floor(numeric)) : 1800;
 }
 
 function renderManagedExecutableDesignSection(selected: ExperimentDesignCandidate): string[] {

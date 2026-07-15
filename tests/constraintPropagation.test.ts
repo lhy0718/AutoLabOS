@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { createDesignExperimentsNode } from "../src/core/nodes/designExperiments.js";
+import { EXPERIMENT_GOVERNANCE_CONTRACT_ARTIFACT } from "../src/core/experimentGovernance.js";
 import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
@@ -172,7 +173,7 @@ describe("constraint propagation", () => {
     );
 
     const node = createDesignExperimentsNode({
-      config: {} as any,
+      config: { experiments: { timeout_sec: 7200 } } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
       llm: new MockLLMClient(),
@@ -191,6 +192,12 @@ describe("constraint propagation", () => {
     expect(plan).toContain('    target_venue: "ACL"');
     expect(plan).toContain('    tone_hint: "formal academic"');
     expect(plan).toContain('    length_hint: "short paper"');
+    expect(plan).toContain("  timeout_sec: 7200");
+
+    const comparisonContract = JSON.parse(
+      await readFile(path.join(runDir, EXPERIMENT_GOVERNANCE_CONTRACT_ARTIFACT), "utf8")
+    ) as { budget_profile?: { timeout_sec?: number } };
+    expect(comparisonContract.budget_profile?.timeout_sec).toBe(7200);
 
     const publicPlanPath = path.join(buildPublicExperimentDir(root, run), "experiment_plan.yaml");
     expect(await readFile(publicPlanPath, "utf8")).toBe(plan);
