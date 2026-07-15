@@ -70,6 +70,10 @@ import {
   repairPythonDataCollatorPrecomputedLabelReturnSurface,
   repairPythonDataCollatorTokenizerArgumentSurface,
   repairPythonDataclassEvaluationRecordCoercionSurface,
+  repairPythonChoiceStyleTrainingRecordSurface,
+  repairPythonRootTrainingSequenceCollectorSurface,
+  repairPythonBoundedBatchedLowLevelChoiceEvaluationSurface,
+  repairPythonSingleConditionCoreResolverSurface,
   repairPythonNormalizedEvalExampleRecordSurface,
   repairPythonDirectoryHelperAlias,
   repairPythonBenchmarkAccuracyComprehensionSurface,
@@ -316,6 +320,50 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               "before handoff.",
               "before run_experiments retry gate."
             ) || `Accepted already-normalized evaluation example records in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const choiceStyleTrainingRecordPreRepair =
+          await repairPythonChoiceStyleTrainingRecordSurface(preFailureMemoryScriptPath);
+        if (choiceStyleTrainingRecordPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            choiceStyleTrainingRecordPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Converted labeled choice-style training records in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const rootTrainingSequenceCollectorPreRepair =
+          await repairPythonRootTrainingSequenceCollectorSurface(preFailureMemoryScriptPath);
+        if (rootTrainingSequenceCollectorPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            rootTrainingSequenceCollectorPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Enabled flat root training sequences in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const boundedBatchedLowLevelChoiceEvaluationPreRepair =
+          await repairPythonBoundedBatchedLowLevelChoiceEvaluationSurface(preFailureMemoryScriptPath);
+        if (boundedBatchedLowLevelChoiceEvaluationPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            boundedBatchedLowLevelChoiceEvaluationPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Batched low-level choice scoring and enforced its deadline in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
+          );
+        }
+        const singleConditionCoreResolverPreRepair =
+          await repairPythonSingleConditionCoreResolverSurface(preFailureMemoryScriptPath);
+        if (singleConditionCoreResolverPreRepair.repaired) {
+          preFailureMemoryRepairApplied = true;
+          preFailureMemoryRepairMessages.push(
+            singleConditionCoreResolverPreRepair.message?.replace(
+              "before handoff.",
+              "before run_experiments retry gate."
+            ) || `Connected the public single-condition wrapper to a concrete worker in ${path.basename(preFailureMemoryScriptPath)} before run_experiments retry gate.`
           );
         }
         const numericChoiceLabelPreRepair =
@@ -4755,7 +4803,8 @@ function extractPythonTopLevelFunctionBody(source: string, functionName: string)
   let endIndex = lines.length;
   for (let index = startIndex + 1; index < lines.length; index += 1) {
     const line = lines[index] || "";
-    if (line.trim() && !/^[ \t]/u.test(line)) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#") && !/^[ \t]/u.test(line)) {
       endIndex = index;
       break;
     }
@@ -6322,7 +6371,8 @@ function removeUnsupportedTrainingArgumentsKwargLines(source: string): string {
 function promotePerExampleConditionRowsToSummaries(metrics: Record<string, unknown>): string | undefined {
   const conditionRows = collectConditionRows(metrics.condition_results);
   const rawRows = collectConditionRows(metrics.raw_condition_results);
-  const rows = shouldPreferRawRowsForConditionProjection(conditionRows, rawRows) ? rawRows : conditionRows;
+  const preferRawRows = shouldPreferRawRowsForConditionProjection(conditionRows, rawRows);
+  const rows = preferRawRows ? rawRows : conditionRows;
   if (rows.length === 0) {
     return undefined;
   }
@@ -6544,7 +6594,12 @@ function promotePerExampleConditionRowsToSummaries(metrics: Record<string, unkno
     metrics.raw_condition_results = rows;
   }
   metrics.condition_results = summaries;
-  if (!Array.isArray(metrics.condition_summaries)) {
+  const existingSummaryCount = collectConditionRows(metrics.condition_summaries).length;
+  const projectableRawEvidenceCount = rawRows.filter(isProjectablePerExampleConditionRow).length;
+  if (
+    !Array.isArray(metrics.condition_summaries) ||
+    (preferRawRows && projectableRawEvidenceCount > existingSummaryCount)
+  ) {
     metrics.condition_summaries = summaries;
   }
   metrics.completed_condition_count = summaries.length;
@@ -6580,7 +6635,37 @@ function shouldPreferRawRowsForConditionProjection(
     const value = firstNumber(row.accuracy, row.metric, row.score, row.value);
     return Boolean(marker) && (value !== undefined || typeof row.correct === "boolean");
   }).length;
-  return rawMetricRows > 0 && rawSeedRows > conditionSeedRows;
+  const projectableRawEvidenceCount = rawRows.filter(isProjectablePerExampleConditionRow).length;
+  return (
+    rawMetricRows > 0 &&
+    (rawSeedRows > conditionSeedRows || projectableRawEvidenceCount > conditionRows.length)
+  );
+}
+
+function isClearlyPerExampleConditionRow(row: Record<string, unknown>): boolean {
+  const marker = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id);
+  if (!marker) {
+    return false;
+  }
+  const raw = asRecord(row.raw_evidence);
+  const nestedRaw = asRecord(raw.raw_evidence);
+  return [row, raw, nestedRaw].some(
+    (candidate) =>
+      typeof candidate.correct === "boolean" ||
+      candidate.example_id !== undefined ||
+      candidate.prediction !== undefined ||
+      candidate.gold_key !== undefined
+  );
+}
+
+function isProjectablePerExampleConditionRow(row: Record<string, unknown>): boolean {
+  if (!isClearlyPerExampleConditionRow(row)) {
+    return false;
+  }
+  return (
+    firstNumber(row.accuracy, row.metric, row.score, row.value) !== undefined ||
+    typeof row.correct === "boolean"
+  );
 }
 
 function projectionRowSeed(row: Record<string, unknown>): unknown {
@@ -8257,15 +8342,31 @@ function validateConditionSummaryConsistency(input: {
       ? Math.floor(input.requiredRunCount / input.requiredConditionCount)
       : undefined;
   let inconsistentAccuracyCount = 0;
+  let disagreeingAccuracyFieldCount = 0;
+  let undersizedRawEvidenceCount = 0;
   let zeroSeedSummaryCount = 0;
   let undersizedSummaryIntervalCount = 0;
+
+  const rawPerExampleCounts = new Map<string, number>();
+  for (const rawRow of collectConditionRows(input.metrics.raw_condition_results)) {
+    if (!isClearlyPerExampleConditionRow(rawRow)) {
+      continue;
+    }
+    const marker = asString(rawRow.condition_marker) || asString(rawRow.marker) || asString(rawRow.condition_id);
+    if (marker) {
+      rawPerExampleCounts.set(marker, (rawPerExampleCounts.get(marker) ?? 0) + 1);
+    }
+  }
 
   for (const row of rows) {
     const evaluation = asRecord(row.evaluation);
     const evaluationOverall = asRecord(evaluation.overall);
     const confidenceInterval = asRecord(row.confidence_interval);
     const nestedConfidenceInterval = asRecord(evaluationOverall.confidence_interval);
-    const accuracy = firstNumber(row.average_accuracy, row.accuracy, evaluationOverall.accuracy);
+    const accuracyValues = [row.average_accuracy, row.accuracy, evaluationOverall.accuracy]
+      .map(asNumber)
+      .filter((value): value is number => value !== undefined);
+    const accuracy = accuracyValues[0];
     const correctCount = firstNumber(
       row.correct_count,
       row.correct,
@@ -8289,6 +8390,22 @@ function validateConditionSummaryConsistency(input: {
     ) {
       inconsistentAccuracyCount += 1;
     }
+    if (
+      accuracyValues.length > 1 &&
+      Math.max(...accuracyValues) - Math.min(...accuracyValues) > 1e-6
+    ) {
+      disagreeingAccuracyFieldCount += 1;
+    }
+
+    const marker = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id);
+    const rawPerExampleCount = marker ? rawPerExampleCounts.get(marker) : undefined;
+    if (
+      totalCount !== undefined &&
+      rawPerExampleCount !== undefined &&
+      totalCount < rawPerExampleCount
+    ) {
+      undersizedRawEvidenceCount += 1;
+    }
 
     if (expectedSeedsPerCondition !== undefined && expectedSeedsPerCondition > 1) {
       const seedCount = firstNumber(row.seed_count, row.completed_seed_count, evaluationOverall.seed_count);
@@ -8309,6 +8426,16 @@ function validateConditionSummaryConsistency(input: {
   if (inconsistentAccuracyCount > 0) {
     issues.push(
       `Condition summary accuracy is inconsistent with correct/total counts for ${inconsistentAccuracyCount}/${rows.length} completed condition summary row(s).`
+    );
+  }
+  if (disagreeingAccuracyFieldCount > 0) {
+    issues.push(
+      `Condition summary accuracy fields disagree for ${disagreeingAccuracyFieldCount}/${rows.length} completed condition summary row(s).`
+    );
+  }
+  if (undersizedRawEvidenceCount > 0) {
+    issues.push(
+      `Condition summary total_count is smaller than raw per-example evidence for ${undersizedRawEvidenceCount}/${rows.length} completed condition summary row(s).`
     );
   }
   if (zeroSeedSummaryCount > 0) {

@@ -114,6 +114,8 @@ describe("run_experiments execution profile behavior", () => {
       [
         "import argparse",
         "import inspect",
+        "import os",
+        "import time",
         "from dataclasses import dataclass",
         "from types import SimpleNamespace",
         "from typing import Any, Mapping",
@@ -140,6 +142,88 @@ describe("run_experiments execution profile behavior", () => {
         "            gold = value",
         "            break",
         "    return int(gold) if gold is not None else None",
+        "def _field(record, *names):",
+        "    for name in names:",
+        "        if name in record and record[name] not in (None, ''):",
+        "            return record[name]",
+        "    return None",
+        "def _choice_payload(record):",
+        "    choices = _field(record, 'choices', 'options', 'endings') or []",
+        "    return [str(item).strip() for item in choices], []",
+        "def _label_to_index(raw, labels, n_choices):",
+        "    value = int(str(raw).strip())",
+        "    return value if 0 <= value < n_choices else None",
+        "def normalize_training_text(record):",
+        "    instruction = _field(record, 'instruction', 'prompt', 'question')",
+        "    output = _field(record, 'output', 'response', 'answer', 'completion')",
+        "    if instruction and output:",
+        "        return f'Instruction: {instruction}\\nResponse: {output}'",
+        "    return ''",
+        "def _record_to_train_text(record):",
+        "    if isinstance(record, str): return record.strip() or None",
+        "    if isinstance(record, Mapping): return str(record.get('text') or '').strip() or None",
+        "    return None",
+        "def _collect_train_texts(task_bundle, limit):",
+        "    pools = []",
+        "    if isinstance(task_bundle, Mapping):",
+        "        pools += [task_bundle.get(key) for key in ('train_texts', 'train_examples')]",
+        "    else:",
+        "        pools += [getattr(task_bundle, key, None) for key in ('train_texts', 'train_examples')]",
+        "    texts = []",
+        "    def visit(value):",
+        "        if value is None or len(texts) >= limit: return",
+        "        if isinstance(value, (list, tuple)):",
+        "            for item in value: visit(item)",
+        "            return",
+        "        text = _record_to_train_text(value)",
+        "        if text: texts.append(text)",
+        "    visit(pools)",
+        "    return texts[:limit]",
+        "def _autolabos_entrypoint_low_level_choice_metric_rows(condition_row, eval_tasks, config, condition=None, paths=None):",
+        "    runtime_context = object()",
+        "    model = condition_row.get('model')",
+        "    tokenizer = condition_row.get('tokenizer')",
+        "    device = condition_row.get('device')",
+        "    torch_mod = condition_row.get('torch')",
+        "    marker = 'candidate_condition'",
+        "    seed_value = 3",
+        "    task_items = list(eval_tasks.items())",
+        "    preflight_usable_count = sum(len(rows) for _, rows in task_items)",
+        "    max_length = int(8)",
+        "    rows = []",
+        "    failures = []",
+        "    no_grad = getattr(torch_mod, 'no_grad', None)",
+        "    for task_name, examples in task_items:",
+        "        for example_index, example in enumerate(list(examples or [])):",
+        "            choice_pairs = example['choices']",
+        "            prompt_ids = tokenizer(example['prompt'], add_special_tokens=True)['input_ids']",
+        "            for choice_key, choice_text in choice_pairs:",
+        "                batch = {'input_ids': prompt_ids + tokenizer(choice_text, add_special_tokens=False)['input_ids']}",
+        "                out = model(**batch)",
+        "                loss = _autolabos_entrypoint_loss_float(getattr(out, 'loss', out))",
+        "                if loss is not None: rows.append({'prediction': choice_key})",
+        "    if rows:",
+        "        return rows",
+        "    return [{'status': 'failed'}]",
+        "def execute_condition_once(runtime, condition, task_bundle, model_id):",
+        "    return {'status': 'completed_training', 'model_id': model_id}",
+        "def run_single_condition(condition=None, task_bundle=None, runtime=None, **kwargs):",
+        "    core = (",
+        "        globals().get(\"_run_single_condition_core\")",
+        "        or globals().get(\"_execute_single_condition_core\")",
+        "        or globals().get(\"run_single_condition_core\")",
+        "    )",
+        "    try:",
+        "        if not callable(core):",
+        "            raise RuntimeError(\"single-condition core flow helper is not available\")",
+        "        return dict(_public_call(core, {",
+        "            \"condition\": condition,",
+        "            \"task_bundle\": task_bundle,",
+        "            \"runtime\": runtime,",
+        "            \"shared_context\": runtime,",
+        "        }))",
+        "    except BaseException as exc:",
+        "        return {'status': 'failed', 'reason': str(exc)}",
         "def _ev_score_choice(model, tokenizer, prompt, label, device, max_length=768):",
         "    p_ids = tokenizer(prompt, add_special_tokens=True).input_ids",
         "    c_ids = tokenizer(' ' + str(label), add_special_tokens=False).input_ids",
@@ -203,6 +287,11 @@ describe("run_experiments execution profile behavior", () => {
         "    if model_id is None:",
         "        raise RuntimeError('ordered-plan adapter could not resolve a model id')",
         "    return build_ordered_run_plan(model_id=model_id)",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser(add_help=False)",
+        "# _autolabos_generated_timeout_surface",
+        "    parser.add_argument('--timeout-sec', '--budget-timeout-sec', '--condition-timeout-sec', '--max-runtime-sec', dest='timeout_sec', type=int, default=1800)",
+        "    return parser",
         "def main():",
         "    args = argparse.Namespace(fallback_base_model='public_model_fallback')",
         "    return 0 if _autolabos_entrypoint_build_run_plan(args=args) == 'public_model_fallback' else 1",
@@ -238,14 +327,20 @@ describe("run_experiments execution profile behavior", () => {
     let dataBundleRepairedBeforeExecution = false;
     let evalSplitCoverageRepairedBeforeExecution = false;
     let evaluationGoldAliasRepairedBeforeExecution = false;
+    let choiceStyleTrainingRepairedBeforeExecution = false;
+    let rootTrainingSequenceRepairedBeforeExecution = false;
+    let boundedBatchedEvaluationRepairedBeforeExecution = false;
+    let singleConditionCoreRepairedBeforeExecution = false;
     let evaluationChoiceBatchRepairedBeforeExecution = false;
     let rawEvidenceAttemptIsolationRepairedBeforeExecution = false;
     let oneRunRuntimeCleanupRepairedBeforeExecution = false;
     let evaluationBridgeRepairedBeforeExecution = false;
+    let executedCommand = "";
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
       config: {
         experiments: {
+          timeout_sec: 14_400,
           network_policy: "declared",
           network_purpose: "model_download"
         }
@@ -258,7 +353,8 @@ describe("run_experiments execution profile behavior", () => {
       pdfTextLlm: new MockLLMClient(),
       codex: {} as any,
       aci: {
-        runCommand: async () => {
+        runCommand: async (command: string) => {
+          executedCommand = command;
           const repairedSource = await readFile(scriptPath, "utf8");
           repairedBeforeExecution =
             repairedSource.includes("'fallback_base_model'") &&
@@ -284,6 +380,19 @@ describe("run_experiments execution profile behavior", () => {
           evaluationGoldAliasRepairedBeforeExecution =
             repairedSource.includes("_autolabos_evaluation_task_bundle_alias_surface") &&
             repairedSource.includes("'gold_index', 'label_index'");
+          choiceStyleTrainingRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_choice_style_training_record_surface") &&
+            repairedSource.includes("choice_texts, choice_labels = _choice_payload(record)");
+          rootTrainingSequenceRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_root_training_sequence_collector_surface") &&
+            repairedSource.includes("visit(task_bundle)");
+          boundedBatchedEvaluationRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_bounded_batched_low_level_choice_evaluation_surface") &&
+            repairedSource.includes("torch_mod.nn.functional.cross_entropy") &&
+            repairedSource.includes("evaluation deadline exhausted before full required evidence");
+          singleConditionCoreRepairedBeforeExecution =
+            repairedSource.includes("_autolabos_single_condition_core_resolver_surface") &&
+            repairedSource.includes('or globals().get("execute_condition_once")');
           evaluationChoiceBatchRepairedBeforeExecution =
             repairedSource.includes("_autolabos_evaluation_choice_batch_scoring_surface") &&
             repairedSource.includes("attention_mask=attention_mask");
@@ -363,10 +472,15 @@ describe("run_experiments execution profile behavior", () => {
     expect(dataBundleRepairedBeforeExecution).toBe(true);
     expect(evalSplitCoverageRepairedBeforeExecution).toBe(true);
     expect(evaluationGoldAliasRepairedBeforeExecution).toBe(true);
+    expect(choiceStyleTrainingRepairedBeforeExecution).toBe(true);
+    expect(rootTrainingSequenceRepairedBeforeExecution).toBe(true);
+    expect(boundedBatchedEvaluationRepairedBeforeExecution).toBe(true);
+    expect(singleConditionCoreRepairedBeforeExecution).toBe(true);
     expect(evaluationChoiceBatchRepairedBeforeExecution).toBe(true);
     expect(rawEvidenceAttemptIsolationRepairedBeforeExecution).toBe(true);
     expect(oneRunRuntimeCleanupRepairedBeforeExecution).toBe(true);
     expect(evaluationBridgeRepairedBeforeExecution).toBe(true);
+    expect(executedCommand).toContain("--timeout-sec 14400");
     expect(
       eventStream.history().some((event) =>
         String(event.payload.text || "").includes("before run_experiments retry gate")
@@ -2177,7 +2291,35 @@ describe("run_experiments execution profile behavior", () => {
                   { condition_marker: "baseline_condition", status: "completed", seed: 1, accuracy: 0.5 },
                   { condition_marker: "baseline_condition", status: "completed", seed: 2, accuracy: 0.5 },
                   { condition_marker: "candidate_condition_a", status: "completed", seed: 1, accuracy: 0.52 },
-                  { condition_marker: "candidate_condition_a", status: "completed", seed: 2, accuracy: 0.52 }
+                  { condition_marker: "candidate_condition_a", status: "completed", seed: 2, accuracy: 0.52 },
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "completed",
+                    example_id: "example_a",
+                    prediction: "option_a",
+                    gold_key: "option_b"
+                  },
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "completed",
+                    example_id: "example_b",
+                    prediction: "option_b",
+                    gold_key: "option_b"
+                  },
+                  {
+                    condition_marker: "candidate_condition_a",
+                    status: "completed",
+                    example_id: "example_a",
+                    prediction: "option_b",
+                    gold_key: "option_b"
+                  },
+                  {
+                    condition_marker: "candidate_condition_a",
+                    status: "completed",
+                    example_id: "example_b",
+                    prediction: "option_b",
+                    gold_key: "option_b"
+                  }
                 ],
                 condition_summaries: [
                   {
@@ -2191,7 +2333,7 @@ describe("run_experiments execution profile behavior", () => {
                     confidence_interval: { sample_size: 1 },
                     evaluation: {
                       overall: {
-                        accuracy: 0.5,
+                        accuracy: 0.4,
                         correct_count: 0,
                         total_count: 1,
                         confidence_interval: { sample_size: 1 }
@@ -2209,7 +2351,7 @@ describe("run_experiments execution profile behavior", () => {
                     confidence_interval: { sample_size: 1 },
                     evaluation: {
                       overall: {
-                        accuracy: 0.52,
+                        accuracy: 0.42,
                         correct_count: 0,
                         total_count: 1,
                         confidence_interval: { sample_size: 1 }
@@ -2239,6 +2381,8 @@ describe("run_experiments execution profile behavior", () => {
 
     expect(result.status).toBe("failure");
     expect(result.error).toContain("Condition summary accuracy is inconsistent with correct/total counts");
+    expect(result.error).toContain("Condition summary accuracy fields disagree");
+    expect(result.error).toContain("Condition summary total_count is smaller than raw per-example evidence");
     expect(result.error).toContain("condition summaries report seed_count=0");
     expect(result.error).toContain("confidence intervals with sample_size below the expected per-condition seed count");
 
@@ -7010,6 +7154,135 @@ describe("run_experiments execution profile behavior", () => {
       )
     ).toBe(true);
   });
+  it("rebuilds lossy condition summaries from richer per-example evidence without seed identifiers", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-raw-evidence-summary-repair-"));
+    process.chdir(root);
+    const run = makeRun("run-raw-evidence-summary-repair");
+    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.1";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const perExampleRows = [
+      ["baseline_condition", "benchmark_task_a", "example_a", true],
+      ["baseline_condition", "benchmark_task_a", "example_b", false],
+      ["baseline_condition", "benchmark_task_b", "example_c", true],
+      ["baseline_condition", "benchmark_task_b", "example_d", false],
+      ["candidate_condition", "benchmark_task_a", "example_a", true],
+      ["candidate_condition", "benchmark_task_a", "example_b", true],
+      ["candidate_condition", "benchmark_task_b", "example_c", true],
+      ["candidate_condition", "benchmark_task_b", "example_d", false]
+    ].map(([conditionMarker, task, exampleId, correct]) => ({
+      condition_marker: conditionMarker,
+      task,
+      example_id: exampleId,
+      seed: null,
+      correct,
+      accuracy: correct ? 1 : 0,
+      prediction: correct ? "option_a" : "option_b",
+      gold_key: "option_a",
+      status: "completed"
+    }));
+
+    const eventStream = new InMemoryEventStream();
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric_key: "accuracy_delta_vs_baseline",
+                primary_metric_value: 0,
+                accuracy_delta_vs_baseline: 0,
+                completed_run_count: 2,
+                required_run_count: 2,
+                completed_condition_count: 2,
+                required_condition_count: 2,
+                baseline_condition_marker: "baseline_condition",
+                condition_results: [
+                  { condition_marker: "baseline_condition", status: "completed", accuracy: 1, correct: true },
+                  { condition_marker: "candidate_condition", status: "completed", accuracy: 1, correct: true }
+                ],
+                condition_summaries: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "completed",
+                    accuracy: 1,
+                    average_accuracy: 1,
+                    correct_count: 1,
+                    total_count: 1,
+                    evaluation: { overall: { accuracy: 0.5, correct_count: 2, total_count: 4 } }
+                  },
+                  {
+                    condition_marker: "candidate_condition",
+                    status: "completed",
+                    accuracy: 1,
+                    average_accuracy: 1,
+                    correct_count: 1,
+                    total_count: 1,
+                    evaluation: { overall: { accuracy: 0.75, correct_count: 3, total_count: 4 } }
+                  }
+                ],
+                raw_condition_results: perExampleRows
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 10 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).not.toBe("failure");
+    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
+      accuracy_delta_vs_baseline?: number;
+      primary_metric_value?: number;
+      condition_summaries?: Array<{
+        condition_marker?: string;
+        average_accuracy?: number;
+        total_count?: number;
+        evaluation?: Record<string, unknown>;
+      }>;
+    };
+    const baseline = metrics.condition_summaries?.find((row) => row.condition_marker === "baseline_condition");
+    const candidate = metrics.condition_summaries?.find((row) => row.condition_marker === "candidate_condition");
+    expect(baseline).toMatchObject({ average_accuracy: 0.5, total_count: 4 });
+    expect(candidate).toMatchObject({ average_accuracy: 0.75, total_count: 4 });
+    expect(Object.keys(baseline?.evaluation ?? {})).toEqual(["benchmark_task_a", "benchmark_task_b"]);
+    expect(metrics.accuracy_delta_vs_baseline).toBe(0.25);
+    expect(metrics.primary_metric_value).toBe(0.25);
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes("Projected 8 per-example metric row(s) into 2 condition summary row(s)")
+      )
+    ).toBe(true);
+  });
+
   it("promotes condition summary primary metric when the top-level objective metric is null", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-condition-summary-metric-projection-"));
     process.chdir(root);
